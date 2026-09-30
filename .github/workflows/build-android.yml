@@ -37,16 +37,14 @@ jobs:
       - name: 安装依赖
         run: npm install
 
-      - name: 生成应用图标（用 assets/icon.png）
-        run: |
-          if [ -f assets/icon.png ]; then
-            npx capacitor-assets generate --iconBackgroundColor '#121116' --iconBackgroundColorDark '#121116' --splashBackgroundColor '#121116' --splashBackgroundColorDark '#121116' --android || echo "assets generate skipped"
-          else
-            echo "no assets/icon.png, skip"
-          fi
-
       - name: 生成安卓原生壳
         run: npx cap add android
+
+      # 20261001 修复：图标生成必须在 cap add 之后执行（cg 版排在壳生成之前，
+      # android/ 目录尚不存在导致 capacitor-assets 静默失败，APK 用了 Capacitor 默认蓝色图标）。
+      # 图标=白日梦手绘 logo（星辰与轨道），自适应图标背景/启动图底色统一白色。
+      - name: 生成应用图标与启动图（assets/icon.png + assets/splash.png）
+        run: npx capacitor-assets generate --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#ffffff' --splashBackgroundColorDark '#ffffff' --android
 
       - name: 禁用 WebView 强制暗色（Force Dark）— 20260930cg 三重保险
         run: |
