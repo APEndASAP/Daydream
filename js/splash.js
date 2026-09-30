@@ -75,7 +75,10 @@
   /* ==== 画布 ==== */
   var cv = document.createElement('canvas');
   cv.id = 'splash-v5-canvas';
-  cv.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;display:block;z-index:2147483000;cursor:pointer;background:rgb(21,22,28);';
+  // 20260930ce：CSS 尺寸禁用 100vw/100vh——移动端 100vh=「大视口」恒大于 innerHeight（地址栏占位），
+  // 内部按 innerHeight 绘制、CSS 却拉到大视口高度→整幅垂直拉伸，正圆变竖椭圆。改为 100% 初值，
+  // 并在 resize() 里用 innerWidth/innerHeight 的像素值强制同步（CSS 尺寸≡绘制坐标系，拉伸无从发生）。
+  cv.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;display:block;z-index:2147483000;cursor:pointer;background:rgb(21,22,28);';
   (document.body || document.documentElement).appendChild(cv);
   var ctx = cv.getContext('2d');
   var DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -154,6 +157,9 @@
   function resize() {
     w = window.innerWidth; h = window.innerHeight;
     cv.width = Math.ceil(w * DPR); cv.height = Math.ceil(h * DPR);
+    // 20260930ce：CSS 显示尺寸逐像素钉死为 innerWidth/innerHeight（不用 vw/vh/100%）——
+    // 移动端地址栏收放时 100vh≠innerHeight，会整体拉伸画面；px 同步后圆环恒为正圆。
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     cx = w * CFG.CXK; cy = h * CFG.CYK;
     R = Math.min(w * CFG.RK_W, h * CFG.RK_H);
