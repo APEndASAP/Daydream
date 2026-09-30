@@ -33,6 +33,10 @@
 button, input, textarea, select { font-family: inherit; }
 
 :root {
+  /* 20260930cf：锁定本应用的色彩方案为自管深色——声明 dark 后浏览器不会对
+     深色界面做 Auto Dark 二次反转；浅色主题在 body.theme-light 里单独声明 light */
+  color-scheme: dark;
+
   /* 主色板 */
   --bg: #121116;              /* 深炭灰近黑背景 */
   --bg-elevated: #1b1920;     /* 卡片抬升层 */
@@ -4460,7 +4464,9 @@ body.low-end .oc-star-blob { filter: none; opacity: 0.5; }
    在其容器内把变量还原回深色值，自身质感不受浅色主题影响
    ============================================================ */
 body.theme-light {
-  color-scheme: light;
+  /* 20260930cf：浅色主题显式声明 light only——即使手机开系统暗色模式，
+     也告诉浏览器「本页此主题就是浅色、禁止 Auto Dark 反转」，变量不受系统偏好影响 */
+  color-scheme: only light;
   --bg: #f1eef8;
   --bg-elevated: #ffffff;
   --bg-elevated-2: #f3f0fa;
@@ -4781,5 +4787,28 @@ body.theme-light .oc-side-action:active { background: rgba(124, 92, 240, 0.28); 
 }
 
 /* ── 20260930cb：消息送达/已读标识（玩家气泡下方小字；全部走变量，普通/玻璃拟态/浅色预设自适应） ── */
+
+
+/* ============================================================
+   20260930cf：强制锁定配色，杜绝系统暗色模式 Auto Dark / Force Dark 反转
+   —— 无论手机系统处于浅色还是暗色模式，本页严格按自有主题呈现：
+      ① body.theme-light（浅色主题）在 prefers-color-scheme:dark 下仍强制浅底深字；
+      ② 深色默认主题（:root）同样在系统浅色模式下保持深底（已被 color-scheme:dark 锁定）。
+   补此兜底是为了覆盖个别内核（尤其安卓 WebView 老版本）仅凭 color-scheme 声明
+   仍会触发 Force Dark 的极端情况。 */
+@media (prefers-color-scheme: dark) {
+  body.theme-light {
+    color-scheme: only light !important;
+    --bg: #f1eef8 !important;
+    --bg-elevated: #ffffff !important;
+    --bg-elevated-2: #f3f0fa !important;
+    --card: rgba(46, 36, 84, 0.05) !important;
+    --card-solid: #ffffff !important;
+    --border: rgba(46, 36, 84, 0.13) !important;
+    --text: #2a2340 !important;
+    --text-secondary: rgba(42, 35, 64, 0.70) !important;
+    --text-tertiary: rgba(42, 35, 64, 0.46) !important;
+  }
+}
 
 
