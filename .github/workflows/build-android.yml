@@ -29,8 +29,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
+      # 注：GitHub ubuntu-latest runner 已预装 Android SDK（ANDROID_HOME 就绪），
+      # 无需 android-actions/setup-android（它是常见故障点）。20260930cg 实测移除。
+      - name: 确认 Android SDK 就绪
+        run: echo "ANDROID_HOME=$ANDROID_HOME" && sdkmanager --version || true
 
       - name: 安装依赖
         run: npm install
