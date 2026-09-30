@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 680" width="680" height="680">
+  <title>白日梦 · 极简几何 logo（星辰与轨道）</title>
+  <rect width="680" height="680" fill="#ffffff"/>
+  <circle cx="340" cy="340" r="252" fill="none" stroke="#9a9aa8" stroke-width="9"/>
+  <g transform="rotate(-28 340 340)">
+    <ellipse cx="340" cy="340" rx="276" ry="164" fill="none" stroke="#23232e" stroke-width="9"/>
+    <circle cx="245.6" cy="185.9" r="21" fill="#23232e"/>
+  </g>
+  <path d="M 340 220 Q 357 323 460 340 Q 357 357 340 460 Q 323 357 220 340 Q 323 323 340 220 Z" fill="#23232e"/>
+  <path d="M 552 94 Q 557 123 586 128 Q 557 133 552 162 Q 547 133 518 128 Q 547 123 552 94 Z" fill="#9a9aa8"/>
+  <path d="M 120 524 Q 123 542 141 545 Q 123 548 120 566 Q 117 548 99 545 Q 117 542 120 524 Z" fill="#9a9aa8"/>
+  <circle cx="546.4" cy="484.6" r="14" fill="#9a9aa8"/>
+</svg>

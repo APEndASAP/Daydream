@@ -1,0 +1,11 @@
+{
+  "appId": "com.bairimeng.app",
+  "appName": "白日梦",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
