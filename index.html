@@ -4,7 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <!-- 20260930cf：声明应用同时支持浅/深两种配色（自管 color-scheme），
-       阻止手机系统暗色模式用 Auto Dark / Force Dark 强制反转本页浅色界面 -->
+       阻止手机系统暗色模式用 Auto Dark / Force Dark 强制反转本页浅色界面。
+       20260930cg：图片/表情包反色已由 CSS 物理锁死（filter:none + forced-color-adjust:none），
+       color-scheme 保留双值以贴合「默认深色 + 可选浅色」双主题现状 -->
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f1eef8" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#121116" media="(prefers-color-scheme: dark)">
@@ -28,7 +30,7 @@
           || /(^|\.)github\.io$/i.test(location.hostname);
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20260930cf' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20260930cg' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -42,13 +44,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20260930cf'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20260930cg'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20260930cf">
+  <link rel="stylesheet" href="css/style.css?v=20260930cg">
 </head>
 <body>
   <div id="app">
@@ -73,7 +75,8 @@
          20260930cc 修复角色自答问卷大 bug（角色向玩家提问的问卷曾被答题队列捞起 20 秒后自答——队列只收 from:'me' + _answerSurvey 兜底守卫）；删除送达/已读标识（状态机与 UI 全部移除）；问卷批量选择就地更新不跳顶+选中框改 inset 阴影修复两侧被裁；占卜示例问题换中性文案（最近的运势怎么样）；
          20260930cd 撤回提示可读性（硬编码浅灰改变量四模式自适应）；弹窗滚动位全局修复（超频礼物库点详情/送礼物取消返回、礼物柜重建、世界树根↔文件夹往返、问卷详情返回列表——从哪返回就恢复到哪不跳顶）；BGM 增响（压缩器补偿增益+6dB、前半段初始增益 1.25、淡入 0.4s→0.12s、更早起播、开屏默认 150%、滑杆上限 200%）；音频引导删站点地址；数据源门卫放行 GitHub Pages（部署入口）；
          20260930ce 修复手机端开屏动画整体拉伸（canvas CSS 用 100vh=大视口恒大于 innerHeight，内部按小高度绘制被竖向拉长，正圆变竖椭圆——改 px 逐像素同步，星轨/圆环在任意屏幕与地址栏状态下恒为正圆）；
-         20260930cf 杜绝手机系统暗色模式强制变暗浅色界面（Auto Dark/Force Dark 反转）：head 加 <meta name="color-scheme" content="light dark">+theme-color 双 media 值；:root 锁 color-scheme:dark、body.theme-light 锁 color-scheme:only light；CSS 末尾补 @media(prefers-color-scheme:dark) 下浅色主题变量 !important 兜底（系统偏好不再接管配色） -->
+         20260930cf 杜绝手机系统暗色模式强制变暗浅色界面（Auto Dark/Force Dark 反转）：head 加 <meta name="color-scheme" content="light dark">+theme-color 双 media 值；:root 锁 color-scheme:dark、body.theme-light 锁 color-scheme:only light；CSS 末尾补 @media(prefers-color-scheme:dark) 下浅色主题变量 !important 兜底（系统偏好不再接管配色）；
+         20260930cg 防反色机制（物理锁死，杜绝系统暗色模式下图片/表情包/头像/礼物图被强制反色成底片）：CSS 顶部加最高优先级锁死块——img/picture/video/canvas/svg/emoji/sticker/avatar/gift 等所有媒体元素 filter:none+forced-color-adjust:none+color-scheme:only light（只锁反色属性、绝不锁背景色，深色默认主题不受影响）；@media(forced-colors:active) 高对比度模式二次兜底；APK 原生三重保险（styles.xml + AndroidManifest + forceDarkAllowed=false，system WebView 强制暗色一并关闭） -->
 
     <!-- 聊天列表页 -->
     <div class="view" id="view-chatlist">
@@ -266,11 +269,11 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20260930cf"></script>
-  <script src="js/db.js?v=20260930cf"></script>
-  <script src="js/icons.js?v=20260930cf"></script>
-  <script src="js/emoji-img.js?v=20260930cf"></script>
-  <script src="js/cards.js?v=20260930cf"></script>
-  <script src="js/app.js?v=20260930cf"></script>
+  <script src="js/splash.js?v=20260930cg"></script>
+  <script src="js/db.js?v=20260930cg"></script>
+  <script src="js/icons.js?v=20260930cg"></script>
+  <script src="js/emoji-img.js?v=20260930cg"></script>
+  <script src="js/cards.js?v=20260930cg"></script>
+  <script src="js/app.js?v=20260930cg"></script>
 </body>
 </html>

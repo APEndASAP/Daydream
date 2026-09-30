@@ -3,6 +3,48 @@
    设计关键词：黑/深炭灰底 + 淡紫强调色 · 极简 · 超大圆角 · 轻微魔法元素
    ============================================================ */
 
+/* ════════════════════════════════════════════════════════════
+   20260930cg：防反色机制（物理锁死，杜绝系统暗色模式下图片/表情包被反色成底片）
+   —— 安卓 WebView Force Dark / 部分内核 Auto Dark 会把 <img>（尤其透明底表情包、
+   彩色头像、礼物图）整张反色。此处用最高优先级强制关掉一切系统滤镜与强制配色：
+     · filter / -webkit-filter: none —— 禁止任何系统级滤镜（反色、变暗）
+     · forced-color-adjust: none —— 禁止「强制颜色」模式（高对比度）改色
+     · color-scheme: only light —— 对媒体元素声明「仅浅色」，阻断 Auto Dark 对它们的反转
+   注意：这里只锁「反色相关」属性，绝不锁 background-color（背景继续走主题变量，
+   深色默认主题 --bg:#121116 与浅色可选主题互不干扰）。
+   ════════════════════════════════════════════════════════════ */
+img, picture, video, canvas, svg, image,
+.emoji-img, .sticker, .sticker-img, .emoji-panel img, .gift-img, .avatar-img,
+.chat-bubble img, .emoji, [class*="emoji"] img, [class*="avatar"] img,
+.chat-container img, .visitor-profile img {
+  filter: none !important;
+  -webkit-filter: none !important;
+  forced-color-adjust: none !important;
+  -webkit-forced-color-adjust: none !important;
+  color-scheme: only light !important;
+  /* 兜底：强制媒体走 sRGB 渲染，避免个别内核做负片/色彩空间反转 */
+  image-rendering: auto !important;
+  isolation: isolate;
+}
+
+/* 表情包/贴纸等图片的承载容器，也一并锁死反色（避免容器层做 blend/invert） */
+.emoji-panel, .sticker-panel, .gift-panel, .emoji-img, .sticker,
+[class*="emoji"], [class*="sticker"], [class*="avatar"] {
+  forced-color-adjust: none !important;
+  -webkit-forced-color-adjust: none !important;
+}
+
+/* 高对比度 / 强制颜色模式下，禁用系统对文字与描边的强制改色（只保底，不覆盖主题色） */
+@media (forced-colors: active) {
+  img, picture, video, canvas, svg, image,
+  .emoji-img, .sticker, .emoji-panel img, .gift-img, .avatar-img {
+    forced-color-adjust: none !important;
+    -webkit-forced-color-adjust: none !important;
+    filter: none !important;
+    -webkit-filter: none !important;
+  }
+}
+
 /* 20260929am：内置预设字体 5 款（本地打包，零联网）：系统默认 + 仓耳与墨
    + PingFang星辰体 + 阳人东住体 + Unifont点阵黑。其余字体走织梦里的「上传字体」。
    （20260929am：按用户要求移除 K8x12像素体，新增 Unifont点阵黑） */
