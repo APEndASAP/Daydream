@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#121116">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>白日梦</title>
+  <script>
+    /* 20260929ah：数据源门卫（最早执行，任何入口都先过这里）。
+       IndexedDB 按 origin 隔离，正式数据只在 127.0.0.1:8902。从别的入口打开本文件
+       （如对话里的文件卡片落在宿主静态服务 [::1]:55625、或 localhost:8902、或 file://）时：
+       ① 先 location.replace 跳回 8902（正常浏览器直接成功，到此结束）；
+       ② 若跳转被宿主预览面板拦截（iframe sandbox 等场景），DOMContentLoaded 后
+          注入全屏「数据源保护页」——不再渲染应用、不建库，从根源上杜绝
+          "点了文件卡片 → 空库界面 → 以为数据又串了/丢了"。
+       正式数据永远只在 8902：请用对话里的「浏览器预览」卡（http://127.0.0.1:8902）进入。 */
+    (function () {
+      try {
+        // 20260930cd：GitHub Pages（*.github.io）为正式发布入口，与 8902 同为合法数据源，不再拦截跳转
+        var ok = (location.hostname === '127.0.0.1' && location.port === '8902')
+          || /(^|\.)github\.io$/i.test(location.hostname);
+        window.__BM_ORIGIN_OK = ok;
+        if (ok) return;
+        location.replace('http://127.0.0.1:8902/index.html?v=20260930cd' + location.hash);
+        // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
+        document.addEventListener('DOMContentLoaded', function () {
+          if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
+          try {
+            document.body.innerHTML = ''
+              + '<div style="position:fixed;inset:0;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;background:radial-gradient(ellipse at 50% 0%,#2b2340 0%,#1a1626 55%,#121016 100%);font-family:\'PingFang SC\',\'Microsoft YaHei\',system-ui,sans-serif;text-align:center;padding:28px;user-select:none;">'
+              +   '<svg width="64" height="64" viewBox="0 0 24 24" fill="none" style="filter:drop-shadow(0 0 16px rgba(167,139,250,.55));"><defs><linearGradient id="bmg" x1="6" y1="2" x2="19" y2="21" gradientUnits="userSpaceOnUse"><stop stop-color="#ddd6fe"/><stop offset="1" stop-color="#8b74e8"/></linearGradient></defs><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="url(#bmg)"/></svg>'
+              +   '<div style="margin-top:18px;font-size:22px;letter-spacing:8px;text-indent:8px;font-weight:300;color:#c4b5fd;">数据源保护</div>'
+              +   '<div style="margin-top:14px;max-width:420px;font-size:13px;line-height:1.9;color:rgba(255,255,255,.72);">本页从 <b style="color:#c4b5fd;word-break:break-all;">' + (location.protocol === 'file:' ? '本地文件' : location.hostname + (location.port ? ':' + location.port : '')) + '</b> 打开，与正式数据空间（127.0.0.1:8902）<b>互不相通</b>。<br>为避免产生第二套空数据，软件已在当前入口停止加载。<br><b style="color:#e9e4ff;">你的数据一份没丢，全部都在 8902。</b></div>'
+              +   '<button id="bm-go" style="margin-top:26px;padding:12px 34px;border:none;border-radius:999px;background:linear-gradient(135deg,#8b74e8,#a78bfa);color:#fff;font-size:14px;letter-spacing:2px;cursor:pointer;">进入白日梦（正式数据）</button>'
+              +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
+              + '</div>';
+            var btn = document.getElementById('bm-go');
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20260930cd'); };
+          } catch (e) {}
+        });
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="css/style.css?v=20260930cd">
+</head>
+<body>
+  <div id="app">
+    <!-- 星光背景 -->
+    <div class="starfield" id="starfield"></div>
+
+    <!-- 全局页面背景层（聊天导航/朋友圈的自定义背景铺满全屏，含底栏后方，玻璃透出） -->
+    <div id="app-fullbg"></div>
+
+    <!-- 20260929z 删除应用内旧开屏（与启动器动画重复）；20260929br 开屏动画回归，
+         独立承担于 js/splash.js，启动器已改为直接跳转不再播动画；
+         20260929bs 重制为「宇宙手稿 · Heliodream」（双彗星入轨+天文手稿日心系+ENTROPY 反转）；
+         20260930bt 换装 v2「星轨手稿」（双星互绕入场→最高点交汇→星盘白反转+拉丁箴言+BGM）；
+         20260930bu 细节收尾（删原生 emoji / 书信改固定间隔 / 消息时间戳 / BGM 提响度+结尾余韵 / 聊天页内当前角色发消息提示音）；
+         20260930bv 修复开屏（点击不再误跳过、点击任意处激活 BGM 出声）；
+         20260930bw 总设置加「开屏音乐自动播放」开关（splash 读开关更积极 resume+播放；修正提示文案）；
+         20260930bx 通话灰字/挂断图标四模式可读性；开屏音乐语义纠正=开屏结束后继续循环播放全程（主页顶栏小型开关）+每次进入显示点按提醒；总设置加白名单引导+开屏音乐/软件内提示音更换上传；悬浮窗2号设置移到通话悬浮窗模式下方+功能示意图；
+         20260930by 音乐开关补全语义：开=立即从头播放（无论开屏是否结束）、已在播则延续不重播；关=淡出式立即停止；
+         20260930bz 世界树检索细则落地：权限三态（条目「跟随文件夹/单独设置」区分）、本地关键词预提取（高频词+人名地名）、玩家手动补充关键词、AI 精炼后台串行队列（摘要+核心关键词，>200字防重复）、开发者命中日志；
+         20260930ca 世界树标签补全：跟随条目也显示文件夹有效权限（跟随·全部可读/N 个访客/禁读），未设置过权限的文件夹不再误标「AI·禁读」；超频动画下方新增「跳过动画」按钮（点击快速结束本段动画，礼物/惊喜弹窗照常弹出）；
+         20260930cb 问卷感想（玩家答完角色逐题回感想：字卡抽卡/AI 生成）；问卷新增「添加选择题」（问题框+逐行选项框最多 5 个）；创建角色页新增「角色开场白」（留空则从字卡库抽一张打招呼）；消息送达/已读标识（本地状态机：写库成功=送达，访客回复/主动发消息生成前=已读）；生成中打字点点跟随气泡文字色修复可读性；总设置新增两条独立音乐音量条（开屏动画 / 软件内，开屏默认 130% 更响）；
+         20260930cc 修复角色自答问卷大 bug（角色向玩家提问的问卷曾被答题队列捞起 20 秒后自答——队列只收 from:'me' + _answerSurvey 兜底守卫）；删除送达/已读标识（状态机与 UI 全部移除）；问卷批量选择就地更新不跳顶+选中框改 inset 阴影修复两侧被裁；占卜示例问题换中性文案（最近的运势怎么样）；
+         20260930cd 撤回提示可读性（硬编码浅灰改变量四模式自适应）；弹窗滚动位全局修复（超频礼物库点详情/送礼物取消返回、礼物柜重建、世界树根↔文件夹往返、问卷详情返回列表——从哪返回就恢复到哪不跳顶）；BGM 增响（压缩器补偿增益+6dB、前半段初始增益 1.25、淡入 0.4s→0.12s、更早起播、开屏默认 150%、滑杆上限 200%）；音频引导删站点地址；数据源门卫放行 GitHub Pages（部署入口） -->
+
+    <!-- 聊天列表页 -->
+    <div class="view" id="view-chatlist">
+      <div class="topbar">
+        <div class="title">白日梦</div>
+        <div class="spacer"></div>
+        <button class="icon-btn" id="btn-char-groups" title="分组管理" data-icon="cards"></button>
+        <button class="icon-btn" id="btn-add-char" title="添加访客" data-icon="plus"></button>
+      </div>
+      <div class="list" id="chat-list"></div>
+    </div>
+
+    <!-- 聊天页 -->
+    <div class="view" id="view-chat">
+      <div class="topbar" style="padding-bottom:10px;">
+        <button class="icon-btn" id="btn-chat-back" data-icon="back"></button>
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer;" id="chat-header" title="查看访客主页">
+          <div class="avatar sm" id="chat-avatar"></div>
+          <div style="min-width:0;flex:1;">
+            <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+              <div style="font-size:15px;font-weight:600;white-space:nowrap;" id="chat-name"></div>
+              <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="chat-status">在线</div>
+            </div>
+            <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;" id="chat-sign"></div>
+          </div>
+        </div>
+        <button class="icon-btn" id="btn-group-regen" data-icon="regen" title="生成一轮群回复" style="display:none;" aria-label="生成一轮群回复"></button>
+        <button class="icon-btn" id="btn-chat-aimode" data-icon="aitoggle" title="字卡模式 · 点击切换 AI" aria-label="AI/字卡模式开关"></button>
+        <button class="icon-btn" id="btn-char-profile" data-icon="dots"></button>
+      </div>
+      <div class="chat-scroll" id="chat-scroll"></div>
+
+      <!-- 拓展功能面板（5.5） -->
+      <div class="chat-panel" id="plus-panel">
+        <div class="chat-panel-grid" id="plus-grid"></div>
+        <input type="file" id="plus-file-input" accept="image/*" style="display:none;">
+      </div>
+
+      <!-- 表情包面板（5.10 + 5.6 戳一戳合并）：我的表情包 / 戳一戳 两个 tab -->
+      <div class="chat-panel" id="emoji-panel">
+        <div class="emoji-tabs">
+          <button class="emoji-tab active" data-etab="emoji">表情包 <span id="emoji-count"></span></button>
+          <button class="emoji-tab" data-etab="emojilib">Emoji 库</button>
+          <button class="emoji-tab" data-etab="poke">戳一戳</button>
+          <div style="flex:1;"></div>
+          <label class="btn" style="padding:5px 12px;font-size:12px;cursor:pointer;" for="emoji-file-input" id="emoji-add-btn">＋ 添加</label>
+          <button class="icon-btn" style="width:30px;height:30px;" id="btn-emoji-manage" title="批量管理" data-icon="trash" data-size="15"></button>
+        </div>
+        <div class="emoji-grid" id="emoji-grid"></div>
+        <div class="emoji-grid" id="emojilib-grid" style="display:none;"></div>
+        <div class="poke-list" id="poke-list" style="display:none;"></div>
+        <input type="file" id="emoji-file-input" accept="image/*" multiple style="display:none;">
+      </div>
+
+      <div class="chat-input-bar">
+        <button class="icon-btn" id="btn-plus" title="功能" data-icon="plus"></button>
+        <button class="icon-btn" id="btn-emoji" title="表情包" data-icon="sticker"></button>
+        <button class="icon-btn" id="btn-call" title="模拟通话" data-icon="call"></button>
+        <input class="input" id="chat-input" placeholder="说点什么…" autocomplete="off">
+        <button class="send-btn" id="btn-send" data-icon="send" data-size="19"></button>
+      </div>
+    </div>
+
+    <!-- 个人主页（3.3：启动后默认进入；8.1 布局） -->
+    <div class="view active" id="view-home">
+      <div class="topbar" id="home-topbar">
+        <button class="btn" id="btn-anniversary" title="纪念日" style="background:var(--purple-dim);color:var(--purple-soft);padding:7px 14px;font-size:13px;gap:6px;">
+          <span data-icon="anniversary" data-size="15" style="display:inline-flex;"></span> 纪念日
+        </button>
+        <!-- 20260930bz：开屏音乐继续播放开关（小型化放纪念日右侧；开=开屏结束后音乐循环播放贯穿全程） -->
+        <button class="icon-btn" id="btn-splash-music" title="开屏音乐继续播放" style="width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;">
+          <span data-icon="music" data-size="15" style="display:inline-flex;"></span>
+        </button>
+        <div class="topbar-profile" id="topbar-profile">
+          <div class="avatar sm" id="topbar-avatar"></div>
+          <div class="topbar-profile-name" id="topbar-name"></div>
+        </div>
+        <div class="spacer"></div>
+        <button class="hero-change" id="btn-bg-change" title="更换背景图" style="margin-right:6px;"><span data-icon="camera" data-size="13" style="display:inline-flex;"></span>更换背景</button>
+        <button class="icon-btn" id="btn-daily-open" title="入梦签" data-icon="daily"></button>
+      </div>
+      <div class="home-scroll" id="home-scroll">
+        <!-- 背景与内容都包在 .home-content 里：两层背景随页面一起滚动 -->
+        <div class="home-content">
+          <!-- 聊天美化上传的"个人主页美化背景"：独立底层，随页面滚动 -->
+          <div id="home-pagebg"></div>
+          <!-- 全屏融合背景：铺在美化背景之上、内容之下，顶栏浮在它上面（参考小红书个人主页） -->
+          <div id="home-fullbg"></div>
+          <!-- 上半部分：260px 圆角面板（背景图铺在面板内）+ 白边框圆头像（20260926a 版式恢复） -->
+          <div class="player-hero" id="player-hero">
+            <!-- 三层卡片结构（20260929t）：底层=聊天美化的主页背景(#app-fullbg 全屏承接)，
+                 中层=磨砂玻璃卡(.hero-glass，与面板同宽高、下移露出下缘一条)，
+                 顶层=玩家上传的背景图(.hero-clip 圆角面板)。未上传背景时 hero 全透明直接透出底层 -->
+            <div class="hero-glass" aria-hidden="true"></div>
+            <!-- 圆角裁切层：背景图的圆角裁切与亚像素溢出都由它统一处理（20260929s） -->
+            <div class="hero-clip"><div class="hero-bg" id="hero-bg"></div></div>
+            <div class="hero-avatar-wrap" id="hero-avatar-wrap" title="点击编辑资料 / 更换头像">
+              <div class="player-avatar-round" id="player-avatar">梦</div>
+            </div>
+          </div>
+
+          <!-- 下半部分：昵称 / 状态 / 签名 / 统计 / 功能 -->
+          <div class="player-info">
+            <div class="player-name-lg" id="player-name">白日梦主人</div>
+            <div class="player-chips">
+              <span class="chip" id="player-status-chip">🌙 入梦中</span>
+              <span class="chip ghost" id="player-sign-chip">做个好梦</span>
+            </div>
+            <div class="player-chips" style="margin-top:8px;">
+              <span class="chip ghost" id="player-quote-chip" style="font-style:italic;"></span>
+            </div>
+
+            <div class="player-stats">
+              <div class="stat-card"><div class="stat-num" id="stat-chars">0</div><div class="stat-label">访客数量</div></div>
+              <div class="stat-card"><div class="stat-num" id="stat-days">1</div><div class="stat-label">聊天天数</div></div>
+              <div class="stat-card stat-wallet" id="stat-wallet-card" style="cursor:pointer;"><div class="stat-num" id="stat-wallet">¥0</div><div class="stat-label">我的钱包</div></div>
+            </div>
+
+            <div class="player-funcs">
+              <button class="func-row" id="btn-home-memory"><span class="func-ic" data-icon="memory"></span><span class="func-label">记忆宫殿</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-world"><span class="func-ic" data-icon="tree"></span><span class="func-label">世界树</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-relations"><span class="func-ic" data-icon="relation"></span><span class="func-label">关系网</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-cards"><span class="func-ic" data-icon="cards"></span><span class="func-label">字卡库</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-theme"><span class="func-ic" data-icon="palette"></span><span class="func-label">织梦点</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-emoji"><span class="func-ic" data-icon="sticker"></span><span class="func-label">表情包</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-chatsettings"><span class="func-ic" data-icon="chatset"></span><span class="func-label">聊天设置</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-data"><span class="func-ic" data-icon="data"></span><span class="func-label">数据管理</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-ai"><span class="func-ic" data-icon="ai"></span><span class="func-label">API 接入</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-settings"><span class="func-ic" data-icon="settings"></span><span class="func-label">总设置</span><span class="func-arrow">›</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PC 宽屏：未选择聊天时的占位 -->
+    <div id="pc-placeholder">
+      <div class="empty-icon">🌙</div>
+      <div>选择一个访客，开始你们的对话</div>
+    </div>
+
+    <!-- 朋友圈（第九章：类微信朋友圈——玩家/角色发帖、点赞、评论、可见范围） -->
+    <div class="view" id="view-moments">
+      <div class="topbar" id="moments-topbar">
+        <div class="title">朋友圈</div>
+        <div class="spacer"></div>
+        <button class="icon-btn" id="btn-moments-aimode" data-icon="aitoggle" title="字卡模式 · 点击切换 AI" aria-label="AI/字卡模式开关"></button>
+        <button class="icon-btn" id="btn-moments-bg" title="更换朋友圈封面" data-icon="palette"></button>
+        <button class="icon-btn" id="btn-moments-publish" title="发动态" data-icon="camera"></button>
+      </div>
+      <div class="moments-scroll" id="moments-scroll">
+        <!-- 封面（点击更换）+ 玩家头像昵称（微信布局） -->
+        <div class="moments-cover" id="moments-cover" title="点击更换封面">
+        <div class="mc-me">
+          <div style="text-align:right;">
+            <div class="mc-me-name" id="moments-me-name">白日梦主人</div>
+            <div class="mc-me-sign" id="moments-me-sign"></div>
+          </div>
+          <div class="avatar sm" id="moments-me-avatar">梦</div>
+        </div>
+        </div>
+        <div class="moments-list" id="moments-list"></div>
+      </div>
+    </div>
+
+    <!-- 底部导航（3.3：聊天 · 个人主页 · 朋友圈） -->
+    <div class="tabbar">
+      <div class="tab-item" data-view="chatlist">
+        <div class="tab-icon" data-icon="chat" data-size="20"></div>
+        <div>聊天</div>
+      </div>
+      <div class="tab-item active" data-view="home">
+        <div class="tab-icon" data-icon="home" data-size="20"></div>
+        <div>主页</div>
+      </div>
+      <div class="tab-item" data-view="moments">
+        <div class="tab-icon" data-icon="moments" data-size="20"></div>
+        <span class="tab-badge" id="moments-badge" style="display:none;"></span>
+        <div>朋友圈</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 气泡右键菜单（引用/删除/转发/多选/撤回） -->
+  <div id="ctx-menu"></div>
+
+  <!-- 弹窗容器 -->
+  <div class="modal-mask" id="modal-mask">
+    <div class="modal" id="modal-content"></div>
+  </div>
+
+  <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
+  <script src="js/splash.js?v=20260930cd"></script>
+  <script src="js/db.js?v=20260930cd"></script>
+  <script src="js/icons.js?v=20260930cd"></script>
+  <script src="js/emoji-img.js?v=20260930cd"></script>
+  <script src="js/cards.js?v=20260930cd"></script>
+  <script src="js/app.js?v=20260930cd"></script>
+</body>
+</html>
