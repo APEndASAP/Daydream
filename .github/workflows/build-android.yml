@@ -74,6 +74,41 @@ jobs:
           NODE_EOF
           node /tmp/disable-force-dark.js
 
+      - name: 注入系统权限（20261001cn 日程提醒/悬浮窗/精确通知）
+        run: |
+          cat > /tmp/inject-perms.js <<'NODE_EOF'
+          const fs = require('fs');
+          const p = 'android/app/src/main/AndroidManifest.xml';
+          let m = fs.readFileSync(p, 'utf8');
+          const perms = [
+            // 系统闹钟 intent（normal 权限，声明即授予）
+            'com.android.alarm.permission.SET_ALARM',
+            // 精确闹钟：USE_EXACT_ALARM（API33+ 自动授予，侧载无 Play 政策限制）+ SCHEDULE_EXACT_ALARM（API31-32）
+            'android.permission.USE_EXACT_ALARM',
+            'android.permission.SCHEDULE_EXACT_ALARM',
+            // 锁屏全屏横幅通知（QQ/微信式锁屏弹窗）
+            'android.permission.USE_FULL_SCREEN_INTENT',
+            // 系统日历读写（日程提醒写入；ebarooni 插件运行时再动态申请）
+            'android.permission.READ_CALENDAR',
+            'android.permission.WRITE_CALENDAR',
+            // 定时通知重启恢复 / 震动
+            'android.permission.RECEIVE_BOOT_COMPLETED',
+            'android.permission.VIBRATE',
+            // 悬浮窗（SYSTEM_ALERT_WINDOW 为特殊权限，声明后仍需引导用户到设置页授权）
+            'android.permission.SYSTEM_ALERT_WINDOW',
+          ];
+          let added = 0;
+          for (const pm of perms) {
+            if (!m.includes('android:name="' + pm + '"')) {
+              m = m.replace(/<application/, '    <uses-permission android:name="' + pm + '" />\n    <application');
+              added++;
+            }
+          }
+          fs.writeFileSync(p, m);
+          console.log('permissions injected: ' + added);
+          NODE_EOF
+          node /tmp/inject-perms.js
+
       - name: 同步网页资源到安卓工程
         run: npx cap sync android
 
