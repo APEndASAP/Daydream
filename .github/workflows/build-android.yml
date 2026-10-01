@@ -96,15 +96,13 @@ jobs:
             -noprompt
           echo "[1/2] debug.keystore 已固化为标准 JKS 到 ~/.android/"
 
-          # ② versionCode 时间戳递增
+          # ② versionCode 单调递增：分钟级 Unix 时间戳（约 3000 万，远小于 int 上限 21 亿，
+          #   持续递增够用 8 年；旧版 versionCode=1，新值必然 >1 可覆盖安装）
           cat > /tmp/bump-vc.js <<'NODE_EOF'
           const fs = require('fs');
           const p = 'android/app/build.gradle';
           let s = fs.readFileSync(p, 'utf8');
-          const d = new Date();
-          const pad = (n, w=2) => String(n).padStart(w, '0');
-          const vc = '' + d.getUTCFullYear() + pad(d.getUTCMonth()+1) + pad(d.getUTCDate())
-            + pad(d.getUTCHours()) + pad(d.getUTCMinutes());
+          const vc = Math.floor(Date.now() / 60000); // 分钟级 Unix 时间戳
           s = s.replace(/versionCode\s+\d+/, 'versionCode ' + vc);
           fs.writeFileSync(p, s);
           console.log('[2/2] versionCode -> ' + vc);
