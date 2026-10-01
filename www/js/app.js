@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001cj'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001ck'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -6747,7 +6747,29 @@ async function finishExport(save, blob, okMsg) {
     miniToast('写入所选文件夹失败，请重试导出');
     return false;
   }
-  // 只有环境不支持"另存为"（beginExport 没拿到句柄）才走浏览器下载——全程只有一次交互
+  // 20261001ck：APK（Capacitor 环境）里 <a download> 是 no-op（WebView 无 DownloadListener，
+  //   点了静默无反应、文件永远下不来）。改用 @capacitor/filesystem 写进公共「文档」目录
+  //   （Directory.Documents = /storage/emulated/0/Documents/，属公共区域，
+  //   卸载应用不会被删除——正是「卸载重装读数据」的备份落点）。
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (FS && FS.writeFile) {
+    try {
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
+        r.onerror = () => rej(new Error('读取失败'));
+        r.readAsDataURL(blob);
+      });
+      // Directory.Documents = 'DOCUMENTS'（公共文档目录，卸载不删）；recursive 建父目录
+      await FS.writeFile({ path: '白日梦备份/' + save.filename, data: b64, directory: 'DOCUMENTS', recursive: true });
+      miniToast(okMsg + '（已存到「文档/白日梦备份」，卸载重装后可从该目录导入）');
+      return true;
+    } catch (e) {
+      miniToast('保存到文档目录失败：' + (e && e.message ? e.message : '未知错误'));
+      return false;
+    }
+  }
+  // 只有浏览器环境（非 APK）才走 <a download>——全程只有一次交互
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
