@@ -34,7 +34,7 @@
           || /(^|\.)github\.io$/i.test(location.hostname);
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20261002ca' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20261002cc' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -48,13 +48,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261002ca'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261002cc'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20261002ca">
+  <link rel="stylesheet" href="css/style.css?v=20261002cc">
 </head>
 <body>
   <div id="app">
@@ -86,6 +86,8 @@
          20261001ck APK 覆盖安装 + 数据导出落盘：① 固化签名（仓库内置 debug.keystore，构建时 keytool 转 JKS 覆盖 ~/.android/debug.keystore，签名永久一致）+ versionCode 时间戳递增（YYYYMMDDHHMM），同签名 APK 可直接覆盖安装、保留数据不再强制卸载；② 导出改走 @capacitor/filesystem 写公共「文档/白日梦备份」目录（原 <a download> 在 WebView 是 no-op 永远导不出，卸载不删，重装可导入）；
          20261001cl ① 开屏 BGM 网页端加载优化：原 bgm_intro.mp3 是 5 分钟完整版（5MB），运行时全量 fetch 导致手机网页首载无音乐、点击播放延迟高；现无损截取开头 17 秒生成 bgm_intro.web.mp3（267KB，128kbps 原码率音质不变），splash.js 按 window.Capacitor 环境判断——软件端仍用原 5 分钟无损完整版、网页端用 17 秒小文件（软件端无损体验不受影响）；② 模拟视频通话「更换通话背景」接入图片裁剪器 openImageCropper（网页+APK 均改，取消返回 null 不生效）；
          20261002ca ① 省电分级（前台动画面停，后台调度不断）：切后台（visibilitychange + Capacitor appStateChange 双监听）挂 html.bm-bg 全局暂停全部 CSS 动画 + BGM AudioContext 挂起（__bmSplashVol.suspend/resume）+ <audio> 暂停回前台续播 + 开屏 canvas 动画冻结（t0 补偿隐藏时长不快进）；主动消息 15s/问卷 20s/群聊 20s/朋友圈 45s/回信轮询 10s/状态栏 60s 等高频定时器全部挂后台停摆，只保留 bmBgTick 60 秒一次的低频事件调度（静默查超频/主动消息/到期回信，不碰 DOM 不播动画），回前台立即补投到期事件并恢复全部视觉；② APK 原生通知接管（把后台提醒交给系统挂机）：bmRegisterAlarm 在调度时就把已知触达时刻经 @capacitor/local-notifications schedule 预排成安卓精确闹钟（底层 AlarmManager，exact:true + allowWhileIdle，manifest 已注入 USE_EXACT_ALARM/SCHEDULE_EXACT_ALARM）——App 进程被冻结/杀死也照常到点弹通知，系统唤醒只发通知不唤醒网页，发完继续休眠；预排点=单聊回复延迟（scheduleCharReply）、书信回信队列 dueAt（scheduleLetterReply）、超频下轮时刻（_ocTickRandom 撤本轮预排下轮）、主动消息下轮触发（随机/固定双模式）；送达即 bmClearAlarm 撤钟（dueAt ±30s 精确匹配防误清）；③ 通知合并防轰炸：bmNotifIdFor 同访客同类别固定通知 id（消息/书信/超频/转账/朋友圈各自独立通道），后到替换先到绝不叠罗汉；挂后台期间同访客连续多条合并标题「N 条新消息 / N 封信」，回前台计数清零；notifyIncoming 增加 kind 参数分类合并；④ 灰度殿堂列表化补强：板块行点击记录 _ghNavAt，列表行 600ms 内的滞后点击一律忽略（修移动端幽灵点击穿透——点板块后原生 click 落到新列表同坐标行、直接跳进详情卡看起来「没有列表」）；板块列表加「共 N 条残留 · 点条目可查看完整内容」头部；旧日书信行标题改取信文首行（多行信不再糊成一坨）；
+         20261002cc bm-overlay 原生悬浮窗插件前端接入（通话真正浮到系统层）：① 新增统一封装模块——bmOverlayNative()（检测 window.Capacitor.Plugins.BmOverlay 自研插件）、bmOverlayAvailable()、bmOverlayCheckPermission()、bmOverlayShow(name,sub)、bmOverlayUpdateSub(sub)、bmOverlayHide()，网页端/无插件/无权限一律静默降级返回 false 绝不抛异常；② 修正 requestOverlayPermission() 指向自研插件 BmOverlay（原误指向旧 capacitor-overlay 的 PLG.Overlay，方法名也从 openOverlaySettings 改为 requestPermission）；③ 通话接入：缩小悬浮窗（minimizeCall）在「悬浮窗模式=在手机/其他软件上悬浮」且原生可用时，优先 show 原生系统级悬浮窗（其他应用之上可见、可拖动、点按回应用），原生失败自动回退软件内 DOM 浮窗；计时跳动 updateCallFloatTime 同步 updateSub 到系统层小窗；挂断/切回/结束统一经 removeCallFloat 收口 hide 原生悬浮窗（新增 _bmOverlayShown 状态标记）；④ 回前台体验：点原生悬浮窗回应用后 DOM 层无通话界面，appStateChange 回前台检测到 _bmOverlayShown 且通话仍在则自动 backToFullCall 恢复完整通话界面（收起原生悬浮窗）；
+         20261002cb 三项更新（用户需求）：① 模拟通话计时超 1 小时自动进位——通话界面/悬浮胶囊/群通话/挂断后聊天里的通话时长统一改「X小时Y分(秒)」，不再显示「114:23」纯分钟；② 表情包库分家+开关：角色（访客）发表情包默认只用 TA 自己的专属表情包库（TA 主页上传那套），不再抽玩家的表情包库——聊天设置新增「允许使用玩家的表情包库」开关（总设置对所有访客生效+访客主页可单独覆盖，默认关），开启后玩家库才进抽取池（TA 自己的库优先），覆盖聊天自动追加表情包/开发者命令发表情包/朋友圈配图表情全部入口；③ 角色主页表情包库新增「批量管理」：进入多选模式（选中紫色描边+✓），「删除选中(N)」二次确认后批量删除，照问卷列表批量管理同款交互；
          20261001cs ① 字卡组合发送：随机字卡发消息逻辑从「只能单独抽表情字卡/消息字卡」升级为有概率将两者合并成同一条消息——combineCardEmoji 按 30% 概率给文本字卡拼接一个表情字卡（尾随 70% / 前置 30%，表情池取字卡库 customEmojis 优先、库空回退 EMOJI_LIB），接入单聊 splitReplyParts（每条落定各组合一次）与群聊 card() 抽取、maybeAttachSticker 字符表情也优先抽字卡库表情字卡；② 灰度殿堂全板块「可点进详情」：旧日书信/旧日记忆/旧日超频/旧日问卷四个板块从不可点击占位列表升级为「点条目 → graySectionDetail 滑动详情卡」（仿记忆宫殿卡页，左右按钮+滑动手势切换上一条/下一条，返回回对应板块列表），旧日朋友圈走 grayMomentDetail（展示正文/图片/点赞/评论，正文改用 post.content 修复此前恒显「（图文帖）」占位），旧日生平维持整体详情卡片——六大板块全部可回顾具体内容；
          20261001cr 四项修复（用户真机反馈）：① 修灰度殿堂板块回顾点击无反应（真机必现）——grayViewSection 里引用了未定义的 c 变量（bio 生平/关系网渲染依赖角色快照），点任何有残留数据的板块直接 ReferenceError、页面毫无反应，看起来像「按钮点不动/看不到内容」；修复=补 const c = gh.char || {}；② 灰度殿堂图标与记忆宫殿区分：个人主页入口 + 殿堂头部 + 空状态改用 archive 档案盒线性图标；③ 修关系网批量「清除所选关系」后整个页面直接关闭——改为退出批量并重渲染关系网列表（子功能退出返回上一界面铁律）；④ 修颜文字/符号串气泡截断（用户真机：((٩( ÷∀÷ )۶))、~~~~~~~~ 被裁）——单行气泡上限从 72%×90% 嵌套（≈64.8% 行宽）放宽到 90% 行宽 + 渲染后 Range 实测内容宽度（不能用 scrollWidth，气泡 ✦ 伪元素星星伸出右缘会污染测量），超宽逐级缩字号（15→12px）仍放不下再自动换行兜底；⑤ 删除角色弹窗（单聊+批量）增加「全选（彻底删除，不留灰度殿堂）」复选框：一键勾选/取消全部六项删除范围，单项变动同步全选框三态（全选/半选/未选）；
          20261001cq ① 群聊与单聊功能面板新增「拍摄」：手机端（APK）经 @capacitor/camera 调系统相机（先 cam.requestPermissions 申请 CAMERA 权限、getPhoto resultType DataUrl source CAMERA），网页端用隐藏 <input capture=environment> 触发移动浏览器相机；拍完转 File 走 sendImageMessage 上传；② 聊天日程+闹钟自动检测在总设置新增开关（bmSchedDetect，默认开，关闭时 maybeDetectScheduleReminder 直接返回）；③ 修玻璃拟态模式下底部导航栏图标/文字白字白底不可读：浅色玻璃下非激活 tab 深色字（tab-icon rgba(42,35,64,.82)、tab-item rgba(42,35,64,.72)）；④ 聊天导航长按群聊/右键群聊改为进入批量管理（原弹群聊个人主页）；⑤ 批量删除角色统一弹出「删除范围」六项勾选弹窗（对所有涉及删除角色的地方生效），未勾选范围的数据归档进个人主页新增「灰度殿堂」；⑥ 灰度殿堂（kv grayHall，仿记忆宫殿灰石布局，兼容各预设配色/玻璃/普通模式可读性）：每个被删角色生成「X的旧日余晖」文件夹（旧日书信/旧日生平[生平+关系网]/旧日记忆[记忆宫殿]/旧日朋友圈/旧日超频/旧日问卷六板块）、恢复按钮（弹「正在施法将该访客复活」→成功「访客已复活」/失败报错）、非批量模式每行恢复按钮前「彻底删除」按钮（提醒不可撤销）、批量模式勾选后「彻底删除」——彻底删除抹除该角色聊天记录/记忆宫殿/朋友圈/问卷/书信/礼物/他人指向关系，朋友圈不再见其帖、记忆宫殿不再见其记忆；⑦ 关系网批量管理模式改为「清除所选关系」（清除选中角色所有关系、角色保留可重新分配），不再直接删除角色；⑧ 子功能退出后返回上一功能；
@@ -287,11 +289,11 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20261002ca"></script>
-  <script src="js/db.js?v=20261002ca"></script>
-  <script src="js/icons.js?v=20261002ca"></script>
-  <script src="js/emoji-img.js?v=20261002ca"></script>
-  <script src="js/cards.js?v=20261002ca"></script>
-  <script src="js/app.js?v=20261002ca"></script>
+  <script src="js/splash.js?v=20261002cc"></script>
+  <script src="js/db.js?v=20261002cc"></script>
+  <script src="js/icons.js?v=20261002cc"></script>
+  <script src="js/emoji-img.js?v=20261002cc"></script>
+  <script src="js/cards.js?v=20261002cc"></script>
+  <script src="js/app.js?v=20261002cc"></script>
 </body>
 </html>
