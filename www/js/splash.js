@@ -790,8 +790,15 @@
       BGM.gain.gain.cancelScheduledValues(t);
       BGM.gain.gain.setValueAtTime(Math.max(0.0001, BGM.gain.gain.value || 0.0001), t);
       BGM.gain.gain.linearRampToValueAtTime(0.0001, t + fd);
-      if (BGM_STREAM) {                                         // 20261001cm：流式路径暂停 <audio>
-        if (BGM.mediaEl) { try { BGM.mediaEl.pause(); } catch (e2) {} }
+      if (BGM_STREAM) {                                         // 20261001cm：流式路径——淡出包络走完再暂停，避免戛然而止
+        var _el = BGM.mediaEl;
+        if (_el) {
+          try {
+            var _dur = (fd + 0.1) * 1000;
+            setTimeout(function () { try { _el.pause(); } catch (e2) {} }, _dur);
+          } catch (e2) {}
+        }
+        BGM.started = false; BGM.gain = null;                   // 立即清状态（后续 bgmStart 可重播；暂停由定时器完成）
       } else if (BGM.src) {
         try { BGM.src.stop(t + fd + 0.05); } catch (e2) {}
       }
@@ -1219,7 +1226,7 @@
   }
   function end() {
     splashOver = true;
-    if (!bgmEndFired && !AUTO_MUSIC) bgmStop(0.6);   // 跳过时快速淡出；开关开=音乐继续播放不停（bx）
+    if (!bgmEndFired && !AUTO_MUSIC) bgmStop(1.6);   // 跳过时淡出（延至 1.6s，音乐余韵收尾不戛然而止）；开关开=音乐继续播放不停（bx）
     // 20260930cb：继续播放进软件 → 音乐音量平滑切到「软件内音乐音量」条（与开屏音量条互不影响）
     if (AUTO_MUSIC && BGM.gain && BGM.started) {
       try {
