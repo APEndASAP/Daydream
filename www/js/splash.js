@@ -1101,6 +1101,12 @@
 
   function frame(ts) {
     rafId = requestAnimationFrame(frame);
+    /* 20261002ca：挂后台冻结开屏动画——不吃掉时间片（t0 补偿隐藏时长），回前台原地续播不快进 */
+    if (typeof document !== 'undefined' && document.hidden) {
+      if (t0 !== null) t0 += (lastTs === null ? 0 : (ts - lastTs));
+      lastTs = ts;
+      return;
+    }
     if (t0 === null) t0 = ts;
     var time = ts - t0;
     var dt = lastTs === null ? 16 : clamp(ts - lastTs, 0, 50);
@@ -1334,6 +1340,18 @@
           BGM.gain.gain.setValueAtTime(Math.max(0.0001, BGM.gain.gain.value || 0.0001), t2);
           BGM.gain.gain.linearRampToValueAtTime(Math.max(0.0001, BGM.vol * p), t2 + 0.15);
         }
+      } catch (e) {}
+    },
+    /* 20261002ca：省电分级——挂后台时 AudioContext 挂起（BGM≈零功耗），回前台恢复。
+       app.js 的 bmSetBgState 统一调用；只挂起/恢复，绝不改变播放状态语义 */
+    suspend: function () {
+      try {
+        if (actx && actx.state === 'running') { actx.suspend(); BGM._bmPowSuspended = true; }
+      } catch (e) {}
+    },
+    resume: function () {
+      try {
+        if (actx && BGM._bmPowSuspended) { BGM._bmPowSuspended = false; actx.resume(); }
       } catch (e) {}
     }
   };
