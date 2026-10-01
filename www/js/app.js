@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002ca'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002cc'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -36,6 +36,7 @@ let chatSettings = {
   soundName: '默认',             // 提示音名称（可自定义）
   customSound: '',               // 自定义提示音（玩家上传的音频 dataURL）
   allowRecall: true,             // 允许撤回消息 5.3
+  charUsePlayerEmojis: false,    // 20261002cb：允许角色使用玩家的表情包库（默认关——角色只用 TA 自己的专属库；访客主页聊天设置可单独覆盖）
   charPoke: 'mid',               // 访客随机戳一戳：off 关 / mid 偶尔(10%) / often 经常(25%)
   lettersEnabled: true,          // 访客随机来信总开关（书信 13）
   lettersDailyLimit: 2,          // 访客随机来信每日上限（0~5，书信 13）
@@ -3239,7 +3240,7 @@ async function _devCommandMoment(c) {
   const content = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || [])
     || drawFrom(cards.customMottos || []) || '今天也想记录一下生活。';
   const post = { id:uid('mo'), authorType:'char', authorId:c.id, content, images:[], visibility:{type:'all',ids:[]}, likes:[], comments:[], createTime:Date.now(), pending:[], authorReplies:[] };
-  const st = await drawMomentSticker();
+  const st = await drawMomentSticker(c);
   if (st) { if (st.img) post.images.push(st.img); else post.sticker = st.sticker; }
   schedulePostInteractions(post);
   const posts = await loadMomentPosts(); posts.unshift(post); await saveMomentPosts(posts);
@@ -3247,10 +3248,10 @@ async function _devCommandMoment(c) {
 }
 
 async function _devCommandEmoji(c, raw) {
-  const imgs = await getEmojis();
-  const img = imgs && imgs.length ? drawFrom(imgs) : null;
-  let content = img ? (img.img || img.data) : '';
-  if (!content) content = drawFrom(cards.customEmojis || []) || drawFrom(EMOJI_LIB) || '✨';
+  // 20261002cb：走 pickCharSticker——默认抽 TA 自己的专属库，玩家库需聊天设置允许
+  const st = await pickCharSticker(c);
+  let content = (st && st.img) ? st.img : '';
+  if (!content) content = (st && st.sticker) || drawFrom(cards.customEmojis || []) || drawFrom(EMOJI_LIB) || '✨';
   const m = { id:uid('msg'), charId:c.id, from:'them', type: typeof content === 'string' && content.startsWith('data:') ? 'emoji' : 'text', content, time:Date.now() };
   await idbPut('messages',m);
   if (currentCharId === c.id && document.body.dataset.view === 'chat') appendMessage(m); else renderChatList();
@@ -3467,19 +3468,44 @@ function splitReplyParts(gen, c) {
   return parts;
 }
 
+/* 20261002cb：角色抽表情包（统一入口——聊天自动追加/开发者命令/朋友圈都走这里）。
+   默认只用 TA 自己的专属表情包库（character.emojis，TA 主页上传的那套）；
+   聊天设置「允许使用玩家的表情包库」开启后（总设置或该访客单独开启），
+   玩家上传的表情包库（emojis store）才会进入抽取池。
+   抽取顺序：自己的库（60% 直接用）→ 玩家的库（允许时 60%）→ 字卡表情字卡 → Emoji 库字符。
+   返回 { img } 图片表情包 / { sticker } 字符表情 / null */
+async function pickCharSticker(c) {
+  // ① TA 自己的专属库优先
+  const own = (c && Array.isArray(c.emojis)) ? c.emojis : [];
+  if (own.length && Math.random() < 0.6) {
+    const p = drawFrom(own);
+    if (p && (p.img || p.data)) return { img: p.img || p.data };
+  }
+  // ② 玩家表情包库：仅在聊天设置允许时进入抽取（默认关）
+  if (!c || (getCharChatSettings(c).charUsePlayerEmojis === true)) {
+    try {
+      const pics = await getEmojis();
+      if (pics && pics.length && Math.random() < 0.6) {
+        const p = drawFrom(pics);
+        if (p && (p.img || p.data)) return { img: p.img || p.data };
+      }
+    } catch (e) {}
+  }
+  // ③ 兜底：字卡表情字卡 → Emoji 库抽一个字符
+  const emo = drawFrom(cards.customEmojis || []) || drawFrom(EMOJI_LIB);
+  if (emo) return { sticker: emo };
+  return null;
+}
+
 /* 20260929ah：回复落地后小概率（12%）追加一条表情包/emoji 消息。
-   玩家上传的表情包库优先（60%），否则从 Emoji 库抽一个字符当短消息。 */
+   20261002cb：改走 pickCharSticker——默认抽 TA 自己的专属库，玩家库需聊天设置允许。 */
 async function maybeAttachSticker(c) {
   try {
     if (!c || Math.random() > 0.12) return;
-    let img = '';
-    try {
-      const pics = await getEmojis();
-      if (pics && pics.length && Math.random() < 0.6) img = (drawFrom(pics).img) || '';
-    } catch (e) {}
-    const m = img
-      ? { id: uid('msg'), charId: c.id, from: 'them', type: 'emoji', content: img, time: Date.now() }
-      : { id: uid('msg'), charId: c.id, from: 'them', type: 'text', content: drawFrom(cards.customEmojis || []) || drawFrom(EMOJI_LIB) || '🌙', time: Date.now() }; // 20261001cs：字符表情优先抽字卡库的表情字卡
+    const st = await pickCharSticker(c);
+    const m = (st && st.img)
+      ? { id: uid('msg'), charId: c.id, from: 'them', type: 'emoji', content: st.img, time: Date.now() }
+      : { id: uid('msg'), charId: c.id, from: 'them', type: 'text', content: (st && st.sticker) || drawFrom(cards.customEmojis || []) || drawFrom(EMOJI_LIB) || '🌙', time: Date.now() }; // 20261001cs：字符表情优先抽字卡库的表情字卡
     await idbPut('messages', m);
     if (currentCharId === c.id && document.body.dataset.view === 'chat') appendMessage(m);
     else renderChatList();
@@ -4069,7 +4095,8 @@ function notifyIncoming(c, body, title, kind = 'msg') {
     const n = new N(title || (c ? c.name + ' 发来消息' : '白日梦'), {
       body: String(body == null ? '' : body).slice(0, 90),
       icon: c && c.avatar ? imgSrc(c.avatar) : undefined,
-      tag: (c ? 'bm-' + c.id : 'bm') + '|' + (kind || 'msg'), // 同一访客同类连发只弹一条，不刷屏
+      // 20261002cb：单角色逐条——tag 带递增序号，每条独立可见（不覆盖前一条）
+      tag: (c ? 'bm-' + c.id : 'bm') + '|' + (kind || 'msg') + '|' + Date.now(),
     });
     n.onclick = () => { try { window.focus(); n.close(); } catch (e) {} };
   } catch (e) {}
@@ -4079,7 +4106,10 @@ function notifyIncoming(c, body, title, kind = 'msg') {
    权限被拒（display=denied）时静默放弃——申请引导在 requestNotificationPermission 里
    20261002ca：①固定通知 id（访客+类别哈希）——同一访客同类提醒后到替换先到，绝不叠加轰炸；
    ②挂后台期间合并计数：连续多条合成「N 条新消息」；③先 cancel 再 schedule，
-   顺带撤掉预排的原生闹钟（消息已送达，闹钟使命完成） */
+   顺带撤掉预排的原生闹钟（消息已送达，闹钟使命完成）。
+   20261002cb：合并规则反转——单角色逐条弹通知（绝不合并），只有后台期间
+   「多个不同角色」同时来消息才触发汇总合并；单角色的多条用系统通知组 group 聚合展示
+   （每条独立、通知栏分组折叠，不丢任何一条）。 */
 async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
   try {
     let allowed = true;
@@ -4090,26 +4120,53 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
     if (!allowed) return;
     await bmEnsureChannel(LN);
     const k = kind || 'msg';
-    const mk = (c ? c.id : 'bm') + '|' + k;
-    if (bmIsBg()) __bmMergeCount[mk] = (__bmMergeCount[mk] || 0) + 1;
-    const n = __bmMergeCount[mk] || 0;
+    const cid = c ? c.id : 'bm';
+    const name = c ? (c.name || '访客') : '白日梦';
+
+    // 挂后台期间记录「活跃角色」集合——多角色才合并，单角色逐条
+    if (bmIsBg() && c) __bmBgChars[cid] = name;
+
     let tt = title || (c ? c.name + ' 发来消息' : '白日梦');
-    if (n >= 2 && c) {
-      if (k === 'msg') tt = `${c.name} 发来 ${n} 条新消息`;
-      else if (k === 'letter') tt = `${c.name} 寄来 ${n} 封信`;
-      else if (k === 'gift') tt = `${c.name} 的思念涌动 ×${n}`;
-    }
-    const id = bmNotifIdFor(c ? c.id : 'bm', k);
-    try { await LN.cancel([{ id }]); } catch (e) {} // 撤掉预排闹钟/上一条托盘（同 id 替换语义）
+    const bodyText = String(body == null ? '' : body).slice(0, 120);
+
+    // 同一访客同一类提醒用固定 id（后到替换先到，不叠罗汉）；但单角色每条消息内容不同，
+    // 固定 id 会覆盖前一条——因此用「唯一递增 id + group 聚合」保证每条独立可见。
+    const baseId = bmNotifIdFor(cid, k);
+    const uniqId = baseId * 1000 + ((__bmSeq = (__bmSeq || 0) + 1) % 1000);
+    const groupKey = 'bm-' + cid;
+
     await LN.schedule({
       notifications: [{
-        id,
+        id: uniqId,
         title: tt,
-        body: String(body == null ? '' : body).slice(0, 120),
+        body: bodyText,
         channelId: 'bm-messages',
         smallIcon: 'res://ic_launcher',
+        group: groupKey,
       }],
     });
+
+    // 多角色合并：后台期间有 ≥2 个不同角色来消息 → 额外弹一条汇总
+    if (bmIsBg()) {
+      const charCount = Object.keys(__bmBgChars).length;
+      if (charCount >= 2 && kind === 'msg') {
+        const names = Object.values(__bmBgChars).slice(0, 3).join('、');
+        const more = charCount > 3 ? ` 等 ${charCount} 人` : '';
+        const summaryId = bmNotifIdFor('__summary', 'msg');
+        try { await LN.cancel([{ id: summaryId }]); } catch (e) {}
+        await LN.schedule({
+          notifications: [{
+            id: summaryId,
+            title: `${charCount} 个访客发来消息`,
+            body: `${names}${more}给你发来了新消息，打开看看吧`,
+            channelId: 'bm-messages',
+            smallIcon: 'res://ic_launcher',
+            groupSummary: true,
+            group: 'bm-all',
+          }],
+        });
+      }
+    }
   } catch (e) {}
 }
 
@@ -4130,6 +4187,8 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
 let __bmBgOn = false;             // 当前处于后台省电模式
 let __bmBgTickIv = null;          // 60s 低频事件调度 tick
 const __bmMergeCount = {};        // charId|kind -> 后台期间已提醒条数（回前台清零）
+const __bmBgChars = {};           // 后台期间活跃角色集合 charId -> name（多角色合并判据，回前台清零）
+let __bmSeq = 0;                  // 通知唯一 id 递增序号（保证单角色每条独立可见）
 
 function bmIsBg() { return __bmBgOn || document.hidden; }
 
@@ -4168,6 +4227,7 @@ function bmSetBgState(hidden) {
     try { window.__bmSplashVol && window.__bmSplashVol.suspend && window.__bmSplashVol.suspend(); } catch (e) {}
     // 合并计数清零（新一轮后台计数）
     for (const k in __bmMergeCount) delete __bmMergeCount[k];
+    for (const k in __bmBgChars) delete __bmBgChars[k];
     // 高频定时器全停，只留 60s 低频调度 tick
     if (__bmBgTickIv) clearInterval(__bmBgTickIv);
     __bmBgTickIv = setInterval(() => { bmBgTick().catch(() => {}); }, 60000);
@@ -4177,6 +4237,7 @@ function bmSetBgState(hidden) {
     if (__bmBgTickIv) { clearInterval(__bmBgTickIv); __bmBgTickIv = null; }
     // 回前台=用户已看见，合并计数清零（下次挂后台重新计）
     for (const k in __bmMergeCount) delete __bmMergeCount[k];
+    for (const k in __bmBgChars) delete __bmBgChars[k];
     // 恢复视听
     try { window.__bmSplashVol && window.__bmSplashVol.resume && window.__bmSplashVol.resume(); } catch (e) {}
     try { document.querySelectorAll('audio').forEach(a => { if (a.__bmWasPlaying) { a.__bmWasPlaying = false; a.play().catch(() => {}); } }); } catch (e) {}
@@ -4268,7 +4329,16 @@ document.addEventListener('visibilitychange', () => { try { bmSetBgState(documen
 try {
   const Cap = window.Capacitor;
   if (Cap && Cap.Plugins && Cap.Plugins.App && typeof Cap.Plugins.App.addListener === 'function') {
-    Cap.Plugins.App.addListener('appStateChange', (st) => { try { bmSetBgState(!st.isActive); } catch (e) {} });
+    Cap.Plugins.App.addListener('appStateChange', (st) => {
+      try { bmSetBgState(!st.isActive); } catch (e) {}
+      // 20261002cc：点原生悬浮窗（系统层）回应用后，DOM 层没有通话界面；
+      // 回前台时若通话仍在且原生悬浮窗显示中，自动恢复完整通话界面（收起原生悬浮窗）
+      try {
+        if (st.isActive && _bmOverlayShown && _callActive && _callActive.c) {
+          backToFullCall(_callActive.c, _callActive.kind);
+        }
+      } catch (e) {}
+    });
   }
 } catch (e) {}
 
@@ -4568,20 +4638,69 @@ async function bmFireScheduleReminder(it) {
   } catch (e) {}
 }
 
-/* 悬浮窗权限（SYSTEM_ALERT_WINDOW 特殊权限，无法原生弹窗，只能跳系统设置页授权）
-   插件 capacitor-overlay：checkPermission() / openOverlaySettings()；网页端不支持 */
-async function requestOverlayPermission() {
+/* ---------- bm-overlay 原生悬浮窗插件封装（20261002cc） ----------
+   Capacitor 原生插件 BmOverlay（自研，仓库根 bm-overlay/）：
+   通话缩小后浮到系统层（其他应用之上），可拖动、点按回应用。
+   关键原则：网页端 / 未安装 / 无插件 / 无权限 一律静默降级返回 false，
+   前端据返回结果自动回退到「软件内 DOM 悬浮」，绝不抛异常崩溃。 */
+
+/* 取原生插件实例；网页端或无插件返回 null */
+function bmOverlayNative() {
   const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
-  const OV = PLG ? (PLG.Overlay || PLG.CapacitorOverlay || null) : null;
-  if (!OV || typeof OV.openOverlaySettings !== 'function') {
+  if (!PLG) return null;
+  const BO = PLG.BmOverlay;
+  if (!BO || typeof BO.show !== 'function') return null;
+  return BO;
+}
+
+/* 是否具备原生悬浮窗能力（仅安装版且插件已注册） */
+function bmOverlayAvailable() {
+  return !!bmOverlayNative();
+}
+
+/* 检查悬浮窗权限（SYSTEM_ALERT_WINDOW）；异常/无插件一律视为未授权 */
+async function bmOverlayCheckPermission() {
+  const BO = bmOverlayNative();
+  if (!BO || typeof BO.checkPermission !== 'function') return false;
+  try { const st = await BO.checkPermission(); return !!(st && st.granted); } catch (e) { return false; }
+}
+
+/* 显示原生悬浮窗。返回 true=已浮系统层，false=降级（走 DOM 浮窗） */
+async function bmOverlayShow(name, sub) {
+  const BO = bmOverlayNative();
+  if (!BO) return false;
+  try {
+    const r = await BO.show({ name: name || '访客', sub: sub || '' });
+    return !!(r && r.ok);
+  } catch (e) { return false; }
+}
+
+/* 更新副标题（通话时长跳动）；静默失败不阻塞计时 */
+async function bmOverlayUpdateSub(sub) {
+  const BO = bmOverlayNative();
+  if (!BO) return;
+  try { await BO.updateSub({ sub: sub || '' }); } catch (e) {}
+}
+
+/* 隐藏原生悬浮窗；静默失败 */
+async function bmOverlayHide() {
+  const BO = bmOverlayNative();
+  if (!BO) return;
+  try { await BO.hide(); } catch (e) {}
+}
+
+/* 悬浮窗权限（SYSTEM_ALERT_WINDOW 特殊权限，无法原生弹窗，只能跳系统设置页授权）
+   自研插件 BmOverlay：checkPermission() / requestPermission()；网页端不支持 */
+async function requestOverlayPermission() {
+  const BO = bmOverlayNative();
+  if (!BO || typeof BO.requestPermission !== 'function') {
     miniToast('网页版不支持系统悬浮窗（安装版支持，可在软件内悬浮）');
     return false;
   }
   try {
-    let granted = false;
-    try { const st = await OV.checkPermission(); granted = !!(st && st.granted); } catch (e) {}
+    const granted = await bmOverlayCheckPermission();
     if (granted) { miniToast('悬浮窗权限已开启'); return true; }
-    await OV.openOverlaySettings();
+    await BO.requestPermission();
     miniToast('请在列表中找到「白日梦」，允许「显示在其他应用上层」');
     return false;
   } catch (e) { console.error('[悬浮窗权限]', e); miniToast('悬浮窗设置页打开失败'); return false; }
@@ -4589,6 +4708,12 @@ async function requestOverlayPermission() {
 
 function formatDuration(sec) {
   sec = sec || 0;
+  // 20261002cb：超过 1 小时自动进位——「X小时Y分Z秒」，不再显示「114分23秒」
+  const h = Math.floor(sec / 3600);
+  if (h > 0) {
+    const m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return `${h}小时${m}分${s}秒`;
+  }
   const m = Math.floor(sec / 60), s = sec % 60;
   return m > 0 ? `${m}分${s}秒` : `${s}秒`;
 }
@@ -6571,6 +6696,7 @@ function closeCallLayer() {
 /* 通话状态管理 */
 let _callActive = null; // { c, kind, msg, sec, timer, floatMode, incoming }
 let _callActions = null; // { accept, reject } —— 当前来电的接听/拒绝动作（事件委托兜底用）
+let _bmOverlayShown = false; // 20261002cc：原生悬浮窗是否正在显示（floatMode='overlay' 且缩小成功时置 true）
 
 /* 来电按钮事件委托兜底（捕获阶段，注册一次）：
    即使按钮上的直接 onclick 绑定因任何原因失效（重渲染覆盖、异常中断、缓存旧代码），
@@ -6599,7 +6725,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
   // 来电：显示接听/拒绝界面
   const renderFull = (sec) => `
     <div style="display:flex;flex-direction:column;align-items:center;padding:20px 0;min-height:360px;">
-      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:6px;" id="call-timer">${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}</div>
+      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:6px;" id="call-timer">${formatDurShort(sec)}</div>
       <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${escapeHtml(c ? c.name : 'TA')}</div>
       <div style="font-size:13px;color:var(--purple-soft);margin-bottom:24px;">${incoming && !answered ? '邀请你进行' : (kind === 'video' ? '视频通话中…' : '语音通话中…')}</div>
       <div class="avatar xl" style="width:150px;height:150px;border-radius:50%;border:3px solid var(--purple);overflow:hidden;background:var(--bg-elevated-2);display:flex;align-items:center;justify-content:center;font-size:56px;color:var(--purple-soft);margin-bottom:28px;">
@@ -6627,7 +6753,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
     if (answered) {
       sec++;
       const el = $('#call-timer');
-      if (el) el.textContent = String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+      if (el) el.textContent = formatDurShort(sec); // 20261002cb：超1小时进位显示「X小时Y分」
       updateCallFloatTime(sec);
     }
   }, 1000);
@@ -6723,6 +6849,15 @@ function minimizeCall(c, kind) {
   // 20260929bm：只隐藏通话层（保持通话），不再动 #modal-mask——底下功能弹窗原样保留
   const layer = document.getElementById('call-layer');
   if (layer) layer.classList.remove('show', 'call-float2');
+  // 20261002cc：floatMode='overlay' 且原生插件可用 → 优先浮到系统层（其他应用之上），
+  // 原生不可用/无权限 → 静默回退到软件内 DOM 悬浮窗
+  if (floatSettings.floatMode === 'overlay' && bmOverlayAvailable()) {
+    bmOverlayShow(c ? c.name : 'TA', formatDurShort(sec)).then(ok => {
+      if (ok) { _bmOverlayShown = true; return; }
+      buildCallFloat(c, kind, sec); // 降级：原生显示失败，回退 DOM 浮窗
+    });
+    return;
+  }
   buildCallFloat(c, kind, sec);
 }
 
@@ -6852,7 +6987,7 @@ function renderFullCallBody(c, kind, sec) {
       <button class="icon-btn" id="call-eye" title="隐藏通话 UI（纯背景）" style="position:absolute;top:10px;right:12px;z-index:12;">${icon('eye', 18)}</button>
       ` : ''}
       <div class="call-ui" style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;width:100%;">
-        <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:6px;" id="call-timer">${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}</div>
+        <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:6px;" id="call-timer">${formatDurShort(sec)}</div>
         <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${escapeHtml(c ? c.name : 'TA')}</div>
         <div style="font-size:13px;color:var(--purple-soft);margin-bottom:24px;" id="call-kind-label">${kind === 'video' ? '视频通话中…' : '语音通话中…'}</div>
         <div class="avatar xl" style="width:150px;height:150px;border-radius:50%;border:3px solid var(--purple);overflow:hidden;background:var(--bg-elevated-2);display:flex;align-items:center;justify-content:center;font-size:56px;color:var(--purple-soft);margin-bottom:28px;">
@@ -7046,10 +7181,15 @@ function bindCallExtras() {
 function updateCallFloatTime(sec) {
   const el = document.querySelector('#call-float .cf-time');
   if (el) el.textContent = formatDurShort(sec);
+  // 20261002cc：原生悬浮窗显示中，同步跳动通话时长到系统层小窗
+  if (_bmOverlayShown) bmOverlayUpdateSub(formatDurShort(sec));
 }
 
 function formatDurShort(sec) {
   sec = sec || 0;
+  // 20261002cb：超过 1 小时自动进位——通话界面/悬浮窗显示「X小时Y分」，不再显示「114:23」
+  const h = Math.floor(sec / 3600);
+  if (h > 0) return `${h}小时${Math.floor((sec % 3600) / 60)}分`;
   const m = Math.floor(sec / 60), s = sec % 60;
   return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
@@ -7057,6 +7197,8 @@ function formatDurShort(sec) {
 function removeCallFloat() {
   const f = $('#call-float');
   if (f) f.remove();
+  // 20261002cc：移除 DOM 浮窗时，原生悬浮窗（若显示中）一并隐藏——通话结束或切回完整界面都不该再浮系统层
+  if (_bmOverlayShown) { _bmOverlayShown = false; bmOverlayHide(); }
 }
 
 /* 强制结束通话（新通话或切角色时） */
@@ -7139,7 +7281,7 @@ function openGroupCallScreen(g, members, kind, msg) {
   const more = members.length > 4 ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">等 ${members.length} 人</div>` : '';
   openCallLayer(`
     <div style="display:flex;flex-direction:column;align-items:center;padding:20px 0;min-height:360px;">
-      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:6px;" id="call-timer">00:00</div>
+      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:6px;" id="call-timer">${formatDurShort(0)}</div>
       <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${escapeHtml(g.name)}</div>
       <div style="font-size:13px;color:var(--purple-soft);margin-bottom:24px;">${kind === 'video' ? '视频' : '语音'}群聊通话中 · ${members.length} 人</div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-bottom:12px;">${avatars}</div>
@@ -7156,7 +7298,7 @@ function openGroupCallScreen(g, members, kind, msg) {
     sec++;
     _callActive && (_callActive.sec = sec);
     const el = $('#call-timer');
-    if (el) el.textContent = String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+    if (el) el.textContent = formatDurShort(sec); // 20261002cb：超1小时进位显示「X小时Y分」
     updateCallFloatTime(sec);
   }, 1000);
   const endCall = async () => {
@@ -9315,22 +9457,51 @@ function showCharGroupsModal() {
   });
 }
 
-/* ---------- 访客专属表情包库（每个访客独立，存 character.emojis） ---------- */
+/* ---------- 访客专属表情包库（每个访客独立，存 character.emojis） ----------
+   20261002cb：新增批量管理——「批量管理」按钮进入多选模式（选中描边+✓），
+   「删除选中」二次确认后批量删除；照问卷列表批量管理的同款交互。 */
 function showCharEmojiModal(c) {
   c.emojis = c.emojis || [];
+  let batchMode = false;   // 批量管理模式开关
+  const sel = new Set();   // 批量选中的表情 id
   const render = () => {
     const grid = $('#char-emoji-grid');
     const list = c.emojis;
+    const batchBtn = $('#cemoji-batch');
+    if (batchBtn) {
+      batchBtn.textContent = batchMode ? `删除选中（${sel.size}）` : '批量管理';
+      batchBtn.style.background = batchMode ? 'var(--danger)' : '';
+      batchBtn.style.color = batchMode ? '#fff' : '';
+      batchBtn.style.borderColor = batchMode ? 'var(--danger)' : '';
+    }
+    const hint = $('#cemoji-hint');
+    if (hint) hint.textContent = batchMode ? '点选要删除的表情包，再点「删除选中」确认' : `这是 TA 的专属表情包（${list.length}/300），仅在与 TA 聊天时可用，与其他访客互不影响`;
     grid.innerHTML = list.length
-      ? list.map(e => `
-        <div class="emoji-cell" data-eid="${e.id}">
+      ? list.map(e => {
+          const isSel = batchMode && sel.has(e.id);
+          return `
+        <div class="emoji-cell" data-eid="${e.id}" style="${isSel ? 'box-shadow:inset 0 0 0 2px var(--purple-soft);border-radius:10px;' : ''}">
           <img src="${imgSrc(e.img || e.data)}">
-          <button class="emoji-del" data-del="${e.id}">✕</button>
-        </div>`).join('')
+          ${batchMode
+            ? `<button class="emoji-del" style="display:${isSel ? 'block' : 'none'};background:var(--purple-soft);border:none;color:#fff;">✓</button>`
+            : `<button class="emoji-del" data-del="${e.id}">✕</button>`}
+        </div>`;
+        }).join('')
       : `<div class="emoji-empty">还没有专属表情包<br><span style="font-size:12px;">点「＋ 添加」上传（上限 300 张）</span></div>`;
     grid.querySelectorAll('.emoji-cell').forEach(el => {
-      el.onclick = (ev) => {
-        if (ev.target.classList.contains('emoji-del')) return;
+      el.onclick = async (ev) => {
+        // 批量模式：单 ✕ 不渲染；点格子或 ✓ 都切换选中（就地更新不重渲染，避免闪烁）
+        if (ev.target.classList.contains('emoji-del') && !batchMode) return;
+        if (batchMode) {
+          const id = el.dataset.eid;
+          const isSel = !sel.has(id);
+          if (isSel) sel.add(id); else sel.delete(id);
+          el.style.boxShadow = isSel ? 'inset 0 0 0 2px var(--purple-soft)' : 'none';
+          const mark = el.querySelector('.emoji-del');
+          if (mark) mark.style.display = isSel ? 'block' : 'none';
+          if (batchBtn) batchBtn.textContent = `删除选中（${sel.size}）`;
+          return;
+        }
         const emo = list.find(x => x.id === el.dataset.eid);
         if (emo) { closeModal(); sendEmojiMessage(emo.img); }
       };
@@ -9349,14 +9520,34 @@ function showCharEmojiModal(c) {
       <div style="font-size:18px;font-weight:600;">「${escapeHtml(c.name)}」的表情包库</div>
       <button class="icon-btn" id="cemoji-close">✕</button>
     </div>
-    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">这是 TA 的专属表情包（${c.emojis.length}/300），仅在与 TA 聊天时可用，与其他访客互不影响</div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;" id="cemoji-hint"></div>
     <div style="display:flex;gap:10px;margin-bottom:12px;">
       <label class="btn primary" for="char-emoji-input" style="flex:1;cursor:pointer;justify-content:center;">＋ 添加表情包</label>
+      <button class="btn" id="cemoji-batch" style="padding:9px 14px;${c.emojis.length ? '' : 'display:none;'}">批量管理</button>
     </div>
     <input type="file" id="char-emoji-input" accept="image/*" multiple style="display:none;">
     <div class="emoji-grid" id="char-emoji-grid"></div>
   `);
   $('#cemoji-close').onclick = closeModal;
+  // 批量管理：单击进入多选模式，按钮变「删除选中(N)」，再点触发批量删除（二次确认）
+  $('#cemoji-batch').onclick = async () => {
+    if (!batchMode) {
+      batchMode = true;
+      miniToast('点选要删除的表情包，再点「删除选中」确认');
+      render();
+      return;
+    }
+    if (!sel.size) { miniToast('先点选要删除的表情包'); return; }
+    const n = sel.size;
+    showConfirm(`确定删除选中的 ${n} 张表情包吗？删除后不可恢复`, async () => {
+      c.emojis = c.emojis.filter(x => !sel.has(x.id));
+      sel.clear();
+      batchMode = false;
+      await saveChar(c);
+      miniToast(`已删除 ${n} 张表情包`);
+      showCharEmojiModal(c); // 确认弹窗顶掉了库弹窗——重开恢复上一界面（render 找回已脱离文档的 DOM 会报 null）
+    });
+  };
   $('#char-emoji-input').onchange = async (e) => {
     const files = e.target.files;
     if (!files.length) return;
@@ -9779,6 +9970,14 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">长按自己发送的字卡/表情包可撤回；撤回后仍可点击查看，永久保留</div>
     </div>
 
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>允许使用玩家的表情包库</span>
+        <input type="checkbox" id="cs-char-emoji-lib" ${s.charUsePlayerEmojis ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">20261002cb：默认关闭——TA 发表情包只用 TA 自己的专属表情包库（TA 主页里上传的那套）；开启后，TA 也会随机使用你（玩家）上传的表情包库（TA 自己的库优先）。总设置对所有访客生效，访客主页的聊天设置可单独覆盖</div>
+    </div>
+
     ${!isPerChar && s.overclockUnlocked ? `
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
@@ -10018,6 +10217,8 @@ function bindChatSettings(s, onSave) {
     s.soundOn = $('#cs-sound').checked;
     s.soundName = $('#cs-sound-name').value;
     s.allowRecall = $('#cs-recall').checked;
+    const cueEl = $('#cs-char-emoji-lib');
+    if (cueEl) s.charUsePlayerEmojis = cueEl.checked; // 20261002cb：允许角色使用玩家表情包库
     const pokeEl = $('#cs-poke-mode');
     if (pokeEl) s.charPoke = pokeEl.value;
     const muteEl = $('#cs-mute');
@@ -10060,7 +10261,7 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
@@ -11368,7 +11569,7 @@ async function runPendingInteractions() {
         post.comments = post.comments || [];
         const newCm = { id: uid('mc'), who: c.id, replyTo: null, content: text, time: now };
         if (Math.random() < 0.25) {
-          const st = await drawMomentSticker();
+          const st = await drawMomentSticker(c);
           if (st) { if (st.img) newCm.img = st.img; else newCm.sticker = st.sticker; }
         }
         post.comments.push(newCm);
@@ -11400,7 +11601,7 @@ async function runPendingInteractions() {
           const text = await momentReplyText(author, author.relation, post, { replyTo: cc });
           const rep = { id: uid('mc'), who: author.id, replyTo: cc.id, content: text, time: Date.now() };
           if (Math.random() < 0.2) {
-            const st = await drawMomentSticker();
+            const st = await drawMomentSticker(author);
             if (st) { if (st.img) rep.img = st.img; else rep.sticker = st.sticker; }
           }
           post.comments.push(rep);
@@ -11426,7 +11627,7 @@ async function runPendingInteractions() {
         const text = await momentReplyText(author, author.relation, post, { replyTo: pcm }); // 20260929ah：AI 模式由 AI 生成回复
         const rep = { id: uid('mc'), who: author.id, replyTo: r.commentId, content: text, time: Date.now() };
         if (Math.random() < 0.2) {
-          const st = await drawMomentSticker();
+          const st = await drawMomentSticker(author);
           if (st) { if (st.img) rep.img = st.img; else rep.sticker = st.sticker; }
         }
         post.comments.push(rep);
@@ -11454,7 +11655,7 @@ async function runPendingInteractions() {
         const text = await momentReplyText(cc, cc.relation, post, { replyTo: pcm }); // 20260929ah：AI 模式由 AI 生成回复
         const rep = { id: uid('mc'), who: cc.id, replyTo: r.commentId, content: text, time: Date.now() };
         if (Math.random() < 0.2) {
-          const st = await drawMomentSticker();
+          const st = await drawMomentSticker(cc);
           if (st) { if (st.img) rep.img = st.img; else rep.sticker = st.sticker; }
         }
         post.comments.push(rep);
@@ -11531,20 +11732,11 @@ async function checkCharMomentPosts() {
   return arrived;
 }
 
-/* 抽一张表情包：图片型表情包库（emojis store，data:/http）优先；库里没有图则
-   从字卡库 emoji 表情模块抽，再兜底 Emoji 库（20260929ah）抽一个 emoji 字符当贴纸。
+/* 抽一张表情包（朋友圈用）：20261002cb 起委托 pickCharSticker——
+   默认只用 TA 自己的专属表情包库，玩家库需聊天设置「允许使用玩家的表情包库」开启。
    返回 { img } 或 { sticker } 或 null */
-async function drawMomentSticker() {
-  try {
-    const pics = await getEmojis();
-    if (pics && pics.length && Math.random() < 0.6) {
-      const p = drawFrom(pics);
-      if (p && (p.img || p.data)) return { img: p.img || p.data };
-    }
-  } catch (e) {}
-  const emo = drawFrom(cards.customEmojis || []) || drawFrom(EMOJI_LIB);
-  if (emo) return { sticker: emo };
-  return null;
+async function drawMomentSticker(c) {
+  return pickCharSticker(c);
 }
 
 /* 角色发一条朋友圈（字卡随机内容，9.2；AI 模式下由 AI 生成）
@@ -11588,9 +11780,9 @@ async function charMomentPost(c) {
     likes: [], comments: [], createTime: now,
     pending: [], authorReplies: [],
   };
-  // 一半概率配表情包（图片库优先，emoji 贴纸兜底）
+  // 一半概率配表情包（20261002cb：走 pickCharSticker——TA 自己的库优先，玩家库需聊天设置允许）
   if (Math.random() < 0.5) {
-    const st = await drawMomentSticker();
+    const st = await drawMomentSticker(c);
     if (st) { if (st.img) post.images.push(st.img); else post.sticker = st.sticker; }
   }
   // 20261001ci：发贴角色给自己点赞（AI 判定 或 字卡模式 40% 随机；点赞时间往后错开一点显得自然）
@@ -18076,7 +18268,7 @@ async function aiPostMomentFromTag(charId, content, opts = {}) {
       pending: [], authorReplies: [],
     };
     if (Math.random() < 0.5) {
-      const st = await drawMomentSticker();
+      const st = await drawMomentSticker(c);
       if (st) { if (st.img) post.images.push(st.img); else post.sticker = st.sticker; }
     }
     if (opts.selfLike) post.likes.push({ who: c.id, time: now }); // 20261001ci：AI 判定要给自己这条点赞
