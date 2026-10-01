@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001cq'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001cr'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -2267,6 +2267,10 @@ function renderBatchList() {
           <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">此操作无法撤销，请选择要删除的范围（对全部所选访客生效）</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+          <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--purple);border-radius:12px;cursor:pointer;background:var(--purple-dim);">
+            <span style="font-size:14px;font-weight:600;">全选（彻底删除，不留灰度殿堂）</span>
+            <input type="checkbox" id="del-scope-all" style="width:18px;height:18px;accent-color:var(--purple);">
+          </label>
           ${[
             { k: 'chat', label: '聊天记录' },
             { k: 'moments', label: '朋友圈内容' },
@@ -2287,6 +2291,16 @@ function renderBatchList() {
           <button class="btn danger" style="flex:1;" id="bdel-confirm">确定删除</button>
         </div>
       `);
+      // 20261001cr：批量删除范围「全选」（与单聊删除弹窗同一套联动逻辑）
+      const _bdAll = $('#del-scope-all');
+      const _bdSync = () => {
+        const boxes = [...document.querySelectorAll('.del-scope')];
+        _bdAll.checked = boxes.length > 0 && boxes.every(b => b.checked);
+        _bdAll.indeterminate = !_bdAll.checked && boxes.some(b => b.checked);
+      };
+      _bdAll.onchange = () => { document.querySelectorAll('.del-scope').forEach(b => { b.checked = _bdAll.checked; }); };
+      document.querySelectorAll('.del-scope').forEach(b => b.addEventListener('change', _bdSync));
+      _bdSync();
       $('#bdel-cancel').onclick = () => { closeModal(); renderBatchList(); };
       $('#bdel-confirm').onclick = async () => {
         const scopes = new Set();
@@ -2666,6 +2680,42 @@ function isKaomojiText(s) {
   return [...t].length >= 2;
 }
 
+/* 20261001cr：颜文字单行气泡防截断——单行模式 nowrap+overflow-x:auto，超出气泡宽度的
+   部分要横向滑动才能看到（用户反馈 `((٩( ÷∀÷ )۶))`、`~~~~~~` 等被「截断」）。
+   渲染后用 Range 实测内容宽度（不能用 scrollWidth——气泡 ✦ 伪元素星星伸出右缘会污染测量），
+   超宽先逐级缩字号（15→12px，颜文字缩小不影响辨识），仍放不下则恢复自动换行。 */
+function fixOnelineBubble(row) {
+  if (!row) return;
+  const b = row.querySelector('.bubble.oneline');
+  if (!b) return;
+  requestAnimationFrame(() => {
+    if (!b.isConnected || !b.classList.contains('oneline')) return;
+    const cs = getComputedStyle(b);
+    const inner = b.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    const textW = () => {
+      try {
+        const r = document.createRange();
+        r.selectNodeContents(b);
+        const rects = r.getClientRects();
+        let w = 0;
+        for (const rc of rects) w = Math.max(w, rc.width);
+        return w;
+      } catch (e) { return 0; }
+    };
+    let fs = parseFloat(cs.fontSize) || 15;
+    let guard = 0;
+    while (textW() > inner + 0.5 && fs > 12 && guard++ < 6) {
+      fs -= 1;
+      b.style.fontSize = fs + 'px';
+    }
+    if (textW() > inner + 0.5) {
+      b.classList.remove('oneline');
+      b.style.fontSize = '';
+      row.classList.remove('oneline-msg');
+    }
+  });
+}
+
 function appendMessage(m, scroll = true) {
   const scrollEl = $('#chat-scroll');
   // 虚拟滚动：新消息同步进窗口数据源（初始渲染/补载时 suspend 挂起，避免重复）
@@ -2724,6 +2774,7 @@ function appendMessage(m, scroll = true) {
     row.innerHTML = `${avatarHtml(c && c.avatar, c && c.name)}<div class="msg-body">${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>${checkHtml}`;
   }
   scrollEl.appendChild(row);
+  fixOnelineBubble(row); // 20261001cr：颜文字单行气泡超宽时缩字号/换行兜底，杜绝截断
 
   // 事件：撤回消息点击查看原文 / 图片点击放大 / 右键或长按操作菜单
   const recalledEl = row.querySelector('.msg-recalled');
@@ -5103,6 +5154,10 @@ function showDeleteCharModal(charId) {
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">此操作无法撤销，请选择要删除的范围</div>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--purple);border-radius:12px;cursor:pointer;background:var(--purple-dim);">
+        <span style="font-size:14px;font-weight:600;">全选（彻底删除，不留灰度殿堂）</span>
+        <input type="checkbox" id="del-scope-all" style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
       ${[
         { k: 'chat', label: '聊天记录' },
         { k: 'moments', label: '朋友圈内容' },
@@ -5122,6 +5177,16 @@ function showDeleteCharModal(charId) {
       <button class="btn danger" style="flex:1;" id="del-confirm">确定删除</button>
     </div>
   `);
+  // 20261001cr：删除范围「全选」——一键勾选/取消全部六项，单项变动同步全选框状态
+  const _allChk = $('#del-scope-all');
+  const _syncAllState = () => {
+    const boxes = [...document.querySelectorAll('.del-scope')];
+    _allChk.checked = boxes.length > 0 && boxes.every(b => b.checked);
+    _allChk.indeterminate = !_allChk.checked && boxes.some(b => b.checked);
+  };
+  _allChk.onchange = () => { document.querySelectorAll('.del-scope').forEach(b => { b.checked = _allChk.checked; }); };
+  document.querySelectorAll('.del-scope').forEach(b => b.addEventListener('change', _syncAllState));
+  _syncAllState();
   $('#del-cancel').onclick = closeModal;
   $('#del-confirm').onclick = async () => {
     const scopes = new Set();
@@ -5530,7 +5595,9 @@ async function showRelationsModal(selectedId = null) {
           }
           await refreshCharacters();
           window._relBatch = false;
-          closeModal();
+          // 20261001cr：清除结束后留在关系网页面（退出批量回到普通模式重渲染），
+          // 不再 closeModal 整页关闭——子功能退出返回上一界面铁律
+          await showRelationsModal(null);
           miniToast(`已清除 ${touched} 位访客的所有关系`);
         });
       };
@@ -12459,12 +12526,12 @@ async function showGrayHallModal(opts = {}) {
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <div style="display:flex;align-items:center;gap:8px;">
-        ${icon('memory', 18)}<span class="badge">删除时未清空的数据会归档到这里</span>
+        ${icon('archive', 18)}<span class="badge">删除时未清空的数据会归档到这里</span>
       </div>
       <button class="icon-btn" id="gh-close" title="关闭">${icon('close', 18)}</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:48vh;overflow-y:auto;" id="gray-root">
-      ${rows.join('') || `<div class="empty" style="padding:18px 0;"><div class="empty-icon">${icon('memory', 34)}</div><div>还没有归档的访客</div><div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">删除访客时不勾选全部删除范围，残留数据就会来到这里</div></div>`}
+      ${rows.join('') || `<div class="empty" style="padding:18px 0;"><div class="empty-icon">${icon('archive', 34)}</div><div>还没有归档的访客</div><div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">删除访客时不勾选全部删除范围，残留数据就会来到这里</div></div>`}
     </div>
     ${batch
       ? `<div style="display:flex;gap:10px;margin-top:14px;">
@@ -12699,6 +12766,7 @@ async function showGrayHallArchive(gh) {
 async function grayViewSection(gh, sec) {
   const id = gh.charId;
   const fid = 'pf_char_' + id;
+  const c = gh.char || {}; // 20261001cr：板块回顾用的角色快照（bio 生平/关系网渲染依赖；此前缺失导致点击板块直接 ReferenceError、页面无任何反应）
   let listHtml = '';
   if (sec === 'letters') {
     const msgs = (await idbGetAll('messages')).filter(m => m.charId === id && !m.groupId);

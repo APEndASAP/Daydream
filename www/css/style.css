@@ -2411,6 +2411,9 @@ body.glass-ui.glass-low .msg-row.me .bubble {
 }
 .bubble.oneline::-webkit-scrollbar { display: none; }
 .msg-row.oneline-msg .msg-body { max-width: 90%; }
+/* 20261001cr：单行气泡自身上限同步放宽——原 72% 是 msg-body 的 72%（≈行宽 64.8%），
+   颜文字可用宽度过窄容易被截断；放宽到 msg-body 的 100%（≈行宽 90%） */
+.msg-row.oneline-msg .bubble { max-width: 100%; }
 
 /* ============================================================
    底栏红点徽标（朋友圈新动态提醒）——放在 tab-icon 旁（不能放进
