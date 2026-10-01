@@ -7,6 +7,7 @@ on:
     paths:
       - 'www/**'
       - 'assets/**'
+      - 'keystore/**'
       - 'capacitor.config.json'
       - 'package.json'
       - '.github/workflows/build-android.yml'
@@ -75,6 +76,72 @@ jobs:
 
       - name: 同步网页资源到安卓工程
         run: npx cap sync android
+
+      # 20261001ck：① 固化签名 + ② versionCode 递增——两者缺一不可，否则无法覆盖安装。
+      #   根因：Capacitor 默认 debug 签名每次 CI 都是全新 runner 随机生成的 keystore（签名不一致），
+      #   且 versionCode 恒为 1（版本相同），导致新 APK 只能卸载重装、数据丢失。
+      #   方案：用仓库内固化的 keystore/debug.keystore 签名（密码/alias 固定），
+      #   versionCode 用时间戳 YYYYMMDDHHMM 单调递增。
+      - name: 配置固定签名 + 递增 versionCode
+        run: |
+          cat > /tmp/config-signing.js <<'NODE_EOF'
+          const fs = require('fs');
+          // ① 把 keystore 复制进 android 工程（供 build.gradle 引用）
+          const src = 'keystore/debug.keystore';
+          const dstDir = 'android/keystore';
+          if (!fs.existsSync(dstDir)) fs.mkdirSync(dstDir, { recursive: true });
+          fs.copyFileSync(src, dstDir + '/debug.keystore');
+          console.log('[1/4] keystore 已复制到 android/keystore/debug.keystore');
+
+          // ② 修改 android/app/build.gradle
+          const p = 'android/app/build.gradle';
+          let s = fs.readFileSync(p, 'utf8');
+
+          // versionCode 时间戳递增（匹配 defaultConfig 里的 versionCode 1）
+          const d = new Date();
+          const pad = (n, w=2) => String(n).padStart(w, '0');
+          const vc = '' + d.getUTCFullYear() + pad(d.getUTCMonth()+1) + pad(d.getUTCDate())
+            + pad(d.getUTCHours()) + pad(d.getUTCMinutes());
+          s = s.replace(/versionCode\s+\d+/, 'versionCode ' + vc);
+          console.log('[2/4] versionCode -> ' + vc);
+
+          // ③ 注入 signingConfigs（在 android { 之后，只注入一次）
+          if (!s.includes('signingConfigs')) {
+            const signingBlock = [
+              "    signingConfigs {",
+              "        release {",
+              "            storeFile file('../keystore/debug.keystore')",
+              "            storePassword 'android'",
+              "            keyAlias 'androiddebugkey'",
+              "            keyPassword 'android'",
+              "            storeType 'PKCS12'",
+              "        }",
+              "    }",
+            ].join('\n');
+            s = s.replace(/(android\s*\{)/, '$1\n' + signingBlock);
+            console.log('[3/4] signingConfigs 已注入');
+          }
+
+          // ④ 给已有 buildTypes.release 加 signingConfig，并补 debug buildType
+          if (!s.includes('signingConfig signingConfigs.release')) {
+            // release 加 signingConfig
+            s = s.replace(
+              /(buildTypes\s*\{\s*release\s*\{)/,
+              '$1\n            signingConfig signingConfigs.release'
+            );
+            // 补 debug buildType（用同一固定签名，保证 debug 与 release 签名一致）
+            s = s.replace(
+              /(buildTypes\s*\{\s*release\s*\{[\s\S]*?\n\s*\})/,
+              function(m) {
+                return m + '\n        debug {\n            signingConfig signingConfigs.release\n        }\n';
+              }
+            );
+            console.log('[4/4] buildTypes 已配置固定签名');
+          }
+          fs.writeFileSync(p, s);
+          console.log('DONE: 固定签名 + versionCode ' + vc + ' 配置完成');
+          NODE_EOF
+          node /tmp/config-signing.js
 
       - name: 构建 APK（Debug 签名，直接可安装）— 20260930cg
         working-directory: android
