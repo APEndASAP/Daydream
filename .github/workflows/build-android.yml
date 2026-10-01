@@ -10,6 +10,7 @@ on:
       - 'keystore/**'
       - 'capacitor.config.json'
       - 'package.json'
+      - 'bm-overlay/**'
       - '.github/workflows/build-android.yml'
 
 jobs:
@@ -37,6 +38,15 @@ jobs:
 
       - name: 安装依赖
         run: npm install
+
+      # bm-overlay 为本地 file: 依赖，npm 默认 symlink 可能被 cap sync 跳过；
+      # 这里强制用真实目录拷贝覆盖，确保插件 android 源码被 Capacitor 正确识别编译。
+      - name: 固化本地悬浮窗插件 bm-overlay
+        run: |
+          rm -rf node_modules/bm-overlay
+          cp -r bm-overlay node_modules/bm-overlay
+          echo "bm-overlay 插件已固化到 node_modules"
+          ls -la node_modules/bm-overlay/android/src/main/java/com/bairimeng/overlay/
 
       - name: 生成安卓原生壳
         run: npx cap add android
@@ -156,6 +166,13 @@ jobs:
           console.log('versionCode -> ' + vc);
           NODE_EOF
           node /tmp/bump-vc.js
+
+      - name: 单独编译悬浮窗插件验证（第四步：插件隔离测试）
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :bm-overlay:compileDebugJavaWithJavac --no-daemon
+          echo "=== bm-overlay 插件 Java 编译通过 ==="
 
       - name: 构建 APK（Debug）— 20260930cg
         working-directory: android
