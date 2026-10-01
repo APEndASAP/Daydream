@@ -128,6 +128,9 @@ html, body {
      焦点管理/会话恢复把文档滚出一个偏移，整页上移后底栏被顶出视口（间歇性裁切）。
      clip 让文档 scrollTop 恒为 0（程序滚动也无效）；旧浏览器不支持时回退 hidden */
   overflow: clip;
+  /* 20261001ch：禁止横向过度滚动/系统返回手势的滚动联动——
+     手机上左滑不再拉出页面回弹，配合 JS history 守卫拦住「侧滑退出网页」 */
+  overscroll-behavior-x: none;
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -4613,6 +4616,39 @@ body.theme-light .call-float {
   --text-tertiary: rgba(245, 244, 247, 0.5);
   --border: rgba(255, 255, 255, 0.08);
   --bg-elevated-2: #242129;
+}
+
+/* —— 20261001ch：固定深底浮层补漏（浅色主题下「深底深字」不可读）——
+   长按菜单/引用条/多选条/图片裁剪器/回信按钮的背景为硬编码深色（与主题无关），
+   浅色主题下内部 var(--text) 等解析为深色 → 深底深字。
+   容器内统一还原深色变量；color: var(--text) 必须在此重新声明——
+   继承色不会因容器内变量重映射而重新解析（同 20260929bq 教训） */
+body.theme-light #ctx-menu,
+body.theme-light #quote-bar,
+body.theme-light #multi-bar,
+body.theme-light #img-cropper,
+body.theme-light .letter-overlay .letter-reply {
+  color: var(--text);
+  --purple: #a78bfa;
+  --purple-soft: #c4b5fd;
+  --purple-dim: rgba(167, 139, 250, 0.16);
+  --purple-glow: rgba(167, 139, 250, 0.35);
+  --text: #f5f4f7;
+  --text-secondary: rgba(245, 244, 247, 0.62);
+  --text-tertiary: rgba(245, 244, 247, 0.38);
+  --danger: #f87171;
+  --border: rgba(255, 255, 255, 0.10);
+}
+/* 浅色玻璃下长按菜单背景被特化切白（#ctx-menu 白玻璃），变量还原回浅色主题配色 */
+body.theme-light.glass-ui #ctx-menu {
+  --text: #2a2340;
+  --text-secondary: rgba(42, 35, 64, 0.70);
+  --text-tertiary: rgba(42, 35, 64, 0.46);
+  --purple: #7c5cf0;
+  --purple-soft: #6a4de8;
+  --purple-dim: rgba(124, 92, 240, 0.11);
+  --danger: #d95050;
+  --border: rgba(46, 36, 84, 0.13);
 }
 
 /* —— 全局色彩预设色板（织梦点；深浅两主题下都可用） —— */

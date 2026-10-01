@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20260930cg'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001ch'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -3789,6 +3789,66 @@ function switchView(viewName) {
   // 进入主页时重算统计（访客数量 / 聊天天数），保证添加/删除访客后数字即时刷新
   if (viewName === 'home') renderPlayerHome();
 }
+
+/* ---------- 移动端侧滑/返回键的「应用内返回」逻辑（20261001ch） ----------
+   统一入口：浏览器侧滑（popstate）与 APK 物理返回键（Capacitor backButton）
+   都走这里。返回 true = 消费了这次返回（有上一级）；false = 已在顶层，仅拦截 */
+function bmInternalBack() {
+  // 软件声明未同意期间：不许任何返回动作绕过声明（声明弹窗也不被侧滑关掉）
+  if (_noticeGate) return false;
+  // 1) 最上层弹窗开着 → 关弹窗（等于取消，closeModal 内部处理访客主页/设置上下文回退）
+  const mask = $('#modal-mask');
+  if (mask && mask.classList.contains('show')) { closeModal(); return true; }
+  // 2) 长按操作菜单开着 → 关菜单
+  const menu = $('#ctx-menu');
+  if (menu && menu.classList.contains('show')) { closeCtxMenu(); return true; }
+  // 3) 聊天页多选模式 → 先退出多选
+  if (multiSelectMode) { exitMultiSelect(); return true; }
+  // 4) 聊天页 → 聊天导航（与顶栏返回按钮同路径）
+  if (document.body.dataset.view === 'chat') {
+    closeModalPanels(); cancelQuote(); switchView('chatlist');
+    return true;
+  }
+  // 5) 已在顶层 tab（home / chatlist / moments）→ 无上一级，仅拦截退出
+  return false;
+}
+
+/* ---------- history 守卫：拦住浏览器侧滑/返回，永不真正退出网页（20261001ch） ----------
+   原理：页面加载即 replaceState 根锚点 + pushState 一条「守卫」记录。
+   用户侧滑 → 历史退到根锚点触发 popstate → 执行应用内返回 → 重新压入守卫。
+   历史栈永不耗尽，浏览器侧滑/返回键永远无法关闭页面本身。 */
+(function () {
+  if (!window.history || !history.pushState) return;
+  const ROOT = { bmRoot: true }, GUARD = { bmGuard: true };
+  try {
+    history.replaceState(ROOT, '');
+    history.pushState(GUARD, '');
+  } catch (e) { return; }
+  window.addEventListener('popstate', function () {
+    try { bmInternalBack(); } catch (e) {}
+    // 无论是否处理，都重新压入守卫条目（异步等当前导航事件走完）
+    setTimeout(function () { try { history.pushState(GUARD, ''); } catch (e) {} }, 0);
+  });
+})();
+
+/* ---------- Capacitor（APK）物理返回键/侧滑手势接管（20261001ch） ----------
+   装有 @capacitor/app 时生效：返回键 → 应用内返回；顶层双击 2 秒内退出。
+   未装插件（纯网页）时 window.Capacitor.Plugins.App 不存在，静默跳过 */
+(function () {
+  try {
+    const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (!App || typeof App.addListener !== 'function') return;
+    App.addListener('backButton', function () {
+      let handled = false;
+      try { handled = bmInternalBack(); } catch (e) {}
+      if (handled) return;
+      const now = Date.now();
+      if (window.__bmLastBack && now - window.__bmLastBack < 2000) { App.exitApp(); return; }
+      window.__bmLastBack = now;
+      if (typeof miniToast === 'function') miniToast('再按一次退出应用');
+    });
+  } catch (e) {}
+})();
 
 /* 聊天导航/朋友圈顶栏滚动主色（20260929u）：复用 computeDominantColor（imgSrc 兼容
    Blob/旧 base64），按图缓存，异步回填 CSS 变量；无背景时清空走 CSS 默认底色 */
