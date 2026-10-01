@@ -34,7 +34,7 @@
           || /(^|\.)github\.io$/i.test(location.hostname);
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20261001co' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20261001cp' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -48,13 +48,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261001co'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261001cp'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20261001co">
+  <link rel="stylesheet" href="css/style.css?v=20261001cp">
 </head>
 <body>
   <div id="app">
@@ -85,6 +85,7 @@
          20261001cj 修复 APK 首启「跳过开屏后按钮全失灵」真机必现 bug：软件声明未同意期间（_noticeGate）声明弹窗被透明遮罩点击误关、gate 永久卡 true 导致所有弹窗被抑制——现在声明弹窗禁遮罩点击关闭（只能点「同意」进），openModal 被抑制时返回 false 供调用方跳过后续元素绑定（showChatListMenu 等不再取 null 崩溃）；
          20261001ck APK 覆盖安装 + 数据导出落盘：① 固化签名（仓库内置 debug.keystore，构建时 keytool 转 JKS 覆盖 ~/.android/debug.keystore，签名永久一致）+ versionCode 时间戳递增（YYYYMMDDHHMM），同签名 APK 可直接覆盖安装、保留数据不再强制卸载；② 导出改走 @capacitor/filesystem 写公共「文档/白日梦备份」目录（原 <a download> 在 WebView 是 no-op 永远导不出，卸载不删，重装可导入）；
          20261001cl ① 开屏 BGM 网页端加载优化：原 bgm_intro.mp3 是 5 分钟完整版（5MB），运行时全量 fetch 导致手机网页首载无音乐、点击播放延迟高；现无损截取开头 17 秒生成 bgm_intro.web.mp3（267KB，128kbps 原码率音质不变），splash.js 按 window.Capacitor 环境判断——软件端仍用原 5 分钟无损完整版、网页端用 17 秒小文件（软件端无损体验不受影响）；② 模拟视频通话「更换通话背景」接入图片裁剪器 openImageCropper（网页+APK 均改，取消返回 null 不生效）；
+         20261001cp 五项修复：① 总设置「清除多余缓存与数据」下加说明——与数据管理→数据迁移→清除冗余缓存是同一功能双入口，只清缓存类冗余（Cache/SW/localStorage/旧库/孤儿消息）不动正式数据；② 修普通模式导航页「未分组」标题顶部被顶栏盖住（真机必现）：u 版顶栏改 absolute 悬浮时列表 padding-top 按旧高度估 58px，实测顶栏 70px——改 78px（玻璃模式 72px），朋友圈 moments-scroll 同步修；③ 修超频礼物「跳过动画」按钮成死按钮：keepAlive 跳出动画 settle 交棒开箱场景后按钮残留在「打开礼物」下方且点击撞 burstDone 直接 return——settle 时（自然/手动两路）移除按钮；④ 修超频动画×书信信封冲突（用户真机：礼物/惊喜弹窗没弹直接变书信页面）：进入聊天页 _ocOnEnterChat 与 _letterOnEnterChat 并发，信封层(z320)垫底、礼物动画(z500/704)盖上来，走完礼物流程面对的下一层就是信封——新增 _ocAnimBusy/_waitOcAnimDone（检测 #oc-drop/#oc-glitch/#oc-rift/#oc-open/.oc-unbox-scene/#oc-surprise-big），信封到达前（charSendLetter 聊天页内分支 + _letterOnEnterChat）先等全部超频全屏层退场再开信，礼物/惊喜弹窗优先、信封排队随后；⑤ 批量管理支持群聊与整组勾选：renderBatchList 重写为导航页同款分组结构（💬未收录群聊区+📁分组+未分组），群聊行可勾选（批量删除对群聊=解散同群设置语义），分组标题右侧「全组」勾选框一键勾选/取消整组，建群自动剔除群聊 id，移入分组对群聊 id 同样生效；
          20261001cm ① 修记忆宫殿卡片视图点「AI 关」后整页卡死（真机必现）：卡片视图 showPalaceEntry 内点权限 chip 打开 openPalPerm 弹窗会替换 #modal-content 的卡片 DOM，而 back 回调只 setCardContent（刷新的是已脱离文档的游离节点）——权限弹窗永不关闭、遮罩拦截全部触摸，整页动不了；修复=back 改为重开 showPalaceEntry(e.id, backFid)（取消/保存后都重开卡片视图、定位当前卡），与「移动到…」及列表视图关闭语义对齐；② 开屏 BGM 恢复完整歌循环 + 网页端流式加载（用户澄清：cl 版网页端改 17 秒截取段导致「继续播放」循环段变短为 17 秒，需恢复完整 5:14 循环；软件端本就一直循环完整歌未受影响）：网页端（无 Capacitor）改走 <audio> preload+loop 流式边下边播 + createMediaElementSource 接入原 Gain→压缩器→makeup 链路（根治首载无音乐/点播延迟，同时循环整首完整歌）；软件端（有 Capacitor）仍走原 fetch+decode 全量解码；url 统一恢复 audio/bgm_intro.mp3（bgm_intro.web.mp3 不再引用、保留无害）；
          20260930cg 防反色机制（物理锁死，杜绝系统暗色模式下图片/表情包/头像/礼物图被强制反色成底片）：CSS 顶部加最高优先级锁死块——img/picture/video/canvas/svg/emoji/sticker/avatar/gift 等所有媒体元素 filter:none+forced-color-adjust:none+color-scheme:only light（只锁反色属性、绝不锁背景色，深色默认主题不受影响）；@media(forced-colors:active) 高对比度模式二次兜底；APK 原生三重保险（styles.xml + AndroidManifest + forceDarkAllowed=false，system WebView 强制暗色一并关闭） -->
 
@@ -279,11 +280,11 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20261001co"></script>
-  <script src="js/db.js?v=20261001co"></script>
-  <script src="js/icons.js?v=20261001co"></script>
-  <script src="js/emoji-img.js?v=20261001co"></script>
-  <script src="js/cards.js?v=20261001co"></script>
-  <script src="js/app.js?v=20261001co"></script>
+  <script src="js/splash.js?v=20261001cp"></script>
+  <script src="js/db.js?v=20261001cp"></script>
+  <script src="js/icons.js?v=20261001cp"></script>
+  <script src="js/emoji-img.js?v=20261001cp"></script>
+  <script src="js/cards.js?v=20261001cp"></script>
+  <script src="js/app.js?v=20261001cp"></script>
 </body>
 </html>

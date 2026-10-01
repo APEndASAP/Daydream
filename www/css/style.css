@@ -3240,10 +3240,13 @@ body.glass-ui #home-topbar:not(.scrolled) {
   z-index: 6;
   transition: background 0.25s ease;
 }
-#chat-list { padding-top: 58px; }
-.moments-scroll { padding-top: 58px; }
+/* 20261001cp：58px 是按旧顶栏高度估算的，实测顶栏 absolute 后高 70px，
+   列表首行（「未分组/分组」标题）顶部 12px 被顶栏盖住（真机必现）——
+   普通模式 78px（70+8 缓冲）；玻璃模式胶囊（margin-top 10 + 高约 54）底约 64 → 72px */
+#chat-list { padding-top: 78px; }
+.moments-scroll { padding-top: 78px; }
 body.glass-ui #chat-list,
-body.glass-ui .moments-scroll { padding-top: 64px; }
+body.glass-ui .moments-scroll { padding-top: 72px; }
 
 #view-chatlist .topbar.scrolled {
   background: var(--nav-top-color, rgba(24, 21, 32, 0.72));

@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001co'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001cp'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -2090,25 +2090,83 @@ function enterBatchMode() {
 function renderBatchList() {
   const list = $('#chat-list');
   _chatListSig = null; // 批量列表接管了 #chat-list 的 DOM，重置签名让退出后 renderChatList 必定重绘
-  list.innerHTML = `
-    <div style="padding:10px 18px;color:var(--text-tertiary);font-size:13px;">已选 ${batchSelected.size} 个访客 · 点击访客勾选</div>
-  `;
-  characters.forEach(c => {
+  /* 20261001cp：批量管理支持群聊 + 整组勾选（用户反馈"批量管理没法勾选群聊，应可勾选群聊和整个文件夹"）——
+     ① 群聊行可勾选（未收录群聊 + 分组内群聊；批量删除对群聊=解散，与群设置里解散同语义）；
+     ② 分组/未分组/群聊区标题右侧「全组」勾选框，一键勾选/取消整组（含组内群聊）；
+     ③ 建群只吃访客（群聊不能参与建群），移入分组对群聊 id 同样生效（memberIds 混存）。 */
+  const groupById = new Map(chatGroups.map(g => [g.id, g]));
+  const isGroupId = (id) => groupById.has(id);
+  const toggleId = (id) => {
+    if (batchSelected.has(id)) batchSelected.delete(id);
+    else batchSelected.add(id);
+    renderBatchList();
+  };
+  const checkBadge = (on) => `<div style="width:24px;height:24px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;${on ? 'background:var(--purple);border-color:var(--purple);color:#141019;' : ''}">${on ? '✓' : ''}</div>`;
+  const mkRow = (id, avatarHtml, nameHtml, sub) => {
     const item = document.createElement('div');
     item.className = 'list-item';
-    const checked = batchSelected.has(c.id);
-    item.innerHTML = `
-      <div class="avatar">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c.name[0] || '?')}</div>
-      <div style="flex:1;font-size:16px;font-weight:600;">${escapeHtml(c.name)}</div>
-      <div style="width:24px;height:24px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:14px;${checked ? 'background:var(--purple);border-color:var(--purple);color:#141019;' : ''}">${checked ? '✓' : ''}</div>
-    `;
-    item.onclick = () => {
-      if (batchSelected.has(c.id)) batchSelected.delete(c.id);
-      else batchSelected.add(c.id);
+    item.innerHTML = `${avatarHtml}<div style="flex:1;min-width:0;">${nameHtml}${sub ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:1px;">${sub}</div>` : ''}</div>${checkBadge(batchSelected.has(id))}`;
+    item.onclick = () => toggleId(id);
+    return item;
+  };
+  const mkCharRow = (c) => mkRow(c.id,
+    `<div class="avatar">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c.name[0] || '?')}</div>`,
+    `<div style="font-size:16px;font-weight:600;">${escapeHtml(c.name)}</div>`);
+  const mkGroupRow = (g) => mkRow(g.id,
+    `<div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrc(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</div>`,
+    `<div style="font-size:16px;font-weight:600;">${escapeHtml(g.name)} <span style="font-size:11px;color:var(--text-tertiary);font-weight:400;">(${(g.memberIds || []).length})</span></div>`,
+    '群聊');
+  const mkHeadRow = (label, memberIds) => {
+    const allOn = memberIds.length > 0 && memberIds.every(id => batchSelected.has(id));
+    const head = document.createElement('div');
+    head.className = 'char-group-head';
+    head.innerHTML = `<span style="flex:1;font-weight:600;font-size:13px;color:var(--text-secondary);">${label}</span>
+      <span data-batch-all="1" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-tertiary);padding:4px 2px;cursor:pointer;">全组${checkBadge(allOn)}</span>`;
+    head.querySelector('[data-batch-all]').onclick = (e) => {
+      e.stopPropagation();
+      if (allOn) memberIds.forEach(id => batchSelected.delete(id));
+      else memberIds.forEach(id => batchSelected.add(id));
       renderBatchList();
     };
-    list.appendChild(item);
+    return head;
+  };
+
+  list.innerHTML = `
+    <div style="padding:10px 18px;color:var(--text-tertiary);font-size:13px;">已选 ${batchSelected.size} 项（访客/群聊） · 点行勾选，点「全组」整组勾选</div>
+  `;
+
+  // 未收录到分组的群聊（与导航页口径一致）
+  const claimedGroupIds = new Set();
+  charGroups.forEach(g => (g.memberIds || []).forEach(id => { if (groupById.has(id)) claimedGroupIds.add(id); }));
+  const looseGroups = chatGroups.filter(g => !claimedGroupIds.has(g.id));
+  if (looseGroups.length) {
+    list.appendChild(mkHeadRow(`💬 群聊（${looseGroups.length}）`, looseGroups.map(g => g.id)));
+    looseGroups.forEach(g => list.appendChild(mkGroupRow(g)));
+  }
+
+  // 分组（组内群聊在前、访客在后，与导航页一致；折叠组仍可通过「全组」勾选）
+  const groupedIds = new Set();
+  charGroups.forEach((g) => {
+    const members = (g.memberIds || []).map(id => characters.find(x => x.id === id)).filter(Boolean);
+    const groupChats = (g.memberIds || []).map(id => groupById.get(id)).filter(Boolean);
+    if (members.length === 0 && groupChats.length === 0) return;
+    members.forEach(c => groupedIds.add(c.id));
+    groupChats.forEach(gc => groupedIds.add(gc.id));
+    const allIds = [...groupChats.map(x => x.id), ...members.map(c => c.id)];
+    list.appendChild(mkHeadRow(`📁 ${escapeHtml(g.name)}（${allIds.length}）`, allIds));
+    if (!g._collapsed) {
+      groupChats.forEach(gc => list.appendChild(mkGroupRow(gc)));
+      members.forEach(c => list.appendChild(mkCharRow(c)));
+    }
   });
+
+  // 未分组访客
+  const ungrouped = characters.filter(c => !groupedIds.has(c.id));
+  if (ungrouped.length > 0) {
+    list.appendChild(mkHeadRow(`未分组（${ungrouped.length}）`, ungrouped.map(c => c.id)));
+    ungrouped.forEach(c => list.appendChild(mkCharRow(c)));
+  }
+
   // 底部操作栏
   const bar = document.createElement('div');
   bar.style.cssText = 'display:flex;gap:10px;padding:12px 18px;border-top:1px solid var(--border);flex-wrap:wrap;';
@@ -2120,12 +2178,12 @@ function renderBatchList() {
   `;
   list.appendChild(bar);
   $('#batch-cancel').onclick = () => { batchMode = false; batchSelected = new Set(); renderChatList(); };
-  // 20260929be：批量勾选多个访客 → 直接移入某个分组（与建立群聊同交互）
+  // 20260929be：批量勾选多个访客 → 直接移入某个分组（与建立群聊同交互）；20261001cp：群聊 id 同样可移入
   $('#batch-move').onclick = () => {
-    if (batchSelected.size === 0) { showToast('请先勾选访客'); return; }
+    if (batchSelected.size === 0) { showToast('请先勾选访客或群聊'); return; }
     if (charGroups.length === 0) { showToast('还没有分组，先在「访客分组」里新建一个'); return; }
     openModal(`
-      <div style="font-size:17px;font-weight:600;margin-bottom:14px;">把 ${batchSelected.size} 位访客移入分组</div>
+      <div style="font-size:17px;font-weight:600;margin-bottom:14px;">把 ${batchSelected.size} 项（访客/群聊）移入分组</div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px;">
         ${charGroups.map((g, gi) => `
           <button class="btn" style="justify-content:flex-start;" data-bm-group="${gi}">${icon('folder', 15)} ${escapeHtml(g.name)}（${(g.memberIds || []).length}）</button>
@@ -2147,21 +2205,42 @@ function renderBatchList() {
         batchSelected = new Set();
         closeModal();
         renderChatList();
-        miniToast(`已把 ${moved} 位访客移入「${grp.name}」`);
+        miniToast(`已把 ${moved} 项移入「${grp.name}」`);
       };
     });
   };
   $('#batch-group').onclick = () => {
-    if (batchSelected.size < 2) { showToast('至少选择 2 个访客才能建群'); return; }
-    createGroup([...batchSelected]);
+    // 20261001cp：群聊不参与建群——从所选里剔除群 id，纯访客 ≥2 才可建
+    const charIds = [...batchSelected].filter(id => !isGroupId(id));
+    if (charIds.length < 2) { showToast('至少选择 2 个访客才能建群（群聊不能参与建群）'); return; }
+    createGroup(charIds);
   };
   $('#batch-delete').onclick = () => {
-    if (batchSelected.size === 0) { showToast('请先勾选访客'); return; }
-    showConfirm(`确定删除选中的 ${batchSelected.size} 个访客吗？此操作无法撤销。`, async () => {
-      for (const id of batchSelected) await deleteCharacter(id);
+    if (batchSelected.size === 0) { showToast('请先勾选访客或群聊'); return; }
+    // 20261001cp：访客=删除角色；群聊=解散（与群设置「解散群聊」同语义：消息保留、清分组引用）
+    const delChars = [...batchSelected].filter(id => !isGroupId(id));
+    const delGroups = [...batchSelected].filter(isGroupId);
+    const parts = [];
+    if (delChars.length) parts.push(`删除选中的 ${delChars.length} 位访客`);
+    if (delGroups.length) parts.push(`解散 ${delGroups.length} 个群聊`);
+    showConfirm(`确定${parts.join('、')}吗？此操作无法撤销。`, async () => {
+      for (const id of delChars) await deleteCharacter(id);
+      for (const gid of delGroups) {
+        chatGroups = chatGroups.filter(x => x.id !== gid);
+        let cgDirty = false;
+        charGroups.forEach(cg => {
+          const before = (cg.memberIds || []).length;
+          cg.memberIds = (cg.memberIds || []).filter(x => x !== gid);
+          if (cg.memberIds.length !== before) cgDirty = true;
+        });
+        if (cgDirty) await saveCharGroups();
+        if (currentGroupId === gid) currentGroupId = null;
+      }
+      if (delGroups.length) await saveGroups();
       batchMode = false;
       batchSelected = new Set();
       renderChatList();
+      miniToast(delGroups.length ? `已删除 ${delChars.length} 位访客、解散 ${delGroups.length} 个群聊` : `已删除 ${delChars.length} 位访客`);
     });
   };
 }
@@ -9609,9 +9688,14 @@ async function showSettingsModal() {
       后台保活设置引导 <span>🛡️</span>
     </button>
 
-    <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-clear-cache">
+    <button class="btn block" style="margin-bottom:6px;justify-content:space-between;" id="btn-clear-cache">
       清除多余缓存与数据 <span>🧹</span>
     </button>
+    <div style="font-size:11.5px;color:var(--text-tertiary);margin:-2px 0 12px;line-height:1.65;">
+      与「数据管理 → 数据迁移 → 清除冗余缓存（旧版遗留）」是<b>同一个功能</b>（两个入口，清的东西完全一样）：
+      只清缓存类冗余——Cache 存储、Service Worker、旧版残留数据库、不属于任何访客的孤儿消息，
+      <b>不动</b>访客、群聊、聊天记录、书信、字卡、记忆宫殿等正式数据；清除后会弹窗建议刷新页面。
+    </div>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-clear-all-chat">
       清除所有聊天记录 <span>💬</span>
     </button>
@@ -14229,7 +14313,9 @@ async function charSendLetter(c, opts = {}) {
     const cs = getCharChatSettings(c);
     if (_inChatWith(c.id)) {
       appendMessage(msg); scrollToBottom();
-      openLetterOverlay(msg, c);
+      // 20261001cp：超频全屏动画（礼物跳出/开箱/惊喜大字）进行中 → 等它退场再开信封，
+      // 避免信封垫底被礼物动画盖住、礼物流程走完后「直接变成书信页面」
+      (async () => { try { await _waitOcAnimDone(); } catch (e) {} openLetterOverlay(msg, c); })();
       // 20260929aw：正在看的信件直接标记已读——防退出聊天后导航页仍提示未读
       setSetting('lastRead_' + c.id, Date.now());
     } else {
@@ -18267,13 +18353,15 @@ function _ocShowGiftBurst(kind, opts = {}) {
       if (burstDone) return;
       burstDone = true;
       burstClear();
-      if (opts.keepAlive) { layer.classList.add('oc-burst-settle'); resolve({ layer, box, subject }); }
+      if (opts.keepAlive) { const _sb = layer.querySelector('.oc-skip-btn'); if (_sb) _sb.remove(); layer.classList.add('oc-burst-settle'); resolve({ layer, box, subject }); }
       else { layer.remove(); resolve(isSurprise ? { layer, subject } : null); }
     };
     if (opts.keepAlive) {
       // bb：跳出落地（0.5s 延迟 + 1.2s 跳出）后裂口/阴影淡出，主体留在原地 → 交给后续流程（同一 DOM）
       // gift=盒子交给开箱流程形变；surprise=问号交给初次触发流程悬停（box 为 null）
-      burstLater(() => layer.classList.add('oc-burst-settle'), 1950);
+      // 20261001cp：settle 交棒时移除「跳过动画」按钮——开箱场景接管后该按钮已无动画可跳
+      // （点击只会撞上 burstDone 直接 return，成了死按钮残留在「打开礼物」下方），立即移除
+      burstLater(() => { const _sb = layer.querySelector('.oc-skip-btn'); if (_sb) _sb.remove(); layer.classList.add('oc-burst-settle'); }, 1950);
       burstLater(() => { if (!burstDone) { burstDone = true; resolve({ layer, box, subject }); } }, 2350);
       return;
     }
@@ -19404,6 +19492,27 @@ function _ocAnimQueue(run) {
   return p;
 }
 
+/* 20261001cp：全屏动画层活跃检测 + 等待排空——
+   书信开信动画（letter-overlay z320）此前与超频动画（#oc-drop z500 / 开箱场景 z704 /
+   惊喜大字）互不知晓，进入聊天页时两个钩子（_ocOnEnterChat / _letterOnEnterChat）并发，
+   信封先垫底、礼物动画盖上来，玩家走完礼物流程后面对的下一层就是信封——
+   观感「礼物/惊喜弹窗没弹，直接变成书信页面」。
+   现在信封到达前先等全部超频全屏层退场（自然结束/跳过/开箱完成均会移除层），
+   保证礼物/惊喜的弹窗优先呈现，信封排队随后。maxMs 兜底防死等。 */
+function _ocAnimBusy() {
+  return !!document.querySelector('#oc-glitch, #oc-rift, #oc-drop, #oc-open, .oc-unbox-scene, #oc-surprise-big');
+}
+function _waitOcAnimDone(maxMs = 60000) {
+  return new Promise(resolve => {
+    const t0 = Date.now();
+    const tick = () => {
+      if (!_ocAnimBusy() || Date.now() - t0 > maxMs) return resolve();
+      setTimeout(tick, 300);
+    };
+    tick();
+  });
+}
+
 /* 进入访客聊天页：处理挂起的超频动画与未读 */
 async function _ocOnEnterChat(c) {
   if (!c) return;
@@ -19451,6 +19560,9 @@ async function _letterOnEnterChat(c) {
     const unreadLetters = all.filter(x => x.type === 'letter' && x.from === 'them' && !x.read && !x.groupId);
     const latest = unreadLetters.length ? unreadLetters[unreadLetters.length - 1] : null;
     if (latest) {
+      // 20261001cp：与 _ocOnEnterChat 并发——先等超频全屏动画退场再播开信动画，
+      // 保证礼物/惊喜弹窗优先，信封不垫底（详见 _waitOcAnimDone 注释）
+      try { await _waitOcAnimDone(); } catch (err2) {}
       openLetterOverlay(latest, c);
     }
     // 有多封时细窗提示
