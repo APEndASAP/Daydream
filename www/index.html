@@ -30,17 +30,11 @@
     (function () {
       try {
         // 20260930cd：GitHub Pages（*.github.io）为正式发布入口，与 8902 同为合法数据源，不再拦截跳转
-        // 20260930cg-apk：Capacitor 安卓壳（webDir=www，androidScheme=https）通过 https://localhost 加载，
-        //   也是合法数据源（APK 内离线 IndexedDB），放行不跳转
-        var hn = location.hostname;
         var ok = (location.hostname === '127.0.0.1' && location.port === '8902')
-          || /(^|\.)github\.io$/i.test(hn)
-          || hn === 'localhost'
-          || hn === '127.0.0.1'   // Capacitor androidScheme 兼容（http scheme 时 localhost/127.0.0.1）
-          || location.protocol === 'capacitor:';
+          || /(^|\.)github\.io$/i.test(location.hostname);
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20261001cm' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20261001cn' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -54,13 +48,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261001cm'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261001cn'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20261001cm">
+  <link rel="stylesheet" href="css/style.css?v=20261001cn">
 </head>
 <body>
   <div id="app">
@@ -285,11 +279,11 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20261001cm"></script>
-  <script src="js/db.js?v=20261001cm"></script>
-  <script src="js/icons.js?v=20261001cm"></script>
-  <script src="js/emoji-img.js?v=20261001cm"></script>
-  <script src="js/cards.js?v=20261001cm"></script>
-  <script src="js/app.js?v=20261001cm"></script>
+  <script src="js/splash.js?v=20261001cn"></script>
+  <script src="js/db.js?v=20261001cn"></script>
+  <script src="js/icons.js?v=20261001cn"></script>
+  <script src="js/emoji-img.js?v=20261001cn"></script>
+  <script src="js/cards.js?v=20261001cn"></script>
+  <script src="js/app.js?v=20261001cn"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001cm'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001cn'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -237,6 +237,7 @@ async function init() {
     // 请求通知权限（2.5：后台消息/通话提醒）；浏览器要求手势 → 首次点击时补申请
     requestNotificationPermission();
     setupNotifyFirstGesture();
+    bmSchedulePageTimers(); // 20261001cn：网页端行程提醒到点调度（APK 端系统层已保证，空操作）
   } catch (e) {
     console.error('[白日梦] 界面初始化异常', e);
   }
@@ -250,12 +251,9 @@ async function init() {
    顶部就显示一条警示——数据没丢，全在 8902 那份里；关闭后本次会话（同 origin）不再提示 */
 function showDataSourceWarning() {
   // 20260930cd：GitHub Pages（*.github.io）为正式发布入口，不显示"数据源"警示
-  // 20260930cg-apk：Capacitor 安卓壳（https://localhost / capacitor://）同为合法数据源，不警示
-  const hn = location.hostname;
   const on8902 = location.hostname === '127.0.0.1' && location.port === '8902';
-  const onPages = /(^|\.)github\.io$/i.test(hn);
-  const onCapacitor = hn === 'localhost' || (hn === '127.0.0.1') || location.protocol.startsWith('capacitor');
-  if (on8902 || onPages || onCapacitor) return;
+  const onPages = /(^|\.)github\.io$/i.test(location.hostname);
+  if (on8902 || onPages) return;
   try { if (sessionStorage.getItem('bm_srcwarn')) return; } catch (e) {}
   const where = location.protocol === 'file:' ? '本地文件（file://）方式'
     : (location.hostname + (location.port ? ':' + location.port : ''));
@@ -2943,6 +2941,8 @@ async function sendMessage(text) {
   appendMessage(myMsg);
   $('#chat-input').value = '';
   palAutoCollectMaybe(currentCharId, null); // 记忆宫殿：系统随机收藏（每线程每天至多 1 次，细则四）
+  // 20261001cn：日程+闹钟自动检测（字卡/AI 通用，系统本地检测，不阻塞角色回复）
+  try { maybeDetectScheduleReminder(currentCharId, trimmed); } catch (e) {}
 
   // 角色回复
   await scheduleCharReply(currentCharId);
@@ -3807,6 +3807,320 @@ async function bmNativeNotify(LN, c, body, title) {
       }],
     });
   } catch (e) {}
+}
+
+/* ---------- 20261001cn：聊天日程+闹钟自动检测（字卡/AI 模式通用） ----------
+   玩家在聊天里说出某条日程并要闹钟/提醒（「提醒我/叫我/闹钟/别忘了」等语气）时，
+   系统自动检测（本地正则，无独立按键、不依赖 AI）→ 先弹「xx访客正在记录你的重要行程」
+   → 确认后写入：安装版=系统日历事件（日程提醒）+ 到点精确提醒通知（锁屏/横幅可见）；
+   网页版=页面打开期间到点应用内弹窗+系统通知。成功后弹「访客已经成功记录你的行程」。 */
+
+const BM_SCHED_INTENT_RE = /(提醒我|提醒一下|提醒我一下|叫醒我|叫我|喊我|喊醒我|定个?闹钟|设个?闹钟|上个?闹钟|闹铃|闹钟提醒|别让我忘|别忘了|记得提醒|记得叫我)/;
+const BM_SCHED_NEG_RE = /(不用提醒|别提醒|不要提醒|不需要提醒|不用叫|别叫我|不用闹钟|取消提醒|取消闹钟|别设闹钟|不用定闹钟)/;
+const BM_SCHED_KV = 'bmScheduleReminders'; // kv 键：行程记录（防重 + 网页端到点调度）
+
+async function bmLoadSchedules() {
+  try { const v = await getSetting(BM_SCHED_KV, []); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+async function bmSaveSchedules(list) {
+  try { await setSetting(BM_SCHED_KV, list); } catch (e) {}
+}
+
+const BM_SCHED_TIME_RE = /([0-9零〇一二两三四五六七八九十]{1,3})\s*[点时:：]\s*(半|一刻|三刻|整|([0-9零〇一二两三四五六七八九十]{1,3})\s*分?)?/;
+
+/* 中文数字换算（时刻用）：两点→2 / 十二→12 / 二十一点→21 */
+function bmCnNum(str) {
+  const t = String(str || '').trim();
+  if (/^\d+$/.test(t)) return +t;
+  const M = { '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 };
+  if (t === '十') return 10;
+  let m = t.match(/^十([一二两三四五六七八九])$/); if (m) return 10 + M[m[1]];
+  m = t.match(/^([一二两三四五六七八九])十$/); if (m) return M[m[1]] * 10;
+  m = t.match(/^([一二两三四五六七八九])十([一二两三四五六七八九])$/); if (m) return M[m[1]] * 10 + M[m[2]];
+  return M[t] !== undefined ? M[t] : NaN;
+}
+
+function bmFormatCNTime(ts) {
+  try {
+    const d = new Date(ts);
+    const today = new Date();
+    const tomorrow = new Date(today.getTime() + 864e5);
+    const wd = '日一二三四五六'[d.getDay()];
+    const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
+    const dayTxt = d.toDateString() === today.toDateString() ? '今天'
+      : d.toDateString() === tomorrow.toDateString() ? '明天'
+      : (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    return dayTxt + '（周' + wd + '）' + hh + ':' + mm;
+  } catch (e) { return String(ts); }
+}
+
+/* 中文「日期+时刻」解析：从一句话解析出 { at, title }；解析不出完整时刻返回 null（无法定闹钟） */
+function bmParseCNDateTime(text, now) {
+  const s = String(text || '');
+  now = now || Date.now();
+  const base = new Date(now);
+  let m;
+  /* --- 日期 --- */
+  let y = base.getFullYear(), mo = base.getMonth(), day = base.getDate();
+  let hasDate = false, dateOff = 0, rollMode = '';   // rollMode: 'month'=单「X号」已过滚下月 / 'year'=「X月X日」已过滚明年
+  if ((m = s.match(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/))) {
+    y = +m[1]; mo = +m[2] - 1; day = +m[3]; hasDate = true;
+  } else if ((m = s.match(/(\d{1,2})月(\d{1,2})[日号]/))) {
+    mo = +m[1] - 1; day = +m[2]; hasDate = true; rollMode = 'year';
+  } else if ((m = s.match(/大后天|后天|明天|明早|明晚|明儿|今晚|今早|今天|今日/))) {
+    const w = m[0];
+    dateOff = w === '大后天' ? 3 : w === '后天' ? 2 : (w === '明天' || w === '明早' || w === '明晚' || w === '明儿') ? 1 : 0;
+  } else if ((m = s.match(/(下下|下|这|本)?个?(?:周|星期)([一二三四五六日天])/))) {
+    const map = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+    const want = map[m[2]];
+    if (m[1] === '下' || m[1] === '下下') {
+      // 「下周X」= 下一自然周（周一起）的 X；今天恰逢周日时「下周一」就是明天
+      const monOff = (base.getDay() + 6) % 7;   // 今天距本周一的天数
+      const wantIdx = (want + 6) % 7;           // 周一=0 … 周日=6
+      let off = 7 - monOff + wantIdx;
+      if (m[1] === '下下') off += 14;
+      dateOff = off;
+    } else {
+      let off = (want - base.getDay() + 7) % 7; if (off === 0) off = 7;
+      dateOff = off;
+    }
+  } else if ((m = s.match(/(\d{1,2})[日号](?!\d)/))) {
+    // 单独的「15号 / 15日」（前面没有「X月」）——本月已过则滚动到下月同日
+    day = +m[1]; hasDate = true; rollMode = 'month';
+  }
+  /* --- 时刻（必须有具体时刻才能定闹钟） --- */
+  const segM = s.match(/今晚|今早|凌晨|清晨|清早|早上|早晨|上午|中午|午后|下午|傍晚|黄昏|晚上|夜里|深夜|半夜/);
+  const seg = segM ? segM[0] : '';
+  let h = -1, mi = 0, hasTime = false;
+  if ((m = s.match(BM_SCHED_TIME_RE))) {
+    const hn = bmCnNum(m[1]);
+    if (!isNaN(hn)) {
+      hasTime = true; h = hn;
+      if (m[2] === '半') mi = 30;
+      else if (m[2] === '一刻') mi = 15;
+      else if (m[2] === '三刻') mi = 45;
+      else if (m[3] !== undefined) { const mn = bmCnNum(m[3]); mi = isNaN(mn) ? 0 : mn; }
+      else mi = 0;
+    }
+  } else if ((m = s.match(/(\d{1,2})\s*[::：]\s*(\d{2})/))) {
+    hasTime = true; h = +m[1]; mi = +m[2];
+  }
+  if (!hasTime) return null;
+  if (h > 23 || mi > 59) return null;
+  /* 12 小时制修正 */
+  if (seg === '下午' || seg === '午后' || seg === '傍晚' || seg === '黄昏') { if (h >= 1 && h <= 11) h += 12; }
+  else if (seg === '晚上' || seg === '今晚' || seg === '夜里' || seg === '深夜') { if (h >= 1 && h <= 11) h += 12; else if (h === 12) h = 0; }
+  else if (seg === '中午') { if (h >= 1 && h <= 2) h += 12; }
+  else if (seg === '半夜') { if (h === 12) h = 0; }
+  /* --- 组装 --- */
+  let at;
+  if (hasDate) {
+    const dd = new Date(y, mo, day);
+    if (dd.getDate() !== day) { mo += 1; }  // day 超出当月天数（如 9 月说 31 号）→ 顺延到下月
+    at = new Date(y, mo, day, h, mi, 0, 0).getTime();
+    if (rollMode === 'month' && at <= now) { mo += 1; at = new Date(y, mo, day, h, mi, 0, 0).getTime(); }
+    if (rollMode === 'year' && at <= now) { y += 1; at = new Date(y, mo, day, h, mi, 0, 0).getTime(); }
+    if (at <= now) return null;             // 指定了已过去的日期 → 不触发
+  } else {
+    at = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, mi, 0, 0).getTime() + dateOff * 864e5;
+    if (at <= now) at += 864e5;             // 只说时刻且已过 → 明天同一时刻
+  }
+  if (at - now < 120000) return null;       // 距今不足 2 分钟 → 不触发（防误报连弹）
+  /* --- 行程内容：剔除日期/时刻/意图短语后的剩余文本 --- */
+  let title = s
+    .replace(/[，,。.!！？?~～、；;：:\s]+/g, ' ')
+    .replace(/凌晨|清晨|清早|今晚|今早|早上|早晨|上午|中午|午后|下午|傍晚|黄昏|晚上|夜里|深夜|半夜/g, ' ')
+    .replace(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/g, ' ')
+    .replace(/(\d{1,2})月(\d{1,2})[日号]/g, ' ')
+    .replace(/(\d{1,2})[日号](?!\d)/g, ' ')
+    .replace(/大后天|后天|明天|明早|明晚|明儿|今晚|今早|今天|今日/g, ' ')
+    .replace(/(下下|下|这|本)?个?(周|星期)([一二三四五六日天])/g, ' ')
+    .replace(BM_SCHED_TIME_RE, ' ')
+    .replace(/(\d{1,2})\s*[::：]\s*(\d{2})/g, ' ')
+    .replace(BM_SCHED_INTENT_RE, ' ')
+    .replace(/到时候|到点|麻烦|拜托|帮忙|帮我|请你|一下|我要|我得|我打算|我准备|我需要|我要记得/g, ' ')
+    .replace(/(^|\s)要(?=[^\s])/g, '$1')   // 「3点要开会」删时刻后残留的孤立「要」（不碰「重要/主要」）
+    .replace(/^[，,。.!！？?~～、；;：:\s]*(?:我|要)+[，,。.!！？?~～、；;：:\s]*/, '')
+    .replace(/[，,。.!！？?~～、；;：:\s]*[哦啊呀哈了呢吧嘛呀]?[，,。.!！？?~～、；;：:\s]*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!title) title = '行程提醒';
+  if (title.length > 24) title = title.slice(0, 24) + '…';
+  return { at, title };
+}
+
+/* 检测入口：sendMessage 单聊路径调用（字卡/AI 通用） */
+async function maybeDetectScheduleReminder(charId, text) {
+  try {
+    if (!charId || !text) return;
+    if (BM_SCHED_NEG_RE.test(text)) return;           // 明确说不用提醒 → 不触发
+    if (!BM_SCHED_INTENT_RE.test(text)) return;       // 没有提醒/闹钟语气 → 不触发
+    const parsed = bmParseCNDateTime(text);
+    if (!parsed) return;
+    const c = characters.find(x => x.id === charId);
+    if (!c) return;
+    // 防重：同访客 + 同时刻 + 同事项已有未触发记录 → 不再弹
+    const list = await bmLoadSchedules();
+    const key = charId + '|' + parsed.at + '|' + parsed.title;
+    if (list.some(it => it && !it.fired && (it.charId + '|' + it.at + '|' + it.title) === key)) return;
+    setTimeout(() => { try { showScheduleRecordModal({ charId, charName: c.name, at: parsed.at, title: parsed.title }, c); } catch (e) {} }, 700);
+  } catch (e) { console.error('[日程检测]', e); }
+}
+
+/* 弹窗①：「xx访客正在记录你的重要行程」（展示解析结果，确认后写入系统） */
+function showScheduleRecordModal(item, c) {
+  openModal(`
+    <div style="text-align:center;margin-bottom:10px;">
+      <div style="font-size:40px;margin-bottom:8px;">⏰</div>
+      <div style="font-size:16.5px;font-weight:600;line-height:1.55;">「${escapeHtml(item.charName)}」访客正在记录你的重要行程</div>
+      <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:6px;">系统在聊天里检测到了日程与提醒请求</div>
+    </div>
+    <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
+      <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}</div>
+      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
+    </div>
+    <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">安装版将写入<b>系统日历（日程提醒）</b>并在到点前 1 分钟弹出<b>提醒通知</b>（锁屏可见）；网页版在白日梦页面打开时到点提醒。如识别有误可取消。</div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn" style="flex:1;" id="bm-sched-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="bm-sched-ok">确认记录</button>
+    </div>`);
+  $('#bm-sched-cancel').onclick = closeModal;
+  $('#bm-sched-ok').onclick = () => { bmCommitScheduleReminder(item); };
+}
+
+/* 写入系统：APK=精确通知+系统日历；网页=通知授权+页面内调度。成功后弹窗② */
+async function bmCommitScheduleReminder(item) {
+  const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
+  const results = [];
+  if (PLG) {
+    /* ① 到点精确提醒通知（提前 1 分钟；USE_EXACT_ALARM 下 AlarmManager 精确调度） */
+    try {
+      const LN = PLG.LocalNotifications;
+      if (LN && typeof LN.schedule === 'function') {
+        try { await LN.createChannel({ id: 'bm-schedule', name: '行程提醒', description: '访客为你记录的日程到点提醒', importance: 5, visibility: 'PUBLIC' }); } catch (e) {}
+        try { if (typeof LN.requestPermissions === 'function') await LN.requestPermissions(); } catch (e) {}
+        await LN.schedule({
+          notifications: [{
+            id: Math.abs(Math.floor(item.at % 2147483000)),
+            title: '⏰ ' + item.charName + ' 提醒你',
+            body: item.title,
+            channelId: 'bm-schedule',
+            smallIcon: 'res://ic_launcher',
+            schedule: { at: new Date(item.at - 60 * 1000), allowWhileIdle: true },
+          }],
+        });
+        results.push('到点提醒通知');
+      }
+    } catch (e) { console.error('[行程通知写入]', e); }
+    /* ② 系统日历事件（日程提醒；插件自带 READ/WRITE_CALENDAR 运行时申请） */
+    try {
+      const Cal = PLG.CapacitorCalendar;
+      if (Cal && typeof Cal.createEvent === 'function') {
+        try {
+          const perm = await Cal.checkAllPermissions();
+          if (!perm || perm.writeCalendar !== 'granted' || perm.readCalendar !== 'granted') await Cal.requestFullCalendarAccess();
+        } catch (e) {}
+        await Cal.createEvent({
+          title: '【白日梦】' + item.charName + '：' + item.title,
+          startDate: item.at,
+          endDate: item.at + 30 * 60 * 1000,
+          description: '由访客「' + item.charName + '」在聊天中记录',
+          alerts: [0],
+        });
+        results.push('系统日历日程');
+      }
+    } catch (e) { console.error('[行程日历写入]', e); }
+  } else {
+    /* 网页端：授权系统通知 + 存档由页面调度 */
+    try { if (typeof Notification !== 'undefined' && Notification.permission === 'default') requestNotificationPermission(); } catch (e) {}
+    results.push('页面到点提醒');
+  }
+  /* 存档（防重 + 网页端调度；同时清 7 天前的已触发记录） */
+  try {
+    const list = await bmLoadSchedules();
+    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, createdAt: Date.now(), fired: false });
+    await bmSaveSchedules(list.filter(it => !it || (!it.fired || Date.now() - it.at < 7 * 864e5)).slice(-200));
+  } catch (e) {}
+  closeModal();
+  try { bmSchedulePageTimers(); } catch (e) {}
+  openModal(`
+    <div style="text-align:center;margin-bottom:10px;">
+      <div style="font-size:40px;margin-bottom:8px;">✅</div>
+      <div style="font-size:16.5px;font-weight:600;line-height:1.55;">「${escapeHtml(item.charName)}」访客已经成功记录你的行程</div>
+    </div>
+    <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
+      <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}</div>
+      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
+    </div>
+    <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">已写入：${escapeHtml(results.join(' + ') || '行程记录')}${PLG ? '' : '（安装版还会同步写入系统日历与系统提醒通知）'}</div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn primary" style="flex:1;" id="bm-sched-done">好的</button>
+    </div>`);
+  $('#bm-sched-done').onclick = closeModal;
+}
+
+/* 网页端到点调度：启动/写入后调用；APK 端系统层已保证，直接跳过 */
+let _bmSchedTimers = [];
+function bmSchedulePageTimers() {
+  if (window.Capacitor) return;
+  try {
+    _bmSchedTimers.forEach(clearTimeout);
+    _bmSchedTimers = [];
+    bmLoadSchedules().then((list) => {
+      const now = Date.now();
+      for (const it of (list || [])) {
+        if (!it || it.fired) continue;
+        if (it.at <= now) { bmFireScheduleReminder(it); continue; }  // 错过的行程补弹一次
+        if (it.at - now < 2147000000) _bmSchedTimers.push(setTimeout(() => { bmFireScheduleReminder(it); }, it.at - now));
+      }
+    });
+  } catch (e) {}
+}
+
+async function bmFireScheduleReminder(it) {
+  try {
+    const list = await bmLoadSchedules();
+    const t = list.find(x => x && x.id === it.id);
+    if (t) { t.fired = true; await bmSaveSchedules(list); }
+  } catch (e) {}
+  try {
+    const c = characters.find(x => x.id === it.charId) || null;
+    notifyIncoming(c, '⏰ 行程到点：' + it.title, (it.charName || (c && c.name) || '访客') + ' 的行程提醒');
+  } catch (e) {}
+  try {
+    openModal(`
+      <div style="text-align:center;margin-bottom:10px;">
+        <div style="font-size:40px;margin-bottom:8px;">⏰</div>
+        <div style="font-size:16.5px;font-weight:600;line-height:1.55;">「${escapeHtml(it.charName || '访客')}」提醒你：到点啦</div>
+      </div>
+      <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
+        <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(it.at)}</div>
+        <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(it.title)}</div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px;">
+        <button class="btn primary" style="flex:1;" id="bm-sched-fired-ok">知道了</button>
+      </div>`);
+    $('#bm-sched-fired-ok').onclick = closeModal;
+  } catch (e) {}
+}
+
+/* 悬浮窗权限（SYSTEM_ALERT_WINDOW 特殊权限，无法原生弹窗，只能跳系统设置页授权）
+   插件 capacitor-overlay：checkPermission() / openOverlaySettings()；网页端不支持 */
+async function requestOverlayPermission() {
+  const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
+  const OV = PLG ? (PLG.Overlay || PLG.CapacitorOverlay || null) : null;
+  if (!OV || typeof OV.openOverlaySettings !== 'function') {
+    miniToast('网页版不支持系统悬浮窗（安装版支持，可在软件内悬浮）');
+    return false;
+  }
+  try {
+    let granted = false;
+    try { const st = await OV.checkPermission(); granted = !!(st && st.granted); } catch (e) {}
+    if (granted) { miniToast('悬浮窗权限已开启'); return true; }
+    await OV.openOverlaySettings();
+    miniToast('请在列表中找到「白日梦」，允许「显示在其他应用上层」');
+    return false;
+  } catch (e) { console.error('[悬浮窗权限]', e); miniToast('悬浮窗设置页打开失败'); return false; }
 }
 
 function formatDuration(sec) {
@@ -8869,7 +9183,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
           <option value="overlay" ${floatSettings.floatMode === 'overlay' ? 'selected' : ''}>在手机/其他软件上悬浮</option>
         </select>
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">「在其他软件上悬浮」需要系统授予悬浮窗权限（网页端为通知权限）</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">「在其他软件上悬浮」需要系统授予悬浮窗权限（网页端为通知权限）
+        <button class="btn" id="cs-overlay-ask" style="margin-left:8px;padding:3px 12px;font-size:12px;display:inline-block;">申请悬浮窗权限</button>
+      </div>
     </div>
 
     <div class="field">
@@ -9029,6 +9345,8 @@ function bindChatSettings(s, onSave) {
       chatSettings.float2Mode = s.float2Mode;
       refreshF2ModeUI();
       miniToast(s.float2Mode === 'system' ? '已设为「其他应用上悬浮」（网页端自动回退软件内）' : '已设为「悬浮在软件内」');
+      // 20261001cn：切到「其他应用上悬浮」时申请系统悬浮窗权限（SYSTEM_ALERT_WINDOW）
+      if (s.float2Mode === 'system') requestOverlayPermission();
     };
   });
   // 20260929bi：系统通知开关 + 权限状态 + 申请按钮（用户手势内申请，浏览器才会弹授权框）
@@ -9061,6 +9379,9 @@ function bindChatSettings(s, onSave) {
   syncNotifyStatus();
   const nAsk = $('#cs-notify-ask');
   if (nAsk) nAsk.onclick = () => { requestNotificationPermission(); setTimeout(syncNotifyStatus, 1000); };
+  // 20261001cn：悬浮窗权限申请按钮（SYSTEM_ALERT_WINDOW，安装版跳系统设置页）
+  const oAsk = $('#cs-overlay-ask');
+  if (oAsk) oAsk.onclick = () => { requestOverlayPermission(); };
   // 20260929ah：聊天模式切换（仅总聊天设置渲染了该行；立即生效，与顶栏开关同款逻辑）
   document.querySelectorAll('.cs-ai-btn').forEach(btn => {
     btn.onclick = async () => {
@@ -9178,7 +9499,9 @@ function bindChatSettings(s, onSave) {
     floatSettings.floatMode = $('#cs-float-mode').value;
     await setSetting('floatSettings', floatSettings);
     if (floatSettings.floatMode === 'overlay') {
-      requestNotificationPermission();
+      // 20261001cn：安装版申请系统悬浮窗权限（SYSTEM_ALERT_WINDOW）；网页端仍走通知授权
+      if (window.Capacitor) requestOverlayPermission();
+      else requestNotificationPermission();
     }
     s.soundOn = $('#cs-sound').checked;
     s.soundName = $('#cs-sound-name').value;
@@ -9286,7 +9609,7 @@ async function showSettingsModal() {
     </button>
 
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-clear-cache">
-      清除缓存 <span>🧹</span>
+      清除多余缓存与数据 <span>🧹</span>
     </button>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-clear-all-chat">
       清除所有聊天记录 <span>💬</span>
@@ -9381,9 +9704,8 @@ async function showSettingsModal() {
   $('#btn-anniv-card-setting').onclick = () => showAnnivCardSettingModal();
   $('#btn-software-notice').onclick = () => showSoftwareNotice({ review: true }); // 20260929bk：总设置重看软件声明
   $('#btn-keepalive-guide').onclick = () => showKeepAliveModal(); // 20260929bl：后台保活设置引导
-  $('#btn-clear-cache').onclick = () => {
-    miniToast('缓存已清理（网页端无多余缓存项）');
-  };
+  // 20261001cn：清除缓存不再是空壳——直接执行真实的冗余清理（与「数据管理」页同一逻辑）
+  $('#btn-clear-cache').onclick = () => { clearStaleCache(); };
   $('#btn-clear-all-chat').onclick = () => {
     showConfirm('确定清除所有访客的聊天记录吗？此操作无法撤销。', async () => {
       const msgs = await idbGetAll('messages');
@@ -10036,6 +10358,16 @@ async function clearStaleCache() {
         }
       }
     }
+  } catch (e) {}
+  // ⑤ 孤儿聊天记录（20261001cn）：不属于任何现存访客的单聊消息——历史版本残留/导入错位产生的多余数据组
+  try {
+    const curIds = new Set((typeof characters !== 'undefined' ? characters : []).map(c => c.id));
+    const msgs = await idbGetAll('messages');
+    let orphan = 0;
+    for (const mm of msgs) {
+      if (mm && !mm.groupId && mm.charId && !curIds.has(mm.charId)) { await idbDelete('messages', mm.id); orphan++; }
+    }
+    if (orphan) cleaned.push('孤儿聊天记录 ' + orphan + ' 条');
   } catch (e) {}
   if (cleaned.length) {
     openModal(`
