@@ -80,34 +80,53 @@ jobs:
       # 20261001ck：① 固化签名 + ② versionCode 递增——两者缺一不可，否则无法覆盖安装。
       #   根因：Capacitor 默认 debug 签名每次 CI 都是全新 runner 随机生成的 keystore（签名不一致），
       #   且 versionCode 恒为 1（版本相同），导致新 APK 只能卸载重装、数据丢失。
-      #   方案：把仓库内固化的 keystore/debug.keystore 覆盖到 ~/.android/debug.keystore
-      #   （Android 默认 debug 签名位置，assembleDebug 自动使用，无需改 build.gradle），
-      #   versionCode 用时间戳 YYYYMMDDHHMM 单调递增。
+      #   方案：把仓库固化的 keystore 转 JKS 放到 android/app/（与 build.gradle 同目录），
+      #   并显式注入 signingConfigs 指向它（storeFile file('debug.keystore') 同目录必不 null），
+      #   versionCode 用分钟级 Unix 时间戳单调递增。
       - name: 固化签名 + 递增 versionCode
         run: |
-          # ① 把仓库固化的 PKCS12 keystore 转成标准 JKS，覆盖 Android 默认 debug 签名位置
-          #   （assembleDebug 自动读 ~/.android/debug.keystore，无需改 build.gradle，最稳）
-          mkdir -p "$HOME/.android"
+          # ① 把仓库固化的 PKCS12 keystore 转成标准 JKS，放到 android/app/（与 build.gradle 同目录）
           keytool -importkeystore \
             -srckeystore keystore/debug.keystore -srcstoretype PKCS12 -srcstorepass android \
             -srcalias androiddebugkey \
-            -destkeystore "$HOME/.android/debug.keystore" -deststoretype JKS -deststorepass android \
+            -destkeystore android/app/debug.keystore -deststoretype JKS -deststorepass android \
             -destalias androiddebugkey -destkeypass android \
             -noprompt
-          echo "[1/2] debug.keystore 已固化为标准 JKS 到 ~/.android/"
+          echo "[1/3] debug.keystore 已转 JKS 到 android/app/"
 
-          # ② versionCode 单调递增：分钟级 Unix 时间戳（约 3000 万，远小于 int 上限 21 亿，
-          #   持续递增够用 8 年；旧版 versionCode=1，新值必然 >1 可覆盖安装）
-          cat > /tmp/bump-vc.js <<'NODE_EOF'
+          # ② 显式注入 signingConfigs + versionCode（storeFile 用同目录相对路径，绝不 null）
+          cat > /tmp/config-signing.js <<'NODE_EOF'
           const fs = require('fs');
           const p = 'android/app/build.gradle';
           let s = fs.readFileSync(p, 'utf8');
-          const vc = Math.floor(Date.now() / 60000); // 分钟级 Unix 时间戳
+
+          // versionCode 分钟级时间戳递增
+          const vc = Math.floor(Date.now() / 60000);
           s = s.replace(/versionCode\s+\d+/, 'versionCode ' + vc);
+
+          // 注入 signingConfigs（在 android { 之后）+ 让 debug/release 都用固定签名
+          if (!s.includes('signingConfigs')) {
+            const block = [
+              "    signingConfigs {",
+              "        release {",
+              "            storeFile file('debug.keystore')",
+              "            storePassword 'android'",
+              "            keyAlias 'androiddebugkey'",
+              "            keyPassword 'android'",
+              "        }",
+              "    }",
+            ].join('\n');
+            s = s.replace(/(android\s*\{)/, '$1\n' + block);
+          }
+          if (!s.includes('signingConfig signingConfigs.release')) {
+            s = s.replace(/(buildTypes\s*\{\s*release\s*\{)/, '$1\n            signingConfig signingConfigs.release');
+            s = s.replace(/(buildTypes\s*\{\s*release\s*\{[\s\S]*?\n\s*\})/, function(m){ return m + '\n        debug {\n            signingConfig signingConfigs.release\n        }\n'; });
+          }
           fs.writeFileSync(p, s);
-          console.log('[2/2] versionCode -> ' + vc);
+          console.log('[2/3] signingConfigs + versionCode ' + vc + ' 已注入');
           NODE_EOF
-          node /tmp/bump-vc.js
+          node /tmp/config-signing.js
+          echo "[3/3] 配置完成"
 
       - name: 构建 APK（Debug 签名，直接可安装）— 20260930cg
         working-directory: android
