@@ -34,7 +34,7 @@
           || /(^|\.)github\.io$/i.test(location.hostname);
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20261001cn' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20261001co' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -48,13 +48,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261001cn'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261001co'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20261001cn">
+  <link rel="stylesheet" href="css/style.css?v=20261001co">
 </head>
 <body>
   <div id="app">
@@ -279,11 +279,11 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20261001cn"></script>
-  <script src="js/db.js?v=20261001cn"></script>
-  <script src="js/icons.js?v=20261001cn"></script>
-  <script src="js/emoji-img.js?v=20261001cn"></script>
-  <script src="js/cards.js?v=20261001cn"></script>
-  <script src="js/app.js?v=20261001cn"></script>
+  <script src="js/splash.js?v=20261001co"></script>
+  <script src="js/db.js?v=20261001co"></script>
+  <script src="js/icons.js?v=20261001co"></script>
+  <script src="js/emoji-img.js?v=20261001co"></script>
+  <script src="js/cards.js?v=20261001co"></script>
+  <script src="js/app.js?v=20261001co"></script>
 </body>
 </html>

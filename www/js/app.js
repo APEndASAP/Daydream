@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001cn'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001co'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -2491,9 +2491,10 @@ function isKaomojiText(s) {
   if (!t || t.includes('\n')) return false;
   if (/[0-9\u3400-\u9FFF\uAC00-\uD7AF]/.test(t)) return false;        // 数字 / 汉字 / 谚文 → 正常文本
   if (/[A-Za-z\u00C0-\u024F\u0370-\u04FF]{2}/.test(t)) return false;  // 连续字母（单词）→ 正常文本
-  // 20260929bo：纯 emoji 长串（≥7 个）不再走单行——单行模式 nowrap+横向滑动，
-  // 超出气泡宽度的表情会被裁掉（用户反馈"发多个表情会被吞掉一些"），改回正常换行保证全量可见
-  if ((t.match(/\p{Extended_Pictographic}/gu) || []).length >= 7) return false;
+  // 20260929bo：纯 emoji 不再走单行——单行模式 nowrap+横向滑动，超出气泡宽度的表情会被
+  // 裁掉（用户反馈"发多个表情会被吞掉一些"；20261001co：阈值 7→2，实测发 3~5 个仍被裁掉
+  // 最后一个），含 2 个及以上 emoji 一律改回正常换行保证全量可见
+  if ((t.match(/\p{Extended_Pictographic}/gu) || []).length >= 2) return false;
   return [...t].length >= 2;
 }
 

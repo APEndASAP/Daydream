@@ -1316,13 +1316,14 @@ select.input option:checked { color: #fff; }
   display: block;
   cursor: pointer;
 }
-/* 表情包消息：固定正方形显示（5.10） */
+/* 表情包消息：按图片真实宽高比完整显示（20261001co——原固定 120×120 + object-fit:cover
+   会把非正方形表情包裁掉一截（用户反馈「深情的爬行」下半截看不见），改为等比缩放进 160 盒内） */
 .msg-img.msg-emoji {
-  width: 120px;
-  height: 120px;
-  max-width: 120px;
-  max-height: 120px;
-  object-fit: cover;
+  width: auto;
+  height: auto;
+  max-width: 160px;
+  max-height: 160px;
+  object-fit: contain;
   border-radius: 14px;
 }
 
