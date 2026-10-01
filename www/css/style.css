@@ -393,8 +393,12 @@ input, textarea { user-select: text; }
   position: relative;
   width: calc(100% - 48px);
   max-width: 400px;
-  max-height: 84vh;
+  /* 20261001ci：手机浏览器/APK 里 100vh（大视口）可能大于真实可视高度，
+     84vh 会让长弹窗底部（按钮）被裁掉——叠加 mask 相对值 94% 取更小者兜底 */
+  max-height: min(84vh, 94%);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain; /* 弹窗内滚动不穿透到背景页 */
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
@@ -2701,6 +2705,23 @@ body.glass-ui.glass-low .msg-row.me .bubble {
   padding: 12px 14px; font-size: 13px; line-height: 1.7; color: var(--text-secondary);
 }
 .tarot-meaning b { color: var(--text-primary); }
+
+/* 20261001ci：占卜弹窗小屏适配——三张牌与间距按视口高度压缩，
+   保证「AI 解牌设置 / 重新占卜」按钮始终完整可见（手机上弹窗内容过高会被裁） */
+@media (max-height: 800px) {
+  .tarot-wrap { gap: 10px; margin: 12px 0 4px; }
+  .tarot-slot { gap: 6px; width: 88px; }
+  .tarot-card { width: 88px; height: 146px; }
+  .tarot-face .tf-sym { font-size: 24px; }
+  .tarot-face .tf-name { font-size: 11.5px; }
+}
+@media (max-height: 660px) {
+  .tarot-wrap { gap: 8px; margin: 8px 0 2px; }
+  .tarot-slot { gap: 4px; width: 74px; }
+  .tarot-card { width: 74px; height: 123px; }
+  .tarot-face .tf-sym { font-size: 19px; }
+  .tarot-face .tf-name { font-size: 10px; }
+}
 .tarot-meaning .tm-row { margin-top: 8px; }
 .tarot-meaning .tm-row:first-child { margin-top: 0; }
 /* ---------- 书信（信封卡片 + 火漆印开信动画） ---------- */

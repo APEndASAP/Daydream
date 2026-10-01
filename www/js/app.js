@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001ch'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001ci'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -1230,9 +1230,13 @@ async function renderChatList() {
     item.onclick = () => openGroupChat(g.id);
     // 长按/右键群聊行 → 群聊设置（改名/换头像/解散）
     let gPress = null;
-    item.addEventListener('touchstart', () => { gPress = setTimeout(() => showGroupSettingsModal(g), 600); });
+    item.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) return; // 20261001ci：多指（三指截屏等）不触发长按
+      gPress = setTimeout(() => showGroupSettingsModal(g), 600);
+    });
     item.addEventListener('touchend', () => clearTimeout(gPress));
     item.addEventListener('touchmove', () => clearTimeout(gPress));
+    item.addEventListener('touchcancel', () => clearTimeout(gPress)); // 20261001ci：系统手势接管时取消长按
     item.addEventListener('contextmenu', (e) => { e.preventDefault(); showGroupSettingsModal(g); });
     return item;
   };
@@ -1277,9 +1281,13 @@ async function renderChatList() {
     `;
     item.onclick = () => openChat(c.id);
     let pressTimer = null;
-    item.addEventListener('touchstart', () => { pressTimer = setTimeout(() => enterBatchMode(), 600); });
+    item.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) return; // 20261001ci：多指不触发长按
+      pressTimer = setTimeout(() => enterBatchMode(), 600);
+    });
     item.addEventListener('touchend', () => clearTimeout(pressTimer));
     item.addEventListener('touchmove', () => clearTimeout(pressTimer));
+    item.addEventListener('touchcancel', () => clearTimeout(pressTimer)); // 20261001ci
     item.addEventListener('contextmenu', (e) => { e.preventDefault(); enterBatchMode(); });
     return item;
   };
@@ -1755,11 +1763,13 @@ function appendGroupMessage(m, scroll = true) {
     row.addEventListener('contextmenu', (e) => { e.preventDefault(); openGMenu(e.clientX, e.clientY); });
     const gBodyEl = row.querySelector('.msg-body') || row;
     gBodyEl.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) return; // 20261001ci：多指不触发长按
       const t = e.touches[0];
       pressTimer = setTimeout(() => openGMenu(t.clientX, t.clientY), 550);
     });
     gBodyEl.addEventListener('touchend', () => clearTimeout(pressTimer));
     gBodyEl.addEventListener('touchmove', () => clearTimeout(pressTimer));
+    gBodyEl.addEventListener('touchcancel', () => clearTimeout(pressTimer)); // 20261001ci
   }
   if (scroll) scrollToBottom();
 }
@@ -2008,16 +2018,8 @@ async function generateGroupReplyText(g, member, opts = {}) {
   try {
     const all = await idbGetAll('messages');
     const recent = all.filter(m => m.groupId === g.id).sort((a, b) => a.time - b.time).slice(-12);
-    // 20260929bb：话题卡/投票把实际内容喂给 AI（此前只渲染「[话题卡]」，AI 看不到话题内容无法接话）
-    const cardBody = (m) => {
-      if (typeof m.content === 'string') return m.content;
-      if (m.type === 'image') return '[图片]';
-      if (m.type === 'emoji') return '[表情]';
-      if (m.type === 'grouppacket') return '[红包]';
-      if (m.type === 'topic') return `[话题卡：${(m.content && m.content.text) || ''}]`;
-      if (m.type === 'vote') return `[投票：${(m.content && m.content.question) || ''}]`;
-      return `[${m.type}]`;
-    };
+    // 20260929bb：话题卡/投票把实际内容喂给 AI；20261001ci：统一走全局 msgBodyText（图片/表情包/红包等可读描述）
+    const cardBody = (m) => msgBodyText(m);
     const lines = recent.map(m => {
       const who = m.from === 'me' ? (playerProfile.name || '我') : groupMemberName(g, m.charId);
       return `${who}：${cardBody(m)}`;
@@ -2047,13 +2049,24 @@ async function generateGroupReplyText(g, member, opts = {}) {
     }
     const cfg = await loadAIConfig();
     const ctx = await buildCharAIContext(member.id, []);
-    const messages = [
-      { role: 'system', content: `你是角色扮演 AI，扮演群聊「${g.name}」里的成员「${groupMemberName(g, member.id)}」（本名 ${member.name}）。群成员：${(g.memberIds || []).map(id => groupMemberName(g, id)).join('、')}，以及玩家（${playerProfile.name || '我'}）。\n群聊是大家一起聊天的场合，成员之间也会互相聊天、互相 @ 对方、抬杠调侃，不是每句话都围着玩家转。\n最近群聊记录：\n${lines}\n${stance}\n要求：1~2 句，口语化，不要复述记录，不要跳出角色，不要提“AI”“模型”，除要求外不要出现「@」。\n隐藏指令：这段对话里有值得你永久记住的事时，另起一行输出 [[MEMO:一句话记忆]]（最多一条，宁缺毋滥）。\n\n${ctx}` },
-      { role: 'user', content: '请发出群里的下一条消息。' },
-    ];
-    const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, messages);
-    if (r.ok && r.text) {
-      const parsed = parseAITags(r.text);
+    // 20261001ci：收集最近群消息里的图片/表情包 → vision 附加（模型不支持时去图重试）
+    const gImgs = await collectMsgImageDataUrls(recent, 3);
+    const gSys = (extraVision) => `你是角色扮演 AI，扮演群聊「${g.name}」里的成员「${groupMemberName(g, member.id)}」（本名 ${member.name}）。群成员：${(g.memberIds || []).map(id => groupMemberName(g, id)).join('、')}，以及玩家（${playerProfile.name || '我'}）。\n群聊是大家一起聊天的场合，成员之间也会互相聊天、互相 @ 对方、抬杠调侃，不是每句话都围着玩家转。\n最近群聊记录：\n${lines}\n${stance}${extraVision}\n要求：1~2 句，口语化，不要复述记录，不要跳出角色，不要提“AI”“模型”，除要求外不要出现「@」。\n隐藏指令：这段对话里有值得你永久记住的事时，另起一行输出 [[MEMO:一句话记忆]]（最多一条，宁缺毋滥）。\n\n${ctx}`;
+    const gUser = (withImgs) => withImgs
+      ? { role: 'user', content: [{ type: 'text', text: '请发出群里的下一条消息。最近记录里的图片/表情包已按时间顺序附在下面。' }, ...gImgs.map(im => ({ type: 'image_url', image_url: { url: im.dataUrl } }))] }
+      : { role: 'user', content: '请发出群里的下一条消息。' };
+    const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+      { role: 'system', content: gSys(gImgs.length ? '\n【视觉输入】本条消息末尾附上了最近群聊里的图片/表情包（按时间顺序），你可以直接看到它们。' : '') },
+      gUser(gImgs.length > 0),
+    ]);
+    let rr = r;
+    if (!rr.ok && gImgs.length) {
+      rr = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+        { role: 'system', content: gSys('') }, gUser(false),
+      ]);
+    }
+    if (rr.ok && rr.text) {
+      const parsed = parseAITags(rr.text);
       if (parsed.memo) aiPalStoreMemo(member.id, parsed.memo);
       if (wantN > 1) {
         // 拆行 → 去行首序号 → 过滤空行，最多取 wantN 条；一条都没拆出来就回退单条
@@ -2509,11 +2522,12 @@ function appendMessage(m, scroll = true) {
     });
     row.addEventListener('contextmenu', (e) => { e.preventDefault(); delPoke(); });
     row.addEventListener('touchstart', (e) => {
-      const t = e.touches[0];
+      if (e.touches.length > 1) return; // 20261001ci：多指不触发长按
       pokePress = setTimeout(() => delPoke(), 550);
     });
     row.addEventListener('touchend', () => clearTimeout(pokePress));
     row.addEventListener('touchmove', () => clearTimeout(pokePress));
+    row.addEventListener('touchcancel', () => clearTimeout(pokePress)); // 20261001ci
     scrollEl.appendChild(row);
     if (scroll) scrollToBottom();
     return;
@@ -2651,11 +2665,13 @@ function appendMessage(m, scroll = true) {
       row.addEventListener('contextmenu', (e) => { e.preventDefault(); openMenu(e.clientX, e.clientY); });
       const bodyEl = row.querySelector('.msg-body') || row;
       bodyEl.addEventListener('touchstart', (e) => {
+        if (e.touches.length > 1) return; // 20261001ci：多指（三指截屏等）不触发长按
         const t = e.touches[0];
         pressTimer = setTimeout(() => openMenu(t.clientX, t.clientY), 550);
       });
       bodyEl.addEventListener('touchend', () => clearTimeout(pressTimer));
       bodyEl.addEventListener('touchmove', () => clearTimeout(pressTimer));
+      bodyEl.addEventListener('touchcancel', () => clearTimeout(pressTimer)); // 20261001ci：系统手势接管时取消长按
     }
   }
 
@@ -2675,6 +2691,7 @@ window.addEventListener('resize', closeCtxMenu);
 window.addEventListener('scroll', closeCtxMenu, true);
 
 function showMsgMenu(m, x, y) {
+  if (bmMultiTouchRecent()) return; // 20261001ci：三指截屏等多指手势后 1.2 秒内不弹菜单
   const menu = $('#ctx-menu');
   const items = [];
   items.push({ icon: 'quote', label: '引用该条消息', act: () => startQuote(m) });
@@ -3679,8 +3696,21 @@ function randInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-/* 请求通知权限（2.5：网页端 Notification，用于后台消息/通话/查岗提醒） */
+/* 请求通知权限（2.5：网页端 Notification，用于后台消息/通话/查岗提醒）
+   20261001ci：APK 端此前从不申请系统通知权限——WebView 没有 Notification API，
+   直接走到「当前浏览器不支持通知」就返回了，Android 13+ 不授权 POST_NOTIFICATIONS
+   就一条通知都发不出（系统里显示「未请求任何权限」）。
+   现在 APK 端走 @capacitor/local-notifications 的 requestPermissions（原生权限弹窗，无需手势） */
 function requestNotificationPermission() {
+  const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+  if (LN && typeof LN.requestPermissions === 'function') {
+    LN.requestPermissions().then((st) => {
+      const granted = st && (st.display === 'granted' || st.granted === true);
+      if (granted) miniToast('通知权限已开启');
+      else miniToast('通知权限未开启，收不到消息提醒（系统设置→应用→白日梦→通知管理）');
+    }).catch(() => {});
+    return;
+  }
   if (!('Notification' in window)) {
     miniToast('当前浏览器不支持通知');
     return;
@@ -3697,9 +3727,12 @@ function requestNotificationPermission() {
 }
 
 /* 20260929bi：浏览器要求权限申请必须发生在用户手势里——启动时的裸调用不会弹授权框。
-   首次任意点击时补申请一次（每安装只问一次，拒绝/授权后不再打扰）。 */
+   首次任意点击时补申请一次（每安装只问一次，拒绝/授权后不再打扰）。
+   20261001ci：APK 端是原生权限弹窗不受此限制，启动即申请（跳过手势等待）。 */
 function setupNotifyFirstGesture() {
   try {
+    const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+    if (LN) return; // APK：启动即申请，无需手势
     if (!('Notification' in window)) return;
     if (localStorage.getItem('bm_notify_asked')) return;
     const ask = () => {
@@ -3718,23 +3751,61 @@ function setupNotifyFirstGesture() {
    挂后台时 view 仍是 'chat'，通知全被跳过。 */
 function notifyIncoming(c, body, title) {
   try {
-    if (!('Notification' in window)) return;
     if (chatSettings.notifySystem === false) return;
     const cs = c ? getCharChatSettings(c) : null;
     if (cs && cs.muteNotifications) return;
-    const N = window.Notification;
-    if (!N || N.permission !== 'granted') return;
     const inChatView = document.body.dataset.view === 'chat';
     // 正在盯着聊天页、且页面没挂后台/没失焦 → 不打扰（QQ/微信也是盯着聊天窗不弹）。
     // 挂后台（document.hidden）或失焦（!hasFocus）时仍要弹——这是后台提醒的核心。
     // 用 document.hidden 作主判据（无头/移动端 hasFocus 不可靠），hasFocus 仅作辅助。
     if (inChatView && !document.hidden && document.hasFocus()) return;
+    // 20261001ci：APK 端走 @capacitor/local-notifications——WebView 里 Web Notification
+    // 形同虚设（无权限概念、授权后也可能不显示），必须走原生本地通知才会在系统通知栏留记录
+    const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+    if (LN && typeof LN.schedule === 'function') {
+      bmNativeNotify(LN, c, body, title);
+      return;
+    }
+    if (!('Notification' in window)) return;
+    const N = window.Notification;
+    if (!N || N.permission !== 'granted') return;
     const n = new N(title || (c ? c.name + ' 发来消息' : '白日梦'), {
       body: String(body == null ? '' : body).slice(0, 90),
       icon: c && c.avatar ? imgSrc(c.avatar) : undefined,
       tag: c ? 'bm-' + c.id : 'bm', // 同一访客连发只弹一条，不刷屏
     });
     n.onclick = () => { try { window.focus(); n.close(); } catch (e) {} };
+  } catch (e) {}
+}
+
+/* 20261001ci：APK 原生本地通知（幂等创建渠道 + schedule；smallIcon 用应用图标）。
+   权限被拒（display=denied）时静默放弃——申请引导在 requestNotificationPermission 里 */
+async function bmNativeNotify(LN, c, body, title) {
+  try {
+    let allowed = true;
+    try {
+      const st = await LN.checkPermissions();
+      allowed = !st || st.display !== 'denied';
+    } catch (e) {}
+    if (!allowed) return;
+    try {
+      await LN.createChannel({
+        id: 'bm-messages',
+        name: '消息提醒',
+        description: '访客消息、朋友圈动态、通话与书信提醒',
+        importance: 5, // HIGH：横幅 + 通知栏
+        visibility: 'PUBLIC',
+      });
+    } catch (e) {} // 渠道已存在或低版本 Android 无渠道概念 → 忽略
+    await LN.schedule({
+      notifications: [{
+        id: Math.floor(Date.now() % 2147483000), // int32 内唯一 id
+        title: title || (c ? c.name + ' 发来消息' : '白日梦'),
+        body: String(body == null ? '' : body).slice(0, 120),
+        channelId: 'bm-messages',
+        smallIcon: 'res://ic_launcher',
+      }],
+    });
   } catch (e) {}
 }
 
@@ -3789,6 +3860,17 @@ function switchView(viewName) {
   // 进入主页时重算统计（访客数量 / 聊天天数），保证添加/删除访客后数字即时刷新
   if (viewName === 'home') renderPlayerHome();
 }
+
+/* ---------- 多指触摸守卫（20261001ci）----------
+   真机上「三指下滑截屏」等系统多指手势会留下按在消息气泡上的手指，
+   WebView 里 550ms 长按定时器来不及被 touchmove/touchend 清掉 → 长按菜单误弹出。
+   约定：任何时刻出现 ≥2 根手指即记录时间戳，1.2 秒内所有长按菜单入口一律拒绝弹菜单；
+   各长按 touchstart 同时检查 touches.length，多指不启动定时器。 */
+let _bmMultiTouchAt = 0;
+document.addEventListener('touchstart', (e) => {
+  if (e.touches && e.touches.length >= 2) _bmMultiTouchAt = Date.now();
+}, { capture: true, passive: true });
+function bmMultiTouchRecent() { return Date.now() - _bmMultiTouchAt < 1200; }
 
 /* ---------- 移动端侧滑/返回键的「应用内返回」逻辑（20261001ch） ----------
    统一入口：浏览器侧滑（popstate）与 APK 物理返回键（Capacitor backButton）
@@ -8925,6 +9007,18 @@ function bindChatSettings(s, onSave) {
   const nStatus = $('#cs-notify-status');
   const syncNotifyStatus = () => {
     if (!nStatus) return;
+    // 20261001ci：APK 端状态走本地通知插件；异步取状态
+    const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+    if (LN && typeof LN.checkPermissions === 'function') {
+      nStatus.textContent = '查询中…';
+      LN.checkPermissions().then((st) => {
+        const d = st && st.display;
+        if (d === 'granted') nStatus.textContent = '已授权';
+        else if (d === 'denied') nStatus.textContent = '已被拒绝（系统设置→应用→白日梦→通知管理里开启）';
+        else nStatus.textContent = '未申请';
+      }).catch(() => { nStatus.textContent = '未申请'; });
+      return;
+    }
     if (!('Notification' in window)) nStatus.textContent = '浏览器不支持';
     else if (Notification.permission === 'granted') nStatus.textContent = '已授权';
     else if (Notification.permission === 'denied') nStatus.textContent = '已被拒绝（需在浏览器站点设置里开启）';
@@ -10554,10 +10648,12 @@ async function drawMomentSticker() {
   return null;
 }
 
-/* 角色发一条朋友圈（字卡随机内容，9.2；AI 模式下由 AI 生成） */
+/* 角色发一条朋友圈（字卡随机内容，9.2；AI 模式下由 AI 生成）
+   20261001ci：发贴角色给自己点赞——字卡模式随机（约 40%）；AI 模式由 AI 用 [[SELF_LIKE]] 判定 */
 async function charMomentPost(c) {
   const now = Date.now();
   let content = '';
+  let aiSelfLike = false; // AI 判定要自赞
   // 20260929ae：AI 模式下由 AI 生成朋友圈内容（失败回退字卡）
   let aiContent = null;
   if (await isAIMode()) {
@@ -10565,12 +10661,17 @@ async function charMomentPost(c) {
       const cfg = await loadAIConfig();
       const ctx = await buildCharAIContext(c.id, []);
       const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
-        { role: 'system', content: `你是角色扮演 AI，正在发一条朋友圈动态。请以角色身份写一句自然的生活分享（1~2 句，可带 emoji），不要跳出角色。\n\n${ctx}` },
+        { role: 'system', content: `你是角色扮演 AI，正在发一条朋友圈动态。请以角色身份写一句自然的生活分享（1~2 句，可带 emoji），不要跳出角色。\n隐藏指令：若你自己想给这条动态点赞，在正文输出后的最末尾另起一行输出 [[SELF_LIKE]]；一般情况不要输出。\n\n${ctx}` },
         { role: 'user', content: '请发一条朋友圈动态。' },
       ], { temperature: 0.9 });
-      if (r.ok && r.text) aiContent = r.text;
+      if (r.ok && r.text) {
+        const p = parseAITags(r.text);
+        aiContent = p.clean;
+        aiSelfLike = !!p.selfLike;
+      }
     } catch (e) {}
   }
+  const usedAI = !!aiContent;
   if (aiContent) {
     content = aiContent;
   } else {
@@ -10592,6 +10693,10 @@ async function charMomentPost(c) {
   if (Math.random() < 0.5) {
     const st = await drawMomentSticker();
     if (st) { if (st.img) post.images.push(st.img); else post.sticker = st.sticker; }
+  }
+  // 20261001ci：发贴角色给自己点赞（AI 判定 或 字卡模式 40% 随机；点赞时间往后错开一点显得自然）
+  if (aiSelfLike || (!usedAI && Math.random() < 0.4)) {
+    post.likes.push({ who: c.id, time: now + randInt(10e3, 240e3) });
   }
   schedulePostInteractions(post);
   // 提醒（9.4：可在访客主页关闭；关闭或被玩家屏蔽则不弹提醒、不涨红点）
@@ -13217,7 +13322,8 @@ function startNotebookTimer() {
         if (!quote) quote = cards.customReplies && cards.customReplies.length ? drawFrom(cards.customReplies) : '';
         const body = quote ? `${it.text}\n\n—— ${c ? c.name : '梦角'}：${quote}` : it.text;
         miniToast('⏰ 记事簿提醒：' + it.text.slice(0, 18));
-        try { new Notification('⏰ 记事簿提醒', { body: body.slice(0, 90) }); } catch (e) {}
+        // 20261001ci：统一走 notifyIncoming——APK 端自动切本地通知，网页端走 Web Notification
+        notifyIncoming(c, body.slice(0, 120), '⏰ 记事簿提醒');
       }
       if (dirty) await setSetting('notebookItems', items);
     } catch (e) {}
@@ -15189,6 +15295,115 @@ async function callAI(url, key, model, messages, opts = {}) {
 }
 
 /* ---------- 三、AI 上下文组装（细则五：动态上下文隔离） ---------- */
+/* 20261001ci：消息 → AI 可读文本。修复图片/表情包/红包等对象型 content
+   拼进上下文变成字符串「[object Object]」的严重问题（AI 完全看不懂玩家发了什么） */
+function msgBodyText(m) {
+  if (!m) return '';
+  const t = m.type || '';
+  if (t === 'image') return '[图片]';
+  if (t === 'emoji') return '[表情包]';
+  if (t === 'redpacket' || t === 'grouppacket') return '[红包]';
+  if (t === 'transfer') return '[转账]';
+  if (t === 'letter') return '[书信]';
+  if (t === 'survey') return '[问卷]';
+  if (t === 'topic') return `[话题卡：${(m.content && m.content.text) || ''}]`;
+  if (t === 'vote') return `[投票：${(m.content && m.content.question) || ''}]`;
+  if (typeof m.content === 'string') return m.content;
+  if (m.content && typeof m.content.text === 'string') return m.content.text;
+  if (m.content && typeof m.content === 'object') return `[${t || '消息'}]`;
+  return String(m.content == null ? '' : m.content);
+}
+
+/* 20261001ci：收集最近消息里的图片/表情包 → base64 dataURL（OpenAI vision 格式）。
+   支持视觉的模型（gpt-4o 等）可直接"看到"图；不支持的模型由调用方去图重试降级。
+   只取最近 maxN 张（默认 3），图片消息用原图 blob 转码，表情包本身即 dataURL */
+async function collectMsgImageDataUrls(msgs, maxN) {
+  const out = [];
+  try {
+    const arr = (msgs || []).slice(-12).reverse(); // 从最新往回找
+    for (const m of arr) {
+      if (out.length >= (maxN || 3)) break;
+      try {
+        if (m.type === 'image' && m.content && m.content.blob) {
+          const du = await blobToDataURL(m.content.blob);
+          if (du) out.push({ label: '图片', dataUrl: du });
+        } else if (m.type === 'emoji' && typeof m.content === 'string' && m.content.slice(0, 5) === 'data:') {
+          out.push({ label: '表情包', dataUrl: m.content });
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return out;
+}
+
+/* 20261001ci：朋友圈最近动态列表（给 AI 的点赞编号来源；#1 最新）。
+   已按该访客的可见范围过滤（部分可见/屏蔽的帖子不给看），并标注已赞名单防重复点赞 */
+async function momentBriefForAI(charId, limit) {
+  try {
+    const c = characters.find(x => x.id === charId);
+    const posts = await loadMomentPosts();
+    const sorted = [...posts]
+      .filter(p => {
+        if (p.authorType === 'char') {
+          const cc = characters.find(x => x.id === p.authorId);
+          if (cc && cc.momentsBlocked) return false;
+        }
+        if (c && !momentVisibleToChar(p, c)) return false;
+        return true;
+      })
+      .sort((a, b) => b.createTime - a.createTime)
+      .slice(0, limit || 8);
+    if (!sorted.length) return '';
+    const lines = sorted.map((p, i) => {
+      const author = p.authorType === 'player'
+        ? (playerProfile.name || '白日梦主人')
+        : (characters.find(x => x.id === p.authorId)?.name || '梦角');
+      const imgN = (p.images || []).length;
+      const sts = (p.stickers && p.stickers.length) ? p.stickers : (p.sticker ? [p.sticker] : []);
+      const extra = (imgN ? `（配图${imgN}张）` : '') + (sts.length ? `（表情：${sts.join(' ')}）` : '');
+      const likedNames = (p.likes || []).map(l => l.who === 'player' ? (playerProfile.name || '我') : (characters.find(x => x.id === l.who)?.name || '梦角'));
+      const likedStr = likedNames.length ? `〔已赞：${likedNames.join('、')}〕` : '';
+      return `#${i + 1} 「${author}」：${String(p.content || '').replace(/\s+/g, ' ').slice(0, 60)}${extra}${likedStr}`;
+    });
+    return `【朋友圈最新动态（#1 最新；编号供 [[LIKE:编号]] 点赞用）】\n${lines.join('\n')}`;
+  } catch (e) { return ''; }
+}
+
+/* 20261001ci：执行 AI 的 [[LIKE:编号]] 点赞（编号 = momentBriefForAI 列表序号，1=最新）。
+   生成列表与点赞必须用同一套过滤/排序，否则编号错位 */
+async function aiLikeMomentByIndex(charId, idxList) {
+  try {
+    if (!idxList || !idxList.length) return;
+    const c = characters.find(x => x.id === charId);
+    const posts = await loadMomentPosts();
+    const sorted = [...posts]
+      .filter(p => {
+        if (p.authorType === 'char') {
+          const cc = characters.find(x => x.id === p.authorId);
+          if (cc && cc.momentsBlocked) return false;
+        }
+        if (c && !momentVisibleToChar(p, c)) return false;
+        return true;
+      })
+      .sort((a, b) => b.createTime - a.createTime);
+    let changed = false;
+    for (const n of idxList) {
+      const post = sorted[n - 1];
+      if (!post) continue;
+      post.likes = Array.isArray(post.likes) ? post.likes : [];
+      if (!post.likes.some(l => l.who === charId)) {
+        post.likes.push({ who: charId, time: Date.now() });
+        changed = true;
+      }
+    }
+    if (changed) {
+      await saveMomentPosts();
+      if (document.body.dataset.view === 'moments') renderMoments();
+      miniToast('❤️ ' + (c ? c.name : 'TA') + ' 赞了一条朋友圈');
+    }
+  } catch (e) {}
+}
+
 /* 组装「扮演某访客」时注入给 AI 的上下文。只读该访客权限内的内容：
    角色人设 + 访客专属记忆宫殿摘要 + 世界树（分批）+ 玩家侧放行记忆 + 钱包 + 近期聊天。
    绝对不读：其他访客文件夹、未勾选玩家内容、隐藏夹、其他访客群聊记忆。 */
@@ -15230,11 +15445,11 @@ async function buildCharAIContext(charId, recentMessages) {
   if (c && typeof c.wallet === 'number') {
     parts.push(`【该访客当前钱包余额】${c.wallet}`);
   }
-  // 5. 近期聊天记录（最近若干条，帮 AI 接上下文）
+  // 5. 近期聊天记录（最近若干条，帮 AI 接上下文；20261001ci：图片/表情包等转可读描述）
   if (recentMessages && recentMessages.length) {
     const tail = recentMessages.slice(-12).map(m => {
       const who = m.from === 'me' ? (playerProfile.name || '玩家') : (c ? c.name : 'TA');
-      return `${who}：${m.content || ''}`;
+      return `${who}：${msgBodyText(m)}`;
     }).join('\n');
     parts.push(`【最近的对话（按时间顺序）】\n${tail}`);
   }
@@ -15387,7 +15602,10 @@ async function showAIConfigModal() {
     <div class="field"><label>接口链接</label><input class="input" id="aicfg-url" placeholder="https://api.example.com/v1/chat/completions" value="${escapeHtml(cfg.chatApi.url)}"></div>
     <div class="field"><label>Key（可选）</label><input class="input" id="aicfg-key" placeholder="sk-…" value="${escapeHtml(cfg.chatApi.key)}"></div>
     <div class="field"><label>模型名</label><input class="input" id="aicfg-model" placeholder="gpt-3.5-turbo / deepseek-chat …" value="${escapeHtml(cfg.chatApi.model)}"></div>
-    <button class="btn block" id="aicfg-test" style="margin:6px 0 16px;">测试链接</button>
+    <div style="display:flex;gap:8px;margin:6px 0 16px;">
+      <button class="btn" id="aicfg-test" style="flex:1.5;">测试链接</button>
+      <button class="btn primary" id="aicfg-save-chat" style="flex:1;">保存配置</button>
+    </div>
     <div id="aicfg-test-result" style="display:none;font-size:12px;margin:-10px 0 12px;padding:8px 12px;border-radius:10px;"></div>
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">占卜 API（可与聊天 API 相同，也可不同）</div>
@@ -15441,7 +15659,8 @@ async function showAIConfigModal() {
     }
   };
 
-  $('#aicfg-save').onclick = async () => {
+  // 20261001ci：独立保存按钮（测试链接右侧）——保存整份配置但不关弹窗，不依赖最下方的保存
+  const saveAllCfg = async () => {
     const chatApi = { url: $('#aicfg-url').value.trim(), key: $('#aicfg-key').value.trim(), model: $('#aicfg-model').value.trim() };
     const divApi = {
       url: $('#aicfg-durl').value.trim(),
@@ -15450,7 +15669,15 @@ async function showAIConfigModal() {
     };
     await saveAIConfig({ chatApi, divApi, chatMode: selectedMode });
     invalidateAICache();
-    refreshModeSwitchUI(); // 20260929af：配置页改默认模式后，聊天顶栏开关图标同步
+    refreshModeSwitchUI();
+  };
+  $('#aicfg-save-chat').onclick = async () => {
+    await saveAllCfg();
+    miniToast('API 配置已保存');
+  };
+
+  $('#aicfg-save').onclick = async () => {
+    await saveAllCfg();
     miniToast('API 配置已保存');
     closeModal();
   };
@@ -15538,22 +15765,37 @@ async function generateCharReply(charId, opts = {}) {
   try {
     const recent = await idbGetMessagesByChar(charId, 30);
     const ctx = await buildCharAIContext(charId, recent);
+    // 20261001ci：朋友圈列表（编号供 [[LIKE:]] 点赞）+ 最近图片/表情包（vision 附图）
+    const momentBrief = await momentBriefForAI(charId, 8);
+    const imgs = await collectMsgImageDataUrls(recent, 3);
     const userLast = (opts.quote && opts.quote.content) ? opts.quote.content : '';
     // 20260929bf：count>1 = 单聊 AI 也连发多条（每条单独一行，像真人连着发消息）；默认 1 条
     const wantN = Math.max(1, Math.min(3, parseInt(opts.count, 10) || 1));
     const multiLine = wantN > 1
       ? `\n你会连着发 ${wantN} 条消息：每条单独一行输出（共 ${wantN} 行），像真实聊天里连着发几条，几条之间可以是补充、吐槽或自问自答；每条 1 句左右，不要编号。`
       : '';
+    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:编号]]（编号取自下方【朋友圈最新动态】列表，#1 是最新一条）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
+    const sysNoImg = sysBase('');
     const messages = [
-      { role: 'system', content: `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${multiLine}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n\n${ctx}` },
-      ...(userLast ? [{ role: 'user', content: `玩家说：${userLast}` }] : [{ role: 'user', content: '（继续对话）' }]),
+      { role: 'system', content: imgs.length ? sysBase('\n【视觉输入】本条消息末尾附上了最近聊天里的图片/表情包（按时间顺序），你可以直接看到它们的内容。') : sysNoImg },
+      ...(imgs.length
+        ? [{ role: 'user', content: [{ type: 'text', text: userLast ? `玩家说：${userLast}` : '（继续对话）' }, ...imgs.map(im => ({ type: 'image_url', image_url: { url: im.dataUrl } }))] }]
+        : (userLast ? [{ role: 'user', content: `玩家说：${userLast}` }] : [{ role: 'user', content: '（继续对话）' }])),
     ];
-    const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, messages);
+    let r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, messages);
+    // 20261001ci：模型不支持视觉输入时自动去掉图片重试一次，再失败才回退字卡
+    if (!r.ok && imgs.length) {
+      r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+        { role: 'system', content: sysNoImg },
+        ...(userLast ? [{ role: 'user', content: `玩家说：${userLast}` }] : [{ role: 'user', content: '（继续对话）' }]),
+      ]);
+    }
     if (r.ok && r.text) {
-      // 解析隐藏指令：发朋友圈 / 存记忆宫殿（20260929ah）
+      // 解析隐藏指令：发朋友圈 / 存记忆宫殿 / 点赞朋友圈 / 自赞（20260929ah + 20261001ci）
       const parsed = parseAITags(r.text);
       if (parsed.memo) aiPalStoreMemo(charId, parsed.memo);
-      if (parsed.moment) aiPostMomentFromTag(charId, parsed.moment);
+      if (parsed.moment) aiPostMomentFromTag(charId, parsed.moment, { selfLike: parsed.selfLike });
+      if (parsed.likes && parsed.likes.length) aiLikeMomentByIndex(charId, parsed.likes);
       return { type: 'ai', text: parsed.clean };
     }
     // 失败：弹窗报错 + 回退字卡；模式开关同步回滚到字卡（20260929af）
@@ -16140,10 +16382,15 @@ async function momentReplyText(char, relation, post = null, opts = {}) {
       const now2 = Date.now();
       const week = ['周日','周一','周二','周三','周四','周五','周六'][new Date(now2).getDay()];
       const hm = new Date(now2).toTimeString().slice(0, 5);
+      // 20261001ci：帖子的图片/表情贴纸也喂给 AI（此前 AI 完全看不到帖子配图与表情）
+      const pImgN = post && Array.isArray(post.images) ? post.images.length : 0;
+      const pSts = post ? ((post.stickers && post.stickers.length) ? post.stickers : (post.sticker ? [post.sticker] : [])) : [];
+      const postExtra = (pImgN ? `（这条动态附有 ${pImgN} 张图片${pImgN <= 2 ? '，已给你看' : '，已给你看前 2 张'}）` : '')
+        + (pSts.length ? `（表情贴纸：${pSts.join(' ')}）` : '');
       const postDesc = post
-        ? `【这条朋友圈】作者是「${(post.authorType === 'player' ? (playerProfile.name || '白日梦主人') : (characters.find(x => x.id === post.authorId)?.name || '梦角'))}」，发布于 ${timeAgoStr(post.createTime)}，正文：\n「${String(post.content || '').slice(0, 200)}」`
+        ? `【这条朋友圈】作者是「${(post.authorType === 'player' ? (playerProfile.name || '白日梦主人') : (characters.find(x => x.id === post.authorId)?.name || '梦角'))}」，发布于 ${timeAgoStr(post.createTime)}，正文：\n「${String(post.content || '').slice(0, 200)}」${postExtra}`
         : '';
-      // 评论区对话记录（按时间顺序，最多最近 12 条，每条截断 60 字）
+      // 评论区对话记录（按时间顺序，最多最近 12 条，每条截断 60 字；评论附带的表情包/贴纸也描述给 AI）
       const cmts = post && Array.isArray(post.comments) ? post.comments.slice(-12) : [];
       const nameOf = (who) => who === 'player' ? (playerProfile.name || '我') : (characters.find(x => x.id === who)?.name || '梦角');
       const threadDesc = cmts.length
@@ -16153,17 +16400,39 @@ async function momentReplyText(char, relation, post = null, opts = {}) {
               const t = cmts.find(x => x.id === cm.replyTo) || (post.comments || []).find(x => x.id === cm.replyTo);
               if (t) line += `（回复@${nameOf(t.who)}）`;
             }
-            return `${line}：${String(cm.content || '').slice(0, 60)}`;
+            // 20261001ci：评论里的表情包图片/emoji 贴纸转为文字描述
+            const cmImgN = (cm.imgs && cm.imgs.length) ? cm.imgs.length : (cm.img ? 1 : 0);
+            const cmStks = (cm.stickers && cm.stickers.length) ? cm.stickers : (cm.sticker ? [cm.sticker] : []);
+            const cmExtra = (cmImgN ? `〔附${cmImgN}张表情包图片〕` : '') + (cmStks.length ? `〔表情：${cmStks.join(' ')}〕` : '');
+            return `${line}：${String(cm.content || '').slice(0, 60)}${cmExtra}`;
           }).join('\n')}`
         : '【评论区目前对话】还没有人评论。';
       const rt = opts.replyTo || null;
       const targetDesc = rt
         ? `【你的任务】你现在要以「${char.name}」的身份回复 @${nameOf(rt.who)} 的这条评论：「${String(rt.content || '').slice(0, 80)}」。先读懂上面在聊什么再开口：必须接住对方的话头（回应、反驳、补充或调侃都可以），不要答非所问，不要无视对方说的话，不要重复别人已经说过的内容。`
         : `【你的任务】以「${char.name}」的身份给这条朋友圈发一条新评论：结合帖子正文和当前时间说话（比如深夜就别硬聊清晨的安排），像熟人一样自然。`;
-      const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
-        { role: 'system', content: `你是角色扮演 AI，正在朋友圈评论区互动。当前时间是${week} ${hm}。\n${postDesc}\n${threadDesc}\n${targetDesc}\n要求：写 1 句简短自然的评论（可带 emoji），贴合上文语境，不要跳出角色。\n隐藏指令：若这条朋友圈对你很珍贵/难忘，在评论最末尾另起一行输出 [[存忆]]，系统会替你把这条朋友圈收进记忆宫殿；一般情况不要输出。\n\n${ctx}` },
-        { role: 'user', content: rt ? `请回复 @${nameOf(rt.who)} 的这条评论。` : '请评论这条朋友圈。' },
+      // 20261001ci：帖子配图（前 2 张）转 base64 附给支持视觉的模型；失败自动去图重试
+      let postImgUrls = [];
+      if (post && Array.isArray(post.images)) {
+        for (const im of post.images.slice(0, 2)) {
+          try {
+            const du = im && im.blob ? await blobToDataURL(im.blob) : (typeof im === 'string' && im.slice(0, 5) === 'data:' ? im : '');
+            if (du) postImgUrls.push(du);
+          } catch (e) {}
+        }
+      }
+      const moSys = `你是角色扮演 AI，正在朋友圈评论区互动。当前时间是${week} ${hm}。\n${postDesc}\n${threadDesc}\n${targetDesc}\n要求：写 1 句简短自然的评论（可带 emoji），贴合上文语境，不要跳出角色。\n隐藏指令：若这条朋友圈对你很珍贵/难忘，在评论最末尾另起一行输出 [[存忆]]，系统会替你把这条朋友圈收进记忆宫殿；一般情况不要输出。\n\n${ctx}`;
+      const moUser = (withImgs) => withImgs
+        ? { role: 'user', content: [{ type: 'text', text: rt ? `请回复 @${nameOf(rt.who)} 的这条评论。这条朋友圈的配图已附在下面。` : '请评论这条朋友圈。这条朋友圈的配图已附在下面。' }, ...postImgUrls.map(u => ({ type: 'image_url', image_url: { url: u } }))] }
+        : { role: 'user', content: rt ? `请回复 @${nameOf(rt.who)} 的这条评论。` : '请评论这条朋友圈。' };
+      let r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+        { role: 'system', content: moSys }, moUser(postImgUrls.length > 0),
       ], { temperature: 0.9 });
+      if (!r.ok && postImgUrls.length) {
+        r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+          { role: 'system', content: moSys }, moUser(false),
+        ], { temperature: 0.9 });
+      }
       if (r.ok && r.text) {
         let text = r.text.trim();
         if (/\[\[\s*存忆\s*\]\]/.test(text) && post) {
@@ -16184,9 +16453,12 @@ async function momentReplyText(char, relation, post = null, opts = {}) {
    字卡模式不注入这些指令，随机收藏仍走 palAutoCollectMaybe（聊天）/随机朋友圈收藏。
    ============================================================ */
 function parseAITags(text) {
-  const out = { clean: String(text || ''), memo: '', moment: '' };
+  const out = { clean: String(text || ''), memo: '', moment: '', likes: [], selfLike: false };
   out.clean = out.clean.replace(/\[\[\s*MOMENT\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.moment = v.trim(); return ''; });
   out.clean = out.clean.replace(/\[\[\s*MEMO\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.memo = v.trim(); return ''; });
+  // 20261001ci：[[LIKE:编号]] 点赞朋友圈（可多个）；[[SELF_LIKE]] 给自己刚发的动态点赞
+  out.clean = out.clean.replace(/\[\[\s*LIKE\s*[:：]\s*(\d+)\s*\]\]/gi, (_, n) => { const k = parseInt(n, 10); if (k > 0) out.likes.push(k); return ''; });
+  out.clean = out.clean.replace(/\[\[\s*SELF_LIKE\s*\]\]/gi, () => { out.selfLike = true; return ''; });
   out.clean = out.clean.replace(/\[\[\s*存忆\s*\]\]/g, '').trim();
   return out;
 }
@@ -16237,8 +16509,8 @@ async function aiPalStorePost(charId, post) {
   } catch (e) {}
 }
 
-/* AI 决定代发一条朋友圈（[[MOMENT:正文]]） */
-async function aiPostMomentFromTag(charId, content) {
+/* AI 决定代发一条朋友圈（[[MOMENT:正文]]；20261001ci 支持 [[SELF_LIKE]] 自赞） */
+async function aiPostMomentFromTag(charId, content, opts = {}) {
   try {
     if (!content) return;
     const c = characters.find(x => x.id === charId);
@@ -16254,6 +16526,7 @@ async function aiPostMomentFromTag(charId, content) {
       const st = await drawMomentSticker();
       if (st) { if (st.img) post.images.push(st.img); else post.sticker = st.sticker; }
     }
+    if (opts.selfLike) post.likes.push({ who: c.id, time: now }); // 20261001ci：AI 判定要给自己这条点赞
     schedulePostInteractions(post);
     const posts = await loadMomentPosts();
     posts.unshift(post);
@@ -16284,7 +16557,8 @@ async function aiSoftReply(c, instruction, cardFallback) {
       if (r.ok && r.text) {
         const parsed = parseAITags(r.text);
         if (parsed.memo) aiPalStoreMemo(c.id, parsed.memo);
-        if (parsed.moment) aiPostMomentFromTag(c.id, parsed.moment);
+        if (parsed.moment) aiPostMomentFromTag(c.id, parsed.moment, { selfLike: parsed.selfLike });
+        if (parsed.likes && parsed.likes.length) aiLikeMomentByIndex(c.id, parsed.likes); // 20261001ci
         return parsed.clean || cardFallback();
       }
     }
