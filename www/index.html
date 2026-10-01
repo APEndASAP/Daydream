@@ -40,7 +40,7 @@
           || location.protocol === 'capacitor:';
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20261001ci' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20261001cj' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -54,13 +54,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261001ci'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261001cj'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20261001ci">
+  <link rel="stylesheet" href="css/style.css?v=20261001cj">
 </head>
 <body>
   <div id="app">
@@ -88,6 +88,7 @@
          20260930cf 杜绝手机系统暗色模式强制变暗浅色界面（Auto Dark/Force Dark 反转）：head 加 <meta name="color-scheme" content="light dark">+theme-color 双 media 值；:root 锁 color-scheme:dark、body.theme-light 锁 color-scheme:only light；CSS 末尾补 @media(prefers-color-scheme:dark) 下浅色主题变量 !important 兜底（系统偏好不再接管配色）；
          20261001ch 修复移动端「侧滑直接退出」：JS history 守卫（replaceState 根锚点+pushState 守卫条目，popstate 拦截侧滑改走应用内返回——弹窗→长按菜单→多选→聊天页→聊天导航逐级回退，顶层仅拦截；守卫自动补位历史栈永不耗尽）；CSS 全局 overscroll-behavior-x:none 禁横向回弹；APK 物理返回键接管（@capacitor/app backButton，有上一级应用内返回、顶层双击 2 秒退出）；浅色主题可读性补漏（长按菜单/引用条/多选条/图片裁剪器/回信按钮固定深底浮层容器内还原深色变量，杜绝深底深字）；
          20261001ci AI 看得见图与表情包（聊天+群聊+朋友圈：消息上下文图片/表情包/红包等转可读描述杜绝 [object Object]，最近 3 张图自动转 base64 走 vision 附图，模型不支持视觉自动去图重试；朋友圈帖子配图/表情贴纸/评论表情全部喂给 AI）；AI 能执行点赞（聊天中让 AI 点赞朋友圈→[[LIKE:编号]] 隐藏指令真执行，上下文注入朋友圈编号列表含已赞名单；发贴角色自点赞：字卡 40% 随机、AI 模式 [[SELF_LIKE]] 判定）；修复三指下滑截屏误弹长按菜单（多指守卫：≥2 指后 1.2 秒内不弹菜单+多指不启动长按+touchcancel 取消）；弹窗小屏加固（max-height 叠加 mask 相对值防 84vh 大视口裁底、overscroll contain 防滚动穿透；占卜弹窗三张牌按视口高度压缩保证按钮完整）；API 接入弹窗「测试链接」右侧加独立保存配置按钮（不依赖底部保存、保存后不关弹窗）；APK 通知权限根治（集成 @capacitor/local-notifications：启动即申请系统通知权限 Android 13+ 弹授权框、统一通知出口走原生本地通知含渠道创建，通知栏终于有记录；记事簿提醒同步切换；总设置通知状态适配）；
+         20261001cj 修复 APK 首启「跳过开屏后按钮全失灵」真机必现 bug：软件声明未同意期间（_noticeGate）声明弹窗被透明遮罩点击误关、gate 永久卡 true 导致所有弹窗被抑制——现在声明弹窗禁遮罩点击关闭（只能点「同意」进），openModal 被抑制时返回 false 供调用方跳过后续元素绑定（showChatListMenu 等不再取 null 崩溃）；
          20260930cg 防反色机制（物理锁死，杜绝系统暗色模式下图片/表情包/头像/礼物图被强制反色成底片）：CSS 顶部加最高优先级锁死块——img/picture/video/canvas/svg/emoji/sticker/avatar/gift 等所有媒体元素 filter:none+forced-color-adjust:none+color-scheme:only light（只锁反色属性、绝不锁背景色，深色默认主题不受影响）；@media(forced-colors:active) 高对比度模式二次兜底；APK 原生三重保险（styles.xml + AndroidManifest + forceDarkAllowed=false，system WebView 强制暗色一并关闭） -->
 
     <!-- 聊天列表页 -->
@@ -281,11 +282,11 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20261001ci"></script>
-  <script src="js/db.js?v=20261001ci"></script>
-  <script src="js/icons.js?v=20261001ci"></script>
-  <script src="js/emoji-img.js?v=20261001ci"></script>
-  <script src="js/cards.js?v=20261001ci"></script>
-  <script src="js/app.js?v=20261001ci"></script>
+  <script src="js/splash.js?v=20261001cj"></script>
+  <script src="js/db.js?v=20261001cj"></script>
+  <script src="js/icons.js?v=20261001cj"></script>
+  <script src="js/emoji-img.js?v=20261001cj"></script>
+  <script src="js/cards.js?v=20261001cj"></script>
+  <script src="js/app.js?v=20261001cj"></script>
 </body>
 </html>

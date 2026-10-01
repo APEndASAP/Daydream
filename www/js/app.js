@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001ci'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001cj'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -3973,7 +3973,9 @@ function openModal(html, opts) {
   const o = opts || {};
   // 20260929bk：软件声明未同意期间（_noticeGate），任何非声明的弹窗一律抑制——
   // 保证声明弹窗绝对排在最前，不被来电/超频/书信/入梦签等打断
-  if (_noticeGate && String(html || '').indexOf('notice-modal') === -1) return;
+  // 20261001cj：抑制时返回 false，调用方可据此跳过后续「取元素绑 onclick」的动作，
+  //   避免 $() 取到 null 抛异常（真机声明未同意时点按钮崩溃、界面瘫痪）
+  if (_noticeGate && String(html || '').indexOf('notice-modal') === -1) return false;
   // 20260929aq：超频礼物弹窗支持玻璃拟态（glass）与收窄（narrow）外观
   // 20260929bc：glitch=故障风非圆角弹窗（warning/惊喜触发）；galaxy=记忆宫殿星空卡片风
   box.classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy');
@@ -4027,8 +4029,13 @@ function forceCloseModal() {
 }
 
 // 点击遮罩空白处关闭弹窗
+// 20261001cj：软件声明未同意期间（_noticeGate）声明弹窗是唯一弹窗，必须点「同意」才能进，
+//   严禁被遮罩点击关闭——否则开屏「跳过」后的手指点击会穿透到透明遮罩误关声明，
+//   导致 _noticeGate 永久卡 true、所有弹窗被抑制、按钮全失灵（真机必现 bug）
 $('#modal-mask').addEventListener('click', (e) => {
-  if (e.target === $('#modal-mask')) closeModal();
+  if (e.target !== $('#modal-mask')) return;
+  if (_noticeGate) return; // 声明未同意：遮罩点击不关闭，只能点同意按钮
+  closeModal();
 });
 
 /* ---------- 图片裁剪器（20260929az 虚拟框版）：上传背景图先裁后用 ----------
@@ -4193,7 +4200,7 @@ function openImageCropper(file, opts = {}) {
 
 /* ---------- 聊天列表页加号菜单（添加访客 / 建立群聊 / 批量管理 / 访客分组） ---------- */
 function showChatListMenu() {
-  openModal(`
+  const _ok = openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">聊天</div>
       <button class="icon-btn" id="clm-close">✕</button>
@@ -4213,6 +4220,7 @@ function showChatListMenu() {
       </button>
     </div>
   `);
+  if (_ok === false) return; // 20261001cj：声明未同意被抑制，跳过绑定避免 null 崩溃
   $('#clm-close').onclick = closeModal;
   $('#clm-add').onclick = () => { closeModal(); showAddCharModal(); };
   $('#clm-group').onclick = () => { closeModal(); showCreateGroupModal(); };
