@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001ck'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001cl'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -5870,11 +5870,13 @@ function rebindFullCall(c, kind, msg, state) {
     bgInput.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      const dataUrl = await compressImage(file, 1440, 0.72);
-      if (_callActive) _callActive.bg = dataUrl;
-      updateCallBg(dataUrl);
-      miniToast('通话背景已更新');
       e.target.value = '';
+      // 20261001cl：更换通话背景先走裁剪器（所见即所得，取消返回 null 不生效）
+      const cropped = await openImageCropper(file, { aspect: document.documentElement.clientWidth / Math.max(1, document.documentElement.clientHeight) });
+      if (!cropped) return;
+      if (_callActive) _callActive.bg = cropped;
+      updateCallBg(cropped);
+      miniToast('通话背景已更新');
     };
   }
   bindCallExtras(); // 20260929be：小眼睛 + 右下角缩放
@@ -5993,11 +5995,13 @@ function backToFullCall(c, kind) {
     bgInput.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      const dataUrl = await compressImage(file, 1440, 0.72);
-      if (_callActive) _callActive.bg = dataUrl;
-      updateCallBg(dataUrl);
-      miniToast('通话背景已更新');
       e.target.value = '';
+      // 20261001cl：更换通话背景先走裁剪器（所见即所得，取消返回 null 不生效）
+      const cropped = await openImageCropper(file, { aspect: document.documentElement.clientWidth / Math.max(1, document.documentElement.clientHeight) });
+      if (!cropped) return;
+      if (_callActive) _callActive.bg = cropped;
+      updateCallBg(cropped);
+      miniToast('通话背景已更新');
     };
   }
   bindCallExtras(); // 20260929be：小眼睛 + 右下角缩放

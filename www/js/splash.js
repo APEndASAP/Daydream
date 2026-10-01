@@ -668,7 +668,10 @@
   /* ==== 开屏 BGM（MP3 截取段：运行时 fetch+decode，Gain 包络淡入淡出。
      autoplay 被浏览器拦截时挂起，首次任意手势后按动画已播进度音画对齐补播）==== */
   var BGM = {
-    url: 'audio/bgm_intro.mp3',
+    // 20261001cl：网页端用无损截取的开头 17 秒小文件（267KB，下载快、点击播放延迟低）；
+    //   软件端（window.Capacitor 存在）保留原 5 分钟无损完整版 bgm_intro.mp3。
+    //   两者音质一致（128kbps 原码率无损截取），仅时长不同。
+    url: (typeof window !== 'undefined' && window.Capacitor) ? 'audio/bgm_intro.mp3' : 'audio/bgm_intro.web.mp3',
     offset: 0.05,      // 截取起点（s）：20260930cd 提前播放（原 0.3；开头电平低由「前半段增益+极短淡入」补足）
     dur: 16.2,         // 截取时长（s）：覆盖 T_END(15s)+余量
     fadeIn: 0.12,      // 淡入（s）：20260930cd 再缩短（原 0.4），起声更快
