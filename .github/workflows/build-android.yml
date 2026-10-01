@@ -121,6 +121,18 @@ jobs:
             fs.writeFileSync(gp, g + '\nandroid.suppressUnsupportedCompileSdk=35\n');
             console.log('gradle.properties suppressUnsupportedCompileSdk=35');
           }
+          // capacitor-overlay（cap7 插件）声明 Java 21 编译 → 降回 17（其代码仅两个方法，无 21 特性；runner Java 17）
+          const ovp = 'node_modules/capacitor-overlay/android/build.gradle';
+          if (fs.existsSync(ovp)) {
+            let os = fs.readFileSync(ovp, 'utf8');
+            const ob = os;
+            os = os.replace(/JavaVersion\.VERSION_21/g, 'JavaVersion.VERSION_17')
+                   .replace(/sourceCompatibility\s*=\s*["']?21["']?/g, "sourceCompatibility = '17'")
+                   .replace(/targetCompatibility\s*=\s*["']?21["']?/g, "targetCompatibility = '17'")
+                   .replace(/jvmTarget\s*=\s*["']?21["']?/g, "jvmTarget = '17'");
+            if (os !== ob) { fs.writeFileSync(ovp, os); console.log('capacitor-overlay Java21 -> 17 patched'); }
+            else console.log('capacitor-overlay gradle: no Java21 marker found');
+          } else console.log('capacitor-overlay gradle not found (skip patch)');
           NODE_EOF
           node /tmp/inject-perms.js
 
