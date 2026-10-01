@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001cl'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001cm'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -12457,7 +12457,10 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
         const e = list.find(x => x.id === el._eid);
         if (!e) return;
         if (act === 'perm') {
-          openPalPerm('entry', e.id, () => { const ne = list.find(x => x.id === e.id); if (ne) setCardContent(el, ne); });
+          // 20261001cm：卡片视图的 back 必须重开卡片视图——原回调只 setCardContent（刷新的是已被权限弹窗
+          //   替换出文档的游离节点），权限弹窗永不关闭、遮罩拦截全部触摸 → 点「AI 关」后整页卡死（真机必现）。
+          //   与「移动到…」/列表视图关闭语义对齐：openPalPerm 的取消/保存都会调 back → 重开即自然关闭弹窗。
+          openPalPerm('entry', e.id, () => showPalaceEntry(e.id, backFid));
         } else if (act === 'move') {
           palMoveModal([e.id], backFid);
         } else if (act === 'del') {

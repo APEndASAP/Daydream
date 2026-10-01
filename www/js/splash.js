@@ -668,20 +668,25 @@
   /* ==== 开屏 BGM（MP3 截取段：运行时 fetch+decode，Gain 包络淡入淡出。
      autoplay 被浏览器拦截时挂起，首次任意手势后按动画已播进度音画对齐补播）==== */
   var BGM = {
-    // 20261001cl：网页端用无损截取的开头 17 秒小文件（267KB，下载快、点击播放延迟低）；
-    //   软件端（window.Capacitor 存在）保留原 5 分钟无损完整版 bgm_intro.mp3。
-    //   两者音质一致（128kbps 原码率无损截取），仅时长不同。
-    url: (typeof window !== 'undefined' && window.Capacitor) ? 'audio/bgm_intro.mp3' : 'audio/bgm_intro.web.mp3',
+    // 20261001cm：恢复完整 bgm_intro.mp3（5:14 完整歌）——网页端与软件端统一用完整版，
+    //   保证「继续播放」循环的是整首歌（而非之前 17 秒截取段的短循环）。
+    //   加载方式按环境分流：网页端（无 Capacitor）用 <audio> 流式边下边播（根治首载无音乐/点播延迟），
+    //   软件端（window.Capacitor 存在）仍走 fetch+decode 全量解码（本地文件瞬时，无损完整）。
+    url: 'audio/bgm_intro.mp3',
     offset: 0.05,      // 截取起点（s）：20260930cd 提前播放（原 0.3；开头电平低由「前半段增益+极短淡入」补足）
-    dur: 16.2,         // 截取时长（s）：覆盖 T_END(15s)+余量
+    dur: 16.2,         // 开屏动画阶段截取时长（s）：覆盖 T_END(15s)+余量（仅非循环/软件端 fetch 路径用）
     fadeIn: 0.12,      // 淡入（s）：20260930cd 再缩短（原 0.4），起声更快
     fadeOut: 2.6,      // 淡出（s）
     vol: 1.0,          // 背景音量（经压缩器+补偿增益提响度）
     frontBoost: 1.25,  // 20260930cd：前半段初始增益（淡入到位后从 vT*1.25 缓落回 vT，约前 45% 时长）
     userVol: 1.5,      // 20260930cd：开屏动画阶段音量倍率（总设置「开屏音乐音量」0~200%，默认 150%=更响）
     appVol: 1.0,       // 20260930cb：软件内阶段音量倍率（「继续播放」贯穿软件内时用，总设置独立滑杆）
-    buf: null, src: null, gain: null, started: false, pending: false, failed: false
+    buf: null, src: null, gain: null, started: false, pending: false, failed: false,
+    // —— 网页端流式路径（20261001cm）——
+    mediaEl: null, mediaSrcNode: null
   };
+  // 20261001cm：网页端（无 Capacitor）走 <audio> 流式；软件端走原 fetch+decode。
+  var BGM_STREAM = (typeof window !== 'undefined' && !window.Capacitor);
   function bgmVolTarget() {   // 当前阶段应使用的目标音量：开屏动画=开屏音量条；进软件后循环=软件内音量条
     return BGM.vol * ((splashOver && AUTO_MUSIC) ? BGM.appVol : BGM.userVol);
   }
@@ -689,7 +694,9 @@
   var AUTO_MUSIC = false;   // 20260930bx：「开屏音乐继续播放」开关——开=开屏结束/跳过后 BGM 不停，循环播放贯穿整个使用过程
   function bgmElapsed() { return t0 === null ? 0 : Math.max(0, (performance.now() - t0) / 1000); }
   function bgmStart(atSec) {
-    if (!BGM.buf || BGM.started || (splashOver && !AUTO_MUSIC)) return;
+    if (BGM.started || (splashOver && !AUTO_MUSIC)) return;
+    if (BGM_STREAM) { bgmStreamStart(atSec); return; }   // 20261001cm：网页端流式路径
+    if (!BGM.buf) return;
     var pos = Math.max(0, Math.min(atSec || 0, BGM.dur - 0.05));
     var remain = BGM.dur - pos;
     if (remain < 0.15) return;
@@ -723,8 +730,47 @@
       if (BGM.src === src) { BGM.started = false; BGM.src = null; BGM.gain = null; }
     };
   }
+  /* 20261001cm：网页端流式起播——<audio> 边下边播 + createMediaElementSource 接入同一套
+     Gain(淡入/音量条) → DynamicsCompressor → makeup 链路；循环用 audio.loop（循环整首 5:14）。
+     与 fetch+decode 路径共用 BGM.gain/BGM.started/AUTO_MUSIC/音量条钩子。 */
+  function bgmStreamStart(atSec) {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC || !actx) return;
+      // 断开上一轮的增益图（开关切换/重播时避免旧图叠加累积到 destination）
+      if (BGM.gain) { try { BGM.gain.disconnect(); } catch (e0) {} BGM.gain = null; }
+      if (!BGM.mediaEl) {
+        var el = document.createElement('audio');
+        el.src = BGM.url; el.preload = 'auto'; el.loop = true;   // loop=循环整首歌
+        el.crossOrigin = 'anonymous';
+        BGM.mediaEl = el;
+        try { BGM.mediaSrcNode = actx.createMediaElementSource(el); } catch (e) { BGM.mediaSrcNode = null; }
+      }
+      var g = actx.createGain(); g.gain.value = 0.0001;
+      var comp = actx.createDynamicsCompressor();
+      comp.threshold.value = -18; comp.knee.value = 12; comp.ratio.value = 2.5;
+      comp.attack.value = 0.003; comp.release.value = 0.25;
+      var makeup = actx.createGain(); makeup.gain.value = 2.0;
+      var srcNode = BGM.mediaSrcNode;
+      if (srcNode) srcNode.connect(g); else g.gain.value = 1;    // 无 source 时直接出声（兜底：不经图，靠 audio 自带）
+      g.connect(comp); comp.connect(makeup); makeup.connect(actx.destination);
+      var t = actx.currentTime;
+      var vT = bgmVolTarget();
+      var fi = BGM.fadeIn;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(vT * (BGM.frontBoost || 1), t + fi);  // 淡入
+      g.gain.linearRampToValueAtTime(vT, t + fi + 4);            // 缓落回正常电平
+      var el = BGM.mediaEl;
+      try { el.currentTime = BGM.offset + (atSec || 0); } catch (e2) {}
+      var pr = el.play();
+      if (pr && pr.then) pr.catch(function () {});               // 浏览器若仍拦，靠后续手势 resume/play 补
+      BGM.gain = g; BGM.started = true;
+      hideAudioHint();
+    } catch (e) { BGM.failed = true; }
+  }
   function bgmPlay(atSec) {                                     // 有缓冲直接播；否则先解码
     if (BGM.failed || (splashOver && !AUTO_MUSIC)) return;
+    if (BGM_STREAM) { bgmStart(atSec); return; }                // 20261001cm：网页端流式路径（无解码等待）
     if (BGM.buf) { bgmStart(atSec); return; }
     fetch(BGM.url).then(function (r) { return r.arrayBuffer(); })
       .then(function (ab) { return actx.decodeAudioData(ab); })
@@ -744,7 +790,11 @@
       BGM.gain.gain.cancelScheduledValues(t);
       BGM.gain.gain.setValueAtTime(Math.max(0.0001, BGM.gain.gain.value || 0.0001), t);
       BGM.gain.gain.linearRampToValueAtTime(0.0001, t + fd);
-      if (BGM.src) { try { BGM.src.stop(t + fd + 0.05); } catch (e2) {} }
+      if (BGM_STREAM) {                                         // 20261001cm：流式路径暂停 <audio>
+        if (BGM.mediaEl) { try { BGM.mediaEl.pause(); } catch (e2) {} }
+      } else if (BGM.src) {
+        try { BGM.src.stop(t + fd + 0.05); } catch (e2) {}
+      }
     } catch (e) {}
   }
   /* 读取「开屏音乐继续播放」开关 + 自定义开屏音乐（独立读 IndexedDB kv，不依赖 db.js——
