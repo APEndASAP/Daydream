@@ -4776,6 +4776,15 @@ body.theme-light.glass-ui .tab-item:not(.active) .tab-icon {
   border-color: rgba(46, 36, 84, 0.10);
   box-shadow: 0 3px 10px rgba(40, 30, 80, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
+/* 20261001cq：浅色玻璃底栏可读性——底是亮白磨砂，未选中 tab 字与图标若仍是白色（3140 块）会完全隐形，
+   改成深色字 + 深色图标，选中项保持紫色高亮不变 */
+body.theme-light.glass-ui .tab-item:not(.active) {
+  color: rgba(42, 35, 64, 0.72);
+  text-shadow: none;
+}
+body.theme-light.glass-ui .tab-item:not(.active) .tab-icon {
+  color: rgba(42, 35, 64, 0.82);
+}
 
 /* —— D. 浅色 × 玻璃：弹窗白玻璃（三档精度同步） —— */
 body.theme-light.glass-ui .modal {
@@ -4912,6 +4921,47 @@ body.theme-light .oc-side-action:active { background: rgba(124, 92, 240, 0.28); 
     --text-secondary: rgba(42, 35, 64, 0.70) !important;
     --text-tertiary: rgba(42, 35, 64, 0.46) !important;
   }
+}
+
+/* ============================================================
+   20261001cq：灰度殿堂（灰石色调；记忆宫殿 galaxy 布局复用）
+   全预设配色 / 玻璃拟态 / 普通模式统一「灰底浅字」，保证任何主题下可读
+   ============================================================ */
+.modal.modal-gray-hall {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.10), transparent 55%),
+    linear-gradient(168deg, #4d4b54 0%, #35333b 52%, #3e3c45 100%);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+/* 星点淡化为浮尘（沿用 galaxy ::before 的星点底图） */
+.modal.modal-gray-hall::before { opacity: 0.22; }
+.modal.modal-gray-hall .pal-galaxy-title { color: #f2f1f5; text-shadow: 0 0 18px rgba(255, 255, 255, 0.28); }
+.modal.modal-gray-hall .pal-galaxy-sub { color: rgba(238, 236, 242, 0.60); }
+.modal.modal-gray-hall .pal-row { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.16); }
+.modal.modal-gray-hall .pal-row:active { background: rgba(255, 255, 255, 0.12); }
+.modal.modal-gray-hall .badge { background: rgba(255, 255, 255, 0.10); color: rgba(238, 236, 242, 0.75); border-color: rgba(255, 255, 255, 0.18); }
+.modal.modal-gray-hall .empty { color: rgba(238, 236, 242, 0.60); }
+/* 浅色主题：容器内还原浅字变量（继承色问题同记忆宫殿 20260929bq 补丁） */
+body.theme-light .modal.modal-gray-hall {
+  color: var(--text);
+  --purple: #a78bfa;
+  --purple-soft: #c4b5fd;
+  --purple-dim: rgba(167, 139, 250, 0.16);
+  --text: #f5f4f7;
+  --text-secondary: rgba(245, 244, 247, 0.62);
+  --text-tertiary: rgba(245, 244, 247, 0.38);
+  --border: rgba(255, 255, 255, 0.16);
+  --bg-elevated-2: rgba(255, 255, 255, 0.07);
+}
+/* 浅色 × 玻璃：保持灰石底，不被白玻璃覆盖（特异性须压过 body.theme-light.glass-ui .modal） */
+body.theme-light.glass-ui .modal.modal-gray-hall,
+body.theme-light.glass-ui.glass-mid .modal.modal-gray-hall,
+body.theme-light.glass-ui.glass-low .modal.modal-gray-hall {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.10), transparent 55%),
+    linear-gradient(168deg, rgba(77, 75, 84, 0.97) 0%, rgba(53, 51, 59, 0.97) 52%, rgba(62, 60, 69, 0.97) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.20);
 }
 
 

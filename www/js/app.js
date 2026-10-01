@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261001cp'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261001cq'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -840,6 +840,32 @@ async function addCharacter(name, bio, avatarDataUrl, playerNick = '', opts = {}
 }
 
 async function deleteCharacter(id, scopes = new Set(['chat'])) {
+  // 20261001cq：灰度殿堂归档——删除前先快照（角色本体/书信/超频礼物/他人指向关系）。
+  // 只勾部分范围（有未删干净的数据）时归档进灰度殿堂：个人主页可回顾、复活、彻底删除
+  let _ghSnap = null;
+  try {
+    const c0 = characters.find(x => x.id === id);
+    if (c0) {
+      const remaining = ['chat', 'moments', 'wallet', 'relation', 'memory', 'survey'].filter(k => !scopes.has(k));
+      if (remaining.length) {
+        const letters = (await idbGetAll('messages')).filter(m => m.charId === id && !m.groupId && m.type === 'letter');
+        const gfs = (await idbGetAll('gifts')).filter(g => g.charId === id);
+        const othersRel = {};
+        for (const other of characters) {
+          if (other.id === id) continue;
+          if (other.peerRelations && other.peerRelations[id] !== undefined) othersRel[other.id] = other.peerRelations[id];
+        }
+        _ghSnap = {
+          id: 'gh_' + id, charId: id, name: c0.name || 'TA', avatar: c0.avatar || '',
+          archivedAt: Date.now(), remaining,
+          char: JSON.parse(JSON.stringify(c0)),
+          letters: JSON.parse(JSON.stringify(letters)),
+          gifts: JSON.parse(JSON.stringify(gfs)),
+          othersRel,
+        };
+      }
+    }
+  } catch (e) { console.error('[灰度殿堂]归档快照失败', e); }
   // 按勾选范围删除数据
   if (scopes.has('chat')) {
     const msgs = await idbGetMessagesByChar(id, 100000);
@@ -897,6 +923,14 @@ async function deleteCharacter(id, scopes = new Set(['chat'])) {
   if (dailyCharId === id) {
     const remaining = characters.filter(x => x.id !== id);
     await setSetting('dailyCharId', remaining.length ? remaining[0].id : null);
+  }
+  // 20261001cq：归档进灰度殿堂（有未删干净的数据才归档）
+  if (_ghSnap) {
+    try {
+      const hall = await getSetting('grayHall', []);
+      hall.unshift(_ghSnap);
+      await setSetting('grayHall', hall.slice(0, 200));
+    } catch (e) { console.error('[灰度殿堂]归档写入失败', e); }
   }
   await refreshCharacters();
 }
@@ -1226,16 +1260,16 @@ async function renderChatList() {
       ${data.unread > 0 ? `<div class="unread-badge">${data.unread > 99 ? '99+' : data.unread}</div>` : ''}
     `;
     item.onclick = () => openGroupChat(g.id);
-    // 长按/右键群聊行 → 群聊设置（改名/换头像/解散）
+    // 20261001cq：长按/右键群聊行 → 批量管理（与单聊访客一致；群设置入口保留在群聊页右上角）
     let gPress = null;
     item.addEventListener('touchstart', (e) => {
       if (e.touches.length > 1) return; // 20261001ci：多指（三指截屏等）不触发长按
-      gPress = setTimeout(() => showGroupSettingsModal(g), 600);
+      gPress = setTimeout(() => enterBatchMode(), 600);
     });
     item.addEventListener('touchend', () => clearTimeout(gPress));
     item.addEventListener('touchmove', () => clearTimeout(gPress));
     item.addEventListener('touchcancel', () => clearTimeout(gPress)); // 20261001ci：系统手势接管时取消长按
-    item.addEventListener('contextmenu', (e) => { e.preventDefault(); showGroupSettingsModal(g); });
+    item.addEventListener('contextmenu', (e) => { e.preventDefault(); enterBatchMode(); });
     return item;
   };
 
@@ -2220,11 +2254,66 @@ function renderBatchList() {
     // 20261001cp：访客=删除角色；群聊=解散（与群设置「解散群聊」同语义：消息保留、清分组引用）
     const delChars = [...batchSelected].filter(id => !isGroupId(id));
     const delGroups = [...batchSelected].filter(isGroupId);
-    const parts = [];
-    if (delChars.length) parts.push(`删除选中的 ${delChars.length} 位访客`);
-    if (delGroups.length) parts.push(`解散 ${delGroups.length} 个群聊`);
+    // 20261001cq：删除访客与单聊入口同款「选择删除范围」弹窗（批量勾选一次选范围、应用到全部），
+    // 未勾选范围的残留数据自动归档进灰度殿堂
+    if (delChars.length) {
+      const nameStr = delChars.length <= 3
+        ? delChars.map(cid => { const c = characters.find(x => x.id === cid); return c ? c.name : '访客'; }).join('、')
+        : `${delChars.length} 位访客`;
+      openModal(`
+        <div style="text-align:center;margin-bottom:8px;">
+          <div style="font-size:40px;margin-bottom:10px;">⚠️</div>
+          <div style="font-size:15px;font-weight:600;margin-bottom:4px;">删除「${escapeHtml(nameStr)}」${delChars.length > 1 ? `等 ${delChars.length} 位访客` : ''}</div>
+          <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">此操作无法撤销，请选择要删除的范围（对全部所选访客生效）</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+          ${[
+            { k: 'chat', label: '聊天记录' },
+            { k: 'moments', label: '朋友圈内容' },
+            { k: 'wallet', label: '钱包余额' },
+            { k: 'relation', label: '关系网' },
+            { k: 'memory', label: '记忆宫殿文件夹' },
+            { k: 'survey', label: '问卷数据' },
+          ].map((it, i) => `
+            <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
+              <input type="checkbox" class="del-scope" data-k="${it.k}" ${i === 0 ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+              <span style="font-size:14px;">${it.label}</span>
+            </label>
+          `).join('')}
+        </div>
+        <div style="font-size:11.5px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.6;">未勾选删除范围的数据不会消失，会归档到个人主页的「灰度殿堂」里，可以随时回顾或复活该访客。</div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn" style="flex:1;" id="bdel-cancel">取消</button>
+          <button class="btn danger" style="flex:1;" id="bdel-confirm">确定删除</button>
+        </div>
+      `);
+      $('#bdel-cancel').onclick = () => { closeModal(); renderBatchList(); };
+      $('#bdel-confirm').onclick = async () => {
+        const scopes = new Set();
+        document.querySelectorAll('.del-scope:checked').forEach(el => scopes.add(el.dataset.k));
+        forceCloseModal();
+        for (const id of delChars) await deleteCharacter(id, new Set(scopes));
+        for (const gid of delGroups) {
+          chatGroups = chatGroups.filter(x => x.id !== gid);
+          let cgDirty = false;
+          charGroups.forEach(cg => {
+            const before = (cg.memberIds || []).length;
+            cg.memberIds = (cg.memberIds || []).filter(x => x !== gid);
+            if (cg.memberIds.length !== before) cgDirty = true;
+          });
+          if (cgDirty) await saveCharGroups();
+          if (currentGroupId === gid) currentGroupId = null;
+        }
+        if (delGroups.length) await saveGroups();
+        batchMode = false;
+        batchSelected = new Set();
+        renderChatList();
+        miniToast(delGroups.length ? `已删除 ${delChars.length} 位访客、解散 ${delGroups.length} 个群聊` : `已删除 ${delChars.length} 位访客`);
+      };
+      return;
+    }
+    const parts = [`解散 ${delGroups.length} 个群聊`];
     showConfirm(`确定${parts.join('、')}吗？此操作无法撤销。`, async () => {
-      for (const id of delChars) await deleteCharacter(id);
       for (const gid of delGroups) {
         chatGroups = chatGroups.filter(x => x.id !== gid);
         let cgDirty = false;
@@ -2236,11 +2325,11 @@ function renderBatchList() {
         if (cgDirty) await saveCharGroups();
         if (currentGroupId === gid) currentGroupId = null;
       }
-      if (delGroups.length) await saveGroups();
+      await saveGroups();
       batchMode = false;
       batchSelected = new Set();
       renderChatList();
-      miniToast(delGroups.length ? `已删除 ${delChars.length} 位访客、解散 ${delGroups.length} 个群聊` : `已删除 ${delChars.length} 位访客`);
+      miniToast(`已解散 ${delGroups.length} 个群聊`);
     });
   };
 }
@@ -3426,6 +3515,43 @@ function startDayRolloverTimer() {
 }
 
 /* 发送图片消息（5.9：压缩后存本地；20260929g 存 Blob+缩略图描述符） */
+/* 20261001cq：拍摄——功能面板「拍摄」入口（单聊/群聊通用，照片走 sendImageMessage 统一管线）
+   APK（Capacitor）：@capacitor/camera 调系统相机，先申请 CAMERA 运行时权限；
+   网页：隐藏 input capture=environment（移动浏览器直接弹相机，桌面回退文件选择） */
+async function capturePhotoMessage() {
+  const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
+  const cam = PLG && PLG.Camera;
+  if (cam && typeof cam.getPhoto === 'function') {
+    try {
+      /* 权限：先显式申请 CAMERA（用户要求"记得申请权限"），失败不拦截——部分 ROM 会自行弹授权 */
+      try {
+        if (typeof cam.requestPermissions === 'function') await cam.requestPermissions();
+      } catch (e) {}
+      const photo = await cam.getPhoto({
+        resultType: 'DataUrl',   // dataURL 直接进现有图片管线
+        source: 'CAMERA',        // 直接开相机（不弹相册选择）
+        quality: 72,
+        width: 1440,             // 上限约束，sendImageMessage 内还会压缩到 1080
+        correctOrientation: true,
+        saveToGallery: false,
+      });
+      if (!photo || !photo.dataUrl) return;
+      const blob = await (await fetch(photo.dataUrl)).blob();
+      const file = new File([blob], 'camera-' + Date.now() + '.jpg', { type: blob.type || 'image/jpeg' });
+      closeModalPanels();
+      sendImageMessage(file);
+    } catch (e) {
+      /* 用户取消（"no image selected"/"cancel"）静默；真报错提示 */
+      const msg = String((e && e.message) || e || '');
+      if (!/cancel|no image|dismiss/i.test(msg)) miniToast('相机不可用：' + msg);
+    }
+    return;
+  }
+  /* 网页端：capture=environment 让移动浏览器直接进拍照 */
+  const capInp = $('#plus-camera-input');
+  if (capInp) { closeModalPanels(); capInp.click(); }
+}
+
 async function sendImageMessage(file) {
   if (!file) return;
   const img = await compressImage(file, 1080, 0.7);
@@ -4033,6 +4159,7 @@ function bmParseCNDateTime(text, now) {
 async function maybeDetectScheduleReminder(charId, text) {
   try {
     if (!charId || !text) return;
+    if (chatSettings.bmSchedDetect === false) return; // 20261001cq：总设置开关（默认开）
     if (BM_SCHED_NEG_RE.test(text)) return;           // 明确说不用提醒 → 不触发
     if (!BM_SCHED_INTENT_RE.test(text)) return;       // 没有提醒/闹钟语气 → 不触发
     const parsed = bmParseCNDateTime(text);
@@ -4372,18 +4499,19 @@ function openModal(html, opts) {
   if (_noticeGate && String(html || '').indexOf('notice-modal') === -1) return false;
   // 20260929aq：超频礼物弹窗支持玻璃拟态（glass）与收窄（narrow）外观
   // 20260929bc：glitch=故障风非圆角弹窗（warning/惊喜触发）；galaxy=记忆宫殿星空卡片风
-  box.classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy');
+  box.classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy', 'modal-gray-hall');
   if (o.glass) box.classList.add('modal-oc-glass');
   if (o.narrow) box.classList.add('modal-oc-narrow');
   if (o.glitch) box.classList.add('modal-oc-glitch');
   if (o.galaxy) box.classList.add('modal-pal-galaxy');
+  if (o.gray) box.classList.add('modal-gray-hall');
   $('#modal-mask').classList.toggle('mask-oc-clear', !!o.noBackdrop);
   $('#modal-mask').classList.add('show');
   box.innerHTML = html;
 }
 function closeModal() {
   const wasOpen = $('#modal-mask').classList.contains('show');
-  $('#modal-content').classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy');
+  $('#modal-content').classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy', 'modal-gray-hall');
   $('#modal-mask').classList.remove('mask-oc', 'mask-oc-clear');
   $('#modal-mask').classList.remove('show');
   setCallGlass(false);
@@ -5308,7 +5436,7 @@ async function showRelationsModal(selectedId = null) {
           <button class="icon-btn" id="rel-all-close">✕</button>
         </div>
       </div>
-      <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">${relBatch ? '批量模式：勾选访客可删除；点击分组标题可整组勾选' : '点击任意访客，查看并直接修改 TA 与玩家、与其他所有访客的关系'}</div>
+      <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">${relBatch ? '批量模式：勾选访客可清除 TA 们的所有关系（访客保留）；点击分组标题可整组勾选' : '点击任意访客，查看并直接修改 TA 与玩家、与其他所有访客的关系'}</div>
       ${characters.length === 0
         ? '<div style="color:var(--text-tertiary);text-align:center;padding:20px;">还没有访客，先添加一个访客吧</div>'
         : `
@@ -5326,7 +5454,7 @@ async function showRelationsModal(selectedId = null) {
           ${ungrouped.length > 0 ? `<div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin:14px 0 6px;">未分组</div>` : ''}
           ${ungrouped.map(c => rowHtml(c)).join('')}
         `}
-      ${relBatch ? `<div style="display:flex;gap:10px;margin-top:16px;"><button class="btn danger block" id="rel-batchdel">删除所选访客</button></div>` : ''}
+      ${relBatch ? `<div style="display:flex;gap:10px;margin-top:16px;"><button class="btn danger block" id="rel-batchdel">清除所选关系</button></div>` : ''}
     `);
     $('#rel-all-close').onclick = closeModal;
     $('#rel-groups').onclick = () => showCharGroupsModal();
@@ -5380,11 +5508,30 @@ async function showRelationsModal(selectedId = null) {
       });
       $('#rel-batchdel').onclick = () => {
         if (sel.size === 0) { miniToast('请先勾选访客'); return; }
-        showConfirm(`确定删除选中的 ${sel.size} 个访客吗？此操作无法撤销。`, async () => {
-          for (const id of sel) await deleteCharacter(id);
+        // 20261001cq：批量管理删除改为「清除所选访客的所有关系」（不再直接删除访客）——
+        // 清空 TA 与玩家的关系、TA 指向别人的关系、别人指向 TA 的关系，清除后可重新分配
+        showConfirm(`清除所选 ${sel.size} 位访客的所有关系？访客本身会保留，清除后可重新分配关系。`, async () => {
+          let touched = 0;
+          for (const id of sel) {
+            const c = characters.find(x => x.id === id);
+            if (!c) continue;
+            c.relation = '无';
+            c.relationTo = '无';
+            c.peerRelations = {};
+            await idbPut('characters', c);
+            touched++;
+          }
+          for (const other of characters) {
+            if (sel.has(other.id)) continue;
+            if (other.peerRelations && Object.keys(other.peerRelations).some(pid => sel.has(pid))) {
+              for (const pid of Object.keys(other.peerRelations)) { if (sel.has(pid)) delete other.peerRelations[pid]; }
+              await idbPut('characters', other);
+            }
+          }
+          await refreshCharacters();
           window._relBatch = false;
           closeModal();
-          renderChatList();
+          miniToast(`已清除 ${touched} 位访客的所有关系`);
         });
       };
     } else {
@@ -5762,6 +5909,7 @@ function buildPlusPanel() {
   };
   const items = g0 ? [
     { label: '上传图片', labelFor: 'plus-file-input', icon: 'image' }, // 群内直达
+    { label: '拍摄', icon: 'camera', act: () => capturePhotoMessage() }, // 20261001cq：调相机拍摄后群内直达
     { label: '表情包', icon: 'sticker', act: () => togglePanel('emoji-panel') }, // 群内直达
     { label: '决策币', icon: 'coin', act: pickThen('决策币 · 选一名成员主持', (g, m) => showGroupCoinModal(g, m)) },
     { label: '查岗', icon: 'checkin', act: pickThen('查岗 · 选择目标成员', null, () => showCheckinModal()) },
@@ -5776,6 +5924,7 @@ function buildPlusPanel() {
     { label: '群投票', icon: 'vote', act: () => showGroupVoteModal(g0) },
   ] : [
     { label: '上传图片', labelFor: 'plus-file-input', icon: 'image' }, // label 原生触发，兼容沙箱/WebView
+    { label: '拍摄', icon: 'camera', act: () => capturePhotoMessage() }, // 20261001cq：APK=系统相机插件；网页= capture 弹相机
     { label: '表情包', icon: 'sticker', act: () => togglePanel('emoji-panel') },
     { label: '决策币', icon: 'coin', act: showCoinModal },
     { label: '查岗', icon: 'checkin', act: showCheckinModal },
@@ -5812,6 +5961,15 @@ function buildPlusPanel() {
       closeModalPanels();
       sendImageMessage(inp.files[0]);
       inp.value = '';
+    }
+  };
+  // 20261001cq：拍摄——网页端 input capture=environment 弹系统相机；APK 端点击时已由 capturePhotoMessage 走插件
+  const capInp = $('#plus-camera-input');
+  if (capInp) capInp.onchange = () => {
+    if (capInp.files[0]) {
+      closeModalPanels();
+      sendImageMessage(capInp.files[0]);
+      capInp.value = '';
     }
   };
   $$('#plus-grid [data-plus]').forEach(el => {
@@ -7357,6 +7515,7 @@ function bindEvents() {
   $('#btn-home-memory').onclick = () => showMemoryPalaceModal(); // 记忆宫殿：朋友圈分享存入的记忆
   $('#btn-home-world').onclick = () => showWorldBookModal();
   $('#btn-home-relations').onclick = () => showRelationsModal();
+  $('#btn-home-gray').onclick = () => showGrayHallModal(); // 20261001cq：灰度殿堂——部分删除访客的旧日余晖归档
 
   // 朋友圈发布入口
   $('#btn-moments-publish').onclick = () => showPublishMomentModal();
@@ -9676,6 +9835,13 @@ async function showSettingsModal() {
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启需输入密码。开启后可在访客单聊输入命令，让访客发朋友圈/表情包/戳一戳/查岗/超频/视频通话/发红包/书信/问卷。命令不会作为普通消息发送，且不受任何功能解锁限制。</div>
     </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>⏰ 聊天日程+闹钟自动检测</span>
+        <input type="checkbox" id="gs-bm-sched" ${(chatSettings.bmSchedDetect !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，你在聊天里对访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统会自动识别并弹窗确认，把行程写入系统日历/闹钟提醒。字卡模式与 AI 模式通用，关闭后不再自动检测。</div>
+    </div>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-anniv-card-setting">
       入梦签纪念日设置 <span>🎉</span>
     </button>
@@ -9707,6 +9873,15 @@ async function showSettingsModal() {
     <div id="layout-check" style="text-align:center;font-size:11px;color:var(--text-tertiary);margin-top:4px;opacity:.85;"></div>
   `);
   $('#gs-close').onclick = closeModal;
+  // 20261001cq：聊天日程+闹钟自动检测开关（默认开）
+  {
+    const schedBox = $('#gs-bm-sched');
+    if (schedBox) schedBox.onchange = async () => {
+      chatSettings.bmSchedDetect = schedBox.checked;
+      await setSetting('chatSettings', chatSettings);
+      miniToast(schedBox.checked ? '日程自动检测已开启' : '日程自动检测已关闭');
+    };
+  }
   $('#btn-splash-audio-guide').onclick = () => showSplashAudioGuideModal(); // 20260930bx：浏览器自动播放白名单引导
   $('#btn-splash-music-setting').onclick = () => showSplashMusicModal();    // 20260930bx：更换开屏动画音乐
   $('#btn-app-sound-setting').onclick = () => showAppSoundModal();          // 20260930bx：更换软件内提示音
@@ -12202,6 +12377,423 @@ function bindPalSearch(input, fire) {
   });
 }
 function palDebounce(fn, ms) { let t = null; return (v) => { clearTimeout(t); t = setTimeout(() => fn(v), ms); }; }
+
+/* ============================================================
+   灰度殿堂（20261001cq）
+   部分删除访客后，没删干净的数据归档在此：个人主页入口 →
+   每个被删角色一个「XX的旧日余晖」文件夹，板块=旧日书信 / 旧日生平（生平+关系网）/
+   旧日记忆（记忆宫殿）/ 旧日朋友圈 / 旧日超频 / 旧日问卷。
+   每行可「复活」（还原角色本体+关系+礼物柜，残留数据原地接上）或「彻底删除」（不可撤销）；
+   支持批量管理（勾选文件夹 → 彻底删除访客数据）。界面仿记忆宫殿，灰石色调，
+   全预设配色 / 玻璃拟态 / 普通模式统一灰底浅字保证可读。
+   ============================================================ */
+const GRAY_HALL_KV = 'grayHall';
+async function grayHallList() { return await getSetting(GRAY_HALL_KV, []); }
+async function grayHallSave(list) { await setSetting(GRAY_HALL_KV, list); }
+
+/* 归档条目的各板块残留数量（从原 store 实时数） */
+async function graySectionCounts(gh) {
+  const fid = 'pf_char_' + gh.charId;
+  const msgs = (await idbGetAll('messages')).filter(m => m.charId === gh.charId && !m.groupId);
+  const pal = (await idbGetAll('palace')).filter(e => e.folderId === fid);
+  let posts = [];
+  try { posts = (await loadMomentPosts()).filter(p => p.authorType === 'char' && p.authorId === gh.charId); } catch (e) {}
+  const srvs = (await idbGetAll('surveys')).filter(s => s.charId === gh.charId);
+  const gfs = (await idbGetAll('gifts')).filter(g => g.charId === gh.charId);
+  const lettersById = new Set((gh.letters || []).map(l => l.id));
+  const letters = msgs.filter(m => m.type === 'letter' && !lettersById.has(m.id)).concat(gh.letters || []);
+  return {
+    letters: letters.length,
+    memory: pal.length,
+    moments: posts.length,
+    overclock: gfs.length + (gh.gifts || []).length,
+    survey: srvs.length,
+    bio: 1,
+  };
+}
+
+/* 灰度殿堂主界面（仿记忆宫殿 galaxy 布局；opts.batch=批量管理模式） */
+async function showGrayHallModal(opts = {}) {
+  const hall = (await grayHallList()).filter(x => x && x.charId);
+  const batch = !!opts.batch;
+  const sel = batch ? new Set(opts.sel || []) : new Set();
+  const rows = await Promise.all(hall.map(async (gh) => {
+    const cnt = await graySectionCounts(gh);
+    const when = new Date(gh.archivedAt);
+    const dateStr = `${when.getFullYear()}.${String(when.getMonth() + 1).padStart(2, '0')}.${String(when.getDate()).padStart(2, '0')}`;
+    const segs = [];
+    if (cnt.letters) segs.push(`书信${cnt.letters}`);
+    if (cnt.memory) segs.push(`记忆${cnt.memory}`);
+    if (cnt.moments) segs.push(`朋友圈${cnt.moments}`);
+    if (cnt.overclock) segs.push(`礼物${cnt.overclock}`);
+    if (cnt.survey) segs.push(`问卷${cnt.survey}`);
+    const sub = `${dateStr} 归档 · ${segs.length ? segs.join(' / ') : '残留数据已清空'}`;
+    if (batch) {
+      const on = sel.has(gh.charId);
+      return `
+      <div class="pal-row" data-gh-row="${gh.charId}">
+        <div class="pal-ic">${gh.avatar ? `<img src="${imgSrc(gh.avatar, true)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">` : escapeHtml((gh.name || '梦')[0])}</div>
+        <div class="pal-main">
+          <div class="pal-title">${escapeHtml(gh.name || 'TA')}的旧日余晖</div>
+          <div class="pal-sub">${sub}</div>
+        </div>
+        <div data-gh-chk="${gh.charId}" style="width:20px;height:20px;border-radius:50%;border:2px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:13px;color:#17141d;flex-shrink:0;${on ? 'background:var(--purple);border-color:var(--purple);' : ''}">${on ? '✓' : ''}</div>
+      </div>`;
+    }
+    return `
+      <div class="pal-row" data-gh-row="${gh.charId}">
+        <div class="pal-ic">${gh.avatar ? `<img src="${imgSrc(gh.avatar, true)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">` : escapeHtml((gh.name || '梦')[0])}</div>
+        <div class="pal-main">
+          <div class="pal-title">${escapeHtml(gh.name || 'TA')}的旧日余晖</div>
+          <div class="pal-sub">${sub}</div>
+        </div>
+        <button class="wb-act" data-gh-del="${gh.charId}" title="彻底删除（不可撤销）" style="flex-shrink:0;">🗑 彻删</button>
+        <button class="wb-act" data-gh-rev="${gh.charId}" title="复活该访客" style="flex-shrink:0;">🕯️ 复活</button>
+        <span style="color:var(--text-tertiary);">›</span>
+      </div>`;
+  }));
+  openModal(`
+    <div class="pal-galaxy-head">
+      <div class="pal-galaxy-title">灰度殿堂</div>
+      <div class="pal-galaxy-sub">${hall.length ? `${hall.length} 位访客的旧日余晖沉眠于此` : '殿堂里还很安静'}</div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        ${icon('memory', 18)}<span class="badge">删除时未清空的数据会归档到这里</span>
+      </div>
+      <button class="icon-btn" id="gh-close" title="关闭">${icon('close', 18)}</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:48vh;overflow-y:auto;" id="gray-root">
+      ${rows.join('') || `<div class="empty" style="padding:18px 0;"><div class="empty-icon">${icon('memory', 34)}</div><div>还没有归档的访客</div><div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">删除访客时不勾选全部删除范围，残留数据就会来到这里</div></div>`}
+    </div>
+    ${batch
+      ? `<div style="display:flex;gap:10px;margin-top:14px;">
+           <button class="btn" style="flex:1;" id="gh-batch-cancel">退出批量</button>
+           <button class="btn danger" style="flex:1;" id="gh-batch-purge">彻底删除所选访客数据</button>
+         </div>
+         <div style="font-size:11px;color:var(--text-tertiary);margin-top:8px;line-height:1.5;">彻底删除会同时抹去该访客残留的聊天记录、书信、记忆宫殿、朋友圈、问卷、礼物等全部数据，且不可撤销。</div>`
+      : `<div style="display:flex;gap:10px;margin-top:12px;">
+           <button class="btn block" id="gh-batch-enter">批量管理</button>
+         </div>
+         <div style="font-size:11px;color:var(--text-tertiary);margin-top:8px;line-height:1.5;">🕯️ 复活 = 把该访客连同 TA 的残留数据完整还原；🗑 彻删 = 抹除全部残留数据（不可撤销）。点击访客文件夹可进入回顾旧日余晖。</div>`}
+  `, { galaxy: true, gray: true });
+  $('#gh-close').onclick = closeModal;
+  const bindRows = () => {
+    document.querySelectorAll('#gray-root [data-gh-row]').forEach(row => {
+      const cid = row.dataset.ghRow;
+      row.onclick = (ev) => {
+        if (ev.target.closest('[data-gh-del]') || ev.target.closest('[data-gh-rev]') || ev.target.closest('[data-gh-chk]')) return;
+        if (batch) return;
+        const gh = hall.find(x => x.charId === cid);
+        if (gh) showGrayHallArchive(gh);
+      };
+    });
+    document.querySelectorAll('#gray-root [data-gh-del]').forEach(btn => {
+      btn.onclick = (ev) => {
+        ev.stopPropagation();
+        const gh = hall.find(x => x.charId === btn.dataset.ghDel);
+        if (gh) grayPurgeConfirm(gh, () => showGrayHallModal());
+      };
+    });
+    document.querySelectorAll('#gray-root [data-gh-rev]').forEach(btn => {
+      btn.onclick = (ev) => {
+        ev.stopPropagation();
+        const gh = hall.find(x => x.charId === btn.dataset.ghRev);
+        if (gh) grayRevive(gh, () => showGrayHallModal());
+      };
+    });
+  };
+  bindRows();
+  if (batch) {
+    document.querySelectorAll('#gray-root [data-gh-chk]').forEach(el => {
+      el.onclick = (ev) => {
+        ev.stopPropagation();
+        const cid = el.dataset.ghChk;
+        sel.has(cid) ? sel.delete(cid) : sel.add(cid);
+        showGrayHallModal({ batch: true, sel: [...sel] });
+      };
+    });
+    $('#gh-batch-cancel').onclick = () => showGrayHallModal();
+    $('#gh-batch-purge').onclick = () => {
+      if (sel.size === 0) { miniToast('请先勾选访客文件夹'); return; }
+      showConfirm(`彻底删除所选 ${sel.size} 位访客的全部残留数据？聊天记录、书信、记忆宫殿、朋友圈、问卷、礼物等将一并抹去，此操作无法撤销。`, async () => {
+        let ok = 0, fail = 0;
+        for (const cid of sel) {
+          const gh = (await grayHallList()).find(x => x.charId === cid);
+          if (!gh) continue;
+          try { await grayPurge(gh); ok++; } catch (e) { fail++; }
+        }
+        miniToast(`已彻底删除 ${ok} 位访客的数据${fail ? `（${fail} 位失败）` : ''}`);
+        showGrayHallModal();
+      });
+    };
+  } else {
+    $('#gh-batch-enter').onclick = () => showGrayHallModal({ batch: true });
+  }
+}
+
+/* 彻底删除确认（非批量模式行内删除按钮共用；提示不可撤销） */
+function grayPurgeConfirm(gh, after) {
+  showConfirm(`彻底删除「${escapeHtml(gh.name || 'TA')}」的全部残留数据？聊天记录、书信、记忆宫殿、朋友圈、问卷、礼物等将一并抹去，此操作无法撤销。`, async () => {
+    try {
+      await grayPurge(gh);
+      miniToast('已彻底删除');
+    } catch (e) {
+      openModal(`
+        <div style="text-align:center;margin-bottom:10px;">
+          <div style="font-size:38px;margin-bottom:8px;">⚠️</div>
+          <div style="font-size:16px;font-weight:600;">删除失败</div>
+          <div style="font-size:13px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">${escapeHtml(String((e && e.message) || e || '未知错误'))}</div>
+        </div>
+        <button class="btn primary block" id="gh-err-ok">知道了</button>`, { gray: true });
+      const ok = $('#gh-err-ok');
+      if (ok) ok.onclick = () => { closeModal(); if (after) after(); };
+      return;
+    }
+    if (after) after();
+  });
+}
+
+/* 复活：还原角色本体 + 关系 + 礼物柜（残留数据原地接上） */
+async function grayRevive(gh, after) {
+  openModal(`
+    <div style="text-align:center;padding:22px 0;">
+      <div style="font-size:40px;margin-bottom:12px;">🕯️</div>
+      <div style="font-size:16px;font-weight:600;">正在施法将该访客复活…</div>
+      <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:8px;">旧日余晖正在聚拢</div>
+    </div>`, { gray: true });
+  try {
+    const c = JSON.parse(JSON.stringify(gh.char));
+    await idbPut('characters', c);
+    // 还原其他访客指向 TA 的单向关系
+    for (const oid of Object.keys(gh.othersRel || {})) {
+      const o = characters.find(x => x.id === oid);
+      if (o) {
+        o.peerRelations = o.peerRelations || {};
+        o.peerRelations[c.id] = gh.othersRel[oid];
+        await idbPut('characters', o);
+      }
+    }
+    for (const g of (gh.gifts || [])) await idbPut('gifts', g);
+    await refreshCharacters();
+    const hall = (await grayHallList()).filter(x => x.charId !== gh.charId);
+    await grayHallSave(hall);
+    renderChatList();
+    openModal(`
+      <div style="text-align:center;padding:22px 0;">
+        <div style="font-size:40px;margin-bottom:12px;">✨</div>
+        <div style="font-size:16.5px;font-weight:600;">访客已复活</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-top:8px;">「${escapeHtml(c.name || 'TA')}」已回到你的访客列表，TA 的书信、记忆、朋友圈等旧日数据也已一并归还</div>
+      </div>
+      <button class="btn primary block" id="gh-rev-ok">好的</button>`, { gray: true });
+    const ok = $('#gh-rev-ok');
+    if (ok) ok.onclick = closeModal;
+    if (after) after();
+  } catch (e) {
+    openModal(`
+      <div style="text-align:center;margin-bottom:10px;">
+        <div style="font-size:38px;margin-bottom:8px;">⚠️</div>
+        <div style="font-size:16px;font-weight:600;">复活失败</div>
+        <div style="font-size:13px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">施法被某种力量打断了：${escapeHtml(String((e && e.message) || e || '未知错误'))}</div>
+      </div>
+      <button class="btn primary block" id="gh-err-ok">知道了</button>`, { gray: true });
+    const ok = $('#gh-err-ok');
+    if (ok) ok.onclick = () => { closeModal(); if (after) after(); };
+  }
+}
+
+/* 彻底删除：抹掉该访客所有残留数据 + 删除归档条目 */
+async function grayPurge(gh) {
+  const id = gh.charId;
+  // ① 聊天记录与书信（单聊全部消息）
+  const msgs = await idbGetMessagesByChar(id, 100000);
+  for (const m of msgs) await idbDelete('messages', m.id);
+  // ② 记忆宫殿（文件夹 + 条目）
+  const fid = 'pf_char_' + id;
+  const folders = await getSetting('palaceFolders', []);
+  await setSetting('palaceFolders', folders.filter(f => f.id !== fid && f.parentId !== fid));
+  const pal = await idbGetAll('palace');
+  for (const e of pal) { if (e.folderId === fid) await idbDelete('palace', e.id); }
+  // ③ 朋友圈（帖子 + 在别人帖子里的点赞/评论）
+  try {
+    const posts = await loadMomentPosts();
+    const keep = posts.filter(p => !(p.authorType === 'char' && p.authorId === id));
+    for (const p of keep) {
+      p.likes = (p.likes || []).filter(l => l.who !== id);
+      p.comments = (p.comments || []).filter(cm => cm.who !== id);
+      p.pending = (p.pending || []).filter(pd => pd.charId !== id);
+    }
+    _momentsPosts = keep;
+    await saveMomentPosts();
+  } catch (e) {}
+  // ④ 问卷
+  const srvs = await idbGetAll('surveys');
+  for (const s of srvs) { if (s.charId === id) await idbDelete('surveys', s.id); }
+  // ⑤ 礼物柜残留
+  const gfs = await idbGetAll('gifts');
+  for (const g of gfs) { if (g.charId === id) await idbDelete('gifts', g.id); }
+  // ⑥ 其他访客指向 TA 的关系（若有残留）
+  for (const other of characters) {
+    if (other.id === id) continue;
+    if (other.peerRelations && other.peerRelations[id] !== undefined) {
+      delete other.peerRelations[id];
+      await idbPut('characters', other);
+    }
+  }
+  // ⑦ 删除归档条目
+  const hall = (await grayHallList()).filter(x => x.charId !== id);
+  await grayHallSave(hall);
+}
+
+/* 「XX的旧日余晖」详情：六大板块 + 复活/彻底删除（子功能退出回灰度殿堂主界面） */
+async function showGrayHallArchive(gh) {
+  const cnt = await graySectionCounts(gh);
+  const c = gh.char || {};
+  const when = new Date(gh.archivedAt);
+  const dateStr = `${when.getFullYear()}.${String(when.getMonth() + 1).padStart(2, '0')}.${String(when.getDate()).padStart(2, '0')}`;
+  const secRow = (sec, ic, label, n) => `
+    <div class="pal-row" data-gh-sec="${sec}">
+      <div class="pal-ic">${ic}</div>
+      <div class="pal-main">
+        <div class="pal-title">${label}</div>
+        <div class="pal-sub">${n ? `残留 ${n} 条 · 点击回顾` : '没有残留数据'}</div>
+      </div>
+      ${n ? '<span style="color:var(--text-tertiary);">›</span>' : ''}
+    </div>`;
+  openModal(`
+    <div class="pal-galaxy-head">
+      <div class="pal-galaxy-title">${escapeHtml(gh.name || 'TA')}的旧日余晖</div>
+      <div class="pal-galaxy-sub">${dateStr} 归档 · 灰度殿堂</div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <button class="btn" style="padding:6px 12px;font-size:13px;" id="gh-arch-back">‹ 返回殿堂</button>
+      <button class="icon-btn" id="gh-arch-close" title="关闭">${icon('close', 18)}</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow-y:auto;">
+      ${secRow('letters', icon('letter', 17), '旧日书信', cnt.letters)}
+      ${secRow('bio', icon('user', 17), '旧日生平（生平 · 关系网）', cnt.bio)}
+      ${secRow('memory', icon('memory', 17), '旧日记忆（记忆宫殿）', cnt.memory)}
+      ${secRow('moments', icon('moments', 17), '旧日朋友圈', cnt.moments)}
+      ${secRow('overclock', icon('gift', 17), '旧日超频', cnt.overclock)}
+      ${secRow('survey', icon('checklist', 17), '旧日问卷', cnt.survey)}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn" style="flex:1;" id="gh-arch-rev">🕯️ 复活该访客</button>
+      <button class="btn danger" style="flex:1;" id="gh-arch-purge">🗑 彻底删除</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-tertiary);margin-top:8px;line-height:1.5;">复活会把「${escapeHtml(gh.name || 'TA')}」连同 TA 的残留数据完整还原；彻底删除会抹去全部残留数据，不可撤销。</div>
+  `, { galaxy: true, gray: true });
+  $('#gh-arch-back').onclick = () => showGrayHallModal();
+  $('#gh-arch-close').onclick = closeModal;
+  $('#gh-arch-rev').onclick = () => grayRevive(gh, () => {});
+  $('#gh-arch-purge').onclick = () => grayPurgeConfirm(gh, () => showGrayHallModal());
+  document.querySelectorAll('[data-gh-sec]').forEach(row => {
+    row.onclick = () => {
+      if (!cnt[row.dataset.ghSec]) { miniToast('这个板块没有残留数据'); return; }
+      grayViewSection(gh, row.dataset.ghSec);
+    };
+  });
+}
+
+/* 板块只读回顾（子功能退出回「旧日余晖」详情） */
+async function grayViewSection(gh, sec) {
+  const id = gh.charId;
+  const fid = 'pf_char_' + id;
+  let listHtml = '';
+  if (sec === 'letters') {
+    const msgs = (await idbGetAll('messages')).filter(m => m.charId === id && !m.groupId);
+    const byId = new Set((gh.letters || []).map(l => l.id));
+    const letters = msgs.filter(m => m.type === 'letter' && !byId.has(m.id)).concat(gh.letters || []).sort((a, b) => (a.time || 0) - (b.time || 0));
+    listHtml = letters.map(m => {
+      const txt = (m.content && m.content.text) || (m.content && m.content.preview) || '';
+      const who = m.from === 'me' ? (playerProfile.name || '我') : (gh.name || 'TA');
+      const t = m.time ? new Date(m.time) : null;
+      const ds = t ? `${t.getMonth() + 1}.${t.getDate()}` : '';
+      return `<div class="pal-row" style="cursor:default;">
+        <div class="pal-ic">${m.from === 'me' ? '📤' : '📥'}</div>
+        <div class="pal-main">
+          <div class="pal-title">${escapeHtml(String(txt).slice(0, 24) || '（空信）')}</div>
+          <div class="pal-sub">${escapeHtml(who)} · ${ds}</div>
+        </div>
+      </div>`;
+    }).join('') || '<div class="empty" style="padding:14px 0;">没有书信残留</div>';
+  } else if (sec === 'bio') {
+    const relTxt = c.relationTo || '无';
+    const pr = Object.entries(c.peerRelations || {});
+    listHtml = `
+      <div style="border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:14px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="pal-ic" style="width:44px;height:44px;border-radius:50%;overflow:hidden;font-size:18px;display:flex;align-items:center;justify-content:center;">${c.avatar ? `<img src="${imgSrc(c.avatar, true)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((c.name || '梦')[0])}</div>
+          <div>
+            <div style="font-size:15px;font-weight:600;">${escapeHtml(c.name || 'TA')}</div>
+            <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;">💰 钱包 ¥${c.wallet ?? 100000} · 与我：${escapeHtml(String(relTxt))}</div>
+          </div>
+        </div>
+        ${c.bio ? `<div style="font-size:13px;line-height:1.7;margin-top:10px;color:var(--text-secondary);">${escapeHtml(String(c.bio))}</div>` : '<div style="font-size:12px;color:var(--text-tertiary);margin-top:10px;">没有留下生平介绍</div>'}
+      </div>
+      <div style="font-size:12.5px;font-weight:600;color:var(--text-secondary);margin:4px 2px 8px;">关系网快照</div>
+      ${pr.length ? pr.map(([oid, v]) => {
+        const o = characters.find(x => x.id === oid);
+        const nm = o ? o.name : `已离开的访客（${String(oid).slice(-4)}）`;
+        return `<div class="pal-row" style="cursor:default;">
+          <div class="pal-ic">🔗</div>
+          <div class="pal-main"><div class="pal-title">${escapeHtml(nm)}</div><div class="pal-sub">${escapeHtml(String(v || '无'))}</div></div>
+        </div>`;
+      }).join('') : '<div class="empty" style="padding:12px 0;">没有关系快照</div>'}`;
+  } else if (sec === 'memory') {
+    const pal = (await idbGetAll('palace')).filter(e => e.folderId === fid).sort((a, b) => (b.time || 0) - (a.time || 0));
+    listHtml = pal.map(e => `<div class="pal-row" style="cursor:default;">
+      <div class="pal-ic">${e.kind === 'manual' ? icon('image', 16) : icon('chatset', 16)}</div>
+      <div class="pal-main">
+        <div class="pal-title">${escapeHtml(palWithPlayerName(e.title || '（无题）'))}</div>
+        <div class="pal-sub">${escapeHtml(e.dateLabel || '')}${e.summary ? ' · ' + escapeHtml(String(e.summary).slice(0, 20)) : ''}</div>
+      </div>
+    </div>`).join('') || '<div class="empty" style="padding:14px 0;">没有记忆残留</div>';
+  } else if (sec === 'moments') {
+    let posts = [];
+    try { posts = (await loadMomentPosts()).filter(p => p.authorType === 'char' && p.authorId === id).sort((a, b) => (b.time || 0) - (a.time || 0)); } catch (e) {}
+    listHtml = posts.map(p => `<div class="pal-row" style="cursor:default;">
+      <div class="pal-ic">${icon('moments', 16)}</div>
+      <div class="pal-main">
+        <div class="pal-title">${escapeHtml(String(p.text || '').slice(0, 24) || '（图文帖）')}</div>
+        <div class="pal-sub">${p.time ? new Date(p.time).getMonth() + 1 + '.' + new Date(p.time).getDate() : ''}${(p.images && p.images.length) ? ` · ${p.images.length} 图` : ''}</div>
+      </div>
+    </div>`).join('') || '<div class="empty" style="padding:14px 0;">没有朋友圈残留</div>';
+  } else if (sec === 'overclock') {
+    const gfsRes = (await idbGetAll('gifts')).filter(g => g.charId === id);
+    const all = gfsRes.concat(gh.gifts || []);
+    listHtml = all.map(g => `<div class="pal-row" style="cursor:default;">
+      <div class="pal-ic">🎁</div>
+      <div class="pal-main">
+        <div class="pal-title">${escapeHtml(g.name || g.giftName || '礼物')}</div>
+        <div class="pal-sub">${g.time ? new Date(g.time).getMonth() + 1 + '.' + new Date(g.time).getDate() : ''}</div>
+      </div>
+    </div>`).join('') || '<div class="empty" style="padding:14px 0;">礼物柜已随删除清空</div>';
+  } else if (sec === 'survey') {
+    const srvs = (await idbGetAll('surveys')).filter(s => s.charId === id).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    listHtml = srvs.map(s => {
+      const answered = (s.questions || []).filter(q => q.answer).length;
+      return `<div class="pal-row" style="cursor:default;">
+        <div class="pal-ic">${icon('checklist', 16)}</div>
+        <div class="pal-main">
+          <div class="pal-title">${escapeHtml(s.title || '问卷')}</div>
+          <div class="pal-sub">${(s.questions || []).length} 题 · 已答 ${answered} · ${s.createdAt ? new Date(s.createdAt).getMonth() + 1 + '.' + new Date(s.createdAt).getDate() : ''}</div>
+        </div>
+      </div>`;
+    }).join('') || '<div class="empty" style="padding:14px 0;">没有问卷残留</div>';
+  }
+  const secName = { letters: '旧日书信', bio: '旧日生平', memory: '旧日记忆', moments: '旧日朋友圈', overclock: '旧日超频', survey: '旧日问卷' }[sec] || '';
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:17px;font-weight:600;">☰ ${escapeHtml(gh.name || 'TA')}的${secName}</div>
+      <button class="icon-btn" id="gh-sec-close">✕</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;">${listHtml}</div>
+    <button class="btn block" style="margin-top:14px;" id="gh-sec-back">‹ 返回旧日余晖</button>
+  `, { gray: true });
+  $('#gh-sec-close').onclick = closeModal;
+  $('#gh-sec-back').onclick = () => showGrayHallArchive(gh);
+}
 
 async function showMemoryPalaceModal(opts = {}) {
   await palMigrateOldPosts();
