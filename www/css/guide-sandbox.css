@@ -309,6 +309,23 @@
   letter-spacing: 2px;
   color: #a78bfa;
 }
+/* cn：删除卡片段后，spotbar 承担主标题（原「初入梦境」卡片头） */
+.bm-guide-spotbar .bm-guide-spot-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #f2eeff;
+  letter-spacing: 1px;
+}
+.bm-guide-spotbar .bm-guide-spot-title svg { color: #a78bfa; flex-shrink: 0; filter: drop-shadow(0 0 6px rgba(167,139,250,0.55)); }
+.bm-guide-spotbar .bm-guide-spot-step-text {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  color: #9d94bd;
+}
 .bm-guide-spotbar .bm-guide-skip { background: rgba(20,17,30,0.5); }
 
 /* 聚光洞：框住真实按钮，四周用巨大 box-shadow 压暗 */

@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002cm'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002cn'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -201,6 +201,7 @@ async function init() {
     // 触发前 gate 已生效，任何打断弹窗都被抑制，声明弹窗始终排在最前
     try {
       if (!(await getSetting('softwareNoticeAgreed'))) _noticeGate = true;
+      else { try { window.__bmNoticeGateDone = true; } catch (e2) {} } // 20261002cn：已同意，声明流程视为结束（引导 gate 硬门槛信号）
     } catch (e) {}
   } catch (e) {
     console.error('[白日梦] 启动加载异常（已跳过，界面照常显示）', e);
@@ -292,7 +293,7 @@ async function showSoftwareNotice(opts = {}) {
   const isReview = !!opts.review;
   try {
     const agreed = await getSetting('softwareNoticeAgreed');
-    if (!isReview && agreed) return; // 已同意且非主动重看 → 跳过
+    if (!isReview && agreed) { try { window.__bmNoticeGateDone = true; } catch (e2) {} return; } // 已同意且非主动重看 → 跳过（cn：同步发引导 gate 信号）
     if (!isReview && !agreed) _noticeGate = true;
   } catch (e) { if (!isReview) _noticeGate = true; }
 
@@ -378,7 +379,10 @@ async function showSoftwareNotice(opts = {}) {
       </div>
     </div>`, { glass: true, narrow: true, noBackdrop: true });
 
-  const releaseGate = () => { _noticeGate = false; };
+  const releaseGate = () => {
+    _noticeGate = false;
+    try { window.__bmNoticeGateDone = true; } catch (e) {} // 20261002cn：声明同意/关闭后发信号，引导（isReady gate 门槛）才允许挂载
+  };
   const agree = async () => {
     try { await setSetting('softwareNoticeAgreed', '1'); } catch (e) {}
     releaseGate();
