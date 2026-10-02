@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002cc'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002cd'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -252,9 +252,12 @@ async function init() {
    顶部就显示一条警示——数据没丢，全在 8902 那份里；关闭后本次会话（同 origin）不再提示 */
 function showDataSourceWarning() {
   // 20260930cd：GitHub Pages（*.github.io）为正式发布入口，不显示"数据源"警示
+  // 20260930cg-apk：Capacitor 安卓壳（https://localhost / capacitor://）同为合法数据源，不警示
+  const hn = location.hostname;
   const on8902 = location.hostname === '127.0.0.1' && location.port === '8902';
-  const onPages = /(^|\.)github\.io$/i.test(location.hostname);
-  if (on8902 || onPages) return;
+  const onPages = /(^|\.)github\.io$/i.test(hn);
+  const onCapacitor = hn === 'localhost' || (hn === '127.0.0.1') || location.protocol.startsWith('capacitor');
+  if (on8902 || onPages || onCapacitor) return;
   try { if (sessionStorage.getItem('bm_srcwarn')) return; } catch (e) {}
   const where = location.protocol === 'file:' ? '本地文件（file://）方式'
     : (location.hostname + (location.port ? ':' + location.port : ''));
