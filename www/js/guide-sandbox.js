@@ -10,8 +10,8 @@
 
    cn 版重构（应用户要求删除卡片式引导）：
      · 删除第一段「初识卡片」，只保留聚光灯功能导览——逐步框选主页上的
-       真实按钮（记忆宫殿 / 世界树 / 织梦点 / API 接入），AI/字卡开关无
-       实体按钮，用居中气泡示意图说明；
+       真实按钮（记忆宫殿 / 世界树 / 字卡库 / 织梦点 / API 接入），AI/字卡
+       开关无实体按钮，用居中气泡示意图说明；
      · 触发新增「软件声明流程已结束」硬门槛（window.__bmNoticeGateDone）：
        真机上 init 慢、声明弹出晚于开屏结束时，旧版会在窗口期抢跑挂载、
        盖住声明——现在声明未同意/未关闭前引导绝不挂载；
@@ -33,6 +33,7 @@
     sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" stroke-width="1.4"/>',
     memory: '<path d="M4 21V9l8-6 8 6v12"/><path d="M2 21h20"/><path d="M9 21v-6h6v6"/><path d="M12 2.5V4"/>',
     tree: '<path d="M12 22v-8"/><path d="M12 13.5c-.2-1.8-1.1-3.1-2.6-4"/><path d="M12 10c.2-1.5 1-2.7 2.3-3.6"/><path d="M12 14c-3.9 0-7-2.3-7-5.7 0-2.9 1.9-4.8 4.4-4.9 1-1.6 4.2-1.6 5.2 0C17.1 3.5 19 5.4 19 8.3c0 3.4-3.1 5.7-7 5.7z"/>',
+    cards: '<rect x="7" y="3" width="13" height="15" rx="2.5"/><path d="M4 7v11a3 3 0 0 0 3 3h9"/><path d="M11 8h5M11 12h5"/>',
     palette: '<circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="9.5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="9.5" r="1" fill="currentColor" stroke="none"/><path d="M12 21a2.5 2.5 0 0 1-2.5-2.5c0-1.4 1.1-2 2.5-2s2-.6 2-1.5 1-1.5 2.5-1.5"/>',
     aitoggle: '<rect x="2.5" y="7.2" width="19" height="9.6" rx="4.8"/><circle cx="7.3" cy="12" r="3" fill="currentColor" stroke="none"/>',
     ai: '<rect x="4" y="6" width="16" height="12" rx="3"/><path d="M8 6v12M16 6v12"/><circle cx="12" cy="12" r="2"/><path d="M7.5 9h1M7.5 12h1M7.5 15h1M15.5 9h1M15.5 12h1M15.5 15h1" stroke-width="1.6"/>',
@@ -57,6 +58,10 @@
     {
       target: 'btn-home-world', ico: 'tree', name: '世界树',
       desc: '点它进入<b>世界树</b>：你的故事设定库。写下人物、地名、世界观，访客聊到相关关键词时会<span class="bm-guide-hl">自动想起并引用</span>，让对话更有代入感。'
+    },
+    {
+      target: 'btn-home-cards', ico: 'cards', name: '字卡库',
+      desc: '点它进入<b>字卡库</b>——整个软件的内容引擎：访客的回复、打招呼、戳一戳、状态和寄语都是从这里抽取的。你可以<b>新建分组、逐条撰写</b>，也能<span class="bm-guide-hl">一键导入别人分享的字卡</span>；字卡模式（离线）完全由它驱动，内容越丰富，访客越鲜活。'
     },
     {
       target: 'btn-home-theme', ico: 'palette', name: '织梦点',

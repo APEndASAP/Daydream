@@ -2,7 +2,7 @@
 
 一款「聊天 + 朋友圈」形态的**角色陪伴应用**。你可以添加自己的梦角（虚拟角色 / 原创 OC），和它们聊天、发朋友圈、模拟通话、占卜、记录纪念日与日记，并自由定制大量美化内容。
 
-> 当前版本：`v=20261002cn` · 纯前端 · 单机优先 · 数据全部本地存储
+> 当前版本：`v=20261002co` · 纯前端 · 单机优先 · 数据全部本地存储
 
 ---
 
@@ -114,6 +114,7 @@ python -m http.server 8901
 
 | 版本 | 主要内容 |
 | --- | --- |
+| `20261002co` | **引导新增字卡库导览 + 决策币复古雕版图案（YES/NO）**：① 新手引导聚光灯导览由 5 步扩为 **6 步**——在世界树之后新增**字卡库**步骤（框选主页真实按钮 `#btn-home-cards`，图标与主页 icons.js 的 cards 一致），文案介绍字卡库是软件内容引擎（回复/打招呼/戳一戳/状态/寄语都从这里抽，支持分组撰写与导入分享，字卡模式完全由它驱动）；② **决策币两面图案重绘**——弃用 🌙是/⭐否 emoji 面，改为复古木刻雕版硬币风格图（参考六便士古币版画风：**正面 `img/coin-yes.jpg` = YES + 月桂枝环绕 + 珠链边圈；反面 `img/coin-no.jpg` = NO + 新月星群环绕**，AI 生成后居中裁方、白底归一化、400px JPEG 共约 145KB）；`.coin-face` 增加 `img` 满幅圆裁样式（object-fit:cover + overflow:hidden），币径 92→104px 让雕版细节更清晰；掷币结果文案与正反面映射不变（是=正面 YES / 否=反面 NO）；群聊决策币本就不显示币面、保持原样。 |
 | `20261002cn` | **新手引导重构（删卡片段只留聚光灯导览）+ 真机首启乱序/重复弹/卡死根治**：真机反馈「开屏完没弹声明直接见引导、卡片没看完就自动跳步、引导完成入梦签没弹反而又弹一个引导、最后卡死」。根因：① 真机 init 慢，声明弹出晚于开屏结束，armPolling 在窗口期抢跑挂载（z=2147483000）盖住声明；② spot 步骤防御逻辑在目标按钮不可用时自动 `go(idx+1)` 连跳（60ms/步狂跳闪完）；③ armPolling 的「1 分钟兜底无条件强弹」+ watchLateModals 撤下重排队 + agree 显式 start() 多路径叠加，多实例状态崩坏。修复：① **guide-sandbox.js 重构——删除 6 张初识卡片段，只保留 5 步聚光灯功能导览**（spotbar 升级为主标题「✨初入梦境·功能导览(1/5)」+跳过，原卡片内容并入对应气泡文案）；② isReady() 新增 **`window.__bmNoticeGateDone` 硬门槛**——app.js 在「已同意声明」（init/showSoftwareNotice）与 `releaseGate()`（同意/关闭）三处发信号，声明流程未结束引导绝不挂载；③ **删除 1 分钟兜底强弹**（改为最长等 20 分钟按条件等待，绝不无视弹窗硬弹）；④ spot 目标缺失改为**居中示意展示**（不再自动连跳步）；⑤ **mounted 防重入 + 统一 teardown()**（轮询/观察/校正计时器全收口、状态复位）杜绝多实例叠加卡死；⑥ CSS spotbar 增加主标题样式。 |
 | `20261002cm` | **首启顺序竞态修复（声明 → 引导 → 入梦签不再乱序）**：① 声明 `agree()` 关闭后**显式串联启动链**——若 `bmGuide` 未完成且未在屏上，立即 `bmGuide.start()` 挂载，不再依赖 armPolling 的开屏轮询兜底（用户能看到声明 = 开屏必已结束：声明 z-index 100 被开屏 canvas z=2147483000 盖住，此前「声明同意后引导要等轮询慢慢发现条件满足才弹」是乱序主因）；随后**显式补弹入梦签**（幂等：新用户被 showDailyCard 自身让位逻辑排到引导后，老用户/应用内重置后立即弹，不再碰运气等 visibilitychange/pageshow）；② `bmGuide` 新增 **`isActive()`**（`.bm-guide-mask` 是否在 DOM）；③ `showDailyCard` 让位加 isActive() 双保险——即使 `window.bmGuide` 因脚本时序短暂未就绪，只要引导 overlay 已在屏上，入梦签绝不抢弹；CDP 三场景实测全绿（`errors:[]`）：全新首启=开屏 15.2s→声明→同意 251ms 后引导挂载→引导完成入梦签立即补弹；应用内重置（清 IndexedDB 留 localStorage）=声明重弹→同意→入梦签立即弹、引导不弹；老用户=无任何弹窗打扰。 |
 | `20261002cl` | **首启顺序编排 + 总设置「播放新手引导」**：① 首启顺序固定为「开屏动画 → 软件声明 → 新手引导 → 入梦签」——guide-sandbox.js 暴露全局 API `window.bmGuide = { start, isDone, onDone }`；`showDailyCard` 在引导未完成（`!bmGuide.isDone()`）期间让位不弹入梦签，并注册 `onDone` 回调（`_guideDailyCardHooked` 防重复），引导 finish 时自动补弹当天入梦签；老用户（`bm_guide_done=1`）不受影响、入梦签照常弹；② 总设置新增「播放新手引导 ✨」按钮（`#btn-replay-guide`）——点击先关总设置弹窗再 `bmGuide.start()` 手动重播（无视 `bm_guide_done` 强制重看，引导 overlay z-index 2147483000 极高盖过所有弹窗）；③ 确认系统悬浮窗（BmOverlay/SYSTEM_ALERT_WINDOW）与消息通知（LocalNotifications/POST_NOTIFICATIONS）完全独立、无交叉调用，悬浮窗不影响通知送达。 |

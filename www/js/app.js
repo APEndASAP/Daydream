@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002cn'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002co'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -6684,12 +6684,13 @@ function showCoinModal() {
   $('#coin-start').onclick = () => {
     const q = $('#coin-question').value.trim();
     if (!q) { miniToast('先输入你的问题'); return; }
-    // 两面风格化图标：正面「是」🌙（月）/ 背面「否」⭐（星）——白日梦一脉相承
+    // 20261002co：两面改为复古雕版硬币图案（img/coin-yes.jpg 正面 YES 月桂 /
+    // img/coin-no.jpg 反面 NO 星月）——参考六便士木刻币风格，白底圆裁
     $('#coin-stage').innerHTML = `
       <div class="coin-scene">
         <div class="coin3d" id="coin-coin">
-          <div class="coin-face coin-front">🌙<span>是</span></div>
-          <div class="coin-face coin-back">⭐<span>否</span></div>
+          <div class="coin-face coin-front"><img src="img/coin-yes.jpg" alt="YES" draggable="false"></div>
+          <div class="coin-face coin-back"><img src="img/coin-no.jpg" alt="NO" draggable="false"></div>
         </div>
       </div>`;
     // 第一阶段：旋转翻转（coinSpin 无限旋转）
@@ -6707,8 +6708,8 @@ function showCoinModal() {
         $('#coin-stage').innerHTML = `
           <div class="coin-scene">
             <div class="coin3d landed ${result === '是' ? 'face-front' : 'face-back'}">
-              <div class="coin-face coin-front">🌙<span>是</span></div>
-              <div class="coin-face coin-back">⭐<span>否</span></div>
+              <div class="coin-face coin-front"><img src="img/coin-yes.jpg" alt="YES" draggable="false"></div>
+              <div class="coin-face coin-back"><img src="img/coin-no.jpg" alt="NO" draggable="false"></div>
             </div>
           </div>
           <div style="text-align:center;color:var(--text-secondary);font-size:13px;margin-bottom:12px;">「${escapeHtml(q)}」→ ${result}</div>
