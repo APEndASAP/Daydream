@@ -4295,7 +4295,7 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
       __bmMergeCount[key] = (__bmMergeCount[key] || 0) + 1;
       const n = __bmMergeCount[key];
       const mergeId = bmNotifIdFor(cid, k);
-      try { await LN.cancel([{ id: mergeId }]); } catch (e) {}
+      try { await LN.cancel({ notifications: [{ id: mergeId }] }); } catch (e) {}
       await LN.schedule({
         notifications: [{
           id: mergeId,
@@ -4426,7 +4426,7 @@ async function bmRegisterAlarm(char, kind, dueAt) {
     const id = bmNotifIdFor(char.id, kind);
     const cur = map[key];
     if (cur && cur.dueAt && cur.dueAt <= dueAt) return;   // 已挂更早的闹钟 → 保持最早一次（合并语义）
-    if (cur && cur.notifId != null) { try { await LN.cancel([{ id: cur.notifId }]); } catch (e) {} }
+    if (cur && cur.notifId != null) { try { await LN.cancel({ notifications: [{ id: cur.notifId }] }); } catch (e) {} }
     const name = char.name || '访客';
     // 20261002cp：gift 闹钟文案与「维度动静」统一（惊喜/礼物都算维度动静）
     const tt = { msg: `${name} 发来消息`, letter: `${name} 寄来一封信`, gift: `${name} 的维度传来了动静` }[kind] || `${name} · 白日梦`;
@@ -4462,7 +4462,7 @@ async function bmClearAlarm(charId, kind, dueAt = null) {
     if (dueAt != null && cur.dueAt && Math.abs(cur.dueAt - dueAt) > 30000 && cur.dueAt > Date.now()) return; // 别的场次，不动
     delete map[key];
     await setSetting('bmBgAlarms', map);
-    try { await LN.cancel([{ id: cur.notifId != null ? cur.notifId : bmNotifIdFor(charId, kind) }]); } catch (e) {}
+    try { await LN.cancel({ notifications: [{ id: cur.notifId != null ? cur.notifId : bmNotifIdFor(charId, kind) }] }); } catch (e) {}
   } catch (e) {}
 }
 
@@ -4475,7 +4475,7 @@ async function bmClearDeliveredAlarms() {
     let dirty = false;
     for (const key of Object.keys(map)) {
       if (map[key].dueAt <= Date.now()) {
-        try { await LN.cancel([{ id: map[key].notifId }]); } catch (e) {}
+        try { await LN.cancel({ notifications: [{ id: map[key].notifId }] }); } catch (e) {}
         delete map[key];
         dirty = true;
       }
