@@ -78,7 +78,8 @@ public class BmOverlayPlugin extends Plugin {
     private boolean muted = false;
 
     /* 三形态视图引用 */
-    private View squareView, barView, cardHost, cardFixed;
+    private View squareView, barView;
+    private FrameLayout cardHost, cardFixed;
     private ImageView cardBg;
     private LinearLayout cardUi;
     private TextView squareTime, barTime, cardTimer, cardStatus;
@@ -308,7 +309,7 @@ public class BmOverlayPlugin extends Plugin {
         cardHost.setVisibility(View.GONE);
 
         cardFixed = new FrameLayout(getContext());
-        FrameLayout fixedLp = new FrameLayout.LayoutParams(cardNaturalW, cardNaturalH);
+        FrameLayout.LayoutParams fixedLp = new FrameLayout.LayoutParams(cardNaturalW, cardNaturalH);
         cardFixed.setLayoutParams(fixedLp);
         cardFixed.setPivotX(0f);
         cardFixed.setPivotY(0f);
