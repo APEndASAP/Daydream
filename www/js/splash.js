@@ -1098,16 +1098,24 @@
 
   /* ==== 主循环 ==== */
   var t0 = null, rafId = 0, lastTs = null, bgmEndFired = false;
+  /* 20261002cq：开屏显式生命周期状态机。单变量互斥：BOOT→RUNNING⇄PAUSED→FINISHED。
+     document.hidden 只负责 PAUSED/RUNNING 切换，绝无能力结束开屏（只有 end() 置 FINISHED）。
+     RAF 自管：rafId 唯一在途；ensureLoop() 是唯一续播/重建入口；end 后不再续约。 */
+  var phase = 'BOOT';
+  var frameSeq = 0;          // 仅在真正完成一次有效 frame 后递增（heartbeat 判活依据，边界帧不递增）
+  var frozenClock = null;    // 暂停时刻的动画时钟（time）
+  var pendingClock = null;   // 恢复时待消费的时间基准修正（time 补偿）
+  var heartbeatTimer = 0;    // 心跳单句柄（end/pause 时清理，杜绝 end 后恢复）
 
   function frame(ts) {
-    rafId = requestAnimationFrame(frame);
-    /* 20261002ca：挂后台冻结开屏动画——不吃掉时间片（t0 补偿隐藏时长），回前台原地续播不快进 */
-    if (typeof document !== 'undefined' && document.hidden) {
-      if (t0 !== null) t0 += (lastTs === null ? 0 : (ts - lastTs));
-      lastTs = ts;
-      return;
-    }
+    if (phase === 'FINISHED') { rafId = 0; return; }          // 终态：绝不续约、绝不启动
+    if (phase === 'PAUSED') { rafId = 0; return; }            // 暂停边界帧：不画不续约不递增
+    if (phase === 'BOOT') { phase = 'RUNNING'; }              // 首次有效帧：BOOT→RUNNING
     if (t0 === null) t0 = ts;
+    if (pendingClock !== null) {                              // 恢复：修正时间基准（原地续播不快进）
+      t0 = ts - pendingClock;
+      pendingClock = null;
+    }
     var time = ts - t0;
     var dt = lastTs === null ? 16 : clamp(ts - lastTs, 0, 50);
     lastTs = ts;
@@ -1215,9 +1223,13 @@
         ctx.fillRect(0, 0, w, h);
       }
     }
+    frameSeq++;         // 有效 frame 完成（边界帧/终态不走到这里，故不递增）
+    rafId = 0;          // 本帧已消费，在途请求清空，交回 ensureLoop 统一续约
+    ensureLoop();       // 唯一续播/重建入口（内部 !rafId 守卫保证单在途）
   }
 
   function restart() {
+    if (phase !== 'RUNNING') return;             // 20261002cq：非运行态（含 FINISHED）不重播
     bgmStop(0.25);                               // 循环重播：BGM 快速收掉再从头起
     bgmEndFired = false;
     t0 = null; lastTs = null;
@@ -1231,6 +1243,8 @@
     bgmTry();
   }
   function end() {
+    if (phase === 'FINISHED') return;            // 20261002cq：幂等——已结束则任何入口直接返回
+    phase = 'FINISHED';
     splashOver = true;
     if (!bgmEndFired && !AUTO_MUSIC) bgmStop(1.6);   // 跳过时淡出（延至 1.6s，音乐余韵收尾不戛然而止）；开关开=音乐继续播放不停（bx）
     // 20260930cb：继续播放进软件 → 音乐音量平滑切到「软件内音乐音量」条（与开屏音量条互不影响）
@@ -1243,9 +1257,26 @@
       } catch (eV) {}
     }
     hideAudioHint();                             // 声音提示条一并移除
-    try { cancelAnimationFrame(rafId); } catch (e) {}
+    try { cancelAnimationFrame(rafId); rafId = 0; } catch (e) {}
+    try { clearTimeout(heartbeatTimer); heartbeatTimer = 0; } catch (e) {}   // 20261002cq：end 后心跳不再产生恢复
     window.removeEventListener('resize', resize);
     cv.removeEventListener('pointerdown', onTap);
+    scheduleSplashRemoval();                     // 20261002cq：延迟到本次触摸序列结束后再移除 DOM（防穿透）
+  }
+  /* 20261002cq：延迟移除——等当前 pointerdown→pointerup→click 完整序列结束后下一帧再 removeChild，
+     避免 removeChild 后合成 click 重新命中到底部 tab（穿透到朋友圈的根因）。350ms 仅异常兜底。 */
+  var _removalScheduled = false;
+  function scheduleSplashRemoval() {
+    if (_removalScheduled) return;               // 幂等
+    _removalScheduled = true;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {        // 双帧：确保跨帧合成 click 已派发完
+        removeSplashDom();
+      });
+    });
+    setTimeout(function () { removeSplashDom(); }, 350);   // 兜底：极端无 rAF 派发也能移除
+  }
+  function removeSplashDom() {
     if (cv.parentNode) cv.parentNode.removeChild(cv);
     if (skipBtn && skipBtn.parentNode) skipBtn.parentNode.removeChild(skipBtn);   // 跳过按钮一并移除
   }
@@ -1277,14 +1308,21 @@
     + 'z-index:2147483001;opacity:0;transition:opacity 700ms;user-select:none;-webkit-user-select:none;'
     + 'font-family:' + FONT_APP + ';';
   skipBtn.addEventListener('pointerdown', function (ev) {
-    ev.stopPropagation();
+    ev.preventDefault(); ev.stopPropagation();
     if (LOOP) restart(); else end();
   });
+  // 20261002cq：skip 按钮的 up/click 也吞咽（preventDefault 阻断合成 click、stopPropagation 阻断冒泡），
+  // 且此处不 removeChild——DOM 移除已交给 end() 里的 scheduleSplashRemoval 延迟执行。
+  skipBtn.addEventListener('pointerup', function (ev) { ev.preventDefault(); ev.stopPropagation(); });
+  skipBtn.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); });
   (document.body || document.documentElement).appendChild(skipBtn);
   setTimeout(function () { try { skipBtn.style.opacity = '0.8'; } catch (e) {} }, 900);
 
   window.addEventListener('resize', resize);
   cv.addEventListener('pointerdown', onTap);
+  // 20261002cq：canvas 落点吞咽——开屏期间吞掉 pointerup/click，防其穿透到底部 tab。
+  cv.addEventListener('pointerup', function (ev) { ev.preventDefault(); ev.stopPropagation(); });
+  cv.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); });
   // 20260930bx：主页顶栏「开屏音乐继续播放」开关关→立即收掉音乐（自定义事件，不新增全局）
   // 20260930by：关→同步重置 BGM 状态（保证随后「开」能可靠从头重播，不等 onended 异步清状态）
   window.addEventListener('bm-splash-music-stop', function () {
@@ -1357,5 +1395,49 @@
   };
   resize();
   bgmTry();                                      // 开屏起点：读偏好并尝试播放 BGM（被拦则待首次手势）
-  rafId = requestAnimationFrame(frame);
+
+  /* 20261002cq：RAF 自管恢复机制。
+     pause/resume 只做 PAUSED⇄RUNNING；ensureLoop 是唯一续播/重建入口（rafId 唯一在途）；
+     heartbeat 单句柄自愈（WebView 恢复后 RAF 不续派时重建）。三者 FINISHED 后全部拒绝。 */
+  function ensureLoop() {
+    if (phase !== 'RUNNING') return;             // BOOT/PAUSED/FINISHED 都不启动
+    if (!rafId) rafId = requestAnimationFrame(frame);
+  }
+  function pause() {
+    if (phase !== 'RUNNING') return;
+    phase = 'PAUSED';
+    frozenClock = (t0 === null) ? null : (lastTs === null ? 0 : (lastTs - t0));  // 暂停时刻动画时钟
+    try { cancelAnimationFrame(rafId); } catch (e) {}
+    rafId = 0;
+    try { clearTimeout(heartbeatTimer); heartbeatTimer = 0; } catch (e) {}
+  }
+  function resume() {
+    if (phase !== 'PAUSED') return;              // 仅 PAUSED 可续播；BOOT 由首次有效帧推进，FINISHED 拒绝
+    phase = 'RUNNING';
+    if (frozenClock !== null) pendingClock = frozenClock;   // 待 frame 消费：修正时间基准原地续播
+    frozenClock = null;
+    ensureLoop();
+    heartbeat();
+  }
+  function heartbeat() {
+    if (phase !== 'RUNNING') { heartbeatTimer = 0; return; }
+    var curSeq = frameSeq, curId = rafId;
+    try { clearTimeout(heartbeatTimer); } catch (e) {}
+    heartbeatTimer = setTimeout(function () {
+      if (phase !== 'RUNNING') { heartbeatTimer = 0; return; }
+      if (frameSeq === curSeq) {                 // 窗口内一帧都没推进 → rafId 已失效
+        try { cancelAnimationFrame(curId); } catch (e) {}
+        if (rafId === curId) rafId = 0;          // 归零后再重建
+        ensureLoop();
+        heartbeat();                             // 自愈后继续守护
+      } else {
+        heartbeat();                             // 仍在推进 → 继续下一轮守护
+      }
+    }, 150);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) pause(); else resume();
+  });
+
+  rafId = requestAnimationFrame(frame);          // BOOT 首次启动（唯一原始启动点）
 })();

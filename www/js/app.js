@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002cp'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002cq'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -3656,6 +3656,13 @@ function startDayRolloverTimer() {
   }, 30000);
 }
 
+/* 20261002cq：相机会话状态——区分「相机 Activity 返回」与「普通 App 切后台回来」，
+   避免拍照取消被当成 App Resume 走整套恢复流程。 */
+let _camSessionActive = false;   // 相机进行中（Activity 已启动、promise 未 settle）
+let _camReturnPending = false;   // promise 已 settle，等待紧随的 appStateChange 消费（一次性 guard）
+let _camReturnConsumed = false;  // guard 已消费（防重复消费）
+let _camGraceUntil = 0;          // 极端时序兜底时间戳（只消费一次）
+
 /* 发送图片消息（5.9：压缩后存本地；20260929g 存 Blob+缩略图描述符） */
 /* 20261001cq：拍摄——功能面板「拍摄」入口（单聊/群聊通用，照片走 sendImageMessage 统一管线）
    APK（Capacitor）：@capacitor/camera 调系统相机，先申请 CAMERA 运行时权限；
@@ -3664,6 +3671,9 @@ async function capturePhotoMessage() {
   const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
   const cam = PLG && PLG.Camera;
   if (cam && typeof cam.getPhoto === 'function') {
+    /* 20261002cq：相机 session/return guard——相机 Activity 返回触发的 appStateChange 不得被当成普通 App Resume。
+       _camSessionActive=相机进行中；_camReturnPending=promise 已 settle 但返回的 appStateChange 尚未消费（只消费一次）。 */
+    _camSessionActive = true;
     try {
       /* 权限：先显式申请 CAMERA（用户要求"记得申请权限"），失败不拦截——部分 ROM 会自行弹授权 */
       try {
@@ -3686,6 +3696,11 @@ async function capturePhotoMessage() {
       /* 用户取消（"no image selected"/"cancel"）静默；真报错提示 */
       const msg = String((e && e.message) || e || '');
       if (!/cancel|no image|dismiss/i.test(msg)) miniToast('相机不可用：' + msg);
+    } finally {
+      _camSessionActive = false;
+      _camReturnPending = true;   // 建立 Return guard，等待紧随其后的 appStateChange 消费（一次性）
+      _camReturnConsumed = false;
+      _camGraceUntil = Date.now() + 2000;   // 极端时序兜底：只消费一次，非 2 秒屏蔽窗口
     }
     return;
   }
@@ -4469,19 +4484,56 @@ async function bmClearDeliveredAlarms() {
   } catch (e) {}
 }
 
-/* 挂后台/回前台监听（网页 visibilitychange + Capacitor appStateChange 双保险） */
-document.addEventListener('visibilitychange', () => { try { bmSetBgState(document.hidden); } catch (e) {} });
+/* 挂后台/回前台监听（网页 visibilitychange + Capacitor appStateChange 双保险）。
+   20261002cq：回前台统一收敛到 restoreAppState()，两个监听器不再各自写完整恢复逻辑，
+   杜绝「visibilitychange 恢复一次 + appStateChange 恢复一次」的重复恢复/闪退。 */
+let _lastAppActive = false;
+function restoreAppState(isActive) {
+  if (!isActive) return;                       // 只有回前台才恢复；挂后台由 bmSetBgState(true) 单一职责
+  /* 去重：连续多次 isActive 只执行一次恢复 */
+  if (_lastAppActive) return;
+  _lastAppActive = true;
+  try {
+    /* 相机会话优先判定：相机 Activity 返回 ≠ 普通 App Resume，不得走恢复流程 */
+    if (_camSessionActive) {                    // 相机进行中 → 只清背景态
+      bmSetBgState(false);
+      return;
+    }
+    if (_camReturnPending) {                    // Camera 返回后的第一个 appStateChange → 消费 guard（只一次）
+      _camReturnPending = false;
+      _camReturnConsumed = true;
+      bmSetBgState(false);
+      return;
+    }
+    if (_camReturnConsumed && Date.now() < _camGraceUntil) {   // 极端时序一次性兜底
+      _camReturnConsumed = false;
+      _camGraceUntil = 0;
+      bmSetBgState(false);
+      return;
+    }
+    /* 普通回前台：只做省电态恢复 + 通话恢复（白名单，绝不碰 view/bindEvents/splash） */
+    bmSetBgState(false);
+    if (_bmOverlayShown && _callActive && _callActive.c) {
+      backToFullCall(_callActive.c, _callActive.kind);
+    }
+  } catch (e) {}
+}
+function markAppBackground() {                  // 挂后台：复位去重标记，供下次回前台判定
+  _lastAppActive = false;
+}
+document.addEventListener('visibilitychange', () => {
+  try {
+    if (document.hidden) { bmSetBgState(true); markAppBackground(); }
+    else { restoreAppState(true); }
+  } catch (e) {}
+});
 try {
   const Cap = window.Capacitor;
   if (Cap && Cap.Plugins && Cap.Plugins.App && typeof Cap.Plugins.App.addListener === 'function') {
     Cap.Plugins.App.addListener('appStateChange', (st) => {
-      try { bmSetBgState(!st.isActive); } catch (e) {}
-      // 20261002cc：点原生悬浮窗（系统层）回应用后，DOM 层没有通话界面；
-      // 回前台时若通话仍在且原生悬浮窗显示中，自动恢复完整通话界面（收起原生悬浮窗）
       try {
-        if (st.isActive && _bmOverlayShown && _callActive && _callActive.c) {
-          backToFullCall(_callActive.c, _callActive.kind);
-        }
+        if (!st.isActive) { bmSetBgState(true); markAppBackground(); }
+        else { restoreAppState(true); }
       } catch (e) {}
     });
   }
@@ -7130,6 +7182,61 @@ function minimizeCall(c, kind) {
 let _callFloatPos = null; // { x, y }
 let _callFloatDragging = false; // 拖拽中标记：拖拽时禁止悬停展开/缩回
 
+/* 20261002cq：仅供 applyCallFloatMode 原生→DOM 切换使用的纯 DOM 构建路径。
+   与 buildCallFloat 的区别：
+   ① 不做任何 removeCallFloat()/hide 原生（破坏旧形态由调用方确认成功后显式执行）；
+   ② appendChild 作为最后一步——任何 createElement/innerHTML/定位/事件绑定异常都发生在
+      DOM 尚未插入 body 时，绝不留下半成品 #call-float；
+   ③ 事件绑定用局部引用 f.querySelector，而非全局 $()（因 append 已挪到最后，全局 $ 查不到）。 */
+function buildCallFloatDomOnly(c, kind, sec) {
+  const f = document.createElement('div');
+  f.id = 'call-float';
+  f.className = 'call-float square';
+  f.innerHTML = `
+    <div class="cf-avatar">${c && c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c ? c.name[0] : '?')}</div>
+    <div class="cf-mid">
+      <div class="cf-name">${escapeHtml(c ? c.name : 'TA')}</div>
+      <div class="cf-time">${formatDurShort(sec)}</div>
+    </div>
+    <button class="cf-btn" id="cf-back" title="切回完整通话">⤢</button>
+    <button class="cf-btn danger" id="cf-hangup" title="挂断">📞</button>
+  `;
+
+  // 定位（先算好，但 style 在 append 前设置即可，不依赖 document 位置）
+  if (_callFloatPos) {
+    f.style.left = _callFloatPos.x + 'px';
+    f.style.top = _callFloatPos.y + 'px';
+    f.style.right = 'auto';
+    f.style.bottom = 'auto';
+  } else {
+    f.style.right = '14px';
+    f.style.bottom = '84px';
+    f.style.left = 'auto';
+    f.style.top = 'auto';
+  }
+
+  // 事件绑定：全部用 f.querySelector 局部引用（不依赖 append）
+  const backBtn = f.querySelector('#cf-back');
+  const hangupBtn = f.querySelector('#cf-hangup');
+  f.addEventListener('mouseenter', () => { if (!_callFloatDragging) expandCallFloat(c, kind); });
+  f.addEventListener('mouseleave', () => { if (!_callFloatDragging) collapseCallFloat(); });
+  if (backBtn) backBtn.onclick = (e) => { e.stopPropagation(); backToFullCall(c, kind); };
+  if (hangupBtn) hangupBtn.onclick = async (e) => {
+    e.stopPropagation();
+    if (_callActive) await _callActive.endCall(false);
+    if (Math.random() < 0.7 && currentCharId) await scheduleCharReply(currentCharId);
+  };
+  f.addEventListener('click', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.cf-btn')) return;
+    if (f.classList.contains('square')) expandCallFloat(c, kind);
+    else if (f.classList.contains('bar')) collapseCallFloat();
+  });
+  makeDraggable(f, (x, y) => { _callFloatPos = { x, y }; });
+
+  document.body.appendChild(f);   // 最后一步：全部构建成功才插入
+  return f;
+}
+
 /* 创建悬浮窗（玻璃拟态半透明；位置继承上次拖动位置）
    关键：DOM 只建一次，展开/缩回纯 CSS class 切换，避免 innerHTML 重建 + 重复 addEventListener 导致卡死 */
 function buildCallFloat(c, kind, sec) {
@@ -7470,6 +7577,68 @@ function removeCallFloat() {
   if (f) f.remove();
   // 20261002cc：移除 DOM 浮窗时，原生悬浮窗（若显示中）一并隐藏——通话结束或切回完整界面都不该再浮系统层
   if (_bmOverlayShown) { _bmOverlayShown = false; bmOverlayHide(); }
+}
+
+/* 20261002cq：通话中即时切换悬浮窗载体（软件内 DOM 浮窗 ⇄ 系统全局悬浮窗）。
+   通话本体（_callActive/timer/sec/消息）完全不动；只换浮窗外壳。
+   铁律：先建立新形态成功、再破坏旧形态；失败/异常回滚，绝不出现「通话还在、浮窗消失」。 */
+let _overlaySwapInProgress = false;
+async function applyCallFloatMode() {
+  if (!_callActive || !_callActive.c) return;             // 无通话
+  const c = _callActive.c, kind = _callActive.kind, sec = _callActive.sec || 0;
+  const domFloat = document.getElementById('call-float');
+  if (!domFloat && !_bmOverlayShown) return;              // 不在悬浮态（还在完整通话界面）
+  const target = floatSettings.floatMode === 'overlay';
+  if (target && _bmOverlayShown) return;                   // 目标=原生且已在原生
+  if (!target && domFloat && !_bmOverlayShown) return;     // 目标=DOM 且已在 DOM
+  if (_overlaySwapInProgress) return;                      // 防并发 swap
+  _overlaySwapInProgress = true;
+  try {
+    if (target) {
+      /* DOM → 原生：先建原生成功，再拆 DOM */
+      let avatar = '', bg = '';
+      try {
+        avatar = (c && c.avatar) ? await bmOverlayImg(c.avatar, 128) : '';
+        bg = (kind === 'video' && _callActive && _callActive.bg) ? await bmOverlayImg(_callActive.bg, 520) : '';
+      } catch (e) {}
+      const ok = await bmOverlayShow(c ? c.name : 'TA', formatDurShort(sec), { avatar, bg, kind, baseSec: sec });
+      if (ok) {
+        _bmOverlayShown = true;
+        if (domFloat) domFloat.remove();                    // 原生已建 → 拆旧 DOM
+      }
+      // 失败：什么都不动，保留 DOM 浮窗（降级零损失）
+    } else {
+      /* 原生 → DOM：先建 DOM 成功，再 hide 原生（铁律：先建立新形态，再破坏旧形态） */
+      let f = null;
+      try {
+        f = buildCallFloatDomOnly(c, kind, sec);   // 纯构建，内部 append 成功才返回节点
+      } catch (e) { f = null; }
+
+      if (f && f.parentNode) {
+        /* DOM 已建立并 append 成功 → 破坏旧原生形态，成功后置标记 */
+        let hid = false;
+        try {
+          hid = (bmOverlayHide() !== false);   // 按实际返回值判定，而非仅 catch 异常
+        } catch (e) { hid = false; }
+
+        if (hid) {
+          _bmOverlayShown = false;             // hide 成功后才置标记
+        } else {
+          /* hide 返回 false 或抛异常 → 回滚：删除本次刚建的 DOM，保留原生，保持 _bmOverlayShown 原值 */
+          try { f.remove(); } catch (e) {}
+          // _bmOverlayShown 保持原值（仍为 true）；原生浮窗未被破坏，完整保留
+        }
+      }
+      /* DOM 建立失败（f 为 null）：原生从未被 hide，完整保留旧形态，无需任何回滚 */
+    }
+  } catch (e) {
+    /* 异常兜底：若两边浮窗都消失，回完整通话界面保住通话可见 */
+    if (!document.getElementById('call-float') && !_bmOverlayShown) {
+      try { backToFullCall(c, kind); } catch (e2) {}
+    }
+  } finally {
+    _overlaySwapInProgress = false;                         // 所有路径释放锁
+  }
 }
 
 /* 强制结束通话（新通话或切角色时） */
@@ -10494,6 +10663,8 @@ function bindChatSettings(s, onSave) {
     // 悬浮窗模式：全局设置
     floatSettings.floatMode = $('#cs-float-mode').value;
     await setSetting('floatSettings', floatSettings);
+    // 20261002cq：通话进行中若已悬浮，切换模式后立即同步当前浮窗载体（不销毁通话）
+    try { applyCallFloatMode(); } catch (e) {}
     if (floatSettings.floatMode === 'overlay') {
       // 20261001cn：安装版申请系统悬浮窗权限（SYSTEM_ALERT_WINDOW）；网页端仍走通知授权
       if (window.Capacitor) requestOverlayPermission();
