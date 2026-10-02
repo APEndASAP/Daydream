@@ -40,7 +40,7 @@
           || location.protocol === 'capacitor:';
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20261002cd' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20261002cf' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -54,13 +54,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261002cd'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261002cf'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20261002cd">
+  <link rel="stylesheet" href="css/style.css?v=20261002cf">
 </head>
 <body>
   <div id="app">
@@ -92,6 +92,8 @@
          20261001ck APK 覆盖安装 + 数据导出落盘：① 固化签名（仓库内置 debug.keystore，构建时 keytool 转 JKS 覆盖 ~/.android/debug.keystore，签名永久一致）+ versionCode 时间戳递增（YYYYMMDDHHMM），同签名 APK 可直接覆盖安装、保留数据不再强制卸载；② 导出改走 @capacitor/filesystem 写公共「文档/白日梦备份」目录（原 <a download> 在 WebView 是 no-op 永远导不出，卸载不删，重装可导入）；
          20261001cl ① 开屏 BGM 网页端加载优化：原 bgm_intro.mp3 是 5 分钟完整版（5MB），运行时全量 fetch 导致手机网页首载无音乐、点击播放延迟高；现无损截取开头 17 秒生成 bgm_intro.web.mp3（267KB，128kbps 原码率音质不变），splash.js 按 window.Capacitor 环境判断——软件端仍用原 5 分钟无损完整版、网页端用 17 秒小文件（软件端无损体验不受影响）；② 模拟视频通话「更换通话背景」接入图片裁剪器 openImageCropper（网页+APK 均改，取消返回 null 不生效）；
          20261002ca ① 省电分级（前台动画面停，后台调度不断）：切后台（visibilitychange + Capacitor appStateChange 双监听）挂 html.bm-bg 全局暂停全部 CSS 动画 + BGM AudioContext 挂起（__bmSplashVol.suspend/resume）+ <audio> 暂停回前台续播 + 开屏 canvas 动画冻结（t0 补偿隐藏时长不快进）；主动消息 15s/问卷 20s/群聊 20s/朋友圈 45s/回信轮询 10s/状态栏 60s 等高频定时器全部挂后台停摆，只保留 bmBgTick 60 秒一次的低频事件调度（静默查超频/主动消息/到期回信，不碰 DOM 不播动画），回前台立即补投到期事件并恢复全部视觉；② APK 原生通知接管（把后台提醒交给系统挂机）：bmRegisterAlarm 在调度时就把已知触达时刻经 @capacitor/local-notifications schedule 预排成安卓精确闹钟（底层 AlarmManager，exact:true + allowWhileIdle，manifest 已注入 USE_EXACT_ALARM/SCHEDULE_EXACT_ALARM）——App 进程被冻结/杀死也照常到点弹通知，系统唤醒只发通知不唤醒网页，发完继续休眠；预排点=单聊回复延迟（scheduleCharReply）、书信回信队列 dueAt（scheduleLetterReply）、超频下轮时刻（_ocTickRandom 撤本轮预排下轮）、主动消息下轮触发（随机/固定双模式）；送达即 bmClearAlarm 撤钟（dueAt ±30s 精确匹配防误清）；③ 通知合并防轰炸：bmNotifIdFor 同访客同类别固定通知 id（消息/书信/超频/转账/朋友圈各自独立通道），后到替换先到绝不叠罗汉；挂后台期间同访客连续多条合并标题「N 条新消息 / N 封信」，回前台计数清零；notifyIncoming 增加 kind 参数分类合并；④ 灰度殿堂列表化补强：板块行点击记录 _ghNavAt，列表行 600ms 内的滞后点击一律忽略（修移动端幽灵点击穿透——点板块后原生 click 落到新列表同坐标行、直接跳进详情卡看起来「没有列表」）；板块列表加「共 N 条残留 · 点条目可查看完整内容」头部；旧日书信行标题改取信文首行（多行信不再糊成一坨）；
+         20261002cf 开屏动画必播修复 + 悬浮窗插件注册修复：① 移除 splash.js 里「prefers-reduced-motion 则跳过开屏动画」的误判——开屏动画是前台必播内容，与「挂后台省电」无关；用户手机只要在软件内动画一个都不能少，省电跳过只应由后台状态（bmSetBgState/document.hidden）触发；② 修悬浮窗插件从未真正生效的根因（workflow 注入）：Capacitor 6 的 cap add 生成的 MainActivity 默认只 extends BridgeActivity、不会自动 registerPlugin 自定义插件——即使 capacitor.plugins.json 列了 bm-overlay、JS 端能拿到代理对象，Java 端 BmOverlayPlugin 从未实例化，show()/checkPermission() 调用空转、原生悬浮窗永不出现；在 workflow「生成安卓原生壳」后新增「注册 BmOverlay 插件到 MainActivity」步骤，注入 registerPlugin(BmOverlayPlugin.class)（含 import + Bundle 保护），这才是悬浮窗能真正浮到系统层的最后一块拼图；
+         20261002ce 数据防丢失加固（用户卸载丢数据后补强）：① 补全全量备份此前遗漏的 kv 数据——原 .ocdata「全量备份」其实漏了大量存 kv store 的数据：灰度殿堂 grayHall（删除角色的「旧日余晖」归档）、书信 letterFolders/letterFolderMap/pendingLetterReplies、世界树 worldBook/worldBookDrafts、朋友圈 momentsPosts/momentsCover、记事簿 notebookItems、自定义字体 customFonts、悬浮窗设置 floatSettings、行程提醒 bmScheduleReminders 等全部补齐（关系网在角色 c.relations 字段已随 characters 导出、占卜不记录历史，无需单独键）；抽公共函数 buildBackupPayload() 供手动导出与自动备份共用；② 新增自动备份兜底——autoBackup()：APK 端（Capacitor Filesystem 可用时）静默把全量数据写到公共「文档/白日梦备份/白日梦自动备份.ocdata」（卸载应用不被删除），有访客数据才备份防空库覆盖；scheduleAutoBackup() 启动后延迟 40s 首备 + 每次切后台（appStateChange !isActive）补备一次，全程静默不弹窗不打断；
          20261002cd APK 首启「跳转浏览器+黑屏」修复：恢复数据源门卫的 APK 放行条件（hn==='localhost' / hn==='127.0.0.1' / capacitor: 协议——20260930cg-apk 引入的原有放行，后被本地源码同步覆盖丢失），APK 内 WebView（https://localhost）不再被拦截跳转 127.0.0.1:8902 开发地址（此前表现为「白日梦想要打开Edge」+ ERR_CONNECTION_REFUSED + 应用黑屏）；app.js 数据源警示条同步恢复同款放行，APK 内不再误显「数据互不相通」警示；
          20261002cc bm-overlay 原生悬浮窗插件前端接入（通话真正浮到系统层）：① 新增统一封装模块——bmOverlayNative()（检测 window.Capacitor.Plugins.BmOverlay 自研插件）、bmOverlayAvailable()、bmOverlayCheckPermission()、bmOverlayShow(name,sub)、bmOverlayUpdateSub(sub)、bmOverlayHide()，网页端/无插件/无权限一律静默降级返回 false 绝不抛异常；② 修正 requestOverlayPermission() 指向自研插件 BmOverlay（原误指向旧 capacitor-overlay 的 PLG.Overlay，方法名也从 openOverlaySettings 改为 requestPermission）；③ 通话接入：缩小悬浮窗（minimizeCall）在「悬浮窗模式=在手机/其他软件上悬浮」且原生可用时，优先 show 原生系统级悬浮窗（其他应用之上可见、可拖动、点按回应用），原生失败自动回退软件内 DOM 浮窗；计时跳动 updateCallFloatTime 同步 updateSub 到系统层小窗；挂断/切回/结束统一经 removeCallFloat 收口 hide 原生悬浮窗（新增 _bmOverlayShown 状态标记）；④ 回前台体验：点原生悬浮窗回应用后 DOM 层无通话界面，appStateChange 回前台检测到 _bmOverlayShown 且通话仍在则自动 backToFullCall 恢复完整通话界面（收起原生悬浮窗）；
          20261002cb 三项更新（用户需求）：① 模拟通话计时超 1 小时自动进位——通话界面/悬浮胶囊/群通话/挂断后聊天里的通话时长统一改「X小时Y分(秒)」，不再显示「114:23」纯分钟；② 表情包库分家+开关：角色（访客）发表情包默认只用 TA 自己的专属表情包库（TA 主页上传那套），不再抽玩家的表情包库——聊天设置新增「允许使用玩家的表情包库」开关（总设置对所有访客生效+访客主页可单独覆盖，默认关），开启后玩家库才进抽取池（TA 自己的库优先），覆盖聊天自动追加表情包/开发者命令发表情包/朋友圈配图表情全部入口；③ 角色主页表情包库新增「批量管理」：进入多选模式（选中紫色描边+✓），「删除选中(N)」二次确认后批量删除，照问卷列表批量管理同款交互；
@@ -296,11 +298,11 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20261002cd"></script>
-  <script src="js/db.js?v=20261002cd"></script>
-  <script src="js/icons.js?v=20261002cd"></script>
-  <script src="js/emoji-img.js?v=20261002cd"></script>
-  <script src="js/cards.js?v=20261002cd"></script>
-  <script src="js/app.js?v=20261002cd"></script>
+  <script src="js/splash.js?v=20261002cf"></script>
+  <script src="js/db.js?v=20261002cf"></script>
+  <script src="js/icons.js?v=20261002cf"></script>
+  <script src="js/emoji-img.js?v=20261002cf"></script>
+  <script src="js/cards.js?v=20261002cf"></script>
+  <script src="js/app.js?v=20261002cf"></script>
 </body>
 </html>

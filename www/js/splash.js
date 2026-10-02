@@ -32,7 +32,7 @@
 
    双模式：默认单次播放（接入用）；宿主 data-loop="1" 循环预览+点击重播。
    纪律：IIFE 全隔离；resize 用 addEventListener；仅存在期间挂载；
-   低端机 / prefers-reduced-motion 不播（循环预览除外）。
+   开屏动画前台必播（省电跳过只由后台状态触发，与本动画无关）。
    ============================================================ */
 (function () {
   'use strict';
@@ -68,9 +68,9 @@
     : document.body;
   var LOOP = false;
   try { LOOP = !!(host && host.getAttribute && host.getAttribute('data-loop') === '1'); } catch (e) {}
-  try {
-    if (!LOOP && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  } catch (e) {}
+  // 20261002cf：移除「prefers-reduced-motion 则跳过开屏」——这是误判。
+  //   开屏动画是前台必播内容，与「挂后台省电」无关；用户手机只要在软件内，动画一个都不能少。
+  //   省电跳过只应由后台状态（bmSetBgState / document.hidden）触发，不在此处。
 
   /* ==== 画布 ==== */
   var cv = document.createElement('canvas');

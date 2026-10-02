@@ -51,6 +51,63 @@ jobs:
       - name: 生成安卓原生壳
         run: npx cap add android
 
+      # 20261002cf：注册 BmOverlay 悬浮窗插件到 MainActivity（关键修复）。
+      #   Capacitor 6 的 cap add 生成的 MainActivity 默认只 extends BridgeActivity，不会自动
+      #   registerPlugin 自定义插件——即使 capacitor.plugins.json 里列了 bm-overlay，JS 端能拿到
+      #   代理对象，Java 端却从未实例化，show()/checkPermission() 调用空转，悬浮窗永不出现。
+      #   必须手动在 MainActivity.onCreate 里 registerPlugin(BmOverlayPlugin.class)。
+      - name: 注册 BmOverlay 插件到 MainActivity（20261002cf）
+        run: |
+          cat > /tmp/register-bm-overlay.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          // 定位 MainActivity.java（包名 com.bairimeng.app，用递归遍历，不依赖 glob 包）
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmOverlayPlugin.class)')) {
+            console.log('BmOverlayPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          // 1. 加 import（package 声明之后第一个 import 之前，或类声明前）
+          const imp = 'import com.bairimeng.overlay.BmOverlayPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          // 1.5 确保 Bundle 已 import（onCreate 需要）
+          if (!s.includes('import android.os.Bundle;')) {
+            s = s.replace(/(import com\.getcapacitor\.BridgeActivity;)/, 'import android.os.Bundle;\n$1');
+          }
+          // 2. 加 registerPlugin 调用。默认 MainActivity 形如：
+          //    public class MainActivity extends BridgeActivity {}
+          //    改为在 onCreate 里注册（若已存在 onCreate 则在其内追加）
+          if (s.includes('public void onCreate(')) {
+            // 已有 onCreate：在 super.onCreate 前插入 registerPlugin
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmOverlayPlugin.class);\n    $1');
+          } else {
+            // 无 onCreate：把空类体替换为带 onCreate 的版本
+            s = s.replace(
+              /(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmOverlayPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}'
+            );
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmOverlayPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-overlay.js
+
       # 20261001 修复：图标生成必须在 cap add 之后执行（cg 版排在壳生成之前，
       # android/ 目录尚不存在导致 capacitor-assets 静默失败，APK 用了 Capacitor 默认蓝色图标）。
       # 图标=白日梦手绘 logo（星辰与轨道），自适应图标背景/启动图底色统一白色。

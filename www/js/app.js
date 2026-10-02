@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002cd'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002cf'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -222,6 +222,7 @@ async function init() {
     renderPokeList();
     buildPlusPanel();
     bindEvents();
+    scheduleAutoBackup();  // 20261002ce：自动备份兜底（APK 端静默写「文档/白日梦备份」，防卸载丢数据）
     startProactiveTimer(); // 5.3 主动发消息
     startStatusTimer();    // 7 聊天页顶部状态按时段自动换
     startDayRolloverTimer(); // 8 聊天天数过零点自动 +1
@@ -11349,51 +11350,116 @@ async function deepImagesToExport(node, label = '正在打包图片') {
   return topConv !== null ? topConv : node;
 }
 
+/* 20261002ce：把"打包全量备份数据"抽成公共函数，手动导出 exportAll 与自动备份 autoBackup 共用，
+   保证两处导出的内容一字不差（灰度殿堂/书信/世界树/朋友圈/记事簿/字体等 kv 数据都完整包含）。 */
+async function buildBackupPayload() {
+  const data = {
+    app: 'bairimeng',
+    format: 'ocdata',
+    version: '2.2',
+    exportDate: new Date().toISOString(),
+    characters: await idbGetAll('characters'),
+    messages: await idbGetAll('messages'),
+    emojis: await idbGetAll('emojis'),
+    palace: await idbGetAll('palace'), // 记忆宫殿（细则十-2：全量备份必须包含）
+    surveys: await idbGetAll('surveys'), // 问卷（20260929al：全量备份包含）
+    gifts: await idbGetAll('gifts'), // 超频礼物柜（20260929ao：全量备份包含）
+    cards: cards,
+    playerProfile: await getSetting('playerProfile', null),
+    chatSettings: await getSetting('chatSettings', null),
+    chatTheme: await getSetting('chatTheme', null),
+    settings: {
+      dailyCharId: await getSetting('dailyCharId', null),
+      dailyShown: await getSetting('dailyShown', null),
+      dailyCardData: await getSetting('dailyCardData', null),
+      anniversaries: await getSetting('anniversaries', []),
+      heartCharId: await getSetting('heartCharId', null),
+      dailyAnnivCharId: await getSetting('dailyAnnivCharId', null),
+      charGroups: await getSetting('charGroups', []),
+      chatGroups: await getSetting('chatGroups', []),
+      momentsPosts: await getSetting('momentsPosts', []),
+      momentsCover: await getSetting('momentsCover', ''),
+      momentsUnread: await getSetting('momentsUnread', 0),
+      palaceFolders: await getSetting('palaceFolders', []),
+      palaceSettings: await getSetting('palaceSettings', null),
+      // 20261002ce：补全全量备份此前遗漏的 kv 数据（这些数据都存在 kv store，之前导出漏掉，
+      //   导致"全量备份"其实不完整——灰度殿堂/书信/世界树/朋友圈/记事簿/字体/关系网等全丢）
+      grayHall: await getSetting('grayHall', []),                    // 灰度殿堂归档（用户特别在意，删除角色的"旧日余晖"）
+      letterFolders: await getSetting('letterFolders', []),          // 书信信箱文件夹
+      letterFolderMap: await getSetting('letterFolderMap', {}),      // 书信归属映射
+      pendingLetterReplies: await getSetting('pendingLetterReplies', []), // 待回信队列
+      worldBook: await getSetting('worldBook', { folders: [], entries: [] }), // 世界树
+      worldBookDrafts: await getSetting('worldBookDrafts', []),      // 世界树草稿箱
+      notebookItems: await getSetting('notebookItems', []),          // 记事簿
+      customFonts: await getSetting('customFonts', []),              // 自定义字体
+      floatSettings: await getSetting('floatSettings', null),        // 悬浮窗设置
+      bmScheduleReminders: await getSetting('bmScheduleReminders', []), // 行程提醒（网页端）
+      // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
+    },
+  };
+  // .ocdata：单文件备份（JSON 结构 + 图片 base64 内嵌，无需手动解压，可直接导入导出）
+  return await deepImagesToExport(data, '正在打包全量备份'); // Blob → base64 内嵌（JSON 可序列化）
+}
+
 async function exportAll() {
   let save = null;
   try {
     save = await beginExport('白日梦数据备份.ocdata'); // 先取保存句柄（点击激活期内），再慢慢打包图片
     if (save.cancelled) return;
     miniToast('正在打包全量数据，图库大时需要几秒…');
-    const data = {
-      app: 'bairimeng',
-      format: 'ocdata',
-      version: '2.2',
-      exportDate: new Date().toISOString(),
-      characters: await idbGetAll('characters'),
-      messages: await idbGetAll('messages'),
-      emojis: await idbGetAll('emojis'),
-      palace: await idbGetAll('palace'), // 记忆宫殿（细则十-2：全量备份必须包含）
-      surveys: await idbGetAll('surveys'), // 问卷（20260929al：全量备份包含）
-      gifts: await idbGetAll('gifts'), // 超频礼物柜（20260929ao：全量备份包含）
-      cards: cards,
-      playerProfile: await getSetting('playerProfile', null),
-      chatSettings: await getSetting('chatSettings', null),
-      chatTheme: await getSetting('chatTheme', null),
-      settings: {
-        dailyCharId: await getSetting('dailyCharId', null),
-        dailyShown: await getSetting('dailyShown', null),
-        dailyCardData: await getSetting('dailyCardData', null),
-        anniversaries: await getSetting('anniversaries', []),
-        heartCharId: await getSetting('heartCharId', null),
-        dailyAnnivCharId: await getSetting('dailyAnnivCharId', null),
-        charGroups: await getSetting('charGroups', []),
-        chatGroups: await getSetting('chatGroups', []),
-        momentsPosts: await getSetting('momentsPosts', []),
-        momentsCover: await getSetting('momentsCover', ''),
-        momentsUnread: await getSetting('momentsUnread', 0),
-        palaceFolders: await getSetting('palaceFolders', []),
-        palaceSettings: await getSetting('palaceSettings', null),
-      },
-    };
-    // .ocdata：单文件备份（JSON 结构 + 图片 base64 内嵌，无需手动解压，可直接导入导出）
-    const safeData = await deepImagesToExport(data, '正在打包全量备份'); // Blob → base64 内嵌（JSON 可序列化）
+    const safeData = await buildBackupPayload();
     const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
     await finishExport(save, blob, '全量备份已导出');
   } catch (e) {
     exportProgress(false);
     miniToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
   }
+}
+
+/* ---------- 20261002ce：自动备份（防丢失兜底） ----------
+   用户此前因卸载/数据目录重置丢失过全部数据（无备份），故新增静默自动备份：
+   · APK 端：把全量数据直接写到公共「文档/白日梦备份/白日梦自动备份.ocdata」（Capacitor Filesystem，
+     卸载应用不会被删除），无需用户手动点导出；
+   · 网页端：Filesystem 不可用 → 静默跳过（网页版数据在浏览器，用户仍可手动导出）。
+   触发：应用启动后延迟 40s 首备（避开启动加载高峰）；之后每次切后台（appStateChange）补备一次。
+   全程静默、不弹窗、不打断；失败静默忽略（不打扰用户）。 */
+async function autoBackup() {
+  try {
+    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    if (!FS || !FS.writeFile) return; // 非 APK 环境（网页版）静默跳过
+    // 有访客数据才备份，避免全新空库也写一份空备份覆盖掉已有的有效备份
+    const chars = await idbGetAll('characters');
+    if (!chars || !chars.length) return;
+    const safeData = await buildBackupPayload();
+    const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
+      r.onerror = () => rej(new Error('读取失败'));
+      r.readAsDataURL(blob);
+    });
+    await FS.writeFile({ path: '白日梦备份/白日梦自动备份.ocdata', data: b64, directory: 'DOCUMENTS', recursive: true });
+    // 静默记账：本次自动备份时间（下次可据此判断是否过期）
+    try { await setSetting('lastAutoBackupAt', Date.now()); } catch (e) {}
+  } catch (e) { /* 静默失败，不打扰 */ }
+}
+
+/* 自动备份调度：启动后延迟首备 + 每次切后台补备（省电：切后台时顺带一次即可） */
+let _autoBackupScheduled = false;
+function scheduleAutoBackup() {
+  if (_autoBackupScheduled) return;
+  _autoBackupScheduled = true;
+  // 启动后延迟 40s 首备（避开启动加载/声明弹窗高峰）
+  setTimeout(() => { try { autoBackup(); } catch (e) {} }, 40000);
+  // 每次切后台补备一次（数据最可能"已经又变了一批"，切后台正是好时机）
+  try {
+    const Cap = window.Capacitor;
+    if (Cap && Cap.Plugins && Cap.Plugins.App && typeof Cap.Plugins.App.addListener === 'function') {
+      Cap.Plugins.App.addListener('appStateChange', (st) => {
+        try { if (!st.isActive) autoBackup(); } catch (e) {}
+      });
+    }
+  } catch (e) {}
 }
 
 /* ---------- 工具：HTML 转义 ---------- */
