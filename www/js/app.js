@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002co'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002cp'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -4294,10 +4294,11 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
       return;
     }
 
-    // 逐条模式（默认）：同一访客同一类提醒用固定 id（后到替换先到，不叠罗汉）；但每条消息内容不同，
-    // 固定 id 会覆盖前一条——因此用「唯一递增 id + group 聚合」保证每条独立可见。
-    const baseId = bmNotifIdFor(cid, k);
-    const uniqId = baseId * 1000 + ((__bmSeq = (__bmSeq || 0) + 1) % 1000);
+    // 逐条模式（默认）：每条通知独立可见、各带内容。20261002cp 修复关键溢出 bug——
+    // 旧公式 baseId*1000+seq 最大约 2.1e12，超出 Android int32（21.47亿），
+    // 传给原生被截断/碰撞 → 通知互相覆盖、看起来像「被合并」。现在改用安全区段
+    // 16亿~20亿的全局递增 id（永不溢出、单角色多角色都绝不重复）+ group 聚合折叠。
+    const uniqId = 1600000000 + ((__bmSeq = ((__bmSeq || 0) + 1) % 400000000));
     const groupKey = 'bm-' + cid;
 
     await LN.schedule({
@@ -4310,28 +4311,6 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
         group: groupKey,
       }],
     });
-
-    // 逐条模式下，若后台期间有 ≥2 个不同角色来消息 → 额外弹一条汇总（帮玩家一眼看清）
-    if (bmIsBg()) {
-      const charCount = Object.keys(__bmBgChars).length;
-      if (charCount >= 2 && kind === 'msg') {
-        const names = Object.values(__bmBgChars).slice(0, 3).join('、');
-        const more = charCount > 3 ? ` 等 ${charCount} 人` : '';
-        const summaryId = bmNotifIdFor('__summary', 'msg');
-        try { await LN.cancel([{ id: summaryId }]); } catch (e) {}
-        await LN.schedule({
-          notifications: [{
-            id: summaryId,
-            title: `${charCount} 个访客发来消息`,
-            body: `${names}${more}给你发来了新消息，打开看看吧`,
-            channelId: 'bm-messages',
-            smallIcon: 'ic_launcher',
-            groupSummary: true,
-            group: 'bm-all',
-          }],
-        });
-      }
-    }
   } catch (e) {}
 }
 
@@ -4434,8 +4413,9 @@ async function bmRegisterAlarm(char, kind, dueAt) {
     if (cur && cur.dueAt && cur.dueAt <= dueAt) return;   // 已挂更早的闹钟 → 保持最早一次（合并语义）
     if (cur && cur.notifId != null) { try { await LN.cancel([{ id: cur.notifId }]); } catch (e) {} }
     const name = char.name || '访客';
-    const tt = { msg: `${name} 发来消息`, letter: `${name} 寄来一封信`, gift: `${name} 的思念涌上来了` }[kind] || `${name} · 白日梦`;
-    const bb = { msg: '给你发来了新消息，打开看看吧', letter: '一封书信已送达，打开拆信', gift: '超频思念涌动，打开查收' }[kind] || '打开白日梦查看';
+    // 20261002cp：gift 闹钟文案与「维度动静」统一（惊喜/礼物都算维度动静）
+    const tt = { msg: `${name} 发来消息`, letter: `${name} 寄来一封信`, gift: `${name} 的维度传来了动静` }[kind] || `${name} · 白日梦`;
+    const bb = { msg: '给你发来了新消息，打开看看吧', letter: '一封书信已送达，打开拆信', gift: '超频 · 好像有惊喜或礼物要出现，打开看看' }[kind] || '打开白日梦查看';
     map[key] = { dueAt, notifId: id, name, kind };
     await setSetting('bmBgAlarms', map);
     await bmEnsureChannel(LN);
@@ -4879,14 +4859,78 @@ async function bmOverlayCheckPermission() {
   try { const st = await BO.checkPermission(); return !!(st && st.granted); } catch (e) { return false; }
 }
 
-/* 显示原生悬浮窗。返回 true=已浮系统层，false=降级（走 DOM 浮窗） */
-async function bmOverlayShow(name, sub) {
+/* 显示原生悬浮窗。extra: { avatar, bg, kind, baseSec }——头像/背景为压缩后的 dataURL，
+   原生解码成 Bitmap 圆形裁切；kind=voice|video；baseSec=已通话秒数（原生自走计时）。
+   返回 true=已浮系统层，false=降级（走 DOM 浮窗） */
+async function bmOverlayShow(name, sub, extra = {}) {
   const BO = bmOverlayNative();
   if (!BO) return false;
   try {
-    const r = await BO.show({ name: name || '访客', sub: sub || '' });
+    const r = await BO.show({
+      name: name || '访客',
+      sub: sub || '',
+      avatar: extra.avatar || '',
+      bg: extra.bg || '',
+      kind: extra.kind || 'voice',
+      baseSec: extra.baseSec || 0,
+    });
     return !!(r && r.ok);
   } catch (e) { return false; }
+}
+
+/* 把头像/通话背景压成小尺寸 dataURL 供原生悬浮窗解码（失败返回空串，原生回落名字首字） */
+function bmOverlayImg(src, maxPx) {
+  return new Promise((resolve) => {
+    try {
+      const s = imgSrc(src);
+      if (!s || !/^(data:|blob:|https?:)/.test(s)) { resolve(''); return; }
+      const im = new Image();
+      im.onload = () => {
+        try {
+          const w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
+          if (!w || !h) { resolve(''); return; }
+          const scale = Math.min(1, maxPx / Math.max(w, h));
+          const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+          const cv = document.createElement('canvas');
+          cv.width = cw; cv.height = ch;
+          cv.getContext('2d').drawImage(im, 0, 0, cw, ch);
+          resolve(cv.toDataURL('image/jpeg', 0.82));
+        } catch (e) { resolve(''); }
+      };
+      im.onerror = () => resolve('');
+      im.src = s;
+    } catch (e) { resolve(''); }
+  });
+}
+
+/* 原生悬浮窗事件回传（注册一次）：
+   onHangup = 用户在系统层悬浮窗点了挂断 → 与软件内挂断同路径（写时长/落库/概率回消息）；
+   onKindChange = 用户在 2号卡片里切换了语音/视频 → 同步 JS 通话状态（挂断消息按新模式记录） */
+function bmOverlayBindEvents() {
+  const BO = bmOverlayNative();
+  if (!BO || typeof BO.addListener !== 'function') return;
+  if (window.__bmOverlayEventsBound) return;
+  window.__bmOverlayEventsBound = true;
+  try {
+    BO.addListener('onHangup', () => {
+      try {
+        if (_callActive && typeof _callActive.endCall === 'function') {
+          _callActive.endCall(false).catch(() => {});
+          if (Math.random() < 0.7 && currentCharId) scheduleCharReply(currentCharId);
+        }
+      } catch (e) {}
+    });
+  } catch (e) {}
+  try {
+    BO.addListener('onKindChange', (d) => {
+      try {
+        if (_callActive && d && d.kind && _callActive.kind !== d.kind) {
+          _callActive.kind = d.kind;
+          if (_callActive.msg && _callActive.msg.content) _callActive.msg.content.kind = d.kind;
+        }
+      } catch (e) {}
+    });
+  } catch (e) {}
 }
 
 /* 更新副标题（通话时长跳动）；静默失败不阻塞计时 */
@@ -7058,19 +7102,25 @@ function setCallGlass(on) {
   }
 }
 
-/* 缩小为悬浮窗（正方形头像 + 通话时长） */
+/* 缩小为悬浮窗（正方形头像 + 通话时长；系统悬浮窗模式 = 原生浮窗，否则软件内 DOM 浮窗） */
 function minimizeCall(c, kind) {
   const sec = _callActive.sec || 0;
   // 20260929bm：只隐藏通话层（保持通话），不再动 #modal-mask——底下功能弹窗原样保留
   const layer = document.getElementById('call-layer');
   if (layer) layer.classList.remove('show', 'call-float2');
+  bmOverlayBindEvents(); // 20261002cp：注册原生挂断/切换事件（幂等）
   // 20261002cc：floatMode='overlay' 且原生插件可用 → 优先浮到系统层（其他应用之上），
-  // 原生不可用/无权限 → 静默回退到软件内 DOM 悬浮窗
+  // 20261002cp：携带头像/背景/通话类型，原生浮窗显示真实头像；原生不可用/无权限 → 静默回退 DOM 浮窗
   if (floatSettings.floatMode === 'overlay' && bmOverlayAvailable()) {
-    bmOverlayShow(c ? c.name : 'TA', formatDurShort(sec)).then(ok => {
-      if (ok) { _bmOverlayShown = true; return; }
-      buildCallFloat(c, kind, sec); // 降级：原生显示失败，回退 DOM 浮窗
-    });
+    Promise.all([
+      (c && c.avatar) ? bmOverlayImg(c.avatar, 128) : Promise.resolve(''),
+      (kind === 'video' && _callActive && _callActive.bg) ? bmOverlayImg(_callActive.bg, 520) : Promise.resolve(''),
+    ]).then(([avatar, bg]) => {
+      bmOverlayShow(c ? c.name : 'TA', formatDurShort(sec), { avatar, bg, kind, baseSec: sec }).then(ok => {
+        if (ok) { _bmOverlayShown = true; return; }
+        buildCallFloat(c, kind, sec); // 降级：原生显示失败，回退 DOM 浮窗
+      });
+    }).catch(() => { buildCallFloat(c, kind, sec); });
     return;
   }
   buildCallFloat(c, kind, sec);
@@ -7130,6 +7180,12 @@ function buildCallFloat(c, kind, sec) {
     if (_callActive) await _callActive.endCall(false);
     if (Math.random() < 0.7 && currentCharId) await scheduleCharReply(currentCharId);
   };
+  // 20261002cp：点按切换形态——小方块 → 长条 → 小方块（手机上没有 hover，与系统悬浮窗一致）
+  f.addEventListener('click', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.cf-btn')) return;
+    if (f.classList.contains('square')) expandCallFloat(c, kind);
+    else if (f.classList.contains('bar')) collapseCallFloat();
+  });
   // 拖拽（拖动开始/结束回调控制 _callFloatDragging）
   makeDraggable(f, (x, y) => { _callFloatPos = { x, y }; });
 }
@@ -7886,7 +7942,9 @@ async function deliverCharMessage(c, content, type = 'text', extra = null) {
     showTopBanner(`<b>${escapeHtml(c.name)}</b> 给你发送了一些消息<div class="tb-sub">点进与 TA 的聊天查看</div>`, { charId: c.id });
   }
   if (shouldDingFor(c)) playDing();
-  notifyIncoming(c, typeof content === 'string' ? content : '（查岗卡片）'); // 20260929bi：收敛到统一通知出口（含挂后台）
+  // 20261002cp：查岗/普通消息分标题——查岗显示「xx 发起了突击查岗」，普通消息仍显示内容
+  if (type === 'checkin') notifyIncoming(c, typeof content === 'string' ? content : '（查岗卡片）', c.name + ' 发起了突击查岗', 'checkin');
+  else notifyIncoming(c, typeof content === 'string' ? content : '（卡片消息）'); // 20260929bi：收敛到统一通知出口（含挂后台）
 }
 
 /* ---------- 通用文件导出（20260929p：根治"假导出"）
@@ -19133,6 +19191,8 @@ async function charAskPlayer(c) {
   sv.msgId = m.id;
   await idbPut('surveys', sv);
   await idbPut('messages', m);
+  // 20261002cp：角色问卷补系统通知——逐条通知要显示功能名（「xx 访客向你发送了一份问卷」）
+  notifyIncoming(c, '向你发送了一份问卷「' + String(question || '').slice(0, 40) + '」，快来回答吧', c.name + ' 发送了一份问卷', 'survey');
 
   if (currentCharId === c.id && document.body.dataset.view === 'chat') {
     appendMessage(m);
@@ -21091,6 +21151,8 @@ async function _ocCharSendSurprise(c, opts = {}) {
       const e = _ev(c.id);
       e.surprises = (e.surprises || 0) + 1;
       await _saveUnreadEvents();
+      // 20261002cp：首次惊喜挂起也补系统通知（挂后台能收到）
+      notifyIncoming(c, '好像有惊喜出现了，点进与 TA 的聊天看看', c.name + ' 的维度传来了动静', 'surprise');
       renderChatList();
       refreshUnreadBadges();
       showTopBanner(`<b>${escapeHtml(c.name)}</b> 的维度好像传来了一些动静<div class="tb-sub">超频 · 点进与 TA 的聊天查看</div>`, { charId: c.id });
@@ -21171,6 +21233,8 @@ async function _ocNotifyNewGift(c, m, imgUrl) {
   const e = _ev(c.id);
   e.gifts = (e.gifts || 0) + 1;
   await _saveUnreadEvents();
+  // 20261002cp：礼物补系统通知（逐条通知显示功能——「xx 的维度传来了动静」；正盯聊天页时自动免打扰）
+  notifyIncoming(c, '送来一份礼物「' + (m && m.content && m.content.giftName ? m.content.giftName : '礼物') + '」，打开看看吧', c.name + ' 的维度传来了动静', 'gift');
   if (_inChatWith(c.id)) {
     appendMessage(m, true);
     _ocClearUnreadFor(c.id); // 已在聊天页，视为已读该访客超频
@@ -21188,6 +21252,8 @@ async function _ocNotifyNewSurprise(c, m, opts = {}) {
   const e = _ev(c.id);
   e.surprises = (e.surprises || 0) + 1;
   await _saveUnreadEvents();
+  // 20261002cp：惊喜补系统通知（逐条通知显示功能——「xx 的维度传来了动静」；正盯聊天页时自动免打扰）
+  notifyIncoming(c, '好像有惊喜出现了，点进与 TA 的聊天看看', c.name + ' 的维度传来了动静', 'surprise');
   // 20260929bb：skipAnim=true（初次触发大字卡片已播过动画）→ 只落库与轻提示，不再重播跳出动画
   if (!opts.skipAnim && _inChatWith(c.id)) {
     appendMessage(m, true);
