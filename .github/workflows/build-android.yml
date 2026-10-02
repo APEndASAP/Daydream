@@ -173,6 +173,17 @@ jobs:
           }
           fs.writeFileSync(p, m);
           console.log('permissions injected: ' + added);
+          // 20261002cg：MainActivity 注入 launchMode="singleTask" —— 根治「点通知/点悬浮窗回应用
+          // 触发 Activity 重建 → WebView 重载 → 通话挂断 + 界面闪退 + 重播开屏」的问题。
+          // singleTask 保证应用永远复用同一个 Activity 实例，回到前台不重建 WebView，通话状态保留。
+          if (!m.includes('android:launchMode')) {
+            m = m.replace(/(<activity[^>]*android:name="\.MainActivity"[^>]*?)(\/?>)/,
+              '$1 android:launchMode="singleTask"$2');
+            fs.writeFileSync(p, m);
+            console.log('MainActivity launchMode=singleTask injected');
+          } else {
+            console.log('launchMode already present');
+          }
           // compileSdk 34 -> 35：@ebarooni/capacitor-calendar 拉入 androidx.core 1.15（要求 SDK 35 编译）；
           // targetSdk 保持 34 不变（运行时行为不变，仅编译目标升级；AGP 8.2.1 未推荐 35 的警告压制）
           const vp = 'android/variables.gradle';

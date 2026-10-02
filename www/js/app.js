@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002cf'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002cg'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -18,6 +18,7 @@ let chatSettings = {
   allowFloat2: true,             // 20260929bi：悬浮窗2号（缩小后的通话小窗）允许拖动浮游
   float2Mode: 'inner',           // 20260929bk：悬浮窗2号模式 inner=软件内悬浮 / system=其他应用上悬浮（网页端回退软件内）
   notifySystem: true,            // 20260929bi：系统通知（挂后台/切走时弹 QQ 式系统弹窗），需浏览器通知权限
+  notifyMerge: 'each',           // 20261002cg：消息通知方式 each=逐条通知 / merge=合并通知（玩家在聊天设置最顶端自主选择）
   proactive: false,              // 访客主动发消息 5.3
   proactiveMin: 10,              // 主动消息间隔（分钟）1~120
   proactiveRandom: false,        // 随机主动发消息：开启后在下方区间内随机时刻发，不再按固定间隔
@@ -4113,7 +4114,10 @@ function notifyIncoming(c, body, title, kind = 'msg') {
    顺带撤掉预排的原生闹钟（消息已送达，闹钟使命完成）。
    20261002cb：合并规则反转——单角色逐条弹通知（绝不合并），只有后台期间
    「多个不同角色」同时来消息才触发汇总合并；单角色的多条用系统通知组 group 聚合展示
-   （每条独立、通知栏分组折叠，不丢任何一条）。 */
+   （每条独立、通知栏分组折叠，不丢任何一条）。
+   20261002cg：新增「消息通知方式」开关（chatSettings.notifyMerge）——玩家在聊天设置
+   最顶端自主选择「逐条通知(each)」或「合并通知(merge)」，不再硬编码多角色判定。
+   each=每条消息独立一条；merge=后台期间同一访客多条合成「发来 N 条新消息」。 */
 async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
   try {
     let allowed = true;
@@ -4126,14 +4130,36 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
     const k = kind || 'msg';
     const cid = c ? c.id : 'bm';
     const name = c ? (c.name || '访客') : '白日梦';
+    const merge = chatSettings.notifyMerge === 'merge'; // 20261002cg：玩家自主选择合并/逐条
 
-    // 挂后台期间记录「活跃角色」集合——多角色才合并，单角色逐条
+    // 挂后台期间记录「活跃角色」集合
     if (bmIsBg() && c) __bmBgChars[cid] = name;
 
     let tt = title || (c ? c.name + ' 发来消息' : '白日梦');
     const bodyText = String(body == null ? '' : body).slice(0, 120);
 
-    // 同一访客同一类提醒用固定 id（后到替换先到，不叠罗汉）；但单角色每条消息内容不同，
+    // 20261002cg：合并模式 —— 同一访客同类通知用固定 id（后到替换先到，绝不叠罗汉），
+    // 后台期间连续多条只保留一条，正文显示「发来 N 条新消息」。
+    if (merge && kind === 'msg') {
+      const key = cid + '|' + k;
+      __bmMergeCount[key] = (__bmMergeCount[key] || 0) + 1;
+      const n = __bmMergeCount[key];
+      const mergeId = bmNotifIdFor(cid, k);
+      try { await LN.cancel([{ id: mergeId }]); } catch (e) {}
+      await LN.schedule({
+        notifications: [{
+          id: mergeId,
+          title: tt,
+          body: n > 1 ? `${name} 发来 ${n} 条新消息` : bodyText,
+          channelId: 'bm-messages',
+          smallIcon: 'res://ic_launcher',
+          group: 'bm-' + cid,
+        }],
+      });
+      return;
+    }
+
+    // 逐条模式（默认）：同一访客同一类提醒用固定 id（后到替换先到，不叠罗汉）；但每条消息内容不同，
     // 固定 id 会覆盖前一条——因此用「唯一递增 id + group 聚合」保证每条独立可见。
     const baseId = bmNotifIdFor(cid, k);
     const uniqId = baseId * 1000 + ((__bmSeq = (__bmSeq || 0) + 1) % 1000);
@@ -4150,7 +4176,7 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
       }],
     });
 
-    // 多角色合并：后台期间有 ≥2 个不同角色来消息 → 额外弹一条汇总
+    // 逐条模式下，若后台期间有 ≥2 个不同角色来消息 → 额外弹一条汇总（帮玩家一眼看清）
     if (bmIsBg()) {
       const charCount = Object.keys(__bmBgChars).length;
       if (charCount >= 2 && kind === 'msg') {
@@ -9793,6 +9819,18 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
 
     ${!isPerChar ? `
     <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>消息通知方式</span>
+        <select class="input" id="cs-notify-merge" style="width:auto;padding:8px 10px;font-size:13px;">
+          <option value="each" ${s.notifyMerge !== 'merge' ? 'selected' : ''}>逐条通知</option>
+          <option value="merge" ${s.notifyMerge === 'merge' ? 'selected' : ''}>合并通知</option>
+        </select>
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">逐条通知：每条消息单独弹一条系统通知；合并通知：挂后台期间同一访客的多条消息合成「发来 N 条新消息」一条。仅对安装版（Android）的原生通知生效</div>
+    </div>` : ''}
+
+    ${!isPerChar ? `
+    <div class="field">
       <label>聊天模式（全局，聊天窗口顶栏开关可随时切换）</label>
       <div style="display:flex;gap:8px;">
         <button class="btn cs-ai-btn" data-mode="card" style="flex:1;gap:6px;display:inline-flex;align-items:center;justify-content:center;">${icon('cards', 15)} 字卡模式</button>
@@ -9890,7 +9928,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
           <option value="overlay" ${floatSettings.floatMode === 'overlay' ? 'selected' : ''}>在手机/其他软件上悬浮</option>
         </select>
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">「在其他软件上悬浮」需要系统授予悬浮窗权限（网页端为通知权限）
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">「在其他软件上悬浮」需要系统授予悬浮窗权限（网页端为通知权限）。系统悬浮窗手势：<b>单击</b>在「小方块⇄大卡片」间切换形态，<b>双击</b>进入软件（回到通话界面），<b>拖动</b>移动位置
         <button class="btn" id="cs-overlay-ask" style="margin-left:8px;padding:3px 12px;font-size:12px;display:inline-block;">申请悬浮窗权限</button>
       </div>
     </div>
@@ -10220,6 +10258,9 @@ function bindChatSettings(s, onSave) {
     }
     s.soundOn = $('#cs-sound').checked;
     s.soundName = $('#cs-sound-name').value;
+    // 20261002cg：消息通知方式（逐条/合并）——仅总聊天设置渲染该行
+    const nmEl = $('#cs-notify-merge');
+    if (nmEl) s.notifyMerge = nmEl.value === 'merge' ? 'merge' : 'each';
     s.allowRecall = $('#cs-recall').checked;
     const cueEl = $('#cs-char-emoji-lib');
     if (cueEl) s.charUsePlayerEmojis = cueEl.checked; // 20261002cb：允许角色使用玩家表情包库

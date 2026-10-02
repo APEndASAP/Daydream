@@ -2,7 +2,7 @@
 
 一款「聊天 + 朋友圈」形态的**角色陪伴应用**。你可以添加自己的梦角（虚拟角色 / 原创 OC），和它们聊天、发朋友圈、模拟通话、占卜、记录纪念日与日记，并自由定制大量美化内容。
 
-> 当前版本：`v=20261002cd` · 纯前端 · 单机优先 · 数据全部本地存储
+> 当前版本：`v=20261002cg` · 纯前端 · 单机优先 · 数据全部本地存储
 
 ---
 
@@ -114,6 +114,9 @@ python -m http.server 8901
 
 | 版本 | 主要内容 |
 | --- | --- |
+| `20261002cg` | **悬浮窗2号完整交互 + 闪退根治 + 通知方式开关**：① 原生悬浮窗（系统级）三手势对齐软件内模拟通话——单击在小方块(1号)⇄大卡片(2号)间循环切换形态、双击进入软件（回到通话界面）、拖动移动位置（插件 Java 端 onTouch 用 getRaw 绝对坐标 + 4dp 死区区分拖动 + 两次按下抬起 <300ms 判定双击 + toggleExpand 切换文字列显隐）；② 根治「点通知/点悬浮窗回应用 → Activity 重建 → WebView 重载 → 通话挂断 + 界面闪退 + 重播开屏」——插件 bringAppToFront 改用 moveTaskToFront（优先）/launchIntent+SINGLE_TOP+REORDER_TO_FRONT（兜底）把已有任务栈带前台，workflow 注入 MainActivity launchMode="singleTask" 保证复用同一 Activity 不重建 WebView；③ 聊天设置最顶端新增「消息通知方式」开关（chatSettings.notifyMerge）：逐条通知(each 默认)/合并通知(merge) 玩家自主选择——merge 下后台期间同一访客多条合成「发来 N 条新消息」一条（固定 id 覆盖更新计数），each 保持每条独立（唯一递增 id + group 聚合）；④ 聊天设置「通话悬浮窗模式」说明补充手势标注。 |
+| `20261002cf` | **开屏动画必播修复 + 悬浮窗插件注册修复**：① 移除 splash.js 里「`prefers-reduced-motion` 则跳过开屏动画」的误判——开屏动画是前台必播内容，与「挂后台省电」无关，用户手机只要在软件内动画一个都不能少，省电跳过只由后台状态触发；② 修悬浮窗插件从未真正生效的根因（workflow 注入）——Capacitor 6 的 `cap add` 生成的 MainActivity 默认只 `extends BridgeActivity`、不会自动 `registerPlugin` 自定义插件，即使 `capacitor.plugins.json` 列了 `bm-overlay`、JS 端能拿到代理对象，Java 端 `BmOverlayPlugin` 从未实例化、`show()`/`checkPermission()` 调用空转、原生悬浮窗永不出现；在 workflow「生成安卓原生壳」后新增「注册 BmOverlay 插件到 MainActivity」步骤注入 `registerPlugin(BmOverlayPlugin.class)`。 |
+| `20261002ce` | **数据防丢失加固**（用户卸载丢数据后补强）：① 补全全量备份此前遗漏的 kv 数据——原 .ocdata「全量备份」其实漏了大量存 kv store 的数据：灰度殿堂 `grayHall`（删除角色的「旧日余晖」归档）、书信 `letterFolders`/`letterFolderMap`/`pendingLetterReplies`、世界树 `worldBook`/`worldBookDrafts`、朋友圈 `momentsPosts`/`momentsCover`、记事簿 `notebookItems`、自定义字体 `customFonts`、悬浮窗设置 `floatSettings`、行程提醒 `bmScheduleReminders` 等全部补齐（关系网在角色 `c.relations` 已随 characters 导出、占卜不记录历史，无需单独键）；抽公共函数 `buildBackupPayload()` 供手动导出与自动备份共用；② 新增自动备份兜底——`autoBackup()`：APK 端（Capacitor Filesystem 可用时）静默把全量数据写到公共「文档/白日梦备份/白日梦自动备份.ocdata」（卸载应用不被删除），有访客数据才备份防空库覆盖；`scheduleAutoBackup()` 启动后延迟 40s 首备 + 每次切后台补备，全程静默不弹窗。 |
 | `20261002cd` | **APK 首启「跳转浏览器 + 黑屏」修复**：① 数据源门卫（index.html head）恢复 APK 放行条件——`hn==='localhost'` / `hn==='127.0.0.1'` / `capacitor:` 协议（20260930cg-apk 引入的原有放行，后被本地源码同步覆盖丢失），APK 内 WebView（`https://localhost`）不再被拦截跳转到 `127.0.0.1:8902` 开发地址（此前表现为「白日梦想要打开Edge」+ `ERR_CONNECTION_REFUSED` + 应用本体黑屏）；② app.js 数据源警示条同步恢复同款放行（`onCapacitor`），APK 内不再误显「数据互不相通」警示。 |
 | `20261002cc` | **bm-overlay 原生悬浮窗插件前端接入**（通话真正浮到系统层）：① 新增统一封装模块 `bmOverlayNative()`/`bmOverlayAvailable()`/`bmOverlayCheckPermission()`/`bmOverlayShow(name,sub)`/`bmOverlayUpdateSub(sub)`/`bmOverlayHide()`，检测自研插件 `window.Capacitor.Plugins.BmOverlay`，网页端/无插件/无权限一律静默降级不抛异常；② 修正 `requestOverlayPermission()` 指向自研 BmOverlay（原误指向旧 capacitor-overlay 的 `PLG.Overlay`，方法名 `openOverlaySettings`→`requestPermission`）；③ 通话接入：缩小悬浮窗在「悬浮窗模式=在手机/其他软件上悬浮」且原生可用时优先 `show` 系统级悬浮窗（其他应用之上可见、可拖动、点按回应用），失败自动回退软件内 DOM 浮窗；计时 `updateCallFloatTime` 同步 `updateSub` 到系统层；挂断/切回/结束统一经 `removeCallFloat` 收口 `hide`（新增 `_bmOverlayShown` 状态标记）；④ 回前台体验：点原生悬浮窗回应用后 DOM 层无通话界面，`appStateChange` 回前台检测到 `_bmOverlayShown` 且通话仍在则自动 `backToFullCall` 恢复完整通话界面。 |
 | `20261002cb` | 三项更新（用户需求）：① **模拟通话计时超 1 小时自动进位**——通话界面/悬浮胶囊（含浮游 2 号）/群通话计时、挂断后聊天里的「通话时长」统一加小时位：实时计时超 1 小时显示「X小时Y分」（不再出现 `114:23` 纯分钟），结束消息 `formatDuration` 显示「X小时Y分Z秒」；② **表情包库分家 + 聊天设置开关**——角色（访客）发表情包默认**只用 TA 自己的专属表情包库**（TA 主页上传的那套），不再抽玩家的表情包库；聊天设置（总设置 + 访客主页单独覆盖）新增「允许使用玩家的表情包库」开关（`charUsePlayerEmojis`，默认关），开启后玩家库才进抽取池且 TA 自己的库优先；统一入口 `pickCharSticker(c)` 覆盖全部角色发表情包场景（聊天自动追加表情包 / 开发者命令发表情包 / 朋友圈帖子配图与评论表情）；③ **角色主页表情包库批量管理**——新增「批量管理」按钮（库非空时显示）：进入多选模式（选中紫色描边 + ✓ 角标，就地更新不重渲染不闪烁），按钮变「删除选中(N)」，`showConfirm` 二次确认后批量删除，照问卷列表批量管理同款交互；空库隐藏按钮防误触。 |

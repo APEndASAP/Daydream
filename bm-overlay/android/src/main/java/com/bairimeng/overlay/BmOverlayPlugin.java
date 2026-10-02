@@ -21,11 +21,15 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * 白日梦原生悬浮窗插件（极简版）。
+ * 白日梦原生悬浮窗插件（悬浮窗2号）。
  *
- * 只做两件事（严格单一职责，避免影响通知/日程）：
+ * 职责（严格单一职责，避免影响通知/日程）：
  *   1. 申请悬浮窗权限（SYSTEM_ALERT_WINDOW）——跳系统设置页；
- *   2. 在系统层显示一个自定义悬浮 View（头像首字 + 名字 + 时长，可丝滑拖动，点击回应用）。
+ *   2. 在系统层显示一个自定义悬浮 View（头像首字 + 名字 + 时长），可丝滑拖动；
+ *   3. 手势交互（与软件内模拟通话悬浮窗一致）：
+ *        - 单击 = 在「小方块（1号）」⇄「大卡片（2号）」两种形态之间循环切换（展开/缩放/切回）；
+ *        - 双击 = 进入软件（回到白日梦 App）；
+ *        - 拖动 = 移动悬浮窗到屏幕任意位置（跨应用）。
  *
  * 与通知完全隔离：本插件只用 WindowManager，绝不触碰 LocalNotifications / AlarmManager。
  *
@@ -39,6 +43,9 @@ public class BmOverlayPlugin extends Plugin {
     private View overlayView;
     private WindowManager.LayoutParams layoutParams;
     private boolean viewAttached = false;
+
+    /* 当前形态：false = 小方块（1号），true = 大卡片（2号）；单击在两者间循环切换 */
+    private boolean expanded = false;
 
     /* ============ 1. 权限 ============ */
 
@@ -141,6 +148,7 @@ public class BmOverlayPlugin extends Plugin {
 
     private void showOverlay(String name, String sub) {
         removeOverlay();
+        expanded = false; // 每次 show 从头以小方块（1号）开始
 
         windowManager = (WindowManager) getContext().getSystemService(Context.WINDOW_SERVICE);
 
@@ -160,6 +168,7 @@ public class BmOverlayPlugin extends Plugin {
         ll.setPadding(dp(14), dp(10), dp(14), dp(10));
 
         TextView av = new TextView(getContext());
+        av.setTag("bm-avatar");
         av.setText(name != null && name.length() > 0 ? String.valueOf(name.charAt(0)) : "?");
         av.setTextColor(Color.WHITE);
         av.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
@@ -172,10 +181,12 @@ public class BmOverlayPlugin extends Plugin {
         ll.addView(av, new android.widget.LinearLayout.LayoutParams(sz, sz));
 
         android.widget.LinearLayout txt = new android.widget.LinearLayout(getContext());
+        txt.setTag("bm-text");
         txt.setOrientation(android.widget.LinearLayout.VERTICAL);
         txt.setPadding(dp(10), 0, 0, 0);
 
         TextView nm = new TextView(getContext());
+        nm.setTag("bm-name");
         nm.setText(name);
         nm.setTextColor(Color.WHITE);
         nm.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
@@ -218,12 +229,17 @@ public class BmOverlayPlugin extends Plugin {
         windowManager.addView(overlayView, layoutParams);
         viewAttached = true;
 
-        // 丝滑拖动：手指按下记录起点，移动时用"起点 + 手指位移"增量更新窗口位置。
-        // 用 getRawX/getRawY（屏幕绝对坐标）保证跨应用拖动准确；4dp 死区区分"点击"和"拖动"，
-        // 没拖动就松手 = 点击（回到应用），拖动了松手 = 停在当前位置。
+        // 手势交互（与软件内模拟通话悬浮窗一致）：
+        //   - 单击 = 小方块(1号) ⇄ 大卡片(2号) 形态循环切换；
+        //   - 双击 = 进入软件（回到白日梦）；
+        //   - 拖动 = 移动位置（4dp 死区区分点击与拖动）。
+        // 用 getRawX/getRawY（屏幕绝对坐标）保证跨应用拖动准确；
+        // 双击判定：两次完整「按下→抬起」间隔 < 300ms 且位移 < 8dp。
         root.setOnTouchListener(new View.OnTouchListener() {
             float startX = 0, startY = 0, touchX = 0, touchY = 0;
-            boolean dragging = false;
+            boolean localDragging = false;
+            long lastUpTime = 0;       // 上一次抬起时间戳（双击判定）
+            float lastUpX = 0, lastUpY = 0; // 上一次抬起位置（双击位移校验）
 
             @Override
             public boolean onTouch(View v, MotionEvent e) {
@@ -234,15 +250,15 @@ public class BmOverlayPlugin extends Plugin {
                         startY = layoutParams.y;
                         touchX = e.getRawX();
                         touchY = e.getRawY();
-                        dragging = false;
+                        localDragging = false;
                         return true;
                     case MotionEvent.ACTION_MOVE:
                         // 手指位移
                         float dx = e.getRawX() - touchX;
                         float dy = e.getRawY() - touchY;
                         // 位移小于 4dp 视为抖动，不判定为拖动（避免点击被误判）
-                        if (!dragging && Math.abs(dx) < 4 && Math.abs(dy) < 4) return true;
-                        dragging = true;
+                        if (!localDragging && Math.abs(dx) < 4 && Math.abs(dy) < 4) return true;
+                        localDragging = true;
                         // 窗口新位置 = 按下时的位置 + 手指位移
                         layoutParams.x = (int) (startX + dx);
                         layoutParams.y = (int) (startY + dy);
@@ -251,14 +267,49 @@ public class BmOverlayPlugin extends Plugin {
                         } catch (Exception ignore) {}
                         return true;
                     case MotionEvent.ACTION_UP:
-                        // 全程没拖动 = 单击，回到白日梦应用
-                        if (!dragging) bringAppToFront();
+                        if (localDragging) {
+                            // 拖动了：停在当前位置，只记录抬起（供后续双击判定用，但拖动不触发点击）
+                            lastUpTime = 0; // 拖动打断双击序列
+                            return true;
+                        }
+                        // 没拖动 = 一次单击
+                        long now = System.currentTimeMillis();
+                        boolean isDouble = (now - lastUpTime) < 300
+                                && Math.abs(e.getRawX() - lastUpX) < dp(8)
+                                && Math.abs(e.getRawY() - lastUpY) < dp(8);
+                        if (isDouble) {
+                            // 双击 → 进入软件（回到白日梦 App）
+                            lastUpTime = 0; // 重置，避免三击被误判为两次双击
+                            bringAppToFront();
+                            return true;
+                        }
+                        // 单击 → 在 1号(小方块) ⇄ 2号(大卡片) 之间循环切换形态
+                        lastUpTime = now;
+                        lastUpX = e.getRawX();
+                        lastUpY = e.getRawY();
+                        toggleExpand();
                         return true;
                     default:
                         return true;
                 }
             }
         });
+    }
+
+    /* 单击形态切换：小方块(1号) ⇄ 大卡片(2号)。
+       小方块 = 只显示头像（隐藏文字列，紧凑）；大卡片 = 头像 + 名字 + 时长（完整）。 */
+    private void toggleExpand() {
+        expanded = !expanded;
+        if (overlayView == null) return;
+        try {
+            FrameLayout root = (FrameLayout) overlayView;
+            android.widget.LinearLayout txt = root.findViewWithTag("bm-text");
+            if (txt == null) return;
+            // 展开为大卡片（显示文字列）/ 缩回小方块（隐藏文字列仅留头像）
+            txt.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            // 通知窗口重排（尺寸随内容变化）
+            try { windowManager.updateViewLayout(overlayView, layoutParams); } catch (Exception ignore) {}
+        } catch (Exception ignore) {}
     }
 
     private void removeOverlay() {
@@ -274,9 +325,23 @@ public class BmOverlayPlugin extends Plugin {
 
     private void bringAppToFront() {
         try {
+            // 20261002cg：优先用 moveTaskToFront —— 把已存在的任务栈带到前台，
+            // 不会像 startActivity(launchIntent) 那样可能重建 Activity / 触发 WebView 重新加载
+            // （WebView 重载会导致通话状态丢失、界面闪退、重播开屏动画）。
+            android.app.ActivityManager am = (android.app.ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                java.util.List<android.app.ActivityManager.AppTask> tasks = am.getAppTasks();
+                if (tasks != null && !tasks.isEmpty()) {
+                    tasks.get(0).moveToFront();
+                    return;
+                }
+            }
+            // 兜底：无任务栈时用 launchIntent + SINGLE_TOP（若 Activity 已在栈顶则不重建）
             Intent launch = getContext().getPackageManager().getLaunchIntentForPackage(getContext().getPackageName());
             if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                 getContext().startActivity(launch);
             }
         } catch (Exception ignore) {}
