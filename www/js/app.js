@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002cg'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261002cm'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -315,6 +315,7 @@ async function showSoftwareNotice(opts = {}) {
         <div class="nt-title">《白日梦》<br>软件声明与使用须知</div>
         <div class="nt-sub">本网站/软件由小红书用户：@蓝色鸽子窝（1139353519）原创制作</div>
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所制作的传讯字卡网站中字卡部分的代码，兼容其字卡导入</div>
+        <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所设计的每日弹卡功能，本软件「入梦签 · 每日弹卡」即参考该创意制作</div>
         ${isReview ? '<button class="icon-btn" id="notice-close" style="position:absolute;top:0;right:0;color:rgba(230,222,255,0.9);">✕</button>' : ''}
         <div class="nt-line"></div>
         <p class="nt-lead">感谢你来到《白日梦》。为了维护良好的创作与交流环境，请在下载、使用或分享本软件前，仔细阅读以下声明。</p>
@@ -382,6 +383,18 @@ async function showSoftwareNotice(opts = {}) {
     try { await setSetting('softwareNoticeAgreed', '1'); } catch (e) {}
     releaseGate();
     closeModal();
+    // 20261002cl2：声明关闭后显式串联首启顺序——若新手引导尚未完成且当前未显示，
+    // 立即挂载引导（此时开屏必然已结束：声明 z-index 低于开屏，用户能看到声明即开屏已退场）。
+    // 不再依赖引导自身 armPolling 的轮询兜底（那是「过了很久才弹」的根因之一）。
+    try {
+      if (window.bmGuide && typeof window.bmGuide.start === 'function' && !window.bmGuide.isDone() && !window.bmGuide.isActive()) {
+        window.bmGuide.start();
+      }
+    } catch (e) {}
+    // 20261002cm2：显式补弹入梦签（幂等）——老用户（引导已完成/应用内重置后）声明
+    // 关闭后立即弹，不再碰运气等 visibilitychange/pageshow；新用户路径下
+    // showDailyCard 自身的让位逻辑（isDone/isActive + onDone 排队）会把它排到引导之后。
+    try { showDailyCard().catch(() => {}); } catch (e) {}
   };
   const agreeBtn = $('#notice-agree');
   if (agreeBtn) agreeBtn.onclick = agree;
@@ -708,9 +721,25 @@ async function openDailyCardModal(d, onReceive) {
    _dailyCardOpening 防重入：pageshow / visibilitychange / init 三处可能几乎同时触发，
    避免同一毫秒内重复查库+开窗；写入 dailyShown 前二次核对，防止并发窗口内重复弹。 */
 let _dailyCardOpening = false;
+let _guideDailyCardHooked = false; // 20261002cl：入梦签「等引导完成」回调是否已注册（防重复注册）
 async function showDailyCard() {
   // 20260929bk：软件声明未同意期间不弹入梦签（声明必须排最前；同意后由 visibilitychange/pageshow 补弹）
   if (_noticeGate) return;
+  // 20261002cl2：首启顺序=开屏动画→软件声明→新手引导→入梦签。
+  // 引导（沙盒脚本暴露的 window.bmGuide）尚未完成期间，入梦签让位；
+  // 注册 onDone 回调，引导结束后自动补弹当天入梦签。
+  // 新增 isActive() 兜底：即使 window.bmGuide 因脚本时序尚未就绪，
+  // 只要引导 overlay 已在屏上（.bm-guide-mask 在 DOM），入梦签也绝不抢弹。
+  if (window.bmGuide && !window.bmGuide.isDone()) {
+    if (!_guideDailyCardHooked) {
+      _guideDailyCardHooked = true;
+      window.bmGuide.onDone(function () { try { showDailyCard().catch(() => {}); } catch (e) {} });
+    }
+    return;
+  }
+  if (window.bmGuide && typeof window.bmGuide.isActive === 'function' && window.bmGuide.isActive()) {
+    return;
+  }
   // 字卡库尚未就绪（pageshow 补弹可能早于 init 完成）：本次跳过，
   // 否则会用空字卡池生成一份"空内容"入梦签并写死当天数据；init 加载完成后会再调一次
   if (!cards) return;
@@ -3170,6 +3199,8 @@ async function sendMessage(text) {
   palAutoCollectMaybe(currentCharId, null); // 记忆宫殿：系统随机收藏（每线程每天至多 1 次，细则四）
   // 20261001cn：日程+闹钟自动检测（字卡/AI 通用，系统本地检测，不阻塞角色回复）
   try { maybeDetectScheduleReminder(currentCharId, trimmed); } catch (e) {}
+  // 20261002ch：重要日期检测（字卡模式本地兜底，AI 模式走 [[ANNIV:]] 标签）
+  try { maybeDetectImportantDate(currentCharId, trimmed); } catch (e) {}
 
   // 角色回复
   await scheduleCharReply(currentCharId);
@@ -3991,8 +4022,108 @@ async function __proactiveScan() {
           await deliverCharTransfer(c);
         }
       }
+
+      // —— 权重记忆主动表示（20261002ch）：纪念日当天主动庆祝/送礼/发圈 + 平时权重记忆低频提及 ——
+      try { await _maybeWeightedAction(c, now); } catch (e) {}
     }
   }
+}
+
+/* 20261002ch：权重记忆主动行为。
+   ① 纪念日当天（角色主页设置的纪念日 或 权重记忆条目的 annivDate 命中今天）：
+      每角色每天触发一次，随机执行 1~3 种行为（聊天主动提起 / 发朋友圈 / 送礼物）。
+   ② 平时（非纪念日）：权重记忆存在时，低频随机（约 1/240 的 tick，即平均约 1 小时一次，
+      受 15s tick 驱动）让角色主动提起一条权重记忆。
+   AI 模式由 AI 生成内容；字卡模式用字卡 + 固定文案降级。 */
+let _annivDoneToday = {};   // { charId: todayKey } 防当天重复触发
+async function _maybeWeightedAction(c, now = Date.now()) {
+  try {
+    const day = todayKey();
+    const myAnniv = anniversaries.filter(a => a.charId === c.id);
+    // 今天是否该角色的纪念日（纪念日列表 或 权重记忆条目 annivDate 命中）
+    const todayMd = `${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+    let isAnnivDay = myAnniv.some(a => a.date === todayMd || (a.date && a.date.slice(5) === todayMd));
+    let todayReasons = myAnniv.filter(a => a.date === todayMd || (a.date && a.date.slice(5) === todayMd));
+    // 权重记忆条目含 annivDate 且命中今天（手动设权重/未同步进纪念日列表的场景）
+    if (!isAnnivDay) {
+      try {
+        const folders = await palFolders();
+        const entries = await palEntries();
+        const hit = entries.filter(e => e.folderId === 'pf_char_' + c.id && palIsWeighted(e, folders) && e.annivDate === todayMd);
+        if (hit.length) { isAnnivDay = true; todayReasons = hit.map(e => ({ reason: (e.title || '').replace(todayMd, '').trim() || '重要日子' })); }
+      } catch (e) {}
+    }
+
+    if (isAnnivDay) {
+      if (_annivDoneToday[c.id] === day) return; // 当天已表示过
+      // 立即触发（不依赖 tick 随机），进入即表示
+      _annivDoneToday[c.id] = day;
+      await _doAnnivCelebration(c, todayReasons);
+      return;
+    }
+
+    // 平时：检查是否存在权重记忆，低频随机提及
+    const folders = await palFolders();
+    const entries = await palEntries();
+    const weighted = entries.filter(e => e.folderId === 'pf_char_' + c.id && palIsWeighted(e, folders));
+    if (!weighted.length) return;
+    if (Math.random() > 0.004) return; // 约 1/250 tick ≈ 低频
+    // 随机挑一条权重记忆，让角色主动提起
+    const pick = weighted[randInt(0, weighted.length - 1)];
+    const topic = palWithPlayerName(pick.title || pick.summary || pick.text || '');
+    if (!topic) return;
+    const aiOn = await isAIMode();
+    let msg;
+    if (aiOn) {
+      msg = await aiSoftReply(c,
+        `请以角色身份，自然地、不经意地主动提起一件你特别在意的事（你们之间很重要的记忆）：${topic}。像突然想起一样带一句，1~2 句，符合角色口吻，不要生硬。`,
+        () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
+    } else {
+      msg = `我突然想起……${topic}`;
+    }
+    await deliverCharMessage(c, msg, 'text');
+  } catch (e) {}
+}
+
+/* 纪念日当天主动表示：随机 1~3 种行为（聊天提起 / 发朋友圈 / 送礼物）。
+   AI 模式由 AI 生成庆祝内容；字卡模式降级为固定温馨文案。 */
+async function _doAnnivCelebration(c, annivList) {
+  try {
+    const reason = (annivList[0] && annivList[0].reason) || '我们的纪念日';
+    const aiOn = await isAIMode();
+    // 随机抽取 1~3 种行为（去重）
+    const acts = new Set();
+    const pool = ['chat', 'moment', 'gift'];
+    const n = randInt(1, 3);
+    while (acts.size < n && acts.size < pool.length) {
+      acts.add(pool[randInt(0, pool.length - 1)]);
+    }
+    for (const act of acts) {
+      if (act === 'chat') {
+        let msg;
+        if (aiOn) {
+          msg = await aiSoftReply(c,
+            `今天是你们的重要纪念日「${reason}」！请以角色身份热情、自然地庆祝，表达你的心意（1~3 句），符合角色口吻。`,
+            () => `今天是我们${reason}，我会一直记得。`);
+        } else {
+          msg = `今天是我们的「${reason}」，我一直都记得这个日子。`;
+        }
+        await deliverCharMessage(c, msg, 'text');
+      } else if (act === 'moment') {
+        if (aiOn) {
+          const content = await aiSoftReply(c,
+            `今天是你们的重要纪念日「${reason}」。请以角色身份发一条庆祝的朋友圈动态（20~50 字，温暖、有画面感），只输出动态正文。`,
+            () => `今天是我们「${reason}」，谢谢有你在。`);
+          if (content) await aiPostMomentFromTag(c.id, content, {});
+        } else {
+          await aiPostMomentFromTag(c.id, `今天是我们「${reason}」，谢谢有你在身边。`, {});
+        }
+      } else if (act === 'gift') {
+        // 送礼：复用超频送礼（扣角色钱包；余额不足静默跳过）
+        await _ocCharSendGift(c);
+      }
+    }
+  } catch (e) {}
 }
 
 /* 角色向玩家转账（char_to_me，待领取）：从访客钱包真扣款，玩家可在卡片内领取或退回
@@ -4152,7 +4283,7 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
           title: tt,
           body: n > 1 ? `${name} 发来 ${n} 条新消息` : bodyText,
           channelId: 'bm-messages',
-          smallIcon: 'res://ic_launcher',
+          smallIcon: 'ic_launcher',
           group: 'bm-' + cid,
         }],
       });
@@ -4171,7 +4302,7 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
         title: tt,
         body: bodyText,
         channelId: 'bm-messages',
-        smallIcon: 'res://ic_launcher',
+        smallIcon: 'ic_launcher',
         group: groupKey,
       }],
     });
@@ -4190,7 +4321,7 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
             title: `${charCount} 个访客发来消息`,
             body: `${names}${more}给你发来了新消息，打开看看吧`,
             channelId: 'bm-messages',
-            smallIcon: 'res://ic_launcher',
+            smallIcon: 'ic_launcher',
             groupSummary: true,
             group: 'bm-all',
           }],
@@ -4310,8 +4441,8 @@ async function bmRegisterAlarm(char, kind, dueAt) {
         title: tt,
         body: bb,
         channelId: 'bm-messages',
-        smallIcon: 'res://ic_launcher',
-        schedule: { at: new Date(dueAt), allowWhileIdle: true, exact: true },
+        smallIcon: 'ic_launcher',
+        schedule: { at: new Date(dueAt), allowWhileIdle: true },
       }],
     });
   } catch (e) {}
@@ -4512,6 +4643,55 @@ function bmParseCNDateTime(text, now) {
   return { at, title };
 }
 
+/* 20261002ch：字卡模式下的重要日期本地检测兜底（AI 模式由 [[ANNIV:]] 标签处理）。
+   只匹配「玩家×角色关系相关」的明确表达：生日、纪念日、认识/在一起/结婚等里程碑日期。
+   保守启发式：命中后直接存为记忆宫殿权重记忆（⭐）+ 同步纪念日列表，不打扰聊天。 */
+async function maybeDetectImportantDate(charId, text) {
+  try {
+    if (!charId || !text) return;
+    if (await isAIMode()) return; // AI 模式交给 [[ANNIV:]] 标签，避免重复
+    const s = String(text);
+    // 明确的关系型重要日期表达：我的/你的/TA的生日、我们认识/在一起/确定关系/结婚/相恋的日期
+    const dateRe = /(\d{4}\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/;
+    const mDate = s.match(dateRe);
+    if (!mDate) return;
+    const reasonRe = /(生日|诞生日|认识|在一起|交往|确定关系|表白|结婚|相恋|纪念|周年|遇见|相遇)/;
+    if (!reasonRe.test(s)) return;
+    const mo = String(+mDate[2]).padStart(2, '0');
+    const dd = String(+mDate[3]).padStart(2, '0');
+    const md = `${mo}-${dd}`;
+    const reasonM = s.match(reasonRe);
+    let reason = reasonM ? reasonM[1] : '重要日子';
+    // 补充主语，让记忆更完整
+    if (/我的生日|我生日/.test(s)) reason = '玩家生日';
+    else if (/你的生日|你生日|TA的生日/.test(s)) reason = '角色生日';
+    else if (/结婚/.test(s)) reason = '结婚纪念日';
+    else if (/认识|相遇|遇见/.test(s)) reason = '相遇纪念日';
+    else if (/在一起|交往|相恋|确定关系|表白/.test(s)) reason = '在一起纪念日';
+    else if (/纪念|周年/.test(s)) reason = '纪念日';
+    const c = characters.find(x => x.id === charId);
+    if (!c) return;
+    // 去重：同角色同日期同原因已有 → 不重复
+    if (anniversaries.some(a => a.charId === charId && a.date === md && (a.reason || '') === reason)) return;
+    await palEnsureFolders();
+    await idbPut('palace', {
+      id: uid('pal'), kind: 'manual',
+      folderId: 'pf_char_' + charId, subFolderId: '',
+      charId: charId || '', groupId: '',
+      messages: [], baseMsgId: '',
+      title: `${md} ${reason}`.slice(0, 30), summary: '', summaryByAI: false,
+      text: `${md}：${reason}`, img: null,
+      dateLabel: palDateLabel(Date.now()),
+      time: Date.now(), createdAt: Date.now(),
+      allowAI: null, auto: true,
+      weight: true, annivDate: md,
+    });
+    anniversaries.push({ id: uid('anniv'), charId, date: md, reason, createdAt: Date.now() });
+    await setSetting('anniversaries', anniversaries);
+    miniToast('⭐ ' + c.name + ' 把你们的重要日子记成了权重记忆');
+  } catch (e) {}
+}
+
 /* 检测入口：sendMessage 单聊路径调用（字卡/AI 通用） */
 async function maybeDetectScheduleReminder(charId, text) {
   try {
@@ -4569,7 +4749,7 @@ async function bmCommitScheduleReminder(item) {
             title: '⏰ ' + item.charName + ' 提醒你',
             body: item.title,
             channelId: 'bm-schedule',
-            smallIcon: 'res://ic_launcher',
+            smallIcon: 'ic_launcher',
             schedule: { at: new Date(item.at - 60 * 1000), allowWhileIdle: true },
           }],
         });
@@ -10365,6 +10545,10 @@ async function showSettingsModal() {
       入梦签纪念日设置 <span>🎉</span>
     </button>
 
+    <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-replay-guide">
+      播放新手引导 <span>✨</span>
+    </button>
+
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-software-notice">
       软件声明与使用须知 <span>📜</span>
     </button>
@@ -10481,6 +10665,16 @@ async function showSettingsModal() {
     }
   } catch (e) {}
   $('#btn-anniv-card-setting').onclick = () => showAnnivCardSettingModal();
+  // 20261002cl：播放新手引导——先关总设置弹窗，再重播引导（引导 overlay 浮最顶层，不与弹窗叠层冲突）
+  $('#btn-replay-guide').onclick = () => {
+    _settingsActive = false; // 关总设置本身，避免后续 closeModal 误回总设置
+    closeModal();
+    if (window.bmGuide && typeof window.bmGuide.start === 'function') {
+      window.bmGuide.start();
+    } else {
+      miniToast('新手引导暂不可用，请刷新后重试');
+    }
+  };
   $('#btn-software-notice').onclick = () => showSoftwareNotice({ review: true }); // 20260929bk：总设置重看软件声明
   $('#btn-keepalive-guide').onclick = () => showKeepAliveModal(); // 20260929bl：后台保活设置引导
   // 20261001cn：清除缓存不再是空壳——直接执行真实的冗余清理（与「数据管理」页同一逻辑）
@@ -12691,6 +12885,63 @@ function palPermFor(entry, folders, charId) {
   return false;
 }
 
+/* 20261002ch：权重记忆判定——条目自身 weight 或所属子文件夹/主文件夹 weight 任一为真即权重。
+   权重记忆 AI 必须时刻牢记并主动提及（发朋友圈/送礼/聊天提起）。隐藏夹不可设权重（界面不显示星星）。 */
+function palIsWeighted(entry, folders) {
+  if (!entry) return false;
+  if (entry.weight === true) return true;
+  const sf = entry.subFolderId ? folders.find(x => x.id === entry.subFolderId) : null;
+  if (sf && sf.weight === true) return true;
+  const f = folders.find(x => x.id === entry.folderId);
+  if (f && f.weight === true) return true;
+  return false;
+}
+
+/* 20261002ch：切换权重记忆标记。kind='entry'|'folder'。
+   条目：切换 e.weight（true=权重）。文件夹：切换 f.weight（作用于全夹）。
+   隐藏夹/隐藏夹内的条目不可设权重（界面本就不显示星星）。 */
+async function palToggleWeight(kind, id) {
+  try {
+    if (kind === 'entry') {
+      const e = (await idbGetAll('palace')).find(x => x.id === id);
+      if (!e) return;
+      e.weight = !(e.weight === true);
+      await idbPut('palace', e);
+      return e.weight === true;
+    }
+    if (kind === 'folder') {
+      const list = await palFolders();
+      const f = list.find(x => x.id === id);
+      if (!f) return null;
+      if (f.type === 'hidden' || f.parentId === PAL_H) return null; // 隐藏夹不可设权重
+      f.weight = !(f.weight === true);
+      await palSaveFolders(list);
+      return f.weight === true;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+/* 星星按钮 HTML：正常线条不发光，点亮（on）发光有颜色。size 像素；title 悬停提示 */
+function palStarBtn(kind, id, on, size = 16) {
+  const tip = on ? '已设为权重记忆（AI 会时刻记住并主动提及），点击取消' : '设为权重记忆（AI 会时刻记住并主动提及）';
+  return `<button class="pal-star${on ? ' on' : ''}" data-wstar="${kind}:${id}" title="${tip}" style="width:${size + 8}px;height:${size + 8}px;">${icon('star', size)}</button>`;
+}
+
+/* 绑定星星按钮点击：切换权重，完成后走 back 回调刷新（回上一功能页）。 */
+function bindPalStars(back) {
+  document.querySelectorAll('[data-wstar]').forEach(btn => {
+    btn.onclick = async (ev) => {
+      ev.stopPropagation();
+      const [kind, id] = btn.dataset.wstar.split(':');
+      const on = await palToggleWeight(kind, id);
+      if (on === null) { miniToast('隐藏夹不可设为权重记忆'); return; }
+      miniToast(on ? '⭐ 已设为权重记忆，AI 会时刻记住' : '已取消权重记忆');
+      if (typeof back === 'function') back();
+    };
+  });
+}
+
 /* 兼容旧调用：该条是否"对任意角色可读"（UI 展示用） */
 function palEntryAllow(entry, folders) {
   if (Array.isArray(entry.allowCharIds) && entry.allowCharIds.length) return true;
@@ -12933,7 +13184,8 @@ async function getPalaceAIContext(charId) {
     }
     if (!palPermFor(e, folders, charId)) continue;
     // 20260929an：AI 读记忆时标题/摘要里的「玩家」也换成玩家昵称，保持称呼一致
-    out.push({ dateLabel: e.dateLabel, title: palWithPlayerName(e.title), summary: palWithPlayerName(e.summary || e.title), size: (e.messages || []).length, kind: e.kind });
+    // 20261002ch：带出权重标记，供上层把「权重记忆」单独强调
+    out.push({ dateLabel: e.dateLabel, title: palWithPlayerName(e.title), summary: palWithPlayerName(e.summary || e.title), size: (e.messages || []).length, kind: e.kind, weight: palIsWeighted(e, folders), annivDate: e.annivDate || '' });
   }
   return out;
 }
@@ -13673,6 +13925,7 @@ async function showMemoryPalaceModal(opts = {}) {
           <div class="pal-title">${escapeHtml(palPlayerFolderName())}</div>
           <div class="pal-sub">${cnt(PAL_P)} 段 · ${subCount(PAL_P)} 个分类 · AI 默认不可读（可勾选放开）</div>
         </div>
+        ${palStarBtn('folder', PAL_P, !!(pf && pf.weight))}
         <button class="wb-act ai" data-pact="folder:${PAL_P}" title="AI 读取权限">${icon('shield', 13)} ${pTag}</button>
         <span style="color:var(--text-tertiary);">›</span>
       </div>`;
@@ -13684,6 +13937,7 @@ async function showMemoryPalaceModal(opts = {}) {
             <div class="pal-title">${escapeHtml(f.name)}</div>
             <div class="pal-sub">${cnt(f.id)} 段 · ${subCount(f.id)} 个分类 · ${f.allowAI ? 'AI 默认可读' : 'AI 不可读'}</div>
           </div>
+          ${palStarBtn('folder', f.id, !!f.weight)}
           <button class="wb-act ai" data-pact="folder:${f.id}" title="AI 读取权限">${icon('shield', 13)} ${f.allowAI ? 'AI 开' : 'AI 关'}</button>
           <span style="color:var(--text-tertiary);">›</span>
         </div>
@@ -13697,6 +13951,7 @@ async function showMemoryPalaceModal(opts = {}) {
     <div style="font-size:11px;color:var(--text-tertiary);margin-top:10px;line-height:1.5;">记忆包含在「所有内容」备份（.ocdata）里；玩家上传的图片以 Blob 存储，保护低端机内存</div>
   `, { galaxy: true });
   $('#mp-close').onclick = closeModal;
+  bindPalStars(() => showMemoryPalaceModal()); // 20261002ch：文件夹星星权重按钮
   bindPalSearch($('#pal-search'), palDebounce((v) => showMemoryPalaceModal({ q: v, refocus: true }), 260));
   const clr = $('#pal-search-clear');
   if (clr) clr.onclick = () => showMemoryPalaceModal();
@@ -13781,6 +14036,7 @@ async function showPalaceFolder(fid, opts = {}) {
         <div class="pal-title">${escapeHtml(palWithPlayerName(e.title || '（无题）'))}</div>
         <div class="pal-sub">${escapeHtml(e.dateLabel)} · ${kindLabel}${subName} ${isHidden ? '' : ''}</div>
       </div>
+      ${isHidden ? '' : palStarBtn('entry', e.id, palIsWeighted(e, folders))}
       ${isHidden ? '' : `<button class="wb-act ai" data-pact="entry:${e.id}" title="AI 读取权限">${icon('shield', 13)} ${tag}</button>`}
       <span style="color:var(--text-tertiary);">›</span>
     </div>`;
@@ -13829,6 +14085,7 @@ async function showPalaceFolder(fid, opts = {}) {
           <div class="pal-title">${escapeHtml(sf.name)}</div>
           <div class="pal-sub">${entries.filter(e => e.subFolderId === sf.id).length} 段 · ${sfHidden ? '绝密' : palPermTagText(sf, folders)}</div>
         </div>
+        ${sfHidden ? '' : palStarBtn('folder', sf.id, !!sf.weight)}
         ${sfHidden
           ? `<button class="wb-act ai" data-hidden-perm="1" title="隐藏夹">${icon('shield', 13)} 绝密</button>`
           : `<button class="wb-act ai" data-pact="folder:${sf.id}" title="AI 读取权限">${icon('shield', 13)} ${palPermTagText(sf, folders)}</button>`}
@@ -13853,6 +14110,7 @@ async function showPalaceFolder(fid, opts = {}) {
   `, { galaxy: true });
   $('#pf-close').onclick = () => showMemoryPalaceModal(); // 20260929x：✕ 回上一功能页，不再直接退出
   $('#pf-back').onclick = () => showMemoryPalaceModal();
+  bindPalStars(() => showPalaceFolder(fid, { keepBatch: _palBatchMode })); // 20261002ch：条目/子文件夹星星权重
   bindPalSearch($('#pf-search'), palDebounce((v) => showPalaceFolder(fid, { q: v, keepBatch: _palBatchMode, refocus: true }), 260));
   const pfClr = $('#pf-search-clear');
   if (pfClr) pfClr.onclick = () => showPalaceFolder(fid, { keepBatch: _palBatchMode });
@@ -13992,7 +14250,10 @@ async function showPalaceSubFolder(fid, sid, opts = {}) {
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px dashed var(--border);border-radius:12px;margin-bottom:8px;">
       <div style="font-size:11.5px;color:var(--text-tertiary);">${palPermTagText(sf, folders)} · ${entries.length} 段记忆</div>
-      <button class="wb-act ai" data-pact="folder:${sid}" title="AI 读取权限">${icon('shield', 13)} 权限</button>
+      <div style="display:flex;align-items:center;gap:6px;">
+        ${sf.type === 'hidden' || sf.parentId === PAL_H ? '' : palStarBtn('folder', sid, !!sf.weight)}
+        <button class="wb-act ai" data-pact="folder:${sid}" title="AI 读取权限">${icon('shield', 13)} 权限</button>
+      </div>
     </div>
     <div class="pal-row" data-psmanual="1" style="border-style:dashed;margin-bottom:8px;">
       <div class="pal-ic">${icon('image', 20)}</div>
@@ -14008,6 +14269,7 @@ async function showPalaceSubFolder(fid, sid, opts = {}) {
             <div class="pal-title">${escapeHtml(palWithPlayerName(e.title || '（无题）'))}</div>
             <div class="pal-sub">${escapeHtml(e.dateLabel)}</div>
           </div>
+          ${palStarBtn('entry', e.id, palIsWeighted(e, folders))}
           <button class="wb-act ai" data-pact="entry:${e.id}" title="AI 读取权限">${icon('shield', 13)} ${palPermTagText(e, folders)}</button>
           <span style="color:var(--text-tertiary);">›</span>
         </div>
@@ -14025,6 +14287,7 @@ async function showPalaceSubFolder(fid, sid, opts = {}) {
   `);
   $('#ps-close').onclick = () => showPalaceFolder(fid); // 20260929x：✕ 回上一功能页
   $('#ps-back').onclick = () => showPalaceFolder(fid);
+  bindPalStars(() => showPalaceSubFolder(fid, sid, { keepBatch: _palBatchMode })); // 20261002ch：条目/子文件夹星星权重
   /* bd：子分类检索（composition 守卫）+ 新建记忆入口 */
   bindPalSearch($('#ps-search'), palDebounce((v) => showPalaceSubFolder(fid, sid, { q: v, keepBatch: _palBatchMode, refocus: true }), 260));
   const psClr = $('#ps-search-clear');
@@ -14252,6 +14515,7 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
       ${e.kind === 'chat' ? `<div class="pal-dc-sum">摘要：${escapeHtml(palWithPlayerName(e.summary || e.title || ''))}</div>` : ''}
       <div class="pal-dc-body">${entryBody(e)}</div>
       <div class="pal-dc-foot">
+        ${e.folderId === PAL_H ? '' : `<button class="pal-card-chip star${palIsWeighted(e, folders) ? ' on' : ''}" data-cact="star" title="${palIsWeighted(e, folders) ? '已设为权重记忆，点击取消' : '设为权重记忆'}">${icon('star', 14)} 权重</button>`}
         ${e.folderId === PAL_H ? '' : `<button class="pal-card-chip" data-cact="perm" title="点击设置 AI 读取权限">${icon('shield', 13)} ${palPermTagText(e, folders)}</button>`}
         <button class="pal-card-chip" data-cact="move">移动到…</button>
         <button class="pal-card-chip danger" data-cact="del">删除</button>
@@ -14265,7 +14529,17 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
         const act = btn.dataset.cact;
         const e = list.find(x => x.id === el._eid);
         if (!e) return;
-        if (act === 'perm') {
+        if (act === 'star') {
+          // 20261002ch：卡片视图星星权重切换
+          (async () => {
+            const on = await palToggleWeight('entry', e.id);
+            if (on === null) { miniToast('隐藏夹不可设为权重记忆'); return; }
+            miniToast(on ? '⭐ 已设为权重记忆' : '已取消权重记忆');
+            const di = list.findIndex(x => x.id === e.id);
+            if (di >= 0) { list[di].weight = on; }
+            rebuildDeck();
+          })();
+        } else if (act === 'perm') {
           // 20261001cm：卡片视图的 back 必须重开卡片视图——原回调只 setCardContent（刷新的是已被权限弹窗
           //   替换出文档的游离节点），权限弹窗永不关闭、遮罩拦截全部触摸 → 点「AI 关」后整页卡死（真机必现）。
           //   与「移动到…」/列表视图关闭语义对齐：openPalPerm 的取消/保存都会调 back → 重开即自然关闭弹窗。
@@ -17258,7 +17532,8 @@ async function aiLikeMomentByIndex(charId, idxList) {
 
 /* 组装「扮演某访客」时注入给 AI 的上下文。只读该访客权限内的内容：
    角色人设 + 访客专属记忆宫殿摘要 + 世界树（分批）+ 玩家侧放行记忆 + 钱包 + 近期聊天。
-   绝对不读：其他访客文件夹、未勾选玩家内容、隐藏夹、其他访客群聊记忆。 */
+   绝对不读：其他访客文件夹、未勾选玩家内容、隐藏夹、其他访客群聊记忆。
+   20261002ch：新增纪念日注入（当天重点标注）+ 权重记忆单独强调。 */
 async function buildCharAIContext(charId, recentMessages) {
   const c = characters.find(x => x.id === charId);
   const parts = [];
@@ -17273,12 +17548,32 @@ async function buildCharAIContext(charId, recentMessages) {
     }
     if (c.sign) parts.push(`个性签名：${c.sign}`);
   }
+  // 1.5 纪念日（20261002ch）：该角色设置的纪念日，对 AI 最重要，必须时刻记住；当天重点提醒
+  try {
+    const myAnniv = anniversaries.filter(a => a.charId === charId);
+    if (myAnniv.length) {
+      const lines = myAnniv.map(a => {
+        const info = annivDayText(a.date);
+        const todayTag = info.isToday ? '【就是今天！一定要主动、自然地提及并表示，可以庆祝、送礼或发朋友圈】' : `（还有 ${info.left} 天）`;
+        return `· ${a.date} ${a.reason || '纪念日'}${todayTag}`;
+      });
+      parts.push(`【你和玩家之间最重要的纪念日（必须时刻牢记，这是你与玩家关系里最优先的记忆）】\n${lines.join('\n')}`);
+    }
+  } catch (e) {}
   // 2. 记忆宫殿摘要（只读该访客专属文件夹 + 玩家侧放行条目；摘要关键词触发，不读全文）
   try {
     const palCtx = await getPalaceAIContext(charId);
     if (palCtx && palCtx.length) {
-      const brief = palCtx.slice(0, 20).map(e => `· ${e.dateLabel || ''} ${e.title || e.summary || ''}`.trim()).join('\n');
-      parts.push(`【记忆宫殿摘要（与你有关的记忆，供参考）】\n${brief}`);
+      const weighted = palCtx.filter(e => e.weight);
+      const normal = palCtx.filter(e => !e.weight);
+      if (weighted.length) {
+        const wbrief = weighted.slice(0, 20).map(e => `· ${e.dateLabel || ''} ${e.title || e.summary || ''}${e.annivDate ? `（重要日期：${e.annivDate}）` : ''}`.trim()).join('\n');
+        parts.push(`【⭐ 权重记忆（这是你最重要、必须时刻记住并主动提及的记忆；聊天时可自然提起、纪念日当天要主动表示，也可发朋友圈或送礼物）】\n${wbrief}`);
+      }
+      if (normal.length) {
+        const brief = normal.slice(0, 20).map(e => `· ${e.dateLabel || ''} ${e.title || e.summary || ''}`.trim()).join('\n');
+        parts.push(`【记忆宫殿摘要（与你有关的记忆，供参考）】\n${brief}`);
+      }
     }
   } catch (e) {}
   // 3. 世界树（20260929bc：按关键词/人名触发，只注入与当前对话相关的条目）
@@ -17626,7 +17921,7 @@ async function generateCharReply(charId, opts = {}) {
     const multiLine = wantN > 1
       ? `\n你会连着发 ${wantN} 条消息：每条单独一行输出（共 ${wantN} 行），像真实聊天里连着发几条，几条之间可以是补充、吐槽或自问自答；每条 1 句左右，不要编号。`
       : '';
-    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:编号]]（编号取自下方【朋友圈最新动态】列表，#1 是最新一条）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
+    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:编号]]（编号取自下方【朋友圈最新动态】列表，#1 是最新一条）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。\n4. 玩家在这段对话里提到了「和你们两个人有关的重要日期」（玩家的生日、你的生日、你们认识的纪念日、你或玩家生平里的某件大事的具体日期）时：另起一行输出 [[ANNIV:日期|原因]]，日期尽量写成「YYYY-MM-DD」或「MM-DD」格式（如 [[ANNIV:10-05|玩家生日]]），由系统存成你们的权重记忆。必须是与你俩关系相关的日期才输出，普通的日程/会议日期不要输出。${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
     const sysNoImg = sysBase('');
     const messages = [
       { role: 'system', content: imgs.length ? sysBase('\n【视觉输入】本条消息末尾附上了最近聊天里的图片/表情包（按时间顺序），你可以直接看到它们的内容。') : sysNoImg },
@@ -17646,6 +17941,7 @@ async function generateCharReply(charId, opts = {}) {
       // 解析隐藏指令：发朋友圈 / 存记忆宫殿 / 点赞朋友圈 / 自赞（20260929ah + 20261001ci）
       const parsed = parseAITags(r.text);
       if (parsed.memo) aiPalStoreMemo(charId, parsed.memo);
+      if (parsed.anniv) aiStoreAnnivMemo(charId, parsed.anniv); // 20261002ch：重要日期→权重记忆
       if (parsed.moment) aiPostMomentFromTag(charId, parsed.moment, { selfLike: parsed.selfLike });
       if (parsed.likes && parsed.likes.length) aiLikeMomentByIndex(charId, parsed.likes);
       return { type: 'ai', text: parsed.clean };
@@ -18308,12 +18604,14 @@ async function momentReplyText(char, relation, post = null, opts = {}) {
    字卡模式不注入这些指令，随机收藏仍走 palAutoCollectMaybe（聊天）/随机朋友圈收藏。
    ============================================================ */
 function parseAITags(text) {
-  const out = { clean: String(text || ''), memo: '', moment: '', likes: [], selfLike: false };
+  const out = { clean: String(text || ''), memo: '', moment: '', likes: [], selfLike: false, anniv: null };
   out.clean = out.clean.replace(/\[\[\s*MOMENT\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.moment = v.trim(); return ''; });
   out.clean = out.clean.replace(/\[\[\s*MEMO\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.memo = v.trim(); return ''; });
   // 20261001ci：[[LIKE:编号]] 点赞朋友圈（可多个）；[[SELF_LIKE]] 给自己刚发的动态点赞
   out.clean = out.clean.replace(/\[\[\s*LIKE\s*[:：]\s*(\d+)\s*\]\]/gi, (_, n) => { const k = parseInt(n, 10); if (k > 0) out.likes.push(k); return ''; });
   out.clean = out.clean.replace(/\[\[\s*SELF_LIKE\s*\]\]/gi, () => { out.selfLike = true; return ''; });
+  // 20261002ch：[[ANNIV:日期|原因]] 玩家提到的与「玩家×角色关系相关」的重要日期（生日/纪念日/生平大事）
+  out.clean = out.clean.replace(/\[\[\s*ANNIV\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.anniv = v.trim(); return ''; });
   out.clean = out.clean.replace(/\[\[\s*存忆\s*\]\]/g, '').trim();
   return out;
 }
@@ -18338,6 +18636,48 @@ async function aiPalStoreMemo(charId, memo) {
     };
     await idbPut('palace', entry);
     miniToast('🏛️ ' + (c ? c.name : 'TA') + ' 把一件重要的事存进了记忆宫殿');
+  } catch (e) {}
+}
+
+/* 20261002ch：AI 判定玩家提到「与玩家×角色关系相关的重要日期」→ 存入记忆宫殿并默认标为权重记忆（⭐）。
+   annivRaw 形如「2026-10-02|玩家生日」。日期归一为 MM-DD（每年重复）存 annivDate，同时写入纪念日列表。 */
+async function aiStoreAnnivMemo(charId, annivRaw) {
+  try {
+    if (!annivRaw) return;
+    const [dateStr, reason] = String(annivRaw).split(/[|｜]/, 2).map(s => (s || '').trim());
+    if (!dateStr) return;
+    // 归一日期：YYYY-MM-DD → MM-DD；已是 MM-DD 原样
+    let md = dateStr;
+    let m = dateStr.match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})/);
+    if (m) md = `${String(+m[2]).padStart(2, '0')}-${String(+m[3]).padStart(2, '0')}`;
+    else {
+      m = dateStr.match(/(\d{1,2})[-/月](\d{1,2})/);
+      if (m) md = `${String(+m[1]).padStart(2, '0')}-${String(+m[2]).padStart(2, '0')}`;
+      else return; // 无法解析成日期，放弃
+    }
+    if (!/^\d{2}-\d{2}$/.test(md)) return;
+    await palEnsureFolders();
+    const c = characters.find(x => x.id === charId);
+    const title = `${md}${reason ? ' ' + reason : ' 重要日子'}`;
+    await idbPut('palace', {
+      id: uid('pal'), kind: 'manual',
+      folderId: 'pf_char_' + charId, subFolderId: '',
+      charId: charId || '', groupId: '',
+      messages: [], baseMsgId: '',
+      title: title.slice(0, 30), summary: '', summaryByAI: false,
+      text: `${md}${reason ? '：' + reason : ''}`, img: null,
+      dateLabel: palDateLabel(Date.now()),
+      time: Date.now(), createdAt: Date.now(),
+      allowAI: null, auto: true,
+      weight: true,          // 日期类默认权重记忆
+      annivDate: md,         // 归一后的 MM-DD，供 AI 上下文与纪念日当天判定
+    });
+    // 同步进纪念日列表（去重，按 charId+date+reason）
+    if (!anniversaries.some(a => a.charId === charId && a.date === md && (a.reason || '') === (reason || ''))) {
+      anniversaries.push({ id: uid('anniv'), charId, date: md, reason: reason || '重要日子', createdAt: Date.now() });
+      await setSetting('anniversaries', anniversaries);
+    }
+    miniToast('⭐ ' + (c ? c.name : 'TA') + ' 把你们的重要日子记成了权重记忆');
   } catch (e) {}
 }
 
@@ -18406,12 +18746,13 @@ async function aiSoftReply(c, instruction, cardFallback) {
     if (cfg.chatApi && cfg.chatApi.url) {
       const ctx = await buildCharAIContext(c.id, []);
       const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
-        { role: 'system', content: `你是角色扮演 AI，完全以角色身份、口吻输出，不要跳出角色，不要提“AI”“模型”。\n隐藏指令：若输出里有值得永久记住的事，可在最末尾另起一行输出 [[MEMO:一句话记忆]]（最多一条，没有就省略）。写 [[MEMO]] 时请用玩家在上下文里的昵称称呼玩家，不要写“玩家”二字。\n\n${ctx}` },
+        { role: 'system', content: `你是角色扮演 AI，完全以角色身份、口吻输出，不要跳出角色，不要提“AI”“模型”。\n隐藏指令：若输出里有值得永久记住的事，可在最末尾另起一行输出 [[MEMO:一句话记忆]]（最多一条，没有就省略）。若玩家提到「和你们两人有关的重要日期」（生日/纪念日/生平大事日期），另起一行输出 [[ANNIV:日期|原因]]（日期写成 MM-DD 或 YYYY-MM-DD）。写 [[MEMO]]/[[ANNIV]] 时请用玩家在上下文里的昵称称呼玩家，不要写“玩家”二字。\n\n${ctx}` },
         { role: 'user', content: instruction },
       ], { temperature: 0.95 });
       if (r.ok && r.text) {
         const parsed = parseAITags(r.text);
         if (parsed.memo) aiPalStoreMemo(c.id, parsed.memo);
+        if (parsed.anniv) aiStoreAnnivMemo(c.id, parsed.anniv); // 20261002ch
         if (parsed.moment) aiPostMomentFromTag(c.id, parsed.moment, { selfLike: parsed.selfLike });
         if (parsed.likes && parsed.likes.length) aiLikeMomentByIndex(c.id, parsed.likes); // 20261001ci
         return parsed.clean || cardFallback();

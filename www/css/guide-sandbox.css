@@ -1,0 +1,423 @@
+/* ============================================================
+   《白日梦》新手引导 —— 沙盒样式（20261002cj）
+   独立文件，与核心样式完全隔离；所有选择器都以 .bm-guide- 前缀命名，
+   绝不触碰现有 DOM / 类名。全屏 overlay 浮在 #app 之上（z-index 远高于弹窗）。
+
+   ★ 可读性铁律（20261002cj）：本引导层自带深色星空背景，因此所有文字
+     一律硬编码浅色，绝不引用 var(--text*) / var(--purple-*) 等主题变量——
+     无论玩家当前用哪个预设/主题（浅色字或深色字），引导层永远可读。
+   ============================================================ */
+
+.bm-guide-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000; /* 极高，盖过所有弹窗/浮层 */
+  background: radial-gradient(ellipse at 50% 8%, #2b2340 0%, #1a1626 52%, #0f0d14 100%);
+  font-family: var(--font, system-ui, -apple-system, sans-serif);
+  color: #ece7ff; /* 自持浅色，不随主题变 */
+  animation: bm-guide-fade-in 0.32s ease both;
+  user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: contain;
+}
+
+/* spot 阶段不用 flex 居中，改为绝对定位元素；背景必须透明——
+   真实页面要从洞里透出来，只靠 .bm-guide-spothole 的巨大 box-shadow 压暗四周 */
+.bm-guide-mask.bm-guide-spotting {
+  display: block;
+  background: transparent;
+  animation: none;
+}
+.bm-guide-mask.bm-guide-spotting::before { display: none; } /* 星点也收起，不叠在真实页面上 */
+
+/* 背景星点（纯 CSS，无图片，省流量） */
+.bm-guide-mask::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 22%, rgba(255,255,255,0.7) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 78% 14%, rgba(255,255,255,0.55) 0%, transparent 100%),
+    radial-gradient(1px 1px at 32% 68%, rgba(196,181,253,0.6) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 88% 72%, rgba(255,255,255,0.45) 0%, transparent 100%),
+    radial-gradient(1px 1px at 55% 42%, rgba(255,255,255,0.5) 0%, transparent 100%),
+    radial-gradient(1.5px 1.5px at 20% 86%, rgba(196,181,253,0.45) 0%, transparent 100%),
+    radial-gradient(1px 1px at 66% 90%, rgba(255,255,255,0.4) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+@keyframes bm-guide-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ============ 幻灯片阶段：主卡片 ============ */
+.bm-guide-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100% - 44px);
+  max-width: 340px;
+  max-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(30, 27, 40, 0.86);
+  backdrop-filter: blur(22px) saturate(1.2);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(167,139,250,0.06) inset;
+  padding: 30px 26px 26px;
+  animation: bm-guide-card-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+  overflow: hidden;
+}
+.bm-guide-mask.bm-guide-spotting .bm-guide-card { display: none; }
+
+@keyframes bm-guide-card-in {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* 顶部：标题 + 跳过 */
+.bm-guide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.bm-guide-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #ece7ff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bm-guide-title .bm-guide-logo {
+  width: 22px;
+  height: 22px;
+  color: #a78bfa;
+  filter: drop-shadow(0 0 8px rgba(167,139,250,0.6));
+}
+
+.bm-guide-skip {
+  border: none;
+  background: transparent;
+  color: #8f86ad;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 999px;
+  transition: color 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
+}
+.bm-guide-skip:hover { color: #c9c1e8; }
+.bm-guide-skip:active { background: rgba(255,255,255,0.06); }
+
+/* ============ 幻灯片容器 ============ */
+.bm-guide-slides {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bm-guide-track {
+  display: flex;
+  height: 100%;
+  transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.bm-guide-slide {
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+  padding: 4px 2px 0;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* 图标：大号圆形光晕图标 */
+.bm-guide-ico {
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a78bfa;
+  background: radial-gradient(circle at 50% 35%, rgba(167,139,250,0.28), rgba(167,139,250,0.06) 72%);
+  border: 1px solid rgba(167,139,250,0.25);
+  box-shadow: 0 0 34px rgba(167,139,250,0.28);
+  margin-bottom: 22px;
+  flex-shrink: 0;
+}
+.bm-guide-ico svg {
+  filter: drop-shadow(0 0 6px rgba(167,139,250,0.5));
+}
+
+.bm-guide-name {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  color: #f2eeff;
+}
+
+.bm-guide-tag {
+  font-size: 12px;
+  color: #a78bfa;
+  letter-spacing: 2px;
+  margin-bottom: 16px;
+  opacity: 0.9;
+}
+
+.bm-guide-desc {
+  font-size: 14px;
+  line-height: 1.85;
+  color: #b9b0d8;
+  max-width: 260px;
+}
+.bm-guide-desc b { color: #ece7ff; font-weight: 600; }
+.bm-guide-desc .bm-guide-hl {
+  color: #bfa6ff;
+  font-weight: 600;
+}
+
+/* 位置提示小条 */
+.bm-guide-hint {
+  margin-top: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #9d94bd;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.07);
+  flex-shrink: 0;
+}
+.bm-guide-hint svg { color: #a78bfa; }
+
+/* ============ 底部：进度点 + 按钮 ============ */
+.bm-guide-foot {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.bm-guide-dots {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 100%;
+}
+
+.bm-guide-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.18);
+  transition: all 0.22s ease;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+.bm-guide-dot.done { background: rgba(167,139,250,0.35); }
+.bm-guide-dot.active {
+  width: 22px;
+  border-radius: 999px;
+  background: #a78bfa;
+  box-shadow: 0 0 10px rgba(167,139,250,0.7);
+}
+
+.bm-guide-btnrow {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  justify-content: center;
+}
+
+.bm-guide-next,
+.bm-guide-start {
+  border: none;
+  cursor: pointer;
+  border-radius: 999px;
+  font-size: 15px;
+  padding: 12px 26px;
+  letter-spacing: 1px;
+  transition: transform 0.12s ease, opacity 0.12s ease, background 0.15s ease;
+}
+.bm-guide-next:active,
+.bm-guide-start:active { transform: scale(0.96); }
+
+.bm-guide-next {
+  background: rgba(255,255,255,0.08);
+  color: #ece7ff;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.bm-guide-next:hover { background: rgba(255,255,255,0.12); }
+
+.bm-guide-start {
+  background: linear-gradient(135deg, #8b74e8, #a78bfa);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(139,116,232,0.4);
+}
+.bm-guide-start:hover { box-shadow: 0 10px 30px rgba(139,116,232,0.55); }
+
+/* 滑动提示 */
+.bm-guide-swipe {
+  font-size: 11px;
+  color: #8f86ad;
+  letter-spacing: 1px;
+  margin-top: 2px;
+}
+
+/* ============================================================
+   功能引导阶段（20261002cj）：聚光灯框选真实按钮
+   ============================================================ */
+
+/* 顶部悬浮条：标题 + 跳过 */
+.bm-guide-spotbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  background: linear-gradient(180deg, rgba(10,8,16,0.72), rgba(10,8,16,0));
+  z-index: 3;
+  animation: bm-guide-fade-in 0.3s ease both;
+}
+.bm-guide-spotbar .bm-guide-spot-step {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: #a78bfa;
+}
+.bm-guide-spotbar .bm-guide-skip { background: rgba(20,17,30,0.5); }
+
+/* 聚光洞：框住真实按钮，四周用巨大 box-shadow 压暗 */
+.bm-guide-spothole {
+  position: absolute;
+  z-index: 1;
+  border-radius: 16px;
+  box-shadow: 0 0 0 3px rgba(167,139,250,0.85), 0 0 0 9999px rgba(10, 8, 16, 0.82);
+  border: 1px solid rgba(196,181,253,0.9);
+  pointer-events: none; /* 洞不拦截点击——引导阶段不真的触发按钮 */
+  animation: bm-guide-hole-pulse 1.6s ease-in-out infinite;
+}
+@keyframes bm-guide-hole-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(167,139,250,0.85), 0 0 22px rgba(167,139,250,0.35), 0 0 0 9999px rgba(10,8,16,0.82); }
+  50% { box-shadow: 0 0 0 3px rgba(196,181,253,1), 0 0 34px rgba(167,139,250,0.6), 0 0 0 9999px rgba(10,8,16,0.82); }
+}
+
+/* 说明气泡 */
+.bm-guide-tip {
+  position: absolute;
+  z-index: 2;
+  max-width: 300px;
+  border-radius: 18px;
+  border: 1px solid rgba(167,139,250,0.35);
+  background: rgba(32, 28, 46, 0.94);
+  box-shadow: 0 14px 44px rgba(0,0,0,0.6), 0 0 0 1px rgba(167,139,250,0.08) inset;
+  padding: 14px 16px 12px;
+  animation: bm-guide-tip-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  text-align: left;
+}
+@keyframes bm-guide-tip-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.bm-guide-tip-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #f2eeff;
+  margin-bottom: 5px;
+}
+.bm-guide-tip-name svg { color: #a78bfa; flex-shrink: 0; }
+.bm-guide-tip-desc {
+  font-size: 13px;
+  line-height: 1.75;
+  color: #b9b0d8;
+}
+.bm-guide-tip-desc b { color: #ece7ff; font-weight: 600; }
+.bm-guide-tip-desc .bm-guide-hl { color: #bfa6ff; font-weight: 600; }
+
+/* 气泡内的开关示意图（AI/字卡模式没有主页实体按钮，画一个样子） */
+.bm-guide-toggle-demo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.09);
+}
+.bm-guide-toggle-demo svg { flex-shrink: 0; }
+.bm-guide-toggle-demo .bm-guide-td-on { color: #a78bfa; filter: drop-shadow(0 0 6px rgba(167,139,250,0.6)); }
+.bm-guide-toggle-demo .bm-guide-td-off { color: #6f6889; }
+.bm-guide-toggle-demo .bm-guide-td-label { font-size: 11px; color: #9d94bd; letter-spacing: 1px; }
+
+/* 底部按钮（spot 阶段） */
+.bm-guide-spotfoot {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px 20px;
+  background: linear-gradient(0deg, rgba(10,8,16,0.78), rgba(10,8,16,0));
+  z-index: 3;
+  animation: bm-guide-fade-in 0.3s ease both;
+}
+.bm-guide-spotfoot .bm-guide-dots { max-width: 90%; }
+.bm-guide-spotnext {
+  border: none;
+  cursor: pointer;
+  border-radius: 999px;
+  font-size: 15px;
+  padding: 12px 30px;
+  letter-spacing: 1px;
+  background: rgba(255,255,255,0.08);
+  color: #ece7ff;
+  border: 1px solid rgba(255,255,255,0.12);
+  transition: transform 0.12s ease;
+}
+.bm-guide-spotnext:active { transform: scale(0.96); }
+/* 最后一步的「开始探索」：紫色渐变主按钮（需写在 .bm-guide-spotnext 之后才能覆盖） */
+.bm-guide-spotnext.bm-guide-start {
+  background: linear-gradient(135deg, #8b74e8, #a78bfa);
+  border: none;
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(139,116,232,0.4);
+}
+
+/* ============ 移动端适配 ============ */
+@media (max-width: 380px) {
+  .bm-guide-card { width: calc(100% - 28px); padding: 24px 20px 20px; }
+  .bm-guide-ico { width: 64px; height: 64px; }
+  .bm-guide-desc { font-size: 13px; }
+  .bm-guide-tip { max-width: calc(100vw - 28px); }
+}
