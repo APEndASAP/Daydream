@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261003ct'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261003cu'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -4357,6 +4357,11 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
     const uniqId = 1600000000 + __bmSeq;
     const groupKey = 'bm-' + cid;
 
+    // each 模式：先撤掉该角色同类消息的预排闹钟（消息已即时送达，闹钟使命完成），
+    // 避免「真实消息通知 + 给你发来了新消息」两条并存（与 merge 分支 4314 行语义一致）。
+    // 复用 bmClearAlarm：同时清 kv 里的 bmBgAlarms 记录 + cancel 原生通知，保持两者一致。
+    try { await bmClearAlarm(cid, k); } catch (e) {}
+
     await LN.schedule({
       notifications: [{
         id: uniqId,
@@ -4367,37 +4372,6 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
         group: groupKey,
       }],
     });
-
-    // 20261003：逐条模式的 Android 分组摘要——每条消息仍是独立通知（上面的 schedule），
-    // 但补发一条 groupSummary:true 的摘要通知，让系统按角色折叠成「角色名 · 新消息」的
-    // 可展开组（子通知仍在组内，展开后每条可见，不构成业务合并）。
-    // 仅 Android 有 group 时才需要；OPPO/ColorOS 等 ROM 无 summary 通知会平铺、不显示分组。
-    // 摘要正文用固定文案（不显示「N 条」）：通知栏数量由 Android 系统负责展示，
-    // JS 不维护计数状态，避免 App 被杀/用户清通知后 summary 数字与真实条数不一致。
-    const eachSummaryId = bmNotifIdFor(cid, 'each-summary');
-    const eachSummaryBody = '有新消息';
-    try {
-      await LN.schedule({
-        notifications: [{
-          id: eachSummaryId,
-          title: name,
-          body: eachSummaryBody,
-          channelId: 'bm-messages',
-          smallIcon: 'ic_launcher',
-          group: groupKey,
-          groupSummary: true,
-        }],
-      });
-    } catch (e) {}
-    try {
-      (window.__bmNotifyDiag = window.__bmNotifyDiag || []).push({
-        time: Date.now(), cid, kind: k, mergeMode: 'each',
-        notificationId: eachSummaryId, group: groupKey,
-        body: eachSummaryBody,
-        documentHidden: document.hidden, visibility: document.visibilityState,
-        currentCharId: (window.currentCharId || null), stage: 'each_summary_schedule',
-      });
-    } catch (e) {}
     try {
       (window.__bmNotifyDiag = window.__bmNotifyDiag || []).push({
         time: Date.now(), cid, kind: k, mergeMode: 'each',
@@ -4523,6 +4497,7 @@ async function bmRegisterAlarm(char, kind, dueAt) {
         body: bb,
         channelId: 'bm-messages',
         smallIcon: 'ic_launcher',
+        group: 'bm-' + (char.id || ''),
         schedule: { at: new Date(dueAt), allowWhileIdle: true },
       }],
     });
