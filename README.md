@@ -2,7 +2,7 @@
 
 一款「聊天 + 朋友圈」形态的**角色陪伴应用**。你可以添加自己的梦角（虚拟角色 / 原创 OC），和它们聊天、发朋友圈、模拟通话、占卜、记录纪念日与日记，并自由定制大量美化内容。
 
-> 当前版本：`v=20261003cs` · 纯前端 · 单机优先 · 数据全部本地存储
+> 当前版本：`v=20261003ct` · 纯前端 · 单机优先 · 数据全部本地存储
 
 ---
 
@@ -114,6 +114,7 @@ python -m http.server 8901
 
 | 版本 | 主要内容 |
 | --- | --- |
+| `20261003ct` | **逐条通知 Android 分组摘要（groupSummary）+ 摘要文案去计数化**：① each 逐条模式此前只有 `group:'bm-'+cid`、无 groupSummary 通知，OPPO/ColorOS 等国产 ROM 直接平铺不显示分组；现补发一条 `groupSummary:true` 摘要通知（标题=角色名），让系统按角色折叠成可展开组，子通知仍在组内、展开后每条独立可见，不同角色 group 分离不混；② 摘要正文改固定文案「有新消息」——弃用 `__bmEachCount` 内存计数（原「N 条新消息」在 App 被杀后归零、用户清通知后计数残留，导致 summary 数字与真实通知栏条数不一致），通知栏数量完全交给 Android group 折叠机制展示，JS 不维护计数状态；③ 摘要 id 用 `bmNotifIdFor(cid,'each-summary')` 固定稳定 hash（<21.47亿 int32 安全区，与逐条 id、merge id 不冲突），后到替换先到不堆积。 |
 | `20261003cs` | **通知系统稳定性优化（逐条 id 并发冲突 + merge 范围 + 诊断日志）**：① 逐条通知 id 懒加载并发竞态修复——`bmNativeNotify` 被 `notifyIncoming` 不 await 调用，多角色同时来消息时两个 notify 并发进入懒加载、都读到同一旧 `bmNotifySeq` 值生成相同 notification id，后到覆盖先到导致少通知；新增 `__bmSeqPromise` Promise 级互斥锁（第一个负责读 kv、后续 await 同一 Promise，只读一次），配合既有 `__bmSeqLoaded` 哨兵彻底杜绝 id 碰撞；② merge 合并范围扩大——`if (merge && kind==='msg')` → `if (merge && (kind==='msg'||kind==='letter'||kind==='gift'||kind==='surprise'))`，书信/礼物/惊喜纳入合并防轰炸，查岗/问卷保持独立强提醒不丢；③ 临时通知诊断日志——`window.__bmNotifyDiag` 记录每次通知决策链（time/cid/kind/mergeMode/notificationId/group/body/documentHidden/visibility/currentCharId/stage），stage 分 enter/merge_schedule/each_schedule，测试后可删。 |
 | `20261002co` | **引导新增字卡库导览 + 决策币复古雕版图案（YES/NO）**：① 新手引导聚光灯导览由 5 步扩为 **6 步**——在世界树之后新增**字卡库**步骤（框选主页真实按钮 `#btn-home-cards`，图标与主页 icons.js 的 cards 一致），文案介绍字卡库是软件内容引擎（回复/打招呼/戳一戳/状态/寄语都从这里抽，支持分组撰写与导入分享，字卡模式完全由它驱动）；② **决策币两面图案重绘**——弃用 🌙是/⭐否 emoji 面，改为复古木刻雕版硬币风格图（参考六便士古币版画风：**正面 `img/coin-yes.jpg` = YES + 月桂枝环绕 + 珠链边圈；反面 `img/coin-no.jpg` = NO + 新月星群环绕**，AI 生成后居中裁方、白底归一化、400px JPEG 共约 145KB）；`.coin-face` 增加 `img` 满幅圆裁样式（object-fit:cover + overflow:hidden），币径 92→104px 让雕版细节更清晰；掷币结果文案与正反面映射不变（是=正面 YES / 否=反面 NO）；群聊决策币本就不显示币面、保持原样。 |
 | `20261002cn` | **新手引导重构（删卡片段只留聚光灯导览）+ 真机首启乱序/重复弹/卡死根治**：真机反馈「开屏完没弹声明直接见引导、卡片没看完就自动跳步、引导完成入梦签没弹反而又弹一个引导、最后卡死」。根因：① 真机 init 慢，声明弹出晚于开屏结束，armPolling 在窗口期抢跑挂载（z=2147483000）盖住声明；② spot 步骤防御逻辑在目标按钮不可用时自动 `go(idx+1)` 连跳（60ms/步狂跳闪完）；③ armPolling 的「1 分钟兜底无条件强弹」+ watchLateModals 撤下重排队 + agree 显式 start() 多路径叠加，多实例状态崩坏。修复：① **guide-sandbox.js 重构——删除 6 张初识卡片段，只保留 5 步聚光灯功能导览**（spotbar 升级为主标题「✨初入梦境·功能导览(1/5)」+跳过，原卡片内容并入对应气泡文案）；② isReady() 新增 **`window.__bmNoticeGateDone` 硬门槛**——app.js 在「已同意声明」（init/showSoftwareNotice）与 `releaseGate()`（同意/关闭）三处发信号，声明流程未结束引导绝不挂载；③ **删除 1 分钟兜底强弹**（改为最长等 20 分钟按条件等待，绝不无视弹窗硬弹）；④ spot 目标缺失改为**居中示意展示**（不再自动连跳步）；⑤ **mounted 防重入 + 统一 teardown()**（轮询/观察/校正计时器全收口、状态复位）杜绝多实例叠加卡死；⑥ CSS spotbar 增加主标题样式。 |
