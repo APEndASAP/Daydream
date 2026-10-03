@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004da'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004db'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -1935,7 +1935,7 @@ function scheduleAtQuoteReplies(g, playerMsg, atIds) {
         const m2 = {
           id: uid('msg'), groupId: g.id, charId: cid, from: 'them', type: 'text',
           content: text, time: Date.now(),
-          quote: { name: playerProfile.name || '我', content: (typeof playerMsg.content === 'string' ? playerMsg.content : '[消息]').slice(0, 60) },
+          quote: { name: playerProfile.name || '我', content: (typeof playerMsg.content === 'string' ? playerMsg.content : '[消息]').slice(0, 60), msgId: playerMsg.id },
         };
         await idbPut('messages', m2);
         if (currentGroupId === g.id && document.body.dataset.view === 'chat') {
@@ -1962,6 +1962,7 @@ async function sendGroupMessage(text) {
     myMsg.quote = {
       name: pendingQuote.name,
       content: typeof pendingQuote.content === 'string' ? String(pendingQuote.content).slice(0, 60) : '[卡片消息]',
+      msgId: pendingQuote.msgId, // 20261004：保留 msgId——引用块点击可跳回原消息
     };
     cancelQuote();
   }
@@ -2453,6 +2454,16 @@ function ensureChatWindowHooks() {
     if (!_chatWin || _chatWin.busy || _chatWin.start <= 0) return;
     if (scroll.scrollTop < 80) chatLoadOlder();
   }, { passive: true });
+  // 20261004：引用块点击跳转（事件委托，单聊/群聊共用；closest 兼容引用块内嵌元素点击）
+  scroll.addEventListener('click', (e) => {
+    try {
+      const q = e.target && e.target.closest ? e.target.closest('.msg-quote[data-quote-jump]') : null;
+      if (q && scroll.contains(q)) {
+        e.stopPropagation();
+        jumpToQuotedMessage(q.getAttribute('data-quote-jump'));
+      }
+    } catch (err) {}
+  });
 }
 
 /* 上滑补载更早一批：先渲染再搬移到顶部，滚动位置用高度差补偿 */
@@ -2520,13 +2531,29 @@ function avatarHtml(avatar, name) {
   return `<div class="msg-avatar">${avatar ? `<img src="${imgSrc(avatar, true)}">` : escapeHtml(name ? name[0] || '?' : '?')}</div>`;
 }
 
-/* 引用块渲染（右键菜单 → 引用该条消息） */
+/* 引用块渲染（右键菜单 → 引用该条消息）。
+   20261004：引用块可点击跳回原消息——quote 带 msgId（startQuote/玩家发送路径天然携带）
+   时输出 data-quote-jump 锚点，点击滚动定位并高亮；旧数据/系统引用无 msgId 时不带锚点不响应 */
 function quoteHtml(q) {
   if (!q) return '';
   const brief = typeof q.content === 'string' && q.content.length <= 40
     ? q.content
     : (typeof q.content === 'string' ? q.content.slice(0, 40) + '…' : '[卡片消息]');
-  return `<div class="msg-quote"><div class="msg-quote-name">${escapeHtml(q.name)}</div><div class="msg-quote-text">${escapeHtml(brief)}</div></div>`;
+  const jump = q.msgId ? ` data-quote-jump="${escapeHtml(q.msgId)}"` : '';
+  return `<div class="msg-quote"${jump}><div class="msg-quote-name">${escapeHtml(q.name)}</div><div class="msg-quote-text">${escapeHtml(brief)}</div></div>`;
+}
+
+/* 20261004：点击引用块 → 跳转到被引用的原消息并高亮。
+   群聊/单聊共用 #chat-scroll 上的事件委托（ensureChatWindowHooks 挂载，幂等）；
+   原消息可能因虚拟滚动不在 DOM 里 → 找不到时轻提示。 */
+function jumpToQuotedMessage(msgId) {
+  const row = document.querySelector(`#chat-scroll .msg-row[data-msgid="${CSS.escape(msgId)}"]`);
+  if (!row) { miniToast('原消息已不在当前记录中'); return; }
+  try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { try { row.scrollIntoView(); } catch (e2) {} }
+  row.classList.remove('msg-jump-flash');
+  void row.offsetWidth; // 强制 reflow：连续点击同一条也能重启动画
+  row.classList.add('msg-jump-flash');
+  setTimeout(() => { try { row.classList.remove('msg-jump-flash'); } catch (e) {} }, 1800);
 }
 
 /* 查岗是否已完成一轮应答（20260925i：角色已回应过玩家的回复）。
@@ -3398,7 +3425,7 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
         // 只在单聊消息里找引用对象（群聊消息不串进单聊，20260925 数据乱串修复）
         const lastMe = [...msgs].reverse().find(mm => mm.from === 'me' && mm.type === 'text' && !mm.groupId);
         if (lastMe && Math.random() < 0.22) {
-          finalQuote = { name: playerProfile.name || '我', content: lastMe.content };
+          finalQuote = { name: playerProfile.name || '我', content: lastMe.content, msgId: lastMe.id }; // 20261004：带 msgId 支持点击跳回
         }
       }
 
@@ -6907,7 +6934,7 @@ function showCheckinModal() {
     await idbPut('messages', myMsg);
     appendMessage(myMsg);
     // 角色抽 2~3 条字卡依次回复（15.1），每条都引用查岗卡片，并把回复内容写进查岗卡片
-    const quote = { name: playerProfile.name || '我', content: text };
+    const quote = { name: playerProfile.name || '我', content: text, msgId: myMsg.id }; // 20261004：带 msgId 支持点击跳回
     const c = characters.find(x => x.id === currentCharId);
     const n = randInt(2, 3);
     for (let i = 0; i < n; i++) {
@@ -6948,7 +6975,7 @@ function openCheckinReplyModal(charId, checkinMsg = null) {
     if (!text) { miniToast('请填写你的回复'); return; }
     closeModal();
     // 玩家的回复引用角色的查岗卡片，在聊天里可见地对应这次查岗
-    const myMsg = { id: uid('msg'), charId, from: 'me', type: 'text', content: text, time: Date.now(), quote: { name: c ? c.name : 'TA', content: checkinText } };
+    const myMsg = { id: uid('msg'), charId, from: 'me', type: 'text', content: text, time: Date.now(), quote: { name: c ? c.name : 'TA', content: checkinText, msgId: checkinMsg ? checkinMsg.id : undefined } }; // 20261004：quote 带 msgId（引用查岗卡片可跳回）
     await idbPut('messages', myMsg);
     if (currentCharId === charId) appendMessage(myMsg);
     // 玩家回复也写进查岗卡片
@@ -6960,7 +6987,7 @@ function openCheckinReplyModal(charId, checkinMsg = null) {
     }
     miniToast('已回复查岗，TA 正在看你发来的消息…');
     // 角色对玩家回复的应答也引用玩家这条回复，并把应答写进查岗卡片（quick：2~4 秒内及时反馈）
-    const replyMsg = await scheduleCharReply(charId, { name: playerProfile.name || '我', content: text }, { quick: true });
+    const replyMsg = await scheduleCharReply(charId, { name: playerProfile.name || '我', content: text, msgId: myMsg.id }, { quick: true }); // 20261004：带 msgId 支持点击跳回
     if (replyMsg && checkinMsg) {
       checkinMsg.content.replies = checkinMsg.content.replies || [];
       checkinMsg.content.replies.push({ who: c ? c.name : 'TA', text: replyMsg.content });
@@ -7121,7 +7148,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
     if (answered) {
       sec++;
       const el = $('#call-timer');
-      if (el) el.textContent = formatDurShort(sec); // 20261002cb：超1小时进位显示「X小时Y分」
+      if (el) el.textContent = formatDurShort(sec); // 20261004：全「分:秒」显示
       updateCallFloatTime(sec);
     }
   }, 1000);
@@ -7622,9 +7649,8 @@ function updateCallFloatTime(sec) {
 
 function formatDurShort(sec) {
   sec = sec || 0;
-  // 20261002cb：超过 1 小时自动进位——通话界面/悬浮窗显示「X小时Y分」，不再显示「114:23」
-  const h = Math.floor(sec / 3600);
-  if (h > 0) return `${h}小时${Math.floor((sec % 3600) / 60)}分`;
+  // 20261004：恢复全「分:秒」显示（取消 20261002cb 的 1 小时进位）——分钟数自然增长（如 114:23），
+  // 通话界面 / DOM 悬浮窗 / 原生悬浮窗统一格式，不做「超 1 小时」切换
   const m = Math.floor(sec / 60), s = sec % 60;
   return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
@@ -7795,7 +7821,7 @@ function openGroupCallScreen(g, members, kind, msg) {
     sec++;
     _callActive && (_callActive.sec = sec);
     const el = $('#call-timer');
-    if (el) el.textContent = formatDurShort(sec); // 20261002cb：超1小时进位显示「X小时Y分」
+    if (el) el.textContent = formatDurShort(sec); // 20261004：全「分:秒」显示
     updateCallFloatTime(sec);
   }, 1000);
   const endCall = async () => {

@@ -85,7 +85,8 @@ public class BmOverlayPlugin extends Plugin {
     private TextView squareTime, barTime, cardTimer, cardStatus;
     private FrameLayout squareAvatar, barAvatar, cardAvatar;
     private TextView barNameView;
-    private TextView eyeBtn, muteBtn;
+    private TextView muteBtn;
+    private ImageView eyeBtn;   // 20261003da：小眼镜改图片图标（用户指定睁眼/闭眼图，不再用 emoji）
 
     /* 原生计时 */
     private Handler tickHandler = null;
@@ -229,6 +230,7 @@ public class BmOverlayPlugin extends Plugin {
 
         FrameLayout root = new FrameLayout(getContext());
         root.setTag("bm-root");
+        root.setClipChildren(false);       // 20261003da：最外层同步放行（窗口=视觉尺寸，理论不裁，兜底）
         overlayRoot = root;
 
         /* —— 1号 小方块：头像 + 时长（竖排，圆角方窗） —— */
@@ -248,7 +250,7 @@ public class BmOverlayPlugin extends Plugin {
         squareTime.setTextColor(0xFFC9CDD8);
         squareTime.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         squareTime.setGravity(Gravity.CENTER);
-        squareTime.setMaxWidth(dp(64)); // 允许换行：超1小时显示「X小时Y分」两行
+        squareTime.setMaxWidth(dp(64)); // 20261004：全 mm:ss 后不换行（宽度富余），保留上限防异常长文本
         sq.addView(squareTime, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         squareView = sq;
         root.addView(sq);
@@ -306,9 +308,13 @@ public class BmOverlayPlugin extends Plugin {
         cardNaturalH = dp(344);
 
         cardHost = new FrameLayout(getContext());
+        cardHost.setClipChildren(false);   // 20261003da：同上，放行 cardFixed 放大后的超出部分
         cardHost.setVisibility(View.GONE);
 
         cardFixed = new FrameLayout(getContext());
+        // 20261003da：关闭裁剪——2号放大（scale>1）时 cardFixed 视觉尺寸超出 cardHost，
+        // 默认 clipChildren 会把超出部分裁掉（右侧/右下缺一块）；root 同理放行
+        cardFixed.setClipChildren(false);
         FrameLayout.LayoutParams fixedLp = new FrameLayout.LayoutParams(cardNaturalW, cardNaturalH);
         cardFixed.setLayoutParams(fixedLp);
         cardFixed.setPivotX(0f);
@@ -337,7 +343,10 @@ public class BmOverlayPlugin extends Plugin {
         cardTimer.setText(sub != null ? sub : "00:00");
         cardTimer.setTextColor(0xFFC9CDD8);
         cardTimer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        cardUi.addView(cardTimer);
+        // 20261004：计时文字显式撑满行宽 + 文字居中（与下方 cardName 同款做法）——
+        // 修复真机上 cardTimer 贴在卡片左上角、与应用内通话页「计时居中」不一致的问题
+        cardTimer.setGravity(Gravity.CENTER_HORIZONTAL);
+        cardUi.addView(cardTimer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView cardName = new TextView(getContext());
         cardName.setText(charName);
@@ -436,13 +445,30 @@ public class BmOverlayPlugin extends Plugin {
 
         cardFixed.addView(cardUi, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // 小眼镜（视频+有背景时显示）：隐藏 UI 只看背景
-        eyeBtn = circleTextBtn("👁", dp(34), 0x66141019, 15, Color.WHITE);
+        // 小眼镜（视频+有背景时显示）：隐藏 UI 只看背景。
+        // 20261003da：图标从 emoji(👁/🙈) 改为用户指定的图片资源（bm_eye_open/bm_eye_closed）；
+        // 点击时同步把背景 alpha 切到全显（uiHidden 时 1.0），对齐应用内「小眼睛=隐藏 UI 与遮罩直接看图」，
+        // 修复 uiHidden 时背景仍残留 0.38 透明度的问题；恢复时回到 0.38 与应用内 call-screen-bg 一致。
+        eyeBtn = new ImageView(getContext());
+        eyeBtn.setImageResource(R.drawable.bm_eye_open);
+        eyeBtn.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        GradientDrawable eyeBg = new GradientDrawable();
+        eyeBg.setShape(GradientDrawable.OVAL);
+        eyeBg.setColor(0x66141019);
+        eyeBtn.setBackground(eyeBg);
+        eyeBtn.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, android.graphics.Outline outline) {
+                try { outline.setOval(0, 0, view.getWidth(), view.getHeight()); } catch (Throwable t) {}
+            }
+        });
+        eyeBtn.setClipToOutline(true);
         eyeBtn.setOnClickListener(v -> {
             try {
                 uiHidden = !uiHidden;
                 cardUi.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
-                eyeBtn.setText(uiHidden ? "🙈" : "👁");
+                cardBg.setAlpha(uiHidden ? 1f : 0.38f);
+                eyeBtn.setImageResource(uiHidden ? R.drawable.bm_eye_closed : R.drawable.bm_eye_open);
             } catch (Throwable t) {}
         });
         FrameLayout.LayoutParams eyeLp = new FrameLayout.LayoutParams(dp(34), dp(34));
@@ -610,7 +636,8 @@ public class BmOverlayPlugin extends Plugin {
             if (!video && cardUi != null) {
                 cardUi.setVisibility(View.VISIBLE); // 切回语音时确保 UI 可见
                 uiHidden = false;
-                if (eyeBtn != null) eyeBtn.setText("👁");
+                if (cardBg != null) cardBg.setAlpha(0.38f);   // 20261003da：背景透明度一并复位
+                if (eyeBtn != null) eyeBtn.setImageResource(R.drawable.bm_eye_open);
             }
         } catch (Throwable t) {}
     }
@@ -633,7 +660,17 @@ public class BmOverlayPlugin extends Plugin {
         } catch (Throwable t) {}
     }
 
+    /** 2号窗口尺寸 = 自然尺寸 × 缩放。
+     *  20261004 变形修复：真机（ColorOS）上 setScaleX/Y（View 属性，立即生效）与
+     *  updateViewLayout（WMS relayout 事务）是两条更新轨——快速连续拖拽缩放手柄时，
+     *  relayout 事务会被节流/合并/丢失，而 scale 已生效 → 「窗口尺寸 ≠ 内容视觉尺寸」
+     *  的稳定态变形（内容偏在窗口一角、另一侧大片空白）。修复 = 每次更新后延迟一帧
+     *  再校准重发一次（repost=false 不再续 post，杜绝循环），稳定态必然对齐。 */
     private void applyCardWindowSize() {
+        applyCardWindowSize(true);
+    }
+
+    private void applyCardWindowSize(boolean repost) {
         try {
             if (overlayRoot == null || layoutParams == null || windowManager == null || cardFixed == null) return;
             layoutParams.width = (int) (cardNaturalW * cardScale);
@@ -641,6 +678,12 @@ public class BmOverlayPlugin extends Plugin {
             cardFixed.setScaleX(cardScale);
             cardFixed.setScaleY(cardScale);
             windowManager.updateViewLayout(overlayRoot, layoutParams);
+            if (repost && overlayRoot != null) {
+                final View rootRef = overlayRoot;
+                rootRef.post(() -> {
+                    try { if (form == 2) applyCardWindowSize(false); } catch (Throwable t) {}
+                });
+            }
         } catch (Throwable t) {}
     }
 
@@ -660,6 +703,16 @@ public class BmOverlayPlugin extends Plugin {
                         if (squareTime != null) squareTime.setText(t);
                         if (barTime != null) barTime.setText(t);
                         if (cardTimer != null) cardTimer.setText(t);
+                        // 20261004：2号卡片缩放失步自愈——每秒校验窗口尺寸/视图缩放是否与 cardScale
+                        // 一致（拖拽中 relayout 丢失的残留），不一致就按当前 cardScale 重新对齐一次
+                        if (form == 2 && layoutParams != null && overlayRoot != null && cardFixed != null) {
+                            int wantW = (int) (cardNaturalW * cardScale);
+                            int wantH = (int) (cardNaturalH * cardScale);
+                            boolean sizeOff = layoutParams.width != wantW || layoutParams.height != wantH;
+                            boolean scaleOff = Math.abs(cardFixed.getScaleX() - cardScale) > 0.001f
+                                    || Math.abs(cardFixed.getScaleY() - cardScale) > 0.001f;
+                            if (sizeOff || scaleOff) applyCardWindowSize(false);
+                        }
                     } catch (Throwable t) {}
                     if (tickHandler != null) tickHandler.postDelayed(this, 1000);
                 }
@@ -680,8 +733,8 @@ public class BmOverlayPlugin extends Plugin {
     }
 
     private String fmtDur(int s) {
-        int h = s / 3600;
-        if (h > 0) return h + "小时" + ((s % 3600) / 60) + "分";
+        // 20261004：恢复全「分:秒」显示（取消 1 小时进位），与 JS formatDurShort 保持一致；
+        // 分钟数自然增长（如 114:23），不再切「X小时Y分」。
         return String.format("%02d:%02d", s / 60, s % 60);
     }
 

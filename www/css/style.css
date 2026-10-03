@@ -1797,6 +1797,19 @@ select.input option:checked { color: #fff; }
   margin-bottom: 4px;
   max-width: 100%;
 }
+/* 20261004：引用块点击跳回原消息——带 data-quote-jump 的才可点击（旧数据无 msgId 不响应） */
+.msg-quote[data-quote-jump] { cursor: pointer; transition: background 0.15s ease; }
+.msg-quote[data-quote-jump]:active { background: rgba(167, 139, 250, 0.18); }
+/* 跳转后原消息高亮：紫色描边光晕渐隐 1.6s（气泡/卡片/图片三类消息体都覆盖） */
+@keyframes msgJumpFlash {
+  0% { box-shadow: 0 0 0 3px rgba(124, 92, 252, 0.85), 0 0 22px rgba(124, 92, 252, 0.5); }
+  70% { box-shadow: 0 0 0 3px rgba(124, 92, 252, 0.4), 0 0 14px rgba(124, 92, 252, 0.25); }
+  100% { box-shadow: none; }
+}
+.msg-row.msg-jump-flash .bubble,
+.msg-row.msg-jump-flash .msg-card,
+.msg-row.msg-jump-flash .msg-img,
+.msg-row.msg-jump-flash .msg-recalled { animation: msgJumpFlash 1.6s ease-out; }
 .msg-quote-name { font-size: 11px; color: var(--purple-soft); font-weight: 600; }
 .msg-quote-text {
   font-size: 12px;
