@@ -2,7 +2,7 @@
 
 一款「聊天 + 朋友圈」形态的**角色陪伴应用**。你可以添加自己的梦角（虚拟角色 / 原创 OC），和它们聊天、发朋友圈、模拟通话、占卜、记录纪念日与日记，并自由定制大量美化内容。
 
-> 当前版本：`v=20261003cv` · 纯前端 · 单机优先 · 数据全部本地存储
+> 当前版本：`v=20261003cw` · 纯前端 · 单机优先 · 数据全部本地存储
 
 ---
 
@@ -114,7 +114,7 @@ python -m http.server 8901
 
 | 版本 | 主要内容 |
 | --- | --- |
-| `20261003cv` | **开屏动画启动输入保护（修复真机冷启动被系统合成触摸误跳过）**：真机冷启动阶段 ColorOS/Capacitor 会注入一枚 `deviceId=-1` 的合成 tap，坐标精确命中右下角「跳过」按钮，触发 `pointerdown → end() → removeSplashDom()` 导致开屏动画被跳过（网页端无此 tap 故正常）。修复：splash.js IIFE 顶部新增 `BOOT_TS = Date.now()` 记录启动时刻，skipBtn 的 `pointerdown` 入口在 `if (LOOP) restart(); else end();` 之前加 `if (Date.now() - BOOT_TS < 1500) { return; }`——启动后 1500ms 内忽略跳过操作、吞掉合成 tap，之后恢复正常 skip 行为。仅新增输入保护，未触碰动画流程/canvas/星轨/end()/removeSplashDom()/动画时间/路由/生命周期。 |
+| `20261003cw` | **开屏动画启动输入保护（修复真机冷启动被系统合成触摸误跳过）**：真机冷启动阶段 ColorOS/Capacitor 会注入 `deviceId=-1` 的合成 tap **连发流**（非单枚，约 400ms 间隔连发 4 枚、从 ~0.5s 持续到 ~2s），坐标精确命中右下角「跳过」按钮，触发 `pointerdown → end() → removeSplashDom()` 导致开屏动画被跳过（网页端无此 tap 故正常）。修复：splash.js IIFE 顶部新增 `BOOT_TS = Date.now()` 记录启动时刻，skipBtn 的 `pointerdown` 入口在 `if (LOOP) restart(); else end();` 之前加 `if (Date.now() - BOOT_TS < 2500) { return; }`——启动后 2500ms 内忽略跳过操作、吞掉整个合成 tap 流，之后恢复正常 skip 行为。仅新增输入保护，未触碰动画流程/canvas/星轨/end()/removeSplashDom()/动画时间/路由/生命周期。 |
 | `20261003cu` | **预排闹钟通知 metadata 对齐（group 字段）**：`bmRegisterAlarm` 的 `LN.schedule()` 参数新增 `group: 'bm-' + (char.id \|\| '')`，让预排通知与即时消息通知（`group: 'bm-' + cid`）保持相同的角色分组结构，减少两者在系统层展示上的结构差异；其余字段（id/title/body/channelId/smallIcon/schedule）完全不变，不涉及 merge/each 逻辑、id 生成、bmNotifySeq、bmClearAlarm 及任何通知文案。 |
 | `20261003ct` | **逐条通知 Android 分组摘要（groupSummary）+ 摘要文案去计数化**：① each 逐条模式此前只有 `group:'bm-'+cid`、无 groupSummary 通知，OPPO/ColorOS 等国产 ROM 直接平铺不显示分组；现补发一条 `groupSummary:true` 摘要通知（标题=角色名），让系统按角色折叠成可展开组，子通知仍在组内、展开后每条独立可见，不同角色 group 分离不混；② 摘要正文改固定文案「有新消息」——弃用 `__bmEachCount` 内存计数（原「N 条新消息」在 App 被杀后归零、用户清通知后计数残留，导致 summary 数字与真实通知栏条数不一致），通知栏数量完全交给 Android group 折叠机制展示，JS 不维护计数状态；③ 摘要 id 用 `bmNotifIdFor(cid,'each-summary')` 固定稳定 hash（<21.47亿 int32 安全区，与逐条 id、merge id 不冲突），后到替换先到不堆积。 |
 | `20261003cs` | **通知系统稳定性优化（逐条 id 并发冲突 + merge 范围 + 诊断日志）**：① 逐条通知 id 懒加载并发竞态修复——`bmNativeNotify` 被 `notifyIncoming` 不 await 调用，多角色同时来消息时两个 notify 并发进入懒加载、都读到同一旧 `bmNotifySeq` 值生成相同 notification id，后到覆盖先到导致少通知；新增 `__bmSeqPromise` Promise 级互斥锁（第一个负责读 kv、后续 await 同一 Promise，只读一次），配合既有 `__bmSeqLoaded` 哨兵彻底杜绝 id 碰撞；② merge 合并范围扩大——`if (merge && kind==='msg')` → `if (merge && (kind==='msg'||kind==='letter'||kind==='gift'||kind==='surprise'))`，书信/礼物/惊喜纳入合并防轰炸，查岗/问卷保持独立强提醒不丢；③ 临时通知诊断日志——`window.__bmNotifyDiag` 记录每次通知决策链（time/cid/kind/mergeMode/notificationId/group/body/documentHidden/visibility/currentCharId/stage），stage 分 enter/merge_schedule/each_schedule，测试后可删。 |
