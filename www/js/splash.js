@@ -37,11 +37,13 @@
 (function () {
   'use strict';
 
-  // 20261004：启动输入保护——记录开屏初始化时刻。
-  //   真机冷启动阶段系统会注入 deviceId=-1 的合成 tap（非单枚，而是约 400ms 间隔连发 4 枚、
-  //   从 ~0.5s 持续到 ~2s）精确命中「跳过」按钮，导致开屏被误跳过。
-  //   此处仅记录时间戳，供 skipBtn 入口做启动后 2500ms 内的输入忽略（覆盖整个合成 tap 流）。
+  // 20261004：启动输入保护（连发识别版）。
+  //   真机冷启动阶段 ColorOS/Capacitor 会注入 deviceId=-1 的合成 tap 连发流——约 400/600ms 间隔交替、
+  //   坐标像素级恒定地命中「跳过」按钮，且会持续打到「点击成功（开屏结束）」或「约 8s 上限」才停，
+  //   因此固定时间窗口会被耗死。修复策略：① 启动后 2500ms 内忽略所有 tap（挡合成流开头并建立历史）；
+  //   ② 之后按「与上次 tap 同坐标（容差 5px）且间隔 <800ms」识别连发流并持续忽略，真实独立点击立即放行。
   var BOOT_TS = Date.now();
+  var _skipLast = { t: 0, x: -1, y: -1 };
 
   /* ==== 可调参数 ==== */
   var CFG = {
@@ -1315,10 +1317,15 @@
     + 'font-family:' + FONT_APP + ';';
   skipBtn.addEventListener('pointerdown', function (ev) {
     ev.preventDefault(); ev.stopPropagation();
-    // 20261004：启动输入保护——启动后 2500ms 内忽略跳过操作（吞掉系统注入的连发合成 tap），
-    //   2500ms 后恢复正常 skip 行为。仅拦截 pointerdown 入口，不改动后续 restart()/end() 逻辑。
-    if (Date.now() - BOOT_TS < 2500) { return; }
-    if (LOOP) restart(); else end();
+    // 20261004：启动输入保护（连发识别）——仅拦截 pointerdown 入口，不改动后续 restart()/end() 逻辑。
+    var now = Date.now();
+    var x = ev.clientX, y = ev.clientY;
+    var bootGuard = (now - BOOT_TS) < 2500;                 // 启动 2.5s 内忽略（挡合成流开头）
+    var repeat = _skipLast.t && (now - _skipLast.t) < 800   // 连发：同坐标 + 间隔 <800ms
+      && Math.abs(x - _skipLast.x) < 5 && Math.abs(y - _skipLast.y) < 5;
+    _skipLast = { t: now, x: x, y: y };
+    if (bootGuard || repeat) { return; }                    // 合成 tap 流：忽略
+    if (LOOP) restart(); else end();                        // 真实独立点击：正常跳过
   });
   // 20261002cq：skip 按钮的 up/click 也吞咽（preventDefault 阻断合成 click、stopPropagation 阻断冒泡），
   // 且此处不 removeChild——DOM 移除已交给 end() 里的 scheduleSplashRemoval 延迟执行。
