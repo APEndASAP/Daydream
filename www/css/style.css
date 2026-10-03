@@ -299,12 +299,14 @@ input, textarea { user-select: text; }
   margin: 2px 0 6px;
   padding: 13px 16px;
   border-radius: 18px;
-  background: linear-gradient(165deg, rgba(30, 22, 48, 0.20), rgba(16, 11, 30, 0.15));
-  border: 1px solid rgba(255, 255, 255, 0.035);
+  /* 20261004：tint 0.20/0.15 → 0.34/0.26——浅色背景下白字仍不可读（用户实测反馈），
+     加深暗 tint；暗色星空底上依旧接近不可见，双向表现不变 */
+  background: linear-gradient(165deg, rgba(30, 22, 48, 0.34), rgba(16, 11, 30, 0.26));
+  border: 1px solid rgba(255, 255, 255, 0.06);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 #view-chatlist .list-item.chat-item:active {
-  background: linear-gradient(165deg, rgba(44, 33, 70, 0.30), rgba(24, 17, 42, 0.26));
+  background: linear-gradient(165deg, rgba(44, 33, 70, 0.44), rgba(24, 17, 42, 0.38));
 }
 
 /* 未读消息徽标（白色数字 + 圆形红点背景） */
@@ -1347,10 +1349,12 @@ select.input option:checked { color: #fff; }
 }
 .msg-recalled:active { background: var(--card); }
 
-/* 20260929ah：聊天导航页灰字（消息预览/分组名）加灰色阴影，浅色背景下更清晰 */
+/* 20260929ah：聊天导航页灰字（消息预览/分组名）加灰色阴影，浅色背景下更清晰
+   20261004：单层 0.22 在浅色背景下仍不够（用户实测反馈）——加强为双层暗晕，
+   灰字无论叠在浅背景还是深背景都有足够对比 */
 .chat-item-brief,
 .char-group-head {
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 8px rgba(0, 0, 0, 0.20);
 }
 
 /* ============================================================
@@ -2179,12 +2183,14 @@ body.glass-ui .tabbar {
   -webkit-backdrop-filter: blur(20px) saturate(120%);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
-/* 聊天导航页：每行独立黑色透明玻璃卡（能透出后方背景与星星点点） */
+/* 聊天导航页：每行独立黑色透明玻璃卡（能透出后方背景与星星点点）
+   20261004：玻璃底 0.38 → 0.52——浅色背景下行内白字/灰字仍不清晰（用户实测反馈），
+   与底栏 0.55 同档加深；低精度档 0.78 实底不变 */
 body.glass-ui #view-chatlist .list-item.chat-item {
   margin: 0 0 8px;
   padding: 12px 14px;
   border-radius: 20px;
-  background: rgba(8, 6, 14, 0.38);
+  background: rgba(8, 6, 14, 0.52);
   border: 1px solid rgba(255, 255, 255, 0.13);
   backdrop-filter: blur(11px) saturate(140%);
   -webkit-backdrop-filter: blur(11px) saturate(140%);
@@ -2192,7 +2198,7 @@ body.glass-ui #view-chatlist .list-item.chat-item {
   transition: background 0.12s ease, transform 0.12s ease;
 }
 body.glass-ui #view-chatlist .list-item.chat-item:active {
-  background: rgba(30, 25, 44, 0.5);
+  background: rgba(30, 25, 44, 0.62);
   transform: scale(0.985);
 }
 body.glass-ui #view-chatlist .chat-sep { display: none; }
@@ -2225,22 +2231,25 @@ body.glass-ui #home-topbar .icon-btn {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 /* 个人主页：留白/图标尺寸与基础模式完全一致（已在基础样式中统一），玻璃模式只换表面材质 */
+/* 20261003da：玻璃底色从「白 0.026」改「灰黑半透明」——白 0.026 叠在浅色背景图上等于
+   完全透明，白色文字毫无可读性（用户实测反馈）；灰黑半透明在深/浅背景图上都衬得住白字。
+   浅色主题（theme-light.glass-ui）另有更特异的白玻璃规则，不受此处影响 */
 body.glass-ui .func-row {
-  background: rgba(255, 255, 255, 0.026);
+  background: rgba(26, 22, 38, 0.44);
   border: 1px solid rgba(255, 255, 255, 0.13);
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22), 0 0 10px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 body.glass-ui .stat-card {
-  background: rgba(255, 255, 255, 0.026);
+  background: rgba(26, 22, 38, 0.44);
   border: 1px solid rgba(255, 255, 255, 0.13);
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22), 0 0 10px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 body.glass-ui .chip {
-  background: rgba(255, 255, 255, 0.032);
+  background: rgba(26, 22, 38, 0.44);
   border: 1px solid rgba(255, 255, 255, 0.13);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -3182,13 +3191,16 @@ body.glass-ui .tab-item:not(.active) .tab-icon {
 }
 
 /* —— 4. 聊天界面（1v1）玻璃拟态补齐：顶栏玻璃胶囊 + 背景雾面遮罩
-   （输入条玻璃已有；气泡颜色保留用户自定义不受影响） —— */
+   （输入条玻璃已有；气泡颜色保留用户自定义不受影响）
+   20261004：胶囊底色由白 0.028 改深色玻璃 0.46——白胶囊在浅色聊天背景上
+   白字完全不可读（用户实测反馈）；深玻璃暗底上自然融入、浅底上衬出可读，
+   与底栏 0.55 / 列表行玻璃同色值体系。glass-mid 档继承此底色，low 档 0.85 实底不变 —— */
 body.glass-ui #view-chat .topbar {
   margin: 10px 14px 4px;
   padding: 8px 12px;
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.028);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(22, 19, 30, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.26), 0 0 16px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.14);
@@ -5011,3 +5023,62 @@ html.bm-bg *::before,
 html.bm-bg *::after {
   animation-play-state: paused !important;
 }
+
+/* ============================================================
+   20261003da：表层可读性修复（固定色值，无任何自动取色/检测逻辑）
+   ============================================================ */
+/* —— 1. 聊天导航页顶栏压暗渐变：普通/玻璃模式下顶栏平时与背景一体（透明），
+      换浅色背景图后白色标题/图标不可读（用户实测反馈）。
+      与个人主页 hero 顶部压暗（.player-hero.has-bg .hero-bg::after）同一手法、同色值体系：
+      顶部 92px 固定渐变，顶栏 z-index:6 浮于其上，列表内容滚过顶部时轻微压暗（顶部渐隐观感）。 —— */
+#view-chatlist::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 92px;
+  background: linear-gradient(180deg, rgba(18, 17, 22, 0.42) 0%, rgba(18, 17, 22, 0.16) 55%, rgba(18, 17, 22, 0) 100%);
+  pointer-events: none;
+  z-index: 5;
+}
+/* 浅色主题不适用：浅色顶栏有白色衬底条（theme-light 顶栏规则），且深色渐变会污染浅色页面 */
+body.theme-light #view-chatlist::before { content: none; }
+
+/* —— 2. 浅色预设 × 深色聊天背景：消息引用块可读性。
+      .msg-quote 背景仅 rgba(167,139,250,0.08) ≈ 透明，引用文字 var(--text-tertiary)
+      在浅色预设下是深紫半透明——叠在深色背景上完全不可读（用户实测反馈）。
+      浅色主题下给引用块固定白色实底（纸面），文字始终衬在浅底上；深色主题不变。 —— */
+body.theme-light .msg-quote {
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 1px 6px rgba(40, 30, 80, 0.10);
+}
+
+/* —— 3. 朋友圈顶栏压暗渐变（20261004）：与聊天导航 #view-chatlist::before 同手法同色值。
+      朋友圈顶栏平时全透明（滚动后才浮现取色底），白字「朋友圈」与右上图标
+      在浅色背景图上不可读（用户实测反馈）；玻璃模式胶囊平时也透明，同样压在渐变上。
+      浅色主题不适用（顶栏有白色衬底条，深色渐变会污染浅色页面）。 —— */
+#view-moments::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 92px;
+  background: linear-gradient(180deg, rgba(18, 17, 22, 0.42) 0%, rgba(18, 17, 22, 0.16) 55%, rgba(18, 17, 22, 0) 100%);
+  pointer-events: none;
+  z-index: 5;
+}
+body.theme-light #view-moments::before { content: none; }
+
+/* —— 4. 深色主题（星夜紫默认）× 浅色聊天背景：消息引用块可读性（20261004）。
+      上一轮只覆盖了浅色主题（上方 theme-light 白纸面规则）；星夜紫是深色主题——
+      引用块 rgba(167,139,250,0.08) ≈ 透明，引用文字 var(--text-tertiary) 是浅色，
+      叠浅色自定义背景完全不可读（用户实测反馈）。
+      深色主题统一固定深紫灰衬底：暗底上自然融入气泡层次，浅底上显形保证可读；
+      文字色不变，#quote-bar（0.96 实底）不受影响。 —— */
+body:not(.theme-light) .msg-quote {
+  background: rgba(30, 24, 46, 0.62);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
+}
+

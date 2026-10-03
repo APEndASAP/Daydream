@@ -119,10 +119,24 @@
       return;
     }
 
-    /* 按钮若不在视口内，先滚动到中央再重新测量 */
+    /* 按钮若不在视口内，先把页面滚到按钮可见再重新测量。
+       20261003da：scrollIntoView 在部分 WebView 上对嵌套滚动容器（.home-scroll）不生效，
+       导致「世界树」这类位于列表下方的按钮从未滚入视口——聚光灯框在未滚动位置上，
+       看起来像框住了底部栏。改为手动滚动可滚动祖先（确定性生效），并保留两次重测兜底。 */
     if (r.top < 0 || r.bottom > window.innerHeight) {
-      try { el.scrollIntoView({ block: 'center' }); } catch (e) {}
+      var scrolled = false;
+      try {
+        var sc = el.closest ? el.closest('.home-scroll') : null;
+        if (sc) {
+          var cr = sc.getBoundingClientRect();
+          // 把按钮中心滚到容器中心（容器自身没滚动空间时自然为 0，无副作用）
+          sc.scrollTop += (r.top + r.height / 2) - (cr.top + cr.height / 2);
+          scrolled = true;
+        }
+      } catch (e) {}
+      if (!scrolled) { try { el.scrollIntoView({ block: 'center' }); } catch (e) {} }
       setTimeout(function () { if (mounted && idx === stepIdx) placeSpot(stepIdx); }, 160);
+      setTimeout(function () { if (mounted && idx === stepIdx) placeSpot(stepIdx); }, 380);
       return;
     }
 
