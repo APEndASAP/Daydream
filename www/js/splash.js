@@ -37,6 +37,11 @@
 (function () {
   'use strict';
 
+  // 20261004：启动输入保护——记录开屏初始化时刻。
+  //   真机冷启动阶段系统会注入 deviceId=-1 的合成 tap 命中「跳过」按钮，导致开屏被误跳过。
+  //   此处仅记录时间戳，供 skipBtn 入口做启动后 1500ms 内的输入忽略。
+  var BOOT_TS = Date.now();
+
   /* ==== 可调参数 ==== */
   var CFG = {
     T_FALL: 2400,            // ① 落入（幕内加速）
@@ -1309,6 +1314,9 @@
     + 'font-family:' + FONT_APP + ';';
   skipBtn.addEventListener('pointerdown', function (ev) {
     ev.preventDefault(); ev.stopPropagation();
+    // 20261004：启动输入保护——启动后 1500ms 内忽略跳过操作（吞掉系统注入的合成 tap），
+    //   1500ms 后恢复正常 skip 行为。仅拦截 pointerdown 入口，不改动后续 restart()/end() 逻辑。
+    if (Date.now() - BOOT_TS < 1500) { return; }
     if (LOOP) restart(); else end();
   });
   // 20261002cq：skip 按钮的 up/click 也吞咽（preventDefault 阻断合成 click、stopPropagation 阻断冒泡），

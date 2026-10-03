@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261003cu'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261003cv'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -10347,13 +10347,13 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span style="font-size:13.5px;">随机发消息<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">在下方设置的分钟区间内随机时刻发，不固定</small></span>
         <input type="checkbox" id="cs-proactive-random" ${s.proactiveRandom ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="display:flex;gap:10px;align-items:center;margin:8px 0 0 12px;" id="cs-rand-row">
+      <div style="display:flex;gap:10px;align-items:center;margin:8px 0 0 12px;flex-wrap:wrap;" id="cs-rand-row">
         <span style="font-size:13px;color:var(--text-secondary);white-space:nowrap;">区间（分钟）</span>
         <input class="input" type="number" min="1" max="720" value="${parseInt(s.proactiveRandMin, 10) || 10}" id="cs-proactive-rand-min" style="width:80px;" title="最小间隔">
         <span style="font-size:13px;color:var(--text-tertiary);">～</span>
         <input class="input" type="number" min="1" max="720" value="${parseInt(s.proactiveRandMax, 10) || 120}" id="cs-proactive-rand-max" style="width:80px;" title="最大间隔">
-        <span style="font-size:12px;color:var(--text-tertiary);">TA 只会在最小～最大分钟之间的随机时刻发</span>
       </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;" id="cs-rand-hint">TA 只会在最小～最大分钟之间的随机时刻发</div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">两个勾选互斥：勾选其中一个，另一个自动取消</div>
     </div>
 
@@ -10644,8 +10644,13 @@ function bindChatSettings(s, onSave) {
   const randomCb = $('#cs-proactive-random');
   const fixedRow = $('#cs-fixed-row');
   const randRow = $('#cs-rand-row'); // 20260929bf：随机模式分钟区间行（勾选随机才显示）
+  const randHint = $('#cs-rand-hint'); // 20261003da：区间说明行（从区间行内移出防竖排溢出，显隐随 randRow 同步）
   const syncFixedRow = () => { if (fixedRow) fixedRow.style.visibility = fixedCb.checked ? 'visible' : 'hidden'; };
-  const syncRandRow = () => { if (randRow) randRow.style.visibility = randomCb.checked ? 'visible' : 'hidden'; };
+  const syncRandRow = () => {
+    const on = randomCb.checked ? 'visible' : 'hidden';
+    if (randRow) randRow.style.visibility = on;
+    if (randHint) randHint.style.visibility = on;
+  };
   fixedCb.onchange = () => { if (fixedCb.checked) randomCb.checked = false; syncFixedRow(); syncRandRow(); };
   randomCb.onchange = () => { if (randomCb.checked) fixedCb.checked = false; syncFixedRow(); syncRandRow(); };
   syncFixedRow();
