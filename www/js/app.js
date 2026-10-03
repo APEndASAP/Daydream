@@ -8091,7 +8091,7 @@ async function deliverCharMessage(c, content, type = 'text', extra = null) {
   if (extra) m.content = extra;
   await idbPut('messages', m);
   const cs = getCharChatSettings(c);
-  if (_inChatWith(c.id)) {
+  if (_inChatWith(c.id) && !bmIsBg()) {
     appendMessage(m);
     // 20260929aw：正在看的消息直接标记已读——防退出聊天后导航页仍提示未读
     setSetting('lastRead_' + c.id, Date.now());
