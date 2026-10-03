@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261002cq'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261003cs'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -2758,6 +2758,7 @@ function fixOnelineBubble(row) {
 
 function appendMessage(m, scroll = true) {
   const scrollEl = $('#chat-scroll');
+  if (!scrollEl) return;
   // 虚拟滚动：新消息同步进窗口数据源（初始渲染/补载时 suspend 挂起，避免重复）
   if (_chatWin && !_chatWin.suspend && _chatWin.mode === 'single') _chatWin.all.push(m);
   const emptyEl = scrollEl.querySelector('.empty');
@@ -3421,7 +3422,9 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
         const replyMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: parts[i], time: Date.now() };
         if (i === 0 && finalQuote) replyMsg.quote = finalQuote;
         await idbPut('messages', replyMsg);
-        if (currentCharId === charId) appendMessage(replyMsg);
+        if (currentCharId === charId && document.body.dataset.view === 'chat') {
+          appendMessage(replyMsg);
+        }
         lastMsg = replyMsg;
         // 后续条目间隔 1.2~3.5 秒连续发出；引用只带在第一条上
         if (i < parts.length - 1) await new Promise(r => setTimeout(r, randInt(1200, 3500)));
@@ -4288,9 +4291,22 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
     let tt = title || (c ? c.name + ' 发来消息' : '白日梦');
     const bodyText = String(body == null ? '' : body).slice(0, 120);
 
+    // 临时诊断：记录每次通知决策链，便于排查「没通知/被合并/被覆盖」
+    try {
+      (window.__bmNotifyDiag = window.__bmNotifyDiag || []).push({
+        time: Date.now(), cid, kind: k, mergeMode: merge ? 'merge' : 'each',
+        notificationId: null, group: 'bm-' + cid, body: bodyText,
+        documentHidden: document.hidden, visibility: document.visibilityState,
+        currentCharId: (window.currentCharId || null), stage: 'enter',
+      });
+    } catch (e) {}
+
     // 20261002cg：合并模式 —— 同一访客同类通知用固定 id（后到替换先到，绝不叠罗汉），
     // 后台期间连续多条只保留一条，正文显示「发来 N 条新消息」。
-    if (merge && kind === 'msg') {
+    if (
+      merge &&
+      (kind === 'msg' || kind === 'letter' || kind === 'gift' || kind === 'surprise')
+    ) {
       const key = cid + '|' + k;
       __bmMergeCount[key] = (__bmMergeCount[key] || 0) + 1;
       const n = __bmMergeCount[key];
@@ -4306,6 +4322,14 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
           group: 'bm-' + cid,
         }],
       });
+      try {
+        (window.__bmNotifyDiag = window.__bmNotifyDiag || []).push({
+          time: Date.now(), cid, kind: k, mergeMode: 'merge',
+          notificationId: mergeId, group: 'bm-' + cid, body: n > 1 ? `${name} 发来 ${n} 条新消息` : bodyText,
+          documentHidden: document.hidden, visibility: document.visibilityState,
+          currentCharId: (window.currentCharId || null), stage: 'merge_schedule',
+        });
+      } catch (e) {}
       return;
     }
 
@@ -4313,7 +4337,24 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
     // 旧公式 baseId*1000+seq 最大约 2.1e12，超出 Android int32（21.47亿），
     // 传给原生被截断/碰撞 → 通知互相覆盖、看起来像「被合并」。现在改用安全区段
     // 16亿~20亿的全局递增 id（永不溢出、单角色多角色都绝不重复）+ group 聚合折叠。
-    const uniqId = 1600000000 + ((__bmSeq = ((__bmSeq || 0) + 1) % 400000000));
+    // 20261003：序号持久化到 kv（bmNotifySeq）——避免 App 重启后内存序号归零、
+    // 与历史通知 id 重叠导致「后到替换先到、多条变一条」的伪合并观感。
+    // 一次性懒加载 + Promise 锁：仅当尚未从 kv 加载过时才读持久化序号。
+    // 并发时（多角色同时来消息）第一个通知负责读 kv，后续通知 await 同一个 Promise，
+    // 避免都读到同一旧值 → 生成相同 notification id 互相覆盖。
+    if (!__bmSeqLoaded) {
+      if (!__bmSeqPromise) {
+        __bmSeqPromise = (async () => {
+          try { __bmSeq = (await getSetting('bmNotifySeq', 0)) || 0; } catch (e) { __bmSeq = 0; }
+          __bmSeqLoaded = true;
+          __bmSeqPromise = null;
+        })();
+      }
+      await __bmSeqPromise;
+    }
+    __bmSeq = (__bmSeq + 1) % 400000000;
+    try { await setSetting('bmNotifySeq', __bmSeq); } catch (e) {}
+    const uniqId = 1600000000 + __bmSeq;
     const groupKey = 'bm-' + cid;
 
     await LN.schedule({
@@ -4326,6 +4367,14 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
         group: groupKey,
       }],
     });
+    try {
+      (window.__bmNotifyDiag = window.__bmNotifyDiag || []).push({
+        time: Date.now(), cid, kind: k, mergeMode: 'each',
+        notificationId: uniqId, group: groupKey, body: bodyText,
+        documentHidden: document.hidden, visibility: document.visibilityState,
+        currentCharId: (window.currentCharId || null), stage: 'each_schedule',
+      });
+    } catch (e) {}
   } catch (e) {}
 }
 
@@ -4347,7 +4396,9 @@ let __bmBgOn = false;             // 当前处于后台省电模式
 let __bmBgTickIv = null;          // 60s 低频事件调度 tick
 const __bmMergeCount = {};        // charId|kind -> 后台期间已提醒条数（回前台清零）
 const __bmBgChars = {};           // 后台期间活跃角色集合 charId -> name（多角色合并判据，回前台清零）
-let __bmSeq = 0;                  // 通知唯一 id 递增序号（保证单角色每条独立可见）
+let __bmSeq = 0;                  // 通知唯一 id 递增序号（内存缓存；首次生成时从 kv 'bmNotifySeq' 懒加载，保证跨重启唯一）
+let __bmSeqLoaded = false;        // 序号是否已从 kv 加载过（一次性懒加载哨兵，区分「未初始化」与「回绕到 0」）
+let __bmSeqPromise = null;        // 懒加载互斥锁：并发进入时多个通知等待同一个 Promise，只读一次 kv
 
 function bmIsBg() { return __bmBgOn || document.hidden; }
 
