@@ -251,6 +251,7 @@ public class BmOverlayPlugin extends Plugin {
         squareTime.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         squareTime.setGravity(Gravity.CENTER);
         squareTime.setMaxWidth(dp(64)); // 20261004：全 mm:ss 后不换行（宽度富余），保留上限防异常长文本
+        squareTime.setMinWidth(dp(36)); // 20261004dj：锁文本区最小宽——防 ColorOS 上每秒 setText 后局部重绘残缺（末位字符不显示）
         sq.addView(squareTime, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         squareView = sq;
         root.addView(sq);
@@ -285,6 +286,7 @@ public class BmOverlayPlugin extends Plugin {
         barTime.setText(sub != null ? sub : "00:00");
         barTime.setTextColor(0xFFB8A6FF);
         barTime.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        barTime.setMinWidth(dp(36)); // 20261004dj：锁文本区最小宽——防长条时间行重绘残缺/被挤压不显示
         mid.addView(barTime);
         bar.addView(mid, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -757,9 +759,14 @@ public class BmOverlayPlugin extends Plugin {
                     try {
                         int s = baseSec + (int) ((SystemClock.elapsedRealtime() - startElapsed) / 1000);
                         String t = fmtDur(s);
-                        if (squareTime != null) squareTime.setText(t);
-                        if (barTime != null) barTime.setText(t);
-                        if (cardTimer != null) cardTimer.setText(t);
+                        // 20261004dj：时间显示残缺修复——fmtDur 恒输出 %02d:%02d（秒位恒两位），
+                        // 真机截图出现「02:0」/长条时间行整行不显示，文本本身不可能缺位，是 ColorOS
+                        // 悬浮窗每秒 setText 的局部重绘残缺（与 20261004db 的 surface 停更同族）。
+                        // 三件套加固：SPANNABLE 强制走 Spannable 重绘路径（部分 ROM setText 不刷字
+                        // 的已知 workaround）+ invalidate 全量重绘 + minWidth 锁文本区稳定。
+                        if (squareTime != null) { squareTime.setText(t, TextView.BufferType.SPANNABLE); squareTime.invalidate(); }
+                        if (barTime != null) { barTime.setText(t, TextView.BufferType.SPANNABLE); barTime.invalidate(); }
+                        if (cardTimer != null) { cardTimer.setText(t, TextView.BufferType.SPANNABLE); cardTimer.invalidate(); }
                         // 20261004：2号卡片缩放失步自愈——每秒校验窗口尺寸/视图缩放是否与 cardScale
                         // 一致（拖拽中 relayout 丢失的残留），不一致就按当前 cardScale 重新对齐一次
                         if (form == 2 && layoutParams != null && overlayRoot != null && cardFixed != null) {

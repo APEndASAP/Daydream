@@ -2,7 +2,7 @@
 
 一款「聊天 + 朋友圈」形态的**角色陪伴应用**。你可以添加自己的梦角（虚拟角色 / 原创 OC），和它们聊天、发朋友圈、模拟通话、占卜、记录纪念日与日记，并自由定制大量美化内容。
 
-> 当前版本：`v=20261004di` · 纯前端 · 单机优先 · 数据全部本地存储
+> 当前版本：`v=20261004dj` · 纯前端 · 单机优先 · 数据全部本地存储
 
 ---
 
@@ -114,6 +114,7 @@ python -m http.server 8901
 
 | 版本 | 主要内容 |
 | --- | --- |
+| `20261004dj` | **真机实测反馈双修复（软件内计时丢秒 + 悬浮窗时间显示残缺）**：① **软件内计时比悬浮窗慢 1 分多（丢秒）**——用户实测挂后台 5 分钟（悬浮窗正常走），双击回软件发现软件内通话计时只有 4 分钟。根因 = 软件内 `#call-timer` 由 JS `setInterval` 的 `sec++` 盲加计时，后台 WebView 被 ColorOS 冻结/节流时 interval 停走，**丢掉的秒不会回补**（是"丢秒"不是延迟）；而原生悬浮窗 tick 用 `elapsedRealtime()` 差值，冻结期间照算 → 两边出现差距。修复 = 单聊/群聊 interval 改为**墙钟差值**计时（单聊记录接通基准 `answerTs`、群聊记录创建基准 `startTs`，每秒 `sec = floor((Date.now()-基准)/1000)`）——`Date.now()` 是系统墙钟不随进程冻结停走，解冻后下一个 tick 自动追平真实时长（悬浮窗/软件内从此对齐）。`_callActive.sec` 回写与挂断 `duration` 自动受益。② **悬浮窗时间显示残缺（「02:0」/长条时间行整行不显示）**——原生 `fmtDur` 恒输出 `%02d:%02d`（秒位恒两位），"02:0" 不可能是真实文本，判定为 ColorOS 悬浮窗每秒 `setText` 的**局部重绘残缺**（与 db 轮 surface 停更同族）。修复 = 显示加固三件套：tick 里 `setText(t, BufferType.SPANNABLE)`（强制走 Spannable 重绘路径，部分 ROM setText 不刷字的已知 workaround）+ `invalidate()` 全量重绘 + `squareTime/barTime` 加 `setMinWidth(dp(36))` 锁文本区宽度稳定。 |
 | `20261004di` | **生命周期前置修复（两个确定性计时 bug，只改 js/app.js）**：① **JS/原生双写打架**——`updateCallFloatTime(sec)` 每秒 `bmOverlayUpdateSub(formatDurShort(sec))` 覆盖原生悬浮窗时间，但原生 `startTicking()` 已用 `elapsedRealtime()` 自走（后台冻结解冻后自动回正）；JS 的 `setInterval` 冻结期间落后、解冻后用旧值覆盖原生正确值 → 时间跳变/回退。修复 = 删除该每秒覆盖，JS 只保留网页内部 DOM 浮窗（`#call-float .cf-time`）更新，原生时间交还原生 tick 单一事实源。② **单聊缩小悬浮窗时间归零**——单聊 interval `sec++` 后从不回写 `_callActive.sec`（对象字段恒为创建时快照的 0），导致 `minimizeCall` 里 `baseSec: _callActive.sec \|\| 0` 恒取 0 从 00:00 重计倒跳；修复 = `sec++` 后补 `_callActive && (_callActive.sec = sec)`，与群聊（已有回写）对齐一致。两处均未碰挂断/通知/聊天/数据库/原生，生命周期架构未升级（下一轮专项处理）。 |
 | `20261004dh` | **悬浮窗2号放大到最大后眼睛/缩放手柄点不到（真正根因修复，原生 bm-overlay）**：用户澄清此问题一直发生在**真机 App 原生悬浮窗**（系统/软件悬浮模式下退出 App 挂后台，屏幕上的卡片式悬浮窗2号，拖右下角缩放手柄放大到最大后，眼睛图标与缩放手柄全部点不动，但挂断/切换正常）——此前 df/dg 误判为「手柄出屏」（clamp 钳制 + 加大内移）与「浏览器 JS 版」两个方向，均未命中。**真根因**：`cardFixed` 用 `setScaleX/Y`（pivot=左上角）视觉放大，但父容器 `cardHost` 的**布局尺寸**始终是 `cardNaturalW×H`（296×344）从未跟随放大——眼睛(TOP\|END)/手柄(BOTTOM\|END) 视觉上被 scale 推到 natural×scale 的右/下边缘，即落在 cardHost 布局边界之外；而 ViewGroup 触摸分发（`isTransformedTouchPointInView`）按**布局边界**判断，边界外的触摸点根本不分发下去 → 眼睛/手柄视觉可见却点不到；挂断/切换按钮在 cardUi 内（MATCH_PARENT 填充 cardFixed 的 296 布局、位于边界内）故正常，与实测症状完全吻合。**修复**：`applyCardWindowSize` 里同步把 cardHost 布局尺寸放大到 natural×scale（cardFixed 布局保持 natural + setScaleX/Y 不变，视觉正好铺满放大后的 cardHost，等比缩放效果与触摸边界均对齐）。仅改插件 Java，不动 JS/生命周期。 |
 | `20261004dg` | **引导导览居中 + 悬浮窗2号放大后可缩小/眼睛可点（2 项实测修复）**：① **新手引导不居中、被底栏遮住**——根因 `placeSpot()` 滚动判定只看「是否在视口内」（`top<0 \|\| bottom>innerHeight`），按钮贴屏底、被引导自己的「下一步」按钮区（spotfoot ~100px）盖住时仍算"可见"→ 不滚动（用户实测 9 图中 1/6、2/6、5/6 步均停在底部）；修复 = 安全区判定（spotbar 下缘 ～ spotfoot 上缘）+ 把按钮滚到安全区几何中心（`scrollTop` 赋值前强制 `scrollBehavior=auto` 防容器 CSS smooth 异步生效），赋值即时生效 → 同步重测、当帧画出，删除旧版 160/380ms 双重猜测兜底；到不了中心（列表滚到顶/底）时兜底把越界边压回安全区。② **悬浮窗2号放大到最大后不能缩小、小眼睛点不到**——用户实测在浏览器（无原生插件，df 的 Java 修复不覆盖此场景）；JS 版根因 `applyCallScale()` 缩放只从 top-left 长大、float2 浮游态（`position:fixed`）的 left/top 不动且**无视口钳制**，浮窗停在屏幕右/下侧时放大，右下角缩放手柄与右上角小眼睛被直接推出屏外（与"不能缩小+眼睛不能点"两症状完全吻合）；修复 = 缩放后同步把 left/top 钳回视口（6px 边距）并更新 `_f2Pos`，非浮游态不受影响。原生侧同轮加固：`clampCardWindowToScreen()` 补左/上缘钳制（x/y≥0）、tick `posOff` 自愈补检出左/上出屏、缩放手柄 30→38dp（右/下距内移 10/12dp）、小眼镜 34→40dp（右距 14dp/上距 12dp）——贴屏缘/手势条时也摸得到。另：QQ浏览器开屏动画不放确认为浏览器兼容问题（用户确认不处理）；通话背景持久化用户确认正常。 |

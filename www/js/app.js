@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004di'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004dj'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -7144,9 +7144,11 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
   setCallGlass(true); // 6：模拟通话界面 = 透明磨砂玻璃拟态（透出后面界面与星光）
 
   let sec = 0;
+  let answerTs = 0; // 20261004dj：接通基准墙钟(ms)——后台冻结时 setInterval 停走、sec++ 丢秒且不回补（软件内计时比悬浮窗慢），改用墙钟差值，解冻后下一 tick 自动追平
   const timer = setInterval(() => {
     if (answered) {
-      sec++;
+      if (!answerTs) answerTs = Date.now() - sec * 1000; // 首次进入接通分支：以当前 sec 反推基准（误差≤1s）
+      sec = Math.floor((Date.now() - answerTs) / 1000); // 墙钟差值：冻结期间丢的秒自动补齐
       _callActive && (_callActive.sec = sec); // 20261004di：补齐单聊 sec 回写，缩小悬浮窗时 baseSec 不再读到 0
       const el = $('#call-timer');
       if (el) el.textContent = formatDurShort(sec); // 20261004：全「分:秒」显示
@@ -7839,6 +7841,7 @@ function showGroupCallModal(g) {
 function openGroupCallScreen(g, members, kind, msg) {
   if (_callActive) closeCall(true);
   let sec = 0;
+  const startTs = Date.now(); // 20261004dj：墙钟基准——后台冻结 setInterval 停走、sec++ 丢秒，改差值后解冻自动追平
   const avatars = members.slice(0, 4).map(c => `<div class="avatar" style="width:72px;height:72px;font-size:26px;">${c.avatar ? `<img src="${imgSrc(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml(c.name[0] || '?')}</div>`).join('');
   const more = members.length > 4 ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">等 ${members.length} 人</div>` : '';
   openCallLayer(`
@@ -7857,7 +7860,7 @@ function openGroupCallScreen(g, members, kind, msg) {
   `, { noBackdrop: true });
   setCallGlass(true);
   const timer = setInterval(() => {
-    sec++;
+    sec = Math.floor((Date.now() - startTs) / 1000); // 20261004dj：墙钟差值，冻结丢秒自动补齐
     _callActive && (_callActive.sec = sec);
     const el = $('#call-timer');
     if (el) el.textContent = formatDurShort(sec); // 20261004：全「分:秒」显示
