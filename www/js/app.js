@@ -4276,7 +4276,12 @@ function notifyIncoming(c, body, title, kind = 'msg') {
       //   失败/插件不存在/非消息类一律 fallback 回旧 LocalNotifications，不影响任何现有通知。
       if (kind === 'msg' && bmConversationEnabled()) {
         bmConversationNotify(c, body, title).then((ok) => {
-          if (!ok) bmNativeNotify(LN, c, body, title, kind);
+          if (!ok) { bmNativeNotify(LN, c, body, title, kind); return; }
+          // 20261004dk修复：插件成功发出会话式通知后，补撤该角色同类消息的预排闹钟
+          // （旧 each 分支 4399 行 / merge 分支 4350 行都做了这一步；插件分支绕过了
+          //   bmNativeNotify 导致预排闹钟残留，1 分钟后到点照弹「给你发来了新消息」→ 双通知）。
+          //   仅调用 bmClearAlarm（不碰其内部实现），不重新进入 bmNativeNotify，不让双通道同时发。
+          bmClearAlarm(c ? c.id : 'bm', kind).catch(() => {});
         });
         return;
       }
