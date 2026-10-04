@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004dj'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004dk'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -19,6 +19,7 @@ let chatSettings = {
   float2Mode: 'inner',           // 20260929bk：悬浮窗2号模式 inner=软件内悬浮 / system=其他应用上悬浮（网页端回退软件内）
   notifySystem: true,            // 20260929bi：系统通知（挂后台/切走时弹 QQ 式系统弹窗），需浏览器通知权限
   notifyMerge: 'each',           // 20261002cg：消息通知方式 each=逐条通知 / merge=合并通知（玩家在聊天设置最顶端自主选择）
+  notifyConversationEnabled: false, // 20261004dk：会话式通知（MessagingStyle）开关，默认关；开启后消息通知改走 BmConversationNotify 会话式出口，失败自动回退旧通知
   proactive: false,              // 访客主动发消息 5.3
   proactiveMin: 10,              // 主动消息间隔（分钟）1~120
   proactiveRandom: false,        // 随机主动发消息：开启后在下方区间内随机时刻发，不再按固定间隔
@@ -4271,6 +4272,14 @@ function notifyIncoming(c, body, title, kind = 'msg') {
     // 形同虚设（无权限概念、授权后也可能不显示），必须走原生本地通知才会在系统通知栏留记录
     const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
     if (LN && typeof LN.schedule === 'function') {
+      // 20261004dk：会话式通知出口（灰度）——仅「消息」类且开关打开时尝试走 BmConversationNotify，
+      //   失败/插件不存在/非消息类一律 fallback 回旧 LocalNotifications，不影响任何现有通知。
+      if (kind === 'msg' && bmConversationEnabled()) {
+        bmConversationNotify(c, body, title).then((ok) => {
+          if (!ok) bmNativeNotify(LN, c, body, title, kind);
+        });
+        return;
+      }
       bmNativeNotify(LN, c, body, title, kind);
       return;
     }
@@ -4408,6 +4417,43 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
       });
     } catch (e) {}
   } catch (e) {}
+}
+
+/* ============================================================
+   20261004dk：会话式通知出口（灰度接入，不替换旧 LocalNotifications）。
+   设计原则（纯增量、零破坏）：
+   - 消息系统 / 聊天逻辑 / 数据库 / AI 回复 / 通知判断（notifyIncoming 的前置
+     notifySystem/静音/盯着聊天页 判定）全部不变；
+   - 只在「消息(kind==='msg') 且开关 notifyConversationEnabled===true」时，
+     把「最后一步：怎么告诉 Android 系统」从 LocalNotifications 换成
+     BmConversationNotify.showConversation（MessagingStyle 会话式通知）；
+   - 插件不存在 / 调用失败 / 权限异常 → 一律 fallback 回旧 LocalNotifications，
+     绝不抛出、绝不影响任何现有通知。
+   - 开关存 chatSettings.notifyConversationEnabled（默认 false = 走旧系统）。
+   ============================================================ */
+
+/* 会话式通知灰度开关：默认 false（完全走旧 LocalNotifications）。
+   玩家可在聊天设置里开启（后续 UI 轮次补充开关入口，本轮先落代码）。 */
+function bmConversationEnabled() {
+  try {
+    return !!(chatSettings && chatSettings.notifyConversationEnabled === true);
+  } catch (e) { return false; }
+}
+
+/* 会话式通知出口：成功返回 true，任何异常/不可用/失败返回 false（触发 fallback）。
+   conversationId 用访客 id（同角色固定同 id → 原生按 conversationId.hashCode() 覆盖合并成一条会话）。 */
+async function bmConversationNotify(c, body, title) {
+  try {
+    const CN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmConversationNotify;
+    if (!CN || typeof CN.showConversation !== 'function') return false; // 插件不存在 → fallback
+    const cid = c ? String(c.id) : 'bm';
+    const senderName = c ? (c.name || '访客') : '白日梦';
+    const messageText = String(body == null ? '' : body).slice(0, 120);
+    let ret = null;
+    try { ret = await CN.showConversation({ conversationId: cid, senderName, messageText }); }
+    catch (e) { return false; } // 调用异常 → fallback，不抛出
+    return !!(ret && ret.ok === true);
+  } catch (e) { return false; }
 }
 
 /* ============================================================
@@ -10380,6 +10426,11 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         </select>
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">逐条通知：每条消息单独弹一条系统通知；合并通知：挂后台期间同一访客的多条消息合成「发来 N 条新消息」一条。仅对安装版（Android）的原生通知生效</div>
+      <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
+        <span style="font-size:13.5px;">会话分组式通知<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">同一访客的消息收进同一条通知，折叠显示最新、下拉可看历史（微信/QQ 式）</small></span>
+        <input type="checkbox" id="cs-notify-conversation" ${s.notifyConversationEnabled ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">仅对安装版（Android）生效；开启后由系统分组式通知接管消息提醒，异常时自动退回上面的通知方式</div>
     </div>` : ''}
 
     ${!isPerChar ? `
@@ -10821,6 +10872,9 @@ function bindChatSettings(s, onSave) {
     // 20261002cg：消息通知方式（逐条/合并）——仅总聊天设置渲染该行
     const nmEl = $('#cs-notify-merge');
     if (nmEl) s.notifyMerge = nmEl.value === 'merge' ? 'merge' : 'each';
+    // 20261004dk：会话分组式通知开关（独立 toggle，紧邻通知方式）
+    const ncvEl = $('#cs-notify-conversation');
+    if (ncvEl) s.notifyConversationEnabled = ncvEl.checked;
     s.allowRecall = $('#cs-recall').checked;
     const cueEl = $('#cs-char-emoji-lib');
     if (cueEl) s.charUsePlayerEmojis = cueEl.checked; // 20261002cb：允许角色使用玩家表情包库

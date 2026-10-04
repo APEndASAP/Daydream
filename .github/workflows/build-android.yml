@@ -48,6 +48,14 @@ jobs:
           echo "bm-overlay 插件已固化到 node_modules"
           ls -la node_modules/bm-overlay/android/src/main/java/com/bairimeng/overlay/
 
+      # 20261004dk：固化本地会话通知插件 bm-conversation-notify（与 bm-overlay 同款 file: 依赖固化）
+      - name: 固化本地会话通知插件 bm-conversation-notify
+        run: |
+          rm -rf node_modules/bm-conversation-notify
+          cp -r bm-conversation-notify node_modules/bm-conversation-notify
+          echo "bm-conversation-notify 插件已固化到 node_modules"
+          ls -la node_modules/bm-conversation-notify/android/src/main/java/com/bairimeng/conversation/
+
       - name: 生成安卓原生壳
         run: npx cap add android
 
@@ -108,11 +116,81 @@ jobs:
           NODE_EOF
           node /tmp/register-bm-overlay.js
 
+      # 20261004dk：注册 BmConversationNotify 会话通知插件到 MainActivity。
+      #   与 BmOverlay 同构——Capacitor 6 不会自动实例化自定义插件，必须手动 registerPlugin。
+      #   注意：只注册，不在这里申请 POST_NOTIFICATIONS（通知权限申请由 app.js 的
+      #   requestNotificationPermission() 走 LocalNotifications.requestPermissions 原生弹窗统一处理，
+      #   避免两处重复弹权限框）。POST_NOTIFICATIONS 权限声明已由 inject-perms.js 注入。
+      - name: 注册 BmConversationNotify 插件到 MainActivity（20261004dk）
+        run: |
+          cat > /tmp/register-bm-conversation.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmConversationNotifyPlugin.class)')) {
+            console.log('BmConversationNotifyPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          const imp = 'import com.bairimeng.conversation.BmConversationNotifyPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          if (s.includes('public void onCreate(')) {
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmConversationNotifyPlugin.class);\n    $1');
+          } else {
+            s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmConversationNotifyPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}');
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmConversationNotifyPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-conversation.js
+
       # 20261001 修复：图标生成必须在 cap add 之后执行（cg 版排在壳生成之前，
       # android/ 目录尚不存在导致 capacitor-assets 静默失败，APK 用了 Capacitor 默认蓝色图标）。
       # 图标=白日梦手绘 logo（星辰与轨道），自适应图标背景/启动图底色统一白色。
       - name: 生成应用图标与启动图（assets/icon.png + assets/splash.png）
         run: npx capacitor-assets generate --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#ffffff' --splashBackgroundColorDark '#ffffff' --android
+
+      # 20261002ck：通知 smallIcon 根因修复——Android 通知的 smallIcon 必须能在 res/drawable 里
+      # 找到（而非 mipmap）。capacitor-assets 只生成 mipmap 应用图标，代码里 smallIcon:'ic_launcher'
+      # 在 drawable 找不到资源 → 发通知时 ResourceNotFoundException 闪退 / 图标空白。
+      # 这里把应用图标复制一份到 res/drawable-*/ic_launcher.png，保证通知小图标一定有资源。
+      - name: 生成通知小图标到 res/drawable（20261002ck 闪退修复）
+        run: |
+          cat > /tmp/gen-notif-icon.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const resDir = 'android/app/src/main/res';
+          // 找到任意一个 mipmap 目录里的 ic_launcher（作为源图标）
+          const mipDirs = fs.readdirSync(resDir).filter(d => d.startsWith('mipmap'));
+          let src = null;
+          for (const d of mipDirs) {
+            const f = path.join(resDir, d, 'ic_launcher.png');
+            if (fs.existsSync(f)) { src = f; break; }
+          }
+          if (!src) { console.log('未找到 mipmap/ic_launcher.png，跳过（通知仍用插件默认）'); process.exit(0); }
+          // 复制到 drawable（若只有 drawable 无密度后缀，建 drawable/ic_launcher.png）
+          const target = path.join(resDir, 'drawable', 'ic_launcher.png');
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.copyFileSync(src, target);
+          console.log('通知小图标已生成：' + target);
+          NODE_EOF
+          node /tmp/gen-notif-icon.js
 
       - name: 禁用 WebView 强制暗色（Force Dark）— 20260930cg 三重保险
         run: |
@@ -153,6 +231,8 @@ jobs:
             // 精确闹钟：USE_EXACT_ALARM（API33+ 自动授予，侧载无 Play 政策限制）+ SCHEDULE_EXACT_ALARM（API31-32）
             'android.permission.USE_EXACT_ALARM',
             'android.permission.SCHEDULE_EXACT_ALARM',
+            // Android 13+（API33+）通知权限：不声明则系统静默丢弃通知、requestPermissions 也无法弹授权框
+            'android.permission.POST_NOTIFICATIONS',
             // 锁屏全屏横幅通知（QQ/微信式锁屏弹窗）
             'android.permission.USE_FULL_SCREEN_INTENT',
             // 系统日历读写（日程提醒写入；ebarooni 插件运行时再动态申请）

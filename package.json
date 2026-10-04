@@ -16,8 +16,9 @@
     "@capacitor/filesystem": "^6.0.2",
     "@capacitor/local-notifications": "^6.1.1",
     "@ebarooni/capacitor-calendar": "6.7.2",
-    "capacitor-overlay": "7.0.3",
-    "bm-overlay": "file:./bm-overlay"
+    "bm-overlay": "file:./bm-overlay",
+    "bm-conversation-notify": "file:./bm-conversation-notify",
+    "capacitor-overlay": "7.0.3"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.2.0",
