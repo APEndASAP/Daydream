@@ -5139,3 +5139,20 @@ body:not(.theme-light) .msg-quote {
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
 }
 
+/* ============================================================
+   20261004dp：CSS 预览窗浅底态（#css-preview-box 内 #css-preview-stage.pv-light）
+   预览窗默认跟随主题（深色主题深底/浅色主题浅底），并支持手动切「深色底/浅色底」。
+   浅底时若玩家自定义 CSS 未覆盖气泡底色，用浅色主题默认气泡变量兜底（紫渐变/浅灰），
+   避免「深色气泡落浅底」的观感错位；深底维持原有深色气泡。真实聊天页不受影响。
+   ============================================================ */
+#css-preview-stage.pv-light .msg-row.me .bubble {
+  background: linear-gradient(145deg, #8b5cf6 0%, #7c5cf0 100%);
+  color: #ffffff;
+  border: none;
+}
+#css-preview-stage.pv-light .msg-row.them .bubble {
+  background: #e7e3ef;
+  color: #2a2340;
+  border: none;
+}
+

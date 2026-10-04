@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004dk'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004dn'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -2597,7 +2597,10 @@ function msgBodyHtml(m, oneLine = false) {
     const who = m.from === 'me' ? '你' : '对方';
     return `<div class="msg-recalled" data-msgid="${m.id}">${who}撤回了一条消息</div>`;
   }
-  const bubbleCls = oneLine ? 'bubble oneline' : 'bubble';
+  // 20261004dn：兼容层——在气泡上附加通用聊天气泡 class（message / message-sent / message-received），
+  // 让玩家直接粘贴其他聊天软件的 CSS（.message 等）也能生效；仅加 class，不改结构/逻辑，
+  // 原有 .msg-row.me/.them .bubble 选择器继续有效
+  const bubbleCls = `bubble${oneLine ? ' oneline' : ''} message message-${m.from === 'me' ? 'sent' : 'received'}`;
   switch (m.type) {
     case 'image':
       return `${quoteHtml(m.quote)}<img class="msg-img" src="${imgSrc(m.content, true)}" data-full="${imgSrc(m.content)}" data-msgid="${m.id}">`;
@@ -9370,6 +9373,78 @@ function showCardImportModal() {
 const BUBBLE_ME_COLORS = ['#8b5cf6', '#c084fc', '#f472b6', '#60a5fa', '#34d399', '#fbbf24', '#f87171', '#e5e7eb'];
 const BUBBLE_THEM_COLORS = ['#26232e', '#312b40', '#1f2937', '#2d2a24', '#242f2b', '#33262a', '#252833', '#3a3a3a'];
 
+/* 20261004di：自定义 CSS 校验——浏览器对无效 CSS 规则是「静默丢弃」的，玩家完全无感。
+   这里把源文本按顶层规则切块（括号配对，跳过注释/字符串），逐条喂给离屏 <style> 的
+   sheet 解析：cssRules.length===0 即该条被丢弃（选择器拼错/括号不配对/「css：」这类
+   散文字前缀会把整条规则一起吞掉）。另对有效规则做 querySelector 命中试探：语法对了
+   但选择器在当前页面找不到元素（如 .message 这种别的应用的类名）单独给黄字提示。
+   未命中≠错误（可能作用于其他页面），所以只提示不算失败 */
+function bmSplitCssRules(text) {
+  const out = [];
+  let depth = 0, start = -1, inStr = null, inCmt = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], nx = text[i + 1];
+    if (inCmt) { if (ch === '*' && nx === '/') { inCmt = false; i++; } continue; }
+    if (inStr) { if (ch === inStr && text[i - 1] !== '\\') inStr = null; continue; }
+    if (ch === '/' && nx === '*') { inCmt = true; i++; continue; }
+    if (ch === '"' || ch === "'") { inStr = ch; continue; }
+    if (depth === 0 && !/\s/.test(ch) && start < 0) start = i;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth <= 0) {
+        depth = 0;
+        if (start >= 0) { out.push(text.slice(start, i + 1)); start = -1; }
+      }
+    }
+  }
+  if (start >= 0 && start < text.length) out.push(text.slice(start)); // 括号未闭合 / 尾部散文字
+  return out;
+}
+function bmValidateCustomCss(text) {
+  const res = { total: 0, bad: [], unhit: [] };
+  const t = String(text || '').trim();
+  if (!t) return res;
+  const st = document.createElement('style');
+  document.head.appendChild(st); // 必须进 DOM 才有 sheet
+  // 动态元素探测（20261004dn）：聊天消息行是打开聊天页才渲染的，在设置弹窗里做命中试探
+  // 必然 miss（用户贴正确的气泡 CSS 会被误报「未匹配」）。临时挂一组隐藏的真实气泡结构
+  // 样本（与 msgBodyHtml 输出同构，优先挂 #chat-scroll 内以支持 #chat-scroll 前缀选择器），
+  // 试探完立即删除，不影响任何真实渲染
+  const probe = document.createElement('div');
+  probe.style.cssText = 'display:none';
+  probe.innerHTML = '<div class="msg-row me"><div class="msg-body"><div class="bubble message message-sent">探</div></div></div>'
+    + '<div class="msg-row them"><div class="msg-body"><div class="bubble message message-received">探</div></div></div>';
+  try { ($('#chat-scroll') || document.body).appendChild(probe); } catch (e) { document.body.appendChild(probe); }
+  try {
+    const frags = bmSplitCssRules(t);
+    res.total = frags.length;
+    frags.forEach((f, idx) => {
+      st.textContent = f;
+      let rules = [];
+      try { rules = st.sheet ? Array.from(st.sheet.cssRules) : []; } catch (e) {}
+      if (!rules.length) { res.bad.push({ n: idx + 1, head: f.replace(/\s+/g, ' ').trim().slice(0, 42) }); return; }
+      rules.forEach(r => {
+        if (!r.selectorText) return; // @media 等整体块跳过命中试探
+        r.selectorText.split(',').forEach(selRaw => {
+          const sel = selRaw.trim();
+          if (!sel) return;
+          // 全角标点/全角字符在选择器里几乎必然是误粘贴（如「css：」开头——全角冒号
+          // 不是 CSS 语法字符，浏览器不报错但规则永远匹配不到），升级为失败提示
+          if (/[\u3000-\u303f\uff01-\uff5e\u2018\u2019\u201c\u201d]/.test(sel)) {
+            res.bad.push({ n: idx + 1, head: `${sel.slice(0, 40)}（疑似混入中文标点/说明文字）` });
+            return;
+          }
+          let hit = true;
+          try { hit = !!document.querySelector(sel); } catch (e) { hit = true; }
+          if (!hit) res.unhit.push(sel.slice(0, 38));
+        });
+      });
+    });
+  } finally { st.remove(); try { probe.remove(); } catch (e) {} }
+  return res;
+}
+
 /* 聊天字体候选（20260929af）：全部取系统自带字体，零下载零依赖；id 存 chatTheme.fontId */
 /* 20260929ah：字体表全部换成可商用开源字体（用户要求移除侵权风险字体）。
    · web:true 的字体通过 CDN 加载 webfont（断网自动回退到字体栈后续项）
@@ -9497,8 +9572,25 @@ async function showChatThemeModal() {
 
     <div class="field">
       <label>自定义 CSS（高级美化）</label>
-      <textarea class="textarea" id="theme-css" placeholder="输入 CSS 代码自定义美化，例如：&#10;.chat-scroll { background-color:#1a1626; }&#10;.msg-row.them .bubble { border-radius:20px; }" style="min-height:110px;font-family:monospace;font-size:12px;">${escapeHtml(chatTheme.customCss || '')}</textarea>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">改动即时生效并保存；群聊气泡统一使用总设置（22）</div>
+      <textarea class="textarea" id="theme-css" placeholder="输入 CSS 代码自定义美化，例如：&#10;#chat-scroll { background-color:#1a1626; }&#10;.msg-row.me .bubble { border-radius:20px 20px 4px 20px; }" style="min-height:110px;font-family:monospace;font-size:12px;white-space:pre;overflow:auto;display:block;">${escapeHtml(chatTheme.customCss || '')}</textarea>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+        <button class="btn" id="theme-css-save" style="padding:9px 18px;font-size:13px;font-weight:600;">保存并应用</button>
+        <span id="theme-css-status" style="font-size:12px;flex:1;min-width:0;line-height:1.5;"></span>
+      </div>
+      <div id="css-preview-box" data-prev-bg="dark" style="margin-top:10px;padding:12px;border-radius:14px;background:#17131f;border:1px solid rgba(255,255,255,0.08);">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+          <div id="css-preview-label" style="font-size:11px;color:rgba(255,255,255,0.45);">CSS 实时预览（与真实气泡同结构，编辑即时变化）</div>
+          <div style="display:flex;gap:4px;">
+            <button class="btn" data-prev-bg-btn="dark" style="padding:3px 8px;font-size:11px;line-height:1.4;">深色底</button>
+            <button class="btn" data-prev-bg-btn="light" style="padding:3px 8px;font-size:11px;line-height:1.4;">浅色底</button>
+          </div>
+        </div>
+        <div id="css-preview-stage" style="display:flex;flex-direction:column;gap:10px;">
+          <div class="msg-row me"><div class="bubble message message-sent" style="max-width:78%;">这样聊起来更有氛围啦</div></div>
+          <div class="msg-row them"><div class="bubble message message-received" style="max-width:78%;">嗯嗯，我一直在呢</div></div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">编辑时聊天页实时预览；点「保存并应用」才写入长期保存。常用选择器：#chat-scroll（聊天区）、.msg-row.me .bubble（我的气泡）、.msg-row.them .bubble（对方气泡），也兼容 .message / .message-sent / .message-received 写法</div>
     </div>
 
     <div class="field">
@@ -9639,12 +9731,76 @@ async function showChatThemeModal() {
   bindColors('theme-me-colors', 'bubbleMe', 'bubbleMeText', '#ffffff');
   bindColors('theme-them-colors', 'bubbleThem', 'bubbleThemText', '#f2f0f6');
 
-  // 自定义 CSS：输入即时保存
-  $('#theme-css').oninput = async () => {
-    chatTheme.customCss = $('#theme-css').value;
-    applyChatTheme();
-    await setSetting('chatTheme', chatTheme);
+  // 自定义 CSS：输入即时预览（不落库）+ 防抖校验（无效规则红字、选择器未命中黄字）；
+  // 点「保存并应用」才写入长期保存并给成功/失败反馈
+  let _cssVdTimer = null;
+  const renderCssStatus = (vd, savedMsg) => {
+    const st = $('#theme-css-status');
+    if (!st) return;
+    let html = '';
+    if (vd) {
+      if (vd.total === 0) html = '';
+      else if (vd.bad.length) {
+        html = `<span style="color:var(--danger,#f87171);">✕ ${vd.bad.length}/${vd.total} 条规则无法解析，已被浏览器忽略：${vd.bad.map(b => `第${b.n}条「${escapeHtml(b.head)}…」`).join('、')}（常见原因：选择器拼错、括号不配对、混入了「css：」这类非 CSS 文字）</span>`;
+      } else if (vd.unhit.length) {
+        html = `<span style="color:var(--warn,#fbbf24);">⚠ 语法全部有效，但有 ${vd.unhit.length} 个选择器在当前页面没有匹配元素（不是错误，可正常保存）：${escapeHtml([...new Set(vd.unhit)].slice(0, 2).join('、'))}${vd.unhit.length > 2 ? ' 等' : ''}。若这些样式作用于其他页面/动态弹窗，直接忽略即可</span>`;
+      } else {
+        html = `<span style="color:var(--ok);">✓ ${vd.total} 条规则全部有效</span>`;
+      }
+    }
+    if (savedMsg) html += (html ? ' ' : '') + `<span style="color:var(--ok);font-weight:600;">${escapeHtml(savedMsg)}</span>`;
+    st.innerHTML = html;
   };
+  $('#theme-css').oninput = () => {
+    chatTheme.customCss = $('#theme-css').value;
+    applyChatTheme(); // 实时预览：当前输入立即注入 <style>，聊天页同步变化
+    clearTimeout(_cssVdTimer);
+    _cssVdTimer = setTimeout(() => renderCssStatus(bmValidateCustomCss($('#theme-css').value)), 350);
+  };
+  $('#theme-css-save').onclick = async () => {
+    const val = $('#theme-css').value;
+    chatTheme.customCss = val;
+    applyChatTheme();
+    try { await setSetting('chatTheme', chatTheme); } catch (e) {}
+    const vd = bmValidateCustomCss(val);
+    if (vd.bad.length) {
+      miniToast(`已保存，但有 ${vd.bad.length} 条规则无效被忽略`);
+      renderCssStatus(vd, '已保存（含无效规则）');
+    } else {
+      miniToast('自定义 CSS 已保存并应用');
+      renderCssStatus(vd, '✓ 已保存并应用');
+    }
+  };
+  // 打开设置时对已存 CSS 做一次体检，健康状态一目了然
+  renderCssStatus(bmValidateCustomCss($('#theme-css').value));
+
+  // 20261004dp：CSS 预览窗背景切换——默认跟随当前主题（深色主题=深底、浅色主题=浅底），
+  // 手动切换「深色底/浅色底」可对照毛玻璃/文字可读性效果；切底只改预览窗背景，不影响真实聊天页
+  const cssBox = $('#css-preview-box');
+  const cssLabel = $('#css-preview-label');
+  const cssStage = $('#css-preview-stage');
+  const isLightTheme = () => document.body.classList.contains('theme-light');
+  const setPreviewBg = (mode) => {
+    if (!cssBox) return;
+    const light = mode === 'light';
+    cssBox.dataset.prevBg = mode;
+    cssBox.style.background = light ? '#f4f2f8' : '#17131f';
+    cssBox.style.border = light ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.08)';
+    if (cssLabel) {
+      cssLabel.style.color = light ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)';
+      cssLabel.textContent = `CSS 实时预览 · ${light ? '浅色底' : '深色底'}（与真实气泡同结构，编辑即时变化）`;
+    }
+    if (cssStage) {
+      // 浅底时给预览气泡一个临时 class，让玩家自定义 CSS 之外也能看清默认气泡色；
+      // 深底维持原样。真实聊天页不受影响。
+      cssStage.classList.toggle('pv-light', light);
+    }
+  };
+  // 默认跟随主题
+  setPreviewBg(isLightTheme() ? 'light' : 'dark');
+  $$('#css-preview-box [data-prev-bg-btn]').forEach(b => {
+    b.onclick = () => setPreviewBg(b.dataset.prevBgBtn);
+  });
 }
 
 /* ---------- 访客日记（与 TA 的通话时长/认识天数/消息数） ---------- */

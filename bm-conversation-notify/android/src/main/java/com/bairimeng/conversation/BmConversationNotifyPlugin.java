@@ -3,7 +3,10 @@ package com.bairimeng.conversation;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
@@ -194,6 +197,25 @@ public class BmConversationNotifyPlugin extends Plugin {
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE);
+
+        // 20261004dq：点击通知跳转回 App——用 ComponentName 显式指向 MainActivity（插件不持有
+        // MainActivity.class 引用，无法 new Intent(ctx, MainActivity.class)），并带
+        // FLAG_ACTIVITY_NEW_TASK（从通知栏启动需新任务栈）+ FLAG_ACTIVITY_SINGLE_TOP
+        // （App 已在前台时复用不重建）。FLAG_IMMUTABLE 是 Android 12+（API 31+）硬性要求。
+        Intent launchIntent = new Intent(Intent.ACTION_MAIN);
+        launchIntent.setComponent(new ComponentName(getContext(), "com.bairimeng.app.MainActivity"));
+        launchIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+        launchIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            piFlags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        PendingIntent contentIntent = PendingIntent.getActivity(
+                getContext(),
+                conversationId.hashCode(),
+                launchIntent,
+                piFlags);
+        builder.setContentIntent(contentIntent);
 
         // 折叠态大头像 = setLargeIcon（Person.setIcon 只影响展开后消息气泡旁小头像）
         if (icon != null) {
