@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004db'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004dc'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -8386,10 +8386,11 @@ function bindEvents() {
     const mb = $('#btn-splash-music');
     if (!mb) return;
     const paint = () => {
+      // 20261004dc：深胶囊底/图标色交给 CSS（#btn-splash-music 写死，浅色/深色背景与玻璃模式都可读）；
+      // 开关态只切 music-on 类（开=亮紫图标，关=白 62%）。不再 inline 写 background/color/opacity——
+      // inline opacity 0.85 会压过 .bgbtn-hidden 的 opacity:0（下滚淡出失效），样式统一走 CSS
       const on = _splashAutoplay;
-      mb.style.background = on ? 'var(--purple-dim)' : '';
-      mb.style.color = on ? 'var(--purple-soft)' : '';
-      mb.style.opacity = on ? '1' : '0.6';
+      mb.classList.toggle('music-on', on);
       mb.title = on ? '开屏音乐：继续播放中（点击关闭）' : '开屏音乐：开屏结束即停（点击开启继续播放）';
     };
     _splashAutoplay = (await getSetting('splashAutoplay', '0')) === '1';
@@ -8427,6 +8428,9 @@ function bindEvents() {
       }
       const bgBtn = $('#btn-bg-change');
       if (bgBtn) bgBtn.classList.toggle('bgbtn-hidden', hs.scrollTop > 40);
+      // 20261004dc：🎵 开屏音乐按钮同款下滚淡出（用户反馈：滚出的头像会与它叠在一起），滚回顶部复现
+      const musicBtn = $('#btn-splash-music');
+      if (musicBtn) musicBtn.classList.toggle('bgbtn-hidden', hs.scrollTop > 40);
     }, { passive: true });
   }
   // 聊天导航页/朋友圈顶栏：平时与背景一体，下滑超过阈值浮现背景主色半透明条（20260929u）

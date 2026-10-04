@@ -694,8 +694,9 @@ select.input option:checked { color: #fff; }
   cursor: pointer;
 }
 .hero-change:active { transform: scale(0.96); }
-/* 20260929bb：个人主页下滚时顶栏「更换背景」按钮淡出，滚回顶部才出现 */
-.hero-change.bgbtn-hidden { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+/* 20260929bb：个人主页下滚时顶栏「更换背景」按钮淡出，滚回顶部才出现
+   20261004dc：扩展到 .icon-btn（🎵 开屏音乐按钮同款下滚淡出，用户反馈与滑出头像重叠） */
+.hero-change.bgbtn-hidden, .icon-btn.bgbtn-hidden { opacity: 0; transform: translateY(-8px); pointer-events: none; }
 .hero-change { transition: opacity .25s ease, transform .25s ease; }
 .hero-avatar-wrap {
   position: absolute;
@@ -1355,6 +1356,20 @@ select.input option:checked { color: #fff; }
 .chat-item-brief,
 .char-group-head {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 8px rgba(0, 0, 0, 0.20);
+}
+
+/* 20261004dc：浅色预设 + 自定义深色背景时，聊天导航页分组头小字完全不可见（用户实测图 6/图 7，
+   普通与玻璃拟态模式都是）——上轮的深色暗晕在深背景上反而更看不清。
+   浅色主题下给分组头文字/全选徽章加白胶囊底：深背景上白底深字清晰，浅背景上白底也不突兀，
+   不依赖背景图深浅；深色主题不动（深底浅字本就可见）；箭头 ▸/▾ 保持裸字符不加胶囊。
+   text-shadow:none 抵消上面的暗晕（白底上会显脏）。inline color 需 !important 才能覆盖。 */
+body.theme-light .char-group-head > span:not(.cg-arrow) {
+  color: var(--text-secondary) !important;
+  background: rgba(255, 255, 255, 0.62);
+  border-radius: 999px;
+  padding: 4px 12px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  text-shadow: none;
 }
 
 /* ============================================================
@@ -2426,9 +2441,24 @@ body.glass-ui.glass-low .msg-row.me .bubble {
    个人主页顶栏按钮强化：纪念日/入梦签更明显 + 背景框
    ============================================================ */
 #btn-anniversary {
-  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.38), 0 0 12px var(--purple-glow), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(167, 139, 250, 0.35);
+  /* 20261004dc：深胶囊底写死（对齐更换背景/入梦签）——原紫底紫字在浅色主题变量下过淡，
+     浅色背景几乎隐形、自定义深色背景下也不可读（用户实测图 4/图 5） */
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
 }
+/* 20261004dc：🎵 开屏音乐继续播放按钮——深胶囊底写死（原 icon-btn 透明底 + opacity 0.6
+   在浅色背景上完全隐形）；开=music-on 亮紫图标，关=白 62% 图标；下滚淡出复用 bgbtn-hidden
+   （#id 特异性高于 .icon-btn，需单列一条才能压过基态 opacity） */
+#btn-splash-music {
+  background: rgba(20, 16, 25, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.62);
+  opacity: 0.85;
+  transition: opacity .25s ease, transform .25s ease;
+}
+#btn-splash-music.music-on { color: #B8A6FF; opacity: 1; }
+#btn-splash-music.bgbtn-hidden { opacity: 0; transform: translateY(-8px); pointer-events: none; }
 /* 入梦签：同"更换背景"按钮的深色半透明背景框（圆形图标底） */
 #btn-daily-open {
   background: rgba(20, 16, 25, 0.72);

@@ -331,6 +331,16 @@ public class BmOverlayPlugin extends Plugin {
         cardBg.setScaleType(ImageView.ScaleType.CENTER_CROP);
         cardBg.setAlpha(0.38f);
         cardBg.setVisibility(View.GONE);
+        // 20261004dc：背景图圆角裁剪——uiHidden 全显（alpha 1.0）后 ImageView 直角铺满，
+        // 盖住 cardFixed 的 22dp 圆角（用户实测：遮罩修复了，但四角变直角不好看）；
+        // outline 圆角 22dp 与 cardBgDrawable.setCornerRadius(dp(22)) 一致，半显/全显两态都是圆角
+        cardBg.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, android.graphics.Outline outline) {
+                try { outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(22)); } catch (Throwable t) {}
+            }
+        });
+        cardBg.setClipToOutline(true);
         cardFixed.addView(cardBg, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // UI 层

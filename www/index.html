@@ -40,7 +40,7 @@
           || location.protocol === 'capacitor:';
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20261004db' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20261004dc' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -54,13 +54,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261004db'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261004dc'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20261004db">
+  <link rel="stylesheet" href="css/style.css?v=20261004dc">
 </head>
 <body>
   <div id="app">
@@ -172,7 +172,7 @@
     <!-- 个人主页（3.3：启动后默认进入；8.1 布局） -->
     <div class="view active" id="view-home">
       <div class="topbar" id="home-topbar">
-        <button class="btn" id="btn-anniversary" title="纪念日" style="background:var(--purple-dim);color:var(--purple-soft);padding:7px 14px;font-size:13px;gap:6px;">
+        <button class="btn" id="btn-anniversary" title="纪念日" style="background:rgba(20,16,25,0.72);color:rgba(255,255,255,0.92);padding:7px 14px;font-size:13px;gap:6px;">
           <span data-icon="anniversary" data-size="15" style="display:inline-flex;"></span> 纪念日
         </button>
         <!-- 20260930bz：开屏音乐继续播放开关（小型化放纪念日右侧；开=开屏结束后音乐循环播放贯穿全程） -->
@@ -299,14 +299,14 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20261004db"></script>
-  <script src="js/db.js?v=20261004db"></script>
-  <script src="js/icons.js?v=20261004db"></script>
-  <script src="js/emoji-img.js?v=20261004db"></script>
-  <script src="js/cards.js?v=20261004db"></script>
-  <script src="js/app.js?v=20261004db"></script>
+  <script src="js/splash.js?v=20261004dc"></script>
+  <script src="js/db.js?v=20261004dc"></script>
+  <script src="js/icons.js?v=20261004dc"></script>
+  <script src="js/emoji-img.js?v=20261004dc"></script>
+  <script src="js/cards.js?v=20261004dc"></script>
+  <script src="js/app.js?v=20261004dc"></script>
   <!-- 20261002ch：新手引导（沙盒隔离：独立 js/css，动态创建全屏 overlay，不碰核心代码与 DOM 结构，
        一键「开始探索/跳过新手指引」后彻底移除并 localStorage 记录永不再弹） -->
-  <script src="js/guide-sandbox.js?v=20261004db"></script>
+  <script src="js/guide-sandbox.js?v=20261004dc"></script>
 </body>
 </html>
