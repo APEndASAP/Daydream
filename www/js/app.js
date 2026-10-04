@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004dr'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261005ds'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -4732,6 +4732,7 @@ async function bmBgTick() {
   if (!bmIsBg()) return;
   try { await __proactiveScan(); } catch (e) {}   // 超频/主动消息/查岗/通话/红包 到期检查
   try { await deliverDueLetterReplies(); } catch (e) {} // 到期回信投递
+  try { await groupAutoChatTick(); } catch (e) {}  // 20261005ds：后台群聊自主聊天（60s 级，复用本低频调度，不新增高频 timer）
 }
 
 /* ---------- 原生精确闹钟（AlarmManager 预排程）：调度时已知 dueAt 的事件都来注册 ----------
@@ -18801,8 +18802,9 @@ function markGroupBgChatWindow(groupId) {
    玩家当前不在该群聊页时，触发一次 1 轮接龙（细则：挂后台最多 1 轮就停） */
 async function groupAutoChatTick() {
   try {
-    if (bmIsBg()) return; // 20261002ca：挂后台全停（AI 生成+渲染都是耗电大头，省电红线）
-    // 20261004dr：去掉字卡模式拦截——用户要求字卡和 AI 模式通用（字卡生成零成本，自主聊天同样生效）
+    // 20261005ds：去掉 bmIsBg() 拦截——后台群聊自主聊天改由 bmBgTick（60s 低频调度）驱动，
+    // 不再被后台省电模式直接永久阻断。前台仍由 startGroupAutoChatTimer 的 20s 高频轮询触发，
+    // 后台由 bmBgTick 每 60s 调一次本函数（复用现有低频调度，不新增高频 timer）。
     const now = Date.now();
     for (const g of chatGroups) {
       if (currentGroupId === g.id && document.body.dataset.view === 'chat') continue; // 玩家正在该群聊
@@ -18820,7 +18822,7 @@ async function groupAutoChatTick() {
 /* 启动群聊自主聊天定时器（每 20 秒一查；实际节奏由 20 分钟窗口与轮次控制） */
 function startGroupAutoChatTimer() {
   if (_groupAutoChatTimer) return;
-  // 20261002ca：groupAutoChatTick 首行有 bmIsBg 守卫（挂后台全停，省电）
+  // 20261005ds：前台 20s 高频轮询；后台由 bmBgTick 每 60s 调一次 groupAutoChatTick（不再被 bmIsBg 阻断）
   _groupAutoChatTimer = setInterval(groupAutoChatTick, 20000);
   // 20260929ba：成员随机发群红包（独立 60s 轮询；群设置 autoPacket 开启才生效）
   if (!window.__groupPacketTimer) {
