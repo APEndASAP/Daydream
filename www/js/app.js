@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004dh'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004di'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -7147,6 +7147,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
   const timer = setInterval(() => {
     if (answered) {
       sec++;
+      _callActive && (_callActive.sec = sec); // 20261004di：补齐单聊 sec 回写，缩小悬浮窗时 baseSec 不再读到 0
       const el = $('#call-timer');
       if (el) el.textContent = formatDurShort(sec); // 20261004：全「分:秒」显示
       updateCallFloatTime(sec);
@@ -7679,8 +7680,10 @@ function bindCallExtras() {
 function updateCallFloatTime(sec) {
   const el = document.querySelector('#call-float .cf-time');
   if (el) el.textContent = formatDurShort(sec);
-  // 20261002cc：原生悬浮窗显示中，同步跳动通话时长到系统层小窗
-  if (_bmOverlayShown) bmOverlayUpdateSub(formatDurShort(sec));
+  // 20261004di：移除原生悬浮窗的每秒覆盖——原生 startTicking() 已用 elapsedRealtime 自走计时，
+  // JS 每秒 bmOverlayUpdateSub 会与原生 tick 双写打架（后台冻结后 JS setInterval 落后、解冻后
+  // 用旧值覆盖原生正确值，导致时间跳变/回退）。原生时间交还原生 tick 单一事实源，JS 只保留
+  // 网页内部 DOM 浮窗（#call-float .cf-time）更新。
 }
 
 function formatDurShort(sec) {
