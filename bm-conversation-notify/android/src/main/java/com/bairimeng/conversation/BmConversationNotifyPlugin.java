@@ -124,6 +124,9 @@ public class BmConversationNotifyPlugin extends Plugin {
                 if (ch == null) {
                     ch = new NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH);
                     ch.setDescription("白日梦会话式通知探针测试渠道");
+                    ch.enableVibration(true);
+                    ch.setShowBadge(true);
+                    ch.enableLights(true);
                     nm.createNotificationChannel(ch);
                 }
             }
@@ -192,7 +195,13 @@ public class BmConversationNotifyPlugin extends Plugin {
                 .setStyle(style)
                 .setShortcutId(conversationId)
                 .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE);
+
+        // 折叠态大头像 = setLargeIcon（Person.setIcon 只影响展开后消息气泡旁小头像）
+        if (icon != null) {
+            builder.setLargeIcon(icon);
+        }
 
         return builder.build();
     }

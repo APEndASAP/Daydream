@@ -4280,8 +4280,11 @@ function notifyIncoming(c, body, title, kind = 'msg') {
           // 20261004dk修复：插件成功发出会话式通知后，补撤该角色同类消息的预排闹钟
           // （旧 each 分支 4399 行 / merge 分支 4350 行都做了这一步；插件分支绕过了
           //   bmNativeNotify 导致预排闹钟残留，1 分钟后到点照弹「给你发来了新消息」→ 双通知）。
-          //   仅调用 bmClearAlarm（不碰其内部实现），不重新进入 bmNativeNotify，不让双通道同时发。
-          bmClearAlarm(c ? c.id : 'bm', kind).catch(() => {});
+          //   双保险：① bmClearAlarm 走 kv 清理链；② 直接 LN.cancel 同一闹钟 id，
+          //   兜住 kv 读异步延迟的竞态窗口（偶尔双通知 = 闹钟恰在插件异步回调间隙到点弹出）。
+          const cid = c ? c.id : 'bm';
+          try { LN.cancel({ notifications: [{ id: bmNotifIdFor(cid, kind) }] }); } catch (e) {}
+          bmClearAlarm(cid, kind).catch(() => {});
         });
         return;
       }
@@ -4456,15 +4459,19 @@ async function bmConversationNotify(c, body, title) {
     const cid = c ? String(c.id) : 'bm';
     const senderName = c ? (c.name || '访客') : '白日梦';
     const messageText = String(body == null ? '' : body).slice(0, 120);
-    // 头像：c.avatar 可能是 base64 data URL（字符串）或 Blob 对象；只有 base64 才传给原生
+    // 头像：c.avatar 实际是 openImageCropper 返回的 {blob, thumb} 对象（非 base64 字符串）。
+    // 必须 blobToDataURL 转 base64 才能跨原生桥传给插件；失败/无头像一律置空，不影响通知本体。
     let avatar = '';
     try {
       if (c && c.avatar) {
         if (typeof c.avatar === 'string' && c.avatar.startsWith('data:image/')) {
           avatar = c.avatar;
-        } else if (c.avatar && typeof c.avatar === 'object' && c.avatar.blob) {
-          const u = imgSrc(c.avatar); // Blob -> objectURL；需转 base64 才能跨原生桥
-          if (u && u.startsWith('data:image/')) avatar = u;
+        } else if (c.avatar && typeof c.avatar === 'object') {
+          const b = c.avatar.thumb || c.avatar.blob; // 优先缩略图，减小跨桥体积
+          if (b) {
+            if (typeof b === 'string' && b.startsWith('data:image/')) avatar = b;
+            else if (b instanceof Blob) avatar = await blobToDataURL(b);
+          }
         }
       }
     } catch (e) { avatar = ''; }
