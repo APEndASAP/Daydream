@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004df'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004dg'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -7526,6 +7526,22 @@ function applyCallScale(modal, base, s) {
   modal.style.maxHeight = 'none';
   const body = modal.querySelector('.call-full-body');
   if (body) body.style.transform = `scale(${s})`;
+  // 20261004dg：悬浮窗2号（fixed 浮游态）缩放后钳回视口——旧版缩放只从 top-left
+  // 长大、left/top 不动，浮窗停在屏幕右/下侧时放大到最大，右下角缩放手柄和
+  // 右上角小眼睛会被直接推出屏幕外 → 既摸不到手柄（"放大后不能缩小"）也点不到
+  // 眼睛。缩放后同步收左/上，保证整窗始终可见可点；非浮游态（居中）不受影响。
+  try {
+    if (modal.style.position === 'fixed') {
+      const w = Math.round(base.w * s), h = Math.round(base.h * s);
+      const curX = parseFloat(modal.style.left) || 0;
+      const curY = parseFloat(modal.style.top) || 0;
+      const nx = Math.max(6, Math.min(window.innerWidth - w - 6, curX));
+      const ny = Math.max(6, Math.min(window.innerHeight - h - 6, curY));
+      if (nx !== curX) modal.style.left = Math.round(nx) + 'px';
+      if (ny !== curY) modal.style.top = Math.round(ny) + 'px';
+      modal._f2Pos = { x: Math.round(nx), y: Math.round(ny) };
+    }
+  } catch (e) {}
 }
 /* 关闭弹窗时还原容器（清除 inline 尺寸/缩放/悬浮窗2号定位，防残留到下一个普通弹窗） */
 function resetModalSizing() {

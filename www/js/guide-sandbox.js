@@ -119,25 +119,41 @@
       return;
     }
 
-    /* 按钮若不在视口内，先把页面滚到按钮可见再重新测量。
-       20261003da：scrollIntoView 在部分 WebView 上对嵌套滚动容器（.home-scroll）不生效，
-       导致「世界树」这类位于列表下方的按钮从未滚入视口——聚光灯框在未滚动位置上，
-       看起来像框住了底部栏。改为手动滚动可滚动祖先（确定性生效），并保留两次重测兜底。 */
-    if (r.top < 0 || r.bottom > window.innerHeight) {
-      var scrolled = false;
+    /* 20261004dg：每步无条件把按钮滚到安全区几何中心（页面最中央的实际可用区域）。
+       旧版只看「是否在视口内」——按钮贴屏底、被引导自己的「下一步」按钮区盖住时仍算
+       "可见"不滚动；且首屏本就可见但偏低的按钮（如记忆宫殿）永远不会居中。
+       安全区 = 顶部条下缘 ～ 底部按钮区上缘。滚动用 scrollTop 直接赋值并强制
+       scrollBehavior=auto（防容器 CSS smooth 让赋值异步生效），赋值即时生效 →
+       同步重测、当帧画出，消除旧版「先画错、再靠 160/380ms 二次猜测」的闪烁与漏滚。 */
+    var barH = els.spotbar ? els.spotbar.offsetHeight : 48;
+    var footH = els.spotfoot ? els.spotfoot.offsetHeight : 90;
+    var safeTop = barH + 10;
+    var safeBottom = window.innerHeight - footH - 10;
+    {
+      var idealTop = (safeTop + safeBottom) / 2 - r.height / 2; // 按钮理想 top（视口坐标）
       try {
         var sc = el.closest ? el.closest('.home-scroll') : null;
         if (sc) {
-          var cr = sc.getBoundingClientRect();
-          // 把按钮中心滚到容器中心（容器自身没滚动空间时自然为 0，无副作用）
-          sc.scrollTop += (r.top + r.height / 2) - (cr.top + cr.height / 2);
-          scrolled = true;
+          var prevSB = sc.style.scrollBehavior;
+          sc.style.scrollBehavior = 'auto';
+          sc.scrollTop += r.top - idealTop; // 把按钮中心滚到安全区中心（scrollTop 封顶自然钳住）
+          sc.style.scrollBehavior = prevSB;
+        } else {
+          try { el.scrollIntoView({ block: 'center' }); } catch (e2) {}
         }
       } catch (e) {}
-      if (!scrolled) { try { el.scrollIntoView({ block: 'center' }); } catch (e) {} }
-      setTimeout(function () { if (mounted && idx === stepIdx) placeSpot(stepIdx); }, 160);
-      setTimeout(function () { if (mounted && idx === stepIdx) placeSpot(stepIdx); }, 380);
-      return;
+      r = el.getBoundingClientRect(); // scrollTop 赋值同步生效，直接拿最新位置
+      /* 兜底：到不了理想中心（列表滚到顶/底），至少把越出安全区的边压回来 */
+      try {
+        var sc2 = el.closest ? el.closest('.home-scroll') : null;
+        if (sc2) {
+          if (r.bottom > safeBottom) sc2.scrollTop += (r.bottom - safeBottom);
+          else if (r.top < safeTop) sc2.scrollTop -= (safeTop - r.top);
+          r = el.getBoundingClientRect();
+        }
+      } catch (e) {}
+      /* 布局迟到（入场动画等）时再校一次；滚动已即时生效，通常为空跑 */
+      setTimeout(function () { if (mounted && idx === stepIdx) placeSpot(stepIdx); }, 260);
     }
 
     els.hole.style.display = '';
@@ -152,10 +168,8 @@
     /* 气泡定位：优先放洞下方，放不下放上方；上下都要避开顶部条与底部按钮区 */
     var tw = els.tip.offsetWidth;
     var th = els.tip.offsetHeight;
-    var barH = els.spotbar ? els.spotbar.offsetHeight : 48;
-    var footH = els.spotfoot ? els.spotfoot.offsetHeight : 90;
-    var usableTop = barH + 10;
-    var usableBottom = window.innerHeight - footH - 10;
+    var usableTop = safeTop;
+    var usableBottom = safeBottom;
     var spaceBelow = usableBottom - (r.bottom + pad);
     var top;
     if (spaceBelow >= th + 16) top = r.bottom + pad + 12;

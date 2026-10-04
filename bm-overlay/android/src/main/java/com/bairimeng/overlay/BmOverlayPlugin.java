@@ -481,19 +481,22 @@ public class BmOverlayPlugin extends Plugin {
                 eyeBtn.setImageResource(uiHidden ? R.drawable.bm_eye_closed : R.drawable.bm_eye_open);
             } catch (Throwable t) {}
         });
-        FrameLayout.LayoutParams eyeLp = new FrameLayout.LayoutParams(dp(34), dp(34));
+        // 20261004dg：34→40dp、右距 12→14dp、上距 10→12dp——同手柄，贴屏缘时保证可点
+        FrameLayout.LayoutParams eyeLp = new FrameLayout.LayoutParams(dp(40), dp(40));
         eyeLp.gravity = Gravity.TOP | Gravity.END;
-        eyeLp.topMargin = dp(10);
-        eyeLp.rightMargin = dp(12);
+        eyeLp.topMargin = dp(12);
+        eyeLp.rightMargin = dp(14);
         cardFixed.addView(eyeBtn, eyeLp);
         eyeBtn.setVisibility(View.GONE);
 
         // 右下角缩放手柄：拖拽等比缩放 0.5~1.15
-        TextView resizeHandle = circleTextBtn("⤢", dp(30), 0x66141019, 13, 0xFFB8A6FF);
-        FrameLayout.LayoutParams rhLp = new FrameLayout.LayoutParams(dp(30), dp(30));
+        // 20261004dg：30→38dp 且右/下距内移（10/12dp）——窗口贴屏缘（放大钳制后）时
+        // 手柄容易压在系统手势条/背手势区上，加大+内移保证摸得到、缩得回去
+        TextView resizeHandle = circleTextBtn("⤢", dp(38), 0x66141019, 15, 0xFFB8A6FF);
+        FrameLayout.LayoutParams rhLp = new FrameLayout.LayoutParams(dp(38), dp(38));
         rhLp.gravity = Gravity.BOTTOM | Gravity.END;
-        rhLp.bottomMargin = dp(8);
-        rhLp.rightMargin = dp(8);
+        rhLp.bottomMargin = dp(12);
+        rhLp.rightMargin = dp(10);
         cardFixed.addView(resizeHandle, rhLp);
         resizeHandle.setOnTouchListener(new View.OnTouchListener() {
             float sx = 0, sy = 0;
@@ -702,7 +705,10 @@ public class BmOverlayPlugin extends Plugin {
         } catch (Throwable t) {}
     }
 
-    /** 20261004df：把 2 号窗口右/下缘收回屏内（配合缩放修复，见 applyCardWindowSize 注释）。 */
+    /** 20261004df：把 2 号窗口右/下缘收回屏内（配合缩放修复，见 applyCardWindowSize 注释）。
+     *  20261004dg：补左/上缘（x/y ≥ 0）——拖动路径无钳制，把窗口拖出左/上屏后右上角
+     *  小眼睛会整颗跑出屏（点不到眼睛），与「放大后不能缩小」同类的可达性陷阱；
+     *  与 JS 版浮窗（6px 边距全窗钳回视口）行为对齐。 */
     private void clampCardWindowToScreen() {
         try {
             if (layoutParams == null) return;
@@ -715,6 +721,8 @@ public class BmOverlayPlugin extends Plugin {
             if (layoutParams.height > 0 && layoutParams.y + layoutParams.height > screenH) {
                 layoutParams.y = Math.max(0, screenH - layoutParams.height);
             }
+            if (layoutParams.x < 0) layoutParams.x = 0;
+            if (layoutParams.y < 0) layoutParams.y = 0;
         } catch (Throwable t) {}
     }
 
@@ -746,11 +754,14 @@ public class BmOverlayPlugin extends Plugin {
                             // 不经过 applyCardWindowSize 的钳制，用户把窗口拖到屏缘外时右下角
                             // 缩放手柄会跑出屏摸不到（"放大到最大就不能缩小"的另一半根因）。
                             // 每秒巡检出屏就拉回（只收右/下缘，不动拖放自由）。
+                            // 20261004dg：左/上缘一并检出（x<0/y<0 时眼睛不可达）。
                             boolean posOff = false;
                             try {
                                 android.util.DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
                                 posOff = layoutParams.x + layoutParams.width > dm.widthPixels
-                                        || layoutParams.y + layoutParams.height > dm.heightPixels;
+                                        || layoutParams.y + layoutParams.height > dm.heightPixels
+                                        || layoutParams.x < 0
+                                        || layoutParams.y < 0;
                             } catch (Throwable t2) {}
                             if (sizeOff || scaleOff || posOff) applyCardWindowSize(false);
                         }
