@@ -4446,7 +4446,9 @@ function bmConversationEnabled() {
 }
 
 /* 会话式通知出口：成功返回 true，任何异常/不可用/失败返回 false（触发 fallback）。
-   conversationId 用访客 id（同角色固定同 id → 原生按 conversationId.hashCode() 覆盖合并成一条会话）。 */
+   conversationId 用访客 id（同角色固定同 id → 原生按 conversationId.hashCode() 覆盖合并成一条会话）。
+   20261004dk-fix：补传角色头像 base64（data URL），原生 Person.setIcon 显示真实头像，
+   不再落灰人形；头像提取失败/非 base64 一律置空，绝不影响通知本体。 */
 async function bmConversationNotify(c, body, title) {
   try {
     const CN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmConversationNotify;
@@ -4454,8 +4456,22 @@ async function bmConversationNotify(c, body, title) {
     const cid = c ? String(c.id) : 'bm';
     const senderName = c ? (c.name || '访客') : '白日梦';
     const messageText = String(body == null ? '' : body).slice(0, 120);
+    // 头像：c.avatar 可能是 base64 data URL（字符串）或 Blob 对象；只有 base64 才传给原生
+    let avatar = '';
+    try {
+      if (c && c.avatar) {
+        if (typeof c.avatar === 'string' && c.avatar.startsWith('data:image/')) {
+          avatar = c.avatar;
+        } else if (c.avatar && typeof c.avatar === 'object' && c.avatar.blob) {
+          const u = imgSrc(c.avatar); // Blob -> objectURL；需转 base64 才能跨原生桥
+          if (u && u.startsWith('data:image/')) avatar = u;
+        }
+      }
+    } catch (e) { avatar = ''; }
+    const opts = { conversationId: cid, senderName, messageText };
+    if (avatar) opts.avatar = avatar;
     let ret = null;
-    try { ret = await CN.showConversation({ conversationId: cid, senderName, messageText }); }
+    try { ret = await CN.showConversation(opts); }
     catch (e) { return false; } // 调用异常 → fallback，不抛出
     return !!(ret && ret.ok === true);
   } catch (e) { return false; }

@@ -5,6 +5,8 @@ export interface ConversationOptions {
   senderName: string;
   /** 消息正文 */
   messageText: string;
+  /** 发送者头像 base64 data URL（可选；缺省用系统默认图标） */
+  avatar?: string;
 }
 
 export interface ConversationResult {

@@ -4,7 +4,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Build;
+import android.util.Base64;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -69,6 +72,7 @@ public class BmConversationNotifyPlugin extends Plugin {
             String conversationId = call.getString("conversationId", "test_role");
             String senderName = call.getString("senderName", "测试角色");
             String messageText = call.getString("messageText", "");
+            String avatar = call.getString("avatar", null); // 20261004dk-fix：可选头像 base64 data URL
             long timestamp = System.currentTimeMillis();
 
             if (conversationId == null || conversationId.isEmpty()) {
@@ -81,8 +85,8 @@ public class BmConversationNotifyPlugin extends Plugin {
             // 1. 建立通知渠道（Android 8.0+）
             ensureChannel();
 
-            // 2. 登记长期 shortcut，让系统识别同一会话
-            registerShortcut(conversationId, senderName);
+            // 2. 登记长期 shortcut，让系统识别同一会话（带头像则一并设置 icon）
+            registerShortcut(conversationId, senderName, avatar);
 
             // 3. 追加新消息到会话历史
             List<ConversationMessage> msgs = history.get(conversationId);
@@ -93,7 +97,7 @@ public class BmConversationNotifyPlugin extends Plugin {
             msgs.add(new ConversationMessage(messageText, timestamp, senderName));
 
             // 4. 构建会话式通知（MessagingStyle + Person）
-            Notification notification = buildConversationNotification(conversationId, senderName, msgs);
+            Notification notification = buildConversationNotification(conversationId, senderName, avatar, msgs);
 
             // 5. 固定通知 id = conversationId.hashCode()，同会话覆盖更新
             int notificationId = conversationId.hashCode();
@@ -128,30 +132,49 @@ public class BmConversationNotifyPlugin extends Plugin {
         }
     }
 
-    /** 登记长期 shortcut（conversationId 作 shortcutId） */
-    private void registerShortcut(String conversationId, String senderName) {
+    /** 把 base64 data URL（可能带 data:image/xxx;base64, 前缀）解码成 Bitmap；失败返回 null */
+    private Bitmap decodeAvatar(String avatar) {
+        if (avatar == null || avatar.isEmpty()) return null;
         try {
-            Person person = new Person.Builder().setName(senderName).build();
-            ShortcutInfoCompat shortcut = new ShortcutInfoCompat.Builder(getContext(), conversationId)
+            String base64 = avatar;
+            int comma = avatar.indexOf(',');
+            if (comma >= 0) base64 = avatar.substring(comma + 1); // 去掉 data:image/...;base64, 前缀
+            byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+            if (bytes == null || bytes.length == 0) return null;
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 登记长期 shortcut（conversationId 作 shortcutId；有头像则设置 icon） */
+    private void registerShortcut(String conversationId, String senderName, String avatar) {
+        try {
+            Bitmap icon = decodeAvatar(avatar);
+            Person.Builder pb = new Person.Builder().setName(senderName);
+            if (icon != null) pb.setIcon(IconCompat.createWithBitmap(icon));
+            Person person = pb.build();
+            ShortcutInfoCompat.Builder sb = new ShortcutInfoCompat.Builder(getContext(), conversationId)
                     .setLongLived(true)
                     .setPerson(person)
-                    .setShortLabel(senderName)
-                    .build();
-            boolean pushed = ShortcutManagerCompat.pushDynamicShortcut(getContext(), shortcut);
-            android.util.Log.i("BmConversation", "pushDynamicShortcut result=" + pushed + " id=" + conversationId);
+                    .setShortLabel(senderName);
+            if (icon != null) sb.setIcon(IconCompat.createWithBitmap(icon));
+            boolean pushed = ShortcutManagerCompat.pushDynamicShortcut(getContext(), sb.build());
+            android.util.Log.i("BmConversation", "pushDynamicShortcut result=" + pushed + " id=" + conversationId + " hasIcon=" + (icon != null));
         } catch (Throwable t) {
             android.util.Log.e("BmConversation", "registerShortcut failed: " + t.getMessage());
         }
     }
 
     /** 构建 MessagingStyle 会话通知 */
-    private Notification buildConversationNotification(String conversationId, String senderName, List<ConversationMessage> msgs) {
+    private Notification buildConversationNotification(String conversationId, String senderName, String avatar, List<ConversationMessage> msgs) {
         Context ctx = getContext();
 
-        // 发送者 Person（本探针固定用 senderName；角色头像暂用系统默认图标）
-        Person sender = new Person.Builder()
-                .setName(senderName)
-                .build();
+        // 发送者 Person（有头像则设 icon，否则系统默认图标）
+        Bitmap icon = decodeAvatar(avatar);
+        Person.Builder pb = new Person.Builder().setName(senderName);
+        if (icon != null) pb.setIcon(IconCompat.createWithBitmap(icon));
+        Person sender = pb.build();
 
         // MessagingStyle：conversationTitle = 会话标题（角色名）
         NotificationCompat.MessagingStyle style = new NotificationCompat.MessagingStyle(sender);
