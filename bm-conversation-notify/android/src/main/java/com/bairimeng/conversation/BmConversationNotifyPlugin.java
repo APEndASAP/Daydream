@@ -98,6 +98,10 @@ public class BmConversationNotifyPlugin extends Plugin {
                 history.put(conversationId, msgs);
             }
             msgs.add(new ConversationMessage(messageText, timestamp, senderName));
+            // 20261004dr：历史截断——每会话最多保留最近 10 条，防展开历史在通知栏无限堆积
+            while (msgs.size() > 10) {
+                msgs.remove(0);
+            }
 
             // 4. 构建会话式通知（MessagingStyle + Person）
             Notification notification = buildConversationNotification(conversationId, senderName, avatar, msgs);
@@ -109,6 +113,32 @@ public class BmConversationNotifyPlugin extends Plugin {
             JSObject ret = new JSObject();
             ret.put("ok", true);
             ret.put("notificationId", notificationId);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("ok", false);
+            ret.put("reason", String.valueOf(t.getMessage()));
+            call.resolve(ret);
+        }
+    }
+
+    /** 20261004dr：清空某会话的历史并撤掉托盘通知（玩家点进会话=已读）。
+     *  修复真机反馈「消息在通知栏里越堆越多/点进去不刷新」——此前 history 只 add 永不清理。 */
+    @PluginMethod
+    public void clearConversation(PluginCall call) {
+        try {
+            String conversationId = call.getString("conversationId", "");
+            if (conversationId == null || conversationId.isEmpty()) {
+                JSObject ret = new JSObject();
+                ret.put("ok", false);
+                ret.put("reason", "conversationId required");
+                call.resolve(ret);
+                return;
+            }
+            history.remove(conversationId);
+            NotificationManagerCompat.from(getContext()).cancel(conversationId.hashCode());
+            JSObject ret = new JSObject();
+            ret.put("ok", true);
             call.resolve(ret);
         } catch (Throwable t) {
             JSObject ret = new JSObject();

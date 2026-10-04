@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004dq'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004dr'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -1758,6 +1758,7 @@ async function openGroupChat(groupId) {
   buildPlusPanel(); // az：群聊模式重建 + 号面板（话题卡/群投票/成员选择弹窗）
   await renderGroupMessages(groupId);
   await setSetting('lastRead_group_' + groupId, Date.now());
+  bmClearConversationTray('group:' + groupId); // 20261004dr：点进群聊=已读 → 清托盘会话通知+插件历史
   renderGroupNotice(g); // az：群公告横幅
   renderChatList();
 }
@@ -1999,6 +2000,7 @@ async function putGroupMsg(g, member, text, extra = {}) {
   await idbPut('messages', m);
   if (currentGroupId === g.id && document.body.dataset.view === 'chat') {
     appendGroupMessage(m);
+    bmClearConversationTray('group:' + g.id); // 20261004dr：正盯着该群=已读 → 清托盘旧会话通知
   } else {
     renderChatList();
     const cs = getCharChatSettings(member);
@@ -2025,6 +2027,26 @@ function notifyGroupMention(g, member, m) {
   } catch (e) {}
 }
 const _grpChains = new Set(); // 正在接龙的群 id（防叠加：上一轮没结束不开启新一轮）
+/* 20261004dr：群成员「正在输入…」气泡——AI 生成+节奏等待期间的可见反馈（此前零反馈，
+   真机反馈「字卡模式下没反应/超级慢」的体感放大器）。复用单聊 typing 气泡结构。 */
+function showGroupTyping(g, member) {
+  try {
+    if (!g || !member) return;
+    if (currentGroupId !== g.id || document.body.dataset.view !== 'chat') return; // 不在该群页不显示
+    const old = document.getElementById('group-typing-indicator');
+    if (old) old.remove();
+    const el = document.createElement('div');
+    el.className = 'msg-row them';
+    el.id = 'group-typing-indicator';
+    const name = groupMemberName(g, member.id);
+    el.innerHTML = `${avatarHtml(member && member.avatar, name)}<div class="msg-body"><div class="group-speaker-name">${escapeHtml(name)}</div><div class="bubble typing"><span></span><span></span><span></span></div></div>`;
+    $('#chat-scroll').appendChild(el);
+    scrollToBottom();
+  } catch (e) {}
+}
+function hideGroupTyping() {
+  try { const t = document.getElementById('group-typing-indicator'); if (t) t.remove(); } catch (e) {}
+}
 function startGroupChain(g, opts = {}) {
   const rounds = Math.max(0, opts.rounds != null ? opts.rounds : effGroupRounds(g));
   let members = chainMembers(g);
@@ -2041,11 +2063,13 @@ function startGroupChain(g, opts = {}) {
   let i = 0;
   const step = async () => {
     try {
-      if (i >= total || !chatGroups.some(x => x.id === g.id)) { _grpChains.delete(g.id); return; }
+      if (i >= total || !chatGroups.some(x => x.id === g.id)) { _grpChains.delete(g.id); hideGroupTyping(); return; }
       const member = members[i % members.length];
       const roundIdx = Math.floor(i / members.length); // 当前轮次（0 起）
       const isFinal = (i === total - 1);
       const prevSpeakerId = g._lastSpeakerId;
+      // 20261004dr：该成员生成/等待期间显示「正在输入…」（字卡模式同样生效）
+      showGroupTyping(g, member);
       // 20260929bd：每个成员每轮随机发 1~3 条（抽到几条发几条），连发间隔 1.4~2.8s
       const count = 1 + randInt(0, 2);
       const res = await generateGroupReplyText(g, member, { isFinal, roundIdx, roundsTotal: rounds, source: opts.source || 'player', count });
@@ -2053,21 +2077,26 @@ function startGroupChain(g, opts = {}) {
       for (let k = 0; k < texts.length; k++) {
         if (k > 0) {
           await new Promise(r => setTimeout(r, randInt(1400, 2800)));
-          if (!chatGroups.some(x => x.id === g.id)) { _grpChains.delete(g.id); return; }
+          if (!chatGroups.some(x => x.id === g.id)) { _grpChains.delete(g.id); hideGroupTyping(); return; }
         }
+        if (k === 0) hideGroupTyping(); // 首条落地即撤「正在输入」，随后真实消息接上
         await putGroupMsg(g, member, texts[k]);
         if (k === 0) grpRecordInteraction(g, prevSpeakerId, member.id, texts[0]); // 关系网自动同步计数（AI 模式，仅首条计一次）
         g._lastSpeakerId = member.id;
       }
       i++;
-      if (i >= total) { _grpChains.delete(g.id); return; }
+      if (i >= total) { _grpChains.delete(g.id); hideGroupTyping(); return; }
       // 20260929ba：发言间隔统一用群回复节奏（字卡模式同样生效，不只 AI 模式）
+      // 20261004dr：手动生成轮专用快节奏 2~4s——默认 5~30s/条 + AI 延迟叠加被真机反馈「超级慢」
       const gs = getGroupChatSettings(g);
-      setTimeout(step, Math.max(1.2, randInt(gs.replyMin, gs.replyMax)) * 1000);
-    } catch (e) { _grpChains.delete(g.id); }
+      const gap = opts.source === 'manual' ? randInt(2, 4) : Math.max(1.2, randInt(gs.replyMin, gs.replyMax));
+      setTimeout(step, gap * 1000);
+    } catch (e) { _grpChains.delete(g.id); hideGroupTyping(); }
   };
   const gs0 = getGroupChatSettings(g);
-  setTimeout(step, Math.max(1.2, randInt(gs0.replyMin, gs0.replyMax)) * 1000);
+  // 20261004dr：手动轮首条不再吃 5~30s 群节奏，1~2s 内开始出字
+  const firstDelay = opts.source === 'manual' ? randInt(1, 2) : Math.max(1.2, randInt(gs0.replyMin, gs0.replyMax));
+  setTimeout(step, firstDelay * 1000);
 }
 
 /* 群聊回复文本：AI 模式 = 接龙式上下文（最近群消息喂给 AI，接上一条相关的话）；
@@ -2145,8 +2174,8 @@ async function generateGroupReplyText(g, member, opts = {}) {
       const parsed = parseAITags(rr.text);
       if (parsed.memo) aiPalStoreMemo(member.id, parsed.memo);
       if (wantN > 1) {
-        // 拆行 → 去行首序号 → 过滤空行，最多取 wantN 条；一条都没拆出来就回退单条
-        let arr = String(parsed.clean || '').split('\n').map(s => s.trim().replace(/^\d+[.、)）]\s*/, '')).filter(Boolean);
+        // 拆行 → 去行首序号（20261004dr：补全角：/半角: ——AI 输出「1：xxx」此前序号漏进消息和通知）→ 过滤空行，最多取 wantN 条；一条都没拆出来就回退单条
+        let arr = String(parsed.clean || '').split('\n').map(s => s.trim().replace(/^\d+[.、)）：:]\s*/, '')).filter(Boolean);
         if (!arr.length) return [card()];
         return arr.slice(0, wantN);
       }
@@ -2417,6 +2446,7 @@ async function openChat(charId) {
   await renderMessages(charId);
   // 标记已读：清除该访客未读数
   await setSetting('lastRead_' + charId, Date.now());
+  bmClearConversationTray(charId); // 20261004dr：点进单聊=已读 → 清托盘会话通知+插件历史
   renderChatList();
   // 20260929au：进入聊天页时，若该访客有挂起的超频动画/未读，播最后一条（惊喜优先）+ 清未读
   _ocOnEnterChat(c);
@@ -4276,9 +4306,13 @@ async function notifyGroupIncoming(g, member, content) {
     if ((g.mutedIds || []).includes(member.id)) return; // 该成员在群内被静音
     const ms = getCharChatSettings(member);
     if (ms && ms.muteNotifications) return;   // 成员级静音（与单聊一致）
-    const inChatView = document.body.dataset.view === 'chat';
-    // 正在盯着该群聊页且页面活跃 → 不打扰（与单聊一致的判断）
-    if (inChatView && !document.hidden && document.hasFocus()) return;
+    // 20261004dr：抑制条件收紧为「正在看『这个』群」——此前只要人在任意聊天页（哪怕是别的
+    // 会话），所有群通知全被静音，真机表现为「一会儿提醒一会不提醒」。看别的会话/列表/主页 → 正常提醒。
+    const inThisChat = currentGroupId === g.id && document.body.dataset.view === 'chat';
+    if (inThisChat && !document.hidden && document.hasFocus()) {
+      bmClearConversationTray('group:' + g.id); // 正盯着该群=已读 → 托盘旧会话通知顺手清掉
+      return;
+    }
 
     const gname = g.name || '群聊';
     const who = groupMemberName(g, member.id);
@@ -4364,16 +4398,31 @@ async function bmNativeGroupNotify(LN, g, member, bodyText) {
   } catch (e) {}
 }
 
+/* 20261004dr：清掉某会话的托盘通知 + 插件内历史（用户点进会话=已读）。
+   修复真机反馈「消息在通知栏里越堆越多/点进去不刷新」——此前插件 history 只 add 永不清理，
+   打开聊天页也没人撤通知。网页端无插件 = 静默跳过，绝不影响任何现有逻辑。 */
+async function bmClearConversationTray(cid) {
+  try {
+    if (!cid) return;
+    const CN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmConversationNotify;
+    if (CN && typeof CN.clearConversation === 'function') {
+      await CN.clearConversation({ conversationId: String(cid) });
+    }
+  } catch (e) {}
+}
+
 function notifyIncoming(c, body, title, kind = 'msg') {
   try {
     if (chatSettings.notifySystem === false) return;
     const cs = c ? getCharChatSettings(c) : null;
     if (cs && cs.muteNotifications) return;
-    const inChatView = document.body.dataset.view === 'chat';
-    // 正在盯着聊天页、且页面没挂后台/没失焦 → 不打扰（QQ/微信也是盯着聊天窗不弹）。
-    // 挂后台（document.hidden）或失焦（!hasFocus）时仍要弹——这是后台提醒的核心。
-    // 用 document.hidden 作主判据（无头/移动端 hasFocus 不可靠），hasFocus 仅作辅助。
-    if (inChatView && !document.hidden && document.hasFocus()) return;
+    // 20261004dr：与群聊同步收紧——只在本会话正在看时静音；看别的会话/列表/主页照常提醒
+    // （此前 view==='chat' 全量静音，真机「一会儿提醒一会不提醒」的另一半根因）
+    const inThisChat = c && currentCharId === c.id && document.body.dataset.view === 'chat';
+    if (inThisChat && !document.hidden && document.hasFocus()) {
+      bmClearConversationTray(c.id); // 正盯着该会话=已读 → 托盘旧会话通知顺手清掉
+      return;
+    }
     // 20261001ci：APK 端走 @capacitor/local-notifications——WebView 里 Web Notification
     // 形同虚设（无权限概念、授权后也可能不显示），必须走原生本地通知才会在系统通知栏留记录
     const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
@@ -4667,6 +4716,14 @@ function bmSetBgState(hidden) {
     deliverDueLetterReplies().catch(() => {});
     bmBgTick().catch(() => {});
     bmClearDeliveredAlarms().catch(() => {}); // 已送达/已过点的托盘通知清掉（用户已回来=已读）
+    // 20261004dr：回前台重渲染当前聊天页——修真机「点通知进来，消息不刷新」
+    // （后台冻结期间送达/追加的消息，WebView 恢复后 DOM 可能停留在旧状态）
+    try {
+      if (document.body.dataset.view === 'chat') {
+        if (currentGroupId) renderGroupMessages(currentGroupId);
+        else if (currentCharId) renderMessages(currentCharId);
+      }
+    } catch (e) {}
   }
 }
 
@@ -18745,7 +18802,7 @@ function markGroupBgChatWindow(groupId) {
 async function groupAutoChatTick() {
   try {
     if (bmIsBg()) return; // 20261002ca：挂后台全停（AI 生成+渲染都是耗电大头，省电红线）
-    if (!(await isAIMode())) return; // 字卡模式不自主聊天
+    // 20261004dr：去掉字卡模式拦截——用户要求字卡和 AI 模式通用（字卡生成零成本，自主聊天同样生效）
     const now = Date.now();
     for (const g of chatGroups) {
       if (currentGroupId === g.id && document.body.dataset.view === 'chat') continue; // 玩家正在该群聊
@@ -18753,6 +18810,9 @@ async function groupAutoChatTick() {
       if (now >= until) continue; // 无有效窗口（未开启 / 未退出过页面 / 已超 20 分钟）
       if (_grpChains.has(g.id)) continue;
       g._bgChatUntil = 0; // 窗口内只触发一次，聊完即止
+      // 20261004dr：修复 gs 未定义 ReferenceError——此前每次自主聊天触发都在此处抛错被 catch 吞掉，
+      // 20 分钟窗口被白白消耗，退出群聊后成员永远不会自主发言（真机反馈「退出之后不提醒」的根因）
+      const gs = getGroupChatSettings(g);
       startGroupChain(g, { rounds: Math.min(5, Math.max(1, gs.bgRounds ?? 1)), source: 'auto' });
     }
   } catch (e) {}
