@@ -124,9 +124,6 @@ public class BmConversationNotifyPlugin extends Plugin {
                 if (ch == null) {
                     ch = new NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH);
                     ch.setDescription("白日梦会话式通知探针测试渠道");
-                    ch.enableVibration(true);
-                    ch.setShowBadge(true);
-                    ch.enableLights(true);
                     nm.createNotificationChannel(ch);
                 }
             }
