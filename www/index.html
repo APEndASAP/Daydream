@@ -40,7 +40,7 @@
           || location.protocol === 'capacitor:';
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=20261004dg' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=20261004dh' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -54,13 +54,13 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261004dg'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=20261004dh'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=20261004dg">
+  <link rel="stylesheet" href="css/style.css?v=20261004dh">
 </head>
 <body>
   <div id="app">
@@ -299,14 +299,14 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=20261004dg"></script>
-  <script src="js/db.js?v=20261004dg"></script>
-  <script src="js/icons.js?v=20261004dg"></script>
-  <script src="js/emoji-img.js?v=20261004dg"></script>
-  <script src="js/cards.js?v=20261004dg"></script>
-  <script src="js/app.js?v=20261004dg"></script>
+  <script src="js/splash.js?v=20261004dh"></script>
+  <script src="js/db.js?v=20261004dh"></script>
+  <script src="js/icons.js?v=20261004dh"></script>
+  <script src="js/emoji-img.js?v=20261004dh"></script>
+  <script src="js/cards.js?v=20261004dh"></script>
+  <script src="js/app.js?v=20261004dh"></script>
   <!-- 20261002ch：新手引导（沙盒隔离：独立 js/css，动态创建全屏 overlay，不碰核心代码与 DOM 结构，
        一键「开始探索/跳过新手指引」后彻底移除并 localStorage 记录永不再弹） -->
-  <script src="js/guide-sandbox.js?v=20261004dg"></script>
+  <script src="js/guide-sandbox.js?v=20261004dh"></script>
 </body>
 </html>

@@ -686,13 +686,31 @@ public class BmOverlayPlugin extends Plugin {
     private void applyCardWindowSize(boolean repost) {
         try {
             if (overlayRoot == null || layoutParams == null || windowManager == null || cardFixed == null) return;
-            layoutParams.width = (int) (cardNaturalW * cardScale);
-            layoutParams.height = (int) (cardNaturalH * cardScale);
+            int w = (int) (cardNaturalW * cardScale);
+            int h = (int) (cardNaturalH * cardScale);
+            layoutParams.width = w;
+            layoutParams.height = h;
             // 20261004df：放大到最大（1.15 倍）后不能缩小的修复——窗口带 FLAG_LAYOUT_NO_LIMITS
             // 允许越出屏幕，用户把窗口拖到屏幕边缘附近再放大时，右下角的缩放手柄会整体或
             // 大部跑出屏外，摸不到手柄就「不能缩小」。每次窗口尺寸更新前把 x/y 钳回屏内
             // （只收右/下缘，不动用户拖放的自由）。
             clampCardWindowToScreen();
+            // 20261004dh：放大到最大后眼睛/手柄点不到的真正根因——cardFixed 用 setScaleX/Y
+            // 视觉放大（pivot=左上角），但父容器 cardHost 的**布局尺寸**始终是 cardNaturalW×H
+            // （296×344），从未跟随放大。眼睛(TOP|END)/手柄(BOTTOM|END) 视觉上被 scale 推到
+            // natural×scale 的右/下边缘，即落在 cardHost 布局边界之外；而 ViewGroup 触摸分发
+            // （isTransformedTouchPointInView）按**布局边界**判断，落在边界外的触摸点根本不分发
+            // 下去 → 眼睛/手柄视觉可见却点不到（挂断/切换按钮在 cardUi 内、位于布局边界内故正常，
+            // 与实测症状完全吻合）。修复 = 同步把 cardHost 布局尺寸放大到 natural×scale，
+            // 让触摸分发边界与视觉边界对齐（cardFixed 布局保持 natural + setScaleX/Y 不变，
+            // 视觉正好铺满放大后的 cardHost，等比缩放效果不变）。
+            if (cardHost != null) {
+                FrameLayout.LayoutParams hostLp = (FrameLayout.LayoutParams) cardHost.getLayoutParams();
+                if (hostLp == null) hostLp = new FrameLayout.LayoutParams(w, h);
+                hostLp.width = w;
+                hostLp.height = h;
+                cardHost.setLayoutParams(hostLp);
+            }
             cardFixed.setScaleX(cardScale);
             cardFixed.setScaleY(cardScale);
             windowManager.updateViewLayout(overlayRoot, layoutParams);
