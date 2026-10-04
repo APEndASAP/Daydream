@@ -1350,6 +1350,18 @@ select.input option:checked { color: #fff; }
 }
 .msg-recalled:active { background: var(--card); }
 
+/* 20261004dd：撤回消息提醒在浅色预设 + 自定义深色背景时几乎隐形（用户实测图：灰字+暗晕
+   贴在深背景上整行看不清）。按用户要求只做贴合文字形状的小垫底（不要大气泡）——
+   .msg-recalled 本身 width:fit-content + margin:auto 居中，垫底天然紧贴文字不会撑开；
+   白底 + 深灰字，深背景上清晰、浅背景上不突兀；深色主题不动（深底浅字本就可见）。
+   特异性 (0,2,1) 覆盖基础块的 color/text-shadow。 */
+body.theme-light .msg-recalled {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.5);
+  padding: 2px 10px;
+  text-shadow: none;
+}
+
 /* 20260929ah：聊天导航页灰字（消息预览/分组名）加灰色阴影，浅色背景下更清晰
    20261004：单层 0.22 在浅色背景下仍不够（用户实测反馈）——加强为双层暗晕，
    灰字无论叠在浅背景还是深背景都有足够对比 */
@@ -1358,17 +1370,19 @@ select.input option:checked { color: #fff; }
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 8px rgba(0, 0, 0, 0.20);
 }
 
-/* 20261004dc：浅色预设 + 自定义深色背景时，聊天导航页分组头小字完全不可见（用户实测图 6/图 7，
-   普通与玻璃拟态模式都是）——上轮的深色暗晕在深背景上反而更看不清。
-   浅色主题下给分组头文字/全选徽章加白胶囊底：深背景上白底深字清晰，浅背景上白底也不突兀，
-   不依赖背景图深浅；深色主题不动（深底浅字本就可见）；箭头 ▸/▾ 保持裸字符不加胶囊。
-   text-shadow:none 抵消上面的暗晕（白底上会显脏）。inline color 需 !important 才能覆盖。 */
+/* 20261004dc：浅色预设 + 自定义深色背景时，聊天导航页分组头小字完全不可见（用户实测图 6/图 7），
+   需要垫底而非裸文字/暗晕。20261004dd 按用户要求重做：上轮 999px 大白胶囊被否（「丑到爆炸的
+   大气泡」）——根因是内容 span 带 inline flex:1 撑满整行，垫底跟着拉成整行大气泡。
+   改为贴合图标/文字形状的小垫底：去掉 flex 拉伸与投影，垫底紧贴内容本身（小内边距 + 小圆角）；
+   深背景上白底深字清晰，浅背景上白底不突兀；箭头 ▸/▾ 保持裸字符；深色主题不动。
+   inline color / inline flex:1 均需 !important 才能覆盖。 */
 body.theme-light .char-group-head > span:not(.cg-arrow) {
+  flex: 0 1 auto !important;
+  width: fit-content;
   color: var(--text-secondary) !important;
-  background: rgba(255, 255, 255, 0.62);
-  border-radius: 999px;
-  padding: 4px 12px;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+  padding: 2px 8px;
   text-shadow: none;
 }
 

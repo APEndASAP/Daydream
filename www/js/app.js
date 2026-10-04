@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004dc'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004df'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -7172,6 +7172,20 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
   };
 
   _callActive = { c, kind, msg, sec, timer, answered, incoming, endCall };
+  // 20261004df：恢复上次更换的通话背景——_callActive.bg 是纯内存字段，挂断即随对象清空，
+  // 背景从未落库导致每通电话都要重新上传（用户反馈"很麻烦"）。这里从 kv 异步补挂：
+  // 用户本次没手动换过背景（_callActive.bg 为空）且 kv 有记录才生效；视频通话界面已渲染时
+  // 同步刷新背景层。异步完成不阻塞通话创建。
+  try {
+    getSetting('callBgImage').then((v) => {
+      try {
+        if (_callActive && !_callActive.bg && v) {
+          _callActive.bg = v;
+          if (kind === 'video') updateCallBg(v);
+        }
+      } catch (e2) {}
+    }).catch(() => {});
+  } catch (e) {}
 
   // 来电接听/拒绝（直接绑定 + 事件委托兜底，acted 防止两条路径重复触发）
   let acted = false;
@@ -7221,6 +7235,9 @@ function rebindFullCall(c, kind, msg, state) {
       const cropped = await openImageCropper(file, { aspect: document.documentElement.clientWidth / Math.max(1, document.documentElement.clientHeight) });
       if (!cropped) return;
       if (_callActive) _callActive.bg = cropped;
+      // 20261004df：更换的通话背景持久化（kv）——_callActive 是纯内存对象，挂断即清空，
+      // 背景从未落库导致每次通话都要重新上传（用户反馈"很麻烦"）。存 kv 后新通话自动恢复。
+      try { await setSetting('callBgImage', cropped); } catch (e) {}
       updateCallBg(cropped);
       miniToast('通话背景已更新');
     };
@@ -7422,6 +7439,9 @@ function backToFullCall(c, kind) {
       const cropped = await openImageCropper(file, { aspect: document.documentElement.clientWidth / Math.max(1, document.documentElement.clientHeight) });
       if (!cropped) return;
       if (_callActive) _callActive.bg = cropped;
+      // 20261004df：更换的通话背景持久化（kv）——_callActive 是纯内存对象，挂断即清空，
+      // 背景从未落库导致每次通话都要重新上传（用户反馈"很麻烦"）。存 kv 后新通话自动恢复。
+      try { await setSetting('callBgImage', cropped); } catch (e) {}
       updateCallBg(cropped);
       miniToast('通话背景已更新');
     };
@@ -7836,6 +7856,18 @@ function openGroupCallScreen(g, members, kind, msg) {
     if (currentGroupId === msg.groupId && document.body.dataset.view === 'chat') await renderGroupMessages(msg.groupId);
   };
   _callActive = { g, kind, msg, sec, timer, answered: true, incoming: false, endCall, group: true, members };
+  // 20261004df：群聊通话同样补挂上次更换的背景（与单聊共用 callBgImage 键；updateCallBg
+  // 对群聊界面无对应元素时是 no-op，安全）
+  try {
+    getSetting('callBgImage').then((v) => {
+      try {
+        if (_callActive && !_callActive.bg && v) {
+          _callActive.bg = v;
+          if (kind === 'video') updateCallBg(v);
+        }
+      } catch (e2) {}
+    }).catch(() => {});
+  } catch (e) {}
   const hangup = $('#call-hangup');
   if (hangup) hangup.onclick = () => { endCall(); };
 }

@@ -685,6 +685,11 @@ public class BmOverlayPlugin extends Plugin {
             if (overlayRoot == null || layoutParams == null || windowManager == null || cardFixed == null) return;
             layoutParams.width = (int) (cardNaturalW * cardScale);
             layoutParams.height = (int) (cardNaturalH * cardScale);
+            // 20261004df：放大到最大（1.15 倍）后不能缩小的修复——窗口带 FLAG_LAYOUT_NO_LIMITS
+            // 允许越出屏幕，用户把窗口拖到屏幕边缘附近再放大时，右下角的缩放手柄会整体或
+            // 大部跑出屏外，摸不到手柄就「不能缩小」。每次窗口尺寸更新前把 x/y 钳回屏内
+            // （只收右/下缘，不动用户拖放的自由）。
+            clampCardWindowToScreen();
             cardFixed.setScaleX(cardScale);
             cardFixed.setScaleY(cardScale);
             windowManager.updateViewLayout(overlayRoot, layoutParams);
@@ -693,6 +698,22 @@ public class BmOverlayPlugin extends Plugin {
                 rootRef.post(() -> {
                     try { if (form == 2) applyCardWindowSize(false); } catch (Throwable t) {}
                 });
+            }
+        } catch (Throwable t) {}
+    }
+
+    /** 20261004df：把 2 号窗口右/下缘收回屏内（配合缩放修复，见 applyCardWindowSize 注释）。 */
+    private void clampCardWindowToScreen() {
+        try {
+            if (layoutParams == null) return;
+            android.util.DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
+            int screenW = dm.widthPixels;
+            int screenH = dm.heightPixels;
+            if (layoutParams.width > 0 && layoutParams.x + layoutParams.width > screenW) {
+                layoutParams.x = Math.max(0, screenW - layoutParams.width);
+            }
+            if (layoutParams.height > 0 && layoutParams.y + layoutParams.height > screenH) {
+                layoutParams.y = Math.max(0, screenH - layoutParams.height);
             }
         } catch (Throwable t) {}
     }
@@ -721,7 +742,17 @@ public class BmOverlayPlugin extends Plugin {
                             boolean sizeOff = layoutParams.width != wantW || layoutParams.height != wantH;
                             boolean scaleOff = Math.abs(cardFixed.getScaleX() - cardScale) > 0.001f
                                     || Math.abs(cardFixed.getScaleY() - cardScale) > 0.001f;
-                            if (sizeOff || scaleOff) applyCardWindowSize(false);
+                            // 20261004df：出屏自愈——拖动路径（onTouch MOVE 直接 updateViewLayout）
+                            // 不经过 applyCardWindowSize 的钳制，用户把窗口拖到屏缘外时右下角
+                            // 缩放手柄会跑出屏摸不到（"放大到最大就不能缩小"的另一半根因）。
+                            // 每秒巡检出屏就拉回（只收右/下缘，不动拖放自由）。
+                            boolean posOff = false;
+                            try {
+                                android.util.DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
+                                posOff = layoutParams.x + layoutParams.width > dm.widthPixels
+                                        || layoutParams.y + layoutParams.height > dm.heightPixels;
+                            } catch (Throwable t2) {}
+                            if (sizeOff || scaleOff || posOff) applyCardWindowSize(false);
                         }
                     } catch (Throwable t) {}
                     if (tickHandler != null) tickHandler.postDelayed(this, 1000);
