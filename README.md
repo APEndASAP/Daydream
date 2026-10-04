@@ -2,7 +2,7 @@
 
 一款「聊天 + 朋友圈」形态的**角色陪伴应用**。你可以添加自己的梦角（虚拟角色 / 原创 OC），和它们聊天、发朋友圈、模拟通话、占卜、记录纪念日与日记，并自由定制大量美化内容。
 
-> 当前版本：`v=20261005ds` · 纯前端 · 单机优先 · 数据全部本地存储
+> 当前版本：`v=20261005du` · 纯前端 · 单机优先 · 数据全部本地存储
 
 ---
 
@@ -114,6 +114,7 @@ python -m http.server 8901
 
 | 版本 | 主要内容 |
 | --- | --- |
+| `20261005du` | **朋友圈互动增强**：① 分享朋友圈给角色后，AI 上下文由 `shareMsgAIText` 注入**作者/作者标识/发布时间/内容/配图数/朋友圈标识**完整描述（单聊 `buildCharAIContext` + 群聊 `generateGroupReplyText` 都走它），不再是「有人分享了一条」；`sharePostToChar/Group` 的 content 补 `postId/authorId/authorType`。② **自动点赞评论**：`parseAITags` 新增 `[[LIKE:标识]]`（兼容原编号）+ `[[COMMENT:标识:内容]]`；新增 `aiLikeMomentById`/`aiCommentMoment` 按标识精确点赞评论（同角色同内容防重、自动场景同角色已评论不追加）；`momentBriefForAI` 每行带 `[标识:xxx]`。③ **玩家主动要求点赞并评论**：隐藏指令第 5 条「点赞并回复→双动作缺一不可」。④ **跨角色分享**：B 收到 A 的帖知道作者是 A（authorId/authorName/postId）。⑤ **陌生角色认知流程**：`palKnowsChar` 判关系网+记忆宫殿（只读，绝不写 peerRelations）；B 不认识 A 时第一次自然询问「是谁」；玩家解释后系统直接存「认识的人」记忆（`meetWho` 标记，`aiPalStoreMeetMemo`），再次遇到从记忆读取不再询问。⑥ 执行层 MEMO/点赞/评论全改 `await` 消除 fire-and-forget 竞态。只改 js/app.js，未碰数据库结构/关系网系统/聊天生成核心/通知系统/主动消息系统。 |
 | `20261005ds` | **群聊后台自主聊天最小修复（挂后台收不到通知的根因）**：`groupAutoChatTick` 首行 `if (bmIsBg()) return;` 导致挂后台群聊完全停摆（叠加 `bmSetBgState(true)` 停 20s 定时器，后台一条消息都不生成）。修复：① 去掉 `groupAutoChatTick` 的 bmIsBg 拦截；② `bmBgTick`（后台 60s 低频调度）末尾加 `groupAutoChatTick()` 调用——复用现有低频调度、不新增高频 timer；③ 顺手修正过时注释。只改 js/app.js，未碰单聊主动消息逻辑 / bmRegisterAlarm / bmClearAlarm / 通知插件 / 数据库 / 聊天生成核心 / 生命周期。 |
 | `20261004dr` | **群聊通知/速度七项修复（dq 真机反馈）**：① **后台自主聊天从未跑过**——`groupAutoChatTick` 引用未定义的 `gs` 每次 ReferenceError 被 catch 吞掉、20 分钟窗口被白白消耗（「退出之后角色不说话不提醒」的根因），补 `getGroupChatSettings(g)`；同时删掉字卡模式拦截（用户要求字卡/AI 通用）。② **通知抑制条件收紧**——`notifyGroupIncoming`/`notifyIncoming` 从「人在任意聊天页就全量静音」改为「正在看『这个』会话才静音」（群 `currentGroupId===g.id`、单聊 `currentCharId===c.id`），修「一会儿提醒一会不提醒」；正盯着会话时顺手清托盘旧通知。③ **通知栏越堆越多/点进去不刷新**——插件新增 `clearConversation(conversationId)`（清 history+撤托盘通知）+ 每会话历史截断最近 10 条；JS 打开群聊/单聊时清对应会话、回前台重渲染当前聊天页。④ **手动生成轮提速**——「生成一轮回复」不再吃群设置默认 5~30s/条节奏，首条 1~2s、成员间 2~4s。⑤ **群成员「正在输入…」气泡**（`showGroupTyping/hideGroupTyping`，复用单聊 typing 结构，AI/字卡都显示）。⑥ **AI 连发去序号正则补全角：/半角:**（修「1：」「2：」泄漏进消息和通知）。⑦ 群通知头像：JS 传头像链路与单聊一致，群未设头像时落默认人形（真机复核）。改 js/app.js + BmConversationNotifyPlugin.java，未碰消息结构/数据库/merge/each/bmClearAlarm/bmRegisterAlarm。 |
 | `20261004dq` | **群聊通知专项第一阶段（独立群聊通知通道，纯 JS）**：群消息不再复用单聊 `notifyIncoming`（此前把每个发言成员当独立访客，conversationId 用 member.id，导致「同一群不同成员发消息产生多条会话通知」、且无法显示「哪个群里的谁发了什么」）。新增 `notifyGroupIncoming(g, member, content)` + `bmConversationGroupNotify` + `bmNativeGroupNotify` 三函数：标题=群名 `g.name`、正文=「成员名：内容」、会话式 `conversationId='group:'+g.id`（同群所有消息归并成同一条会话通知，折叠最新/展开历史）。`putGroupMsg` 通知调用点改走新通道；群静音用 `g.mutedIds`（成员级）+ `getCharChatSettings(member).muteNotifications` 判断。只改 js/app.js，未动插件 Java（插件 `showConversation` 的 `senderName` 兼作标题，用 `senderName=群名` 即可让标题显示群名）、未改单聊通知/merge/each/bmNotifIdFor/bmClearAlarm/bmRegisterAlarm。展开后各成员独立头像属第二阶段（MessagingStyle 多 Person 重构）。 |

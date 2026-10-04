@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261005ds'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261005du'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -2124,7 +2124,7 @@ async function generateGroupReplyText(g, member, opts = {}) {
     const all = await idbGetAll('messages');
     const recent = all.filter(m => m.groupId === g.id).sort((a, b) => a.time - b.time).slice(-12);
     // 20260929bb：话题卡/投票把实际内容喂给 AI；20261001ci：统一走全局 msgBodyText（图片/表情包/红包等可读描述）
-    const cardBody = (m) => msgBodyText(m);
+    const cardBody = (m) => (m && m.type === 'share') ? shareMsgAIText(m) : msgBodyText(m); // 20261005du：分享的朋友圈转完整描述
     const lines = recent.map(m => {
       const who = m.from === 'me' ? (playerProfile.name || '我') : groupMemberName(g, m.charId);
       return `${who}：${cardBody(m)}`;
@@ -2132,7 +2132,10 @@ async function generateGroupReplyText(g, member, opts = {}) {
     const src = opts.source || 'player';
     const roundIdx = opts.roundIdx || 0;
     let stance = '';
-    if (src === 'player') {
+    if (src === 'share') {
+      // 20261005du：玩家往群里分享了一条朋友圈——成员按各自人设对这条动态自然反应
+      stance = '玩家刚在群里分享了一条朋友圈（见最近记录里的「[分享的朋友圈]」，里面有作者和内容）：请以该成员身份对这条动态做出自然的反应（可以夸、吐槽、好奇提问），像在朋友圈底下评论一样口语化。';
+    } else if (src === 'player') {
       if (opts.isFinal) {
         stance = '这条是本轮收尾：请在结尾自然地 @ 玩家（用「@」加对玩家的称呼），邀请 TA 说两句。';
       } else if (roundIdx === 0) {
@@ -2172,7 +2175,13 @@ async function generateGroupReplyText(g, member, opts = {}) {
     }
     if (rr.ok && rr.text) {
       const parsed = parseAITags(rr.text);
-      if (parsed.memo) aiPalStoreMemo(member.id, parsed.memo);
+      if (parsed.memo) await aiPalStoreMemo(member.id, parsed.memo);
+      // 20261005du：群成员万一输出点赞/评论标识指令，同样执行（防重与单聊一致）
+      if (parsed.likes && parsed.likes.length) await aiLikeMomentByIndex(member.id, parsed.likes);
+      if (parsed.likeIds && parsed.likeIds.length) await aiLikeMomentById(member.id, parsed.likeIds);
+      if (parsed.comments && parsed.comments.length) {
+        for (const cm of parsed.comments) await aiCommentMoment(member.id, cm.ref, cm.text);
+      }
       if (wantN > 1) {
         // 拆行 → 去行首序号（20261004dr：补全角：/半角: ——AI 输出「1：xxx」此前序号漏进消息和通知）→ 过滤空行，最多取 wantN 条；一条都没拆出来就回退单条
         let arr = String(parsed.clean || '').split('\n').map(s => s.trim().replace(/^\d+[.、)）：:]\s*/, '')).filter(Boolean);
@@ -3267,6 +3276,8 @@ async function sendMessage(text) {
   palAutoCollectMaybe(currentCharId, null); // 记忆宫殿：系统随机收藏（每线程每天至多 1 次，细则四）
   // 20261001cn：日程+闹钟自动检测（字卡/AI 通用，系统本地检测，不阻塞角色回复）
   try { maybeDetectScheduleReminder(currentCharId, trimmed); } catch (e) {}
+  // 20261005dt：日程「记录类」旁路检测（日期+记录动作，缺时间默认09:00，不改已有提醒逻辑）
+  try { maybeDetectScheduleRecord(currentCharId, trimmed); } catch (e) {}
   // 20261002ch：重要日期检测（字卡模式本地兜底，AI 模式走 [[ANNIV:]] 标签）
   try { maybeDetectImportantDate(currentCharId, trimmed); } catch (e) {}
 
@@ -4869,6 +4880,11 @@ try {
 
 const BM_SCHED_INTENT_RE = /(提醒我|提醒一下|提醒我一下|叫醒我|叫我|喊我|喊醒我|定个?闹钟|设个?闹钟|上个?闹钟|闹铃|闹钟提醒|别让我忘|别忘了|记得提醒|记得叫我)/;
 const BM_SCHED_NEG_RE = /(不用提醒|别提醒|不要提醒|不需要提醒|不用叫|别叫我|不用闹钟|取消提醒|取消闹钟|别设闹钟|不用定闹钟)/;
+/* 20261005dt：日程「记录类」意图（旁路，不复用提醒语气词）。记录动作词——「记录/记一下/记下来/写下/写一下/
+   添加/加上/存一下/记个」等明确「动作」，单独出现不构成触发，必须叠加日期信息 + 记录动作双闸门。 */
+const BM_SCHED_RECORD_RE = /(记录|记一下|记下来|记个|写下|写一下|写下来|添加|加上|存一下|存个|备注|备忘|待办|记事|记入|登记)/;
+/* 20261005dt：记录类否定词（「不用记/别记/不记录」等 → 不触发） */
+const BM_SCHED_RECORD_NEG_RE = /(不用记|别记|不要记|不记录|不用写|别写|不用存|别存|不记)/;
 const BM_SCHED_KV = 'bmScheduleReminders'; // kv 键：行程记录（防重 + 网页端到点调度）
 
 async function bmLoadSchedules() {
@@ -4904,6 +4920,99 @@ function bmFormatCNTime(ts) {
       : (d.getMonth() + 1) + '月' + d.getDate() + '日';
     return dayTxt + '（周' + wd + '）' + hh + ':' + mm;
   } catch (e) { return String(ts); }
+}
+
+/* 20261005dt：只解析「日期」（不要求时刻）——记录类日程只需日期即可触发，缺时刻时默认 09:00。
+   返回 { y, mo, day, hasDate, rollMode, dateText }；无任何日期信息返回 null。 */
+function bmExtractScheduleDate(text, now) {
+  const s = String(text || '');
+  now = now || Date.now();
+  const base = new Date(now);
+  let y = base.getFullYear(), mo = base.getMonth(), day = base.getDate();
+  let hasDate = false, rollMode = '';   // rollMode: 'month'=单「X号」已过滚下月 / 'year'=「X月X日」已过滚明年
+  let dateText = '';
+  let m;
+  if ((m = s.match(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/))) {
+    y = +m[1]; mo = +m[2] - 1; day = +m[3]; hasDate = true; dateText = m[0];
+  } else if ((m = s.match(/(\d{1,2})月(\d{1,2})[日号]/))) {
+    mo = +m[1] - 1; day = +m[2]; hasDate = true; rollMode = 'year'; dateText = m[0];
+  } else if ((m = s.match(/大后天|后天|明天|明早|明晚|明儿|今晚|今早|今天|今日/))) {
+    hasDate = true; dateText = m[0];
+  } else if ((m = s.match(/(下下|下|这|本)?个?(?:周|星期)([一二三四五六日天])/))) {
+    hasDate = true; dateText = m[0];
+  } else if ((m = s.match(/(\d{1,2})[日号](?!\d)/))) {
+    day = +m[1]; hasDate = true; rollMode = 'month'; dateText = m[0];
+  }
+  if (!hasDate) return null;
+  return { y, mo, day, hasDate, rollMode, dateText };
+}
+
+/* 20261005dt：把日期信息 + 可选的时刻组装成时间戳。timeSpecified=是否用户明确给了时刻；
+   未给时刻时用默认 09:00 并标记 timeEstimated。返回 { at, timeEstimated }。 */
+function bmBuildScheduleAt(dateInfo, text, now) {
+  const s = String(text || '');
+  now = now || Date.now();
+  const base = new Date(now);
+  let { y, mo, day, hasDate, rollMode, dateText } = dateInfo;
+  // 相对日期（明天/后天/下周三等）→ 复用 bmParseCNDateTime 的日期偏移逻辑：先算出基准日
+  let dateOff = 0;
+  if (!/(\d{1,2})月|(\d{4})年|(\d{1,2})[日号]/.test(dateText)) {
+    if (/大后天/.test(dateText)) dateOff = 3;
+    else if (/后天/.test(dateText)) dateOff = 2;
+    else if (/明天|明早|明晚|明儿/.test(dateText)) dateOff = 1;
+    else if (/今晚|今早|今天|今日/.test(dateText)) dateOff = 0;
+    else {
+      const wm = dateText.match(/(下下|下|这|本)?个?(?:周|星期)([一二三四五六日天])/);
+      if (wm) {
+        const map = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+        const want = map[wm[2]];
+        if (wm[1] === '下' || wm[1] === '下下') {
+          const monOff = (base.getDay() + 6) % 7, wantIdx = (want + 6) % 7;
+          dateOff = 7 - monOff + wantIdx;
+          if (wm[1] === '下下') dateOff += 14;
+        } else {
+          let off = (want - base.getDay() + 7) % 7; if (off === 0) off = 7;
+          dateOff = off;
+        }
+      }
+    }
+  }
+  // 时刻：有则用用户时间，无则默认 09:00
+  let h = 9, mi = 0, timeEstimated = true;
+  const segM = s.match(/今晚|今早|凌晨|清晨|清早|早上|早晨|上午|中午|午后|下午|傍晚|黄昏|晚上|夜里|深夜|半夜/);
+  const seg = segM ? segM[0] : '';
+  let tm = s.match(BM_SCHED_TIME_RE);
+  if (tm) {
+    const hn = bmCnNum(tm[1]);
+    if (!isNaN(hn)) {
+      h = hn;
+      if (tm[2] === '半') mi = 30;
+      else if (tm[2] === '一刻') mi = 15;
+      else if (tm[2] === '三刻') mi = 45;
+      else if (tm[3] !== undefined) { const mn = bmCnNum(tm[3]); mi = isNaN(mn) ? 0 : mn; }
+      else mi = 0;
+      timeEstimated = false;
+    }
+  } else if ((tm = s.match(/(\d{1,2})\s*[::：]\s*(\d{2})/))) {
+    h = +tm[1]; mi = +tm[2]; timeEstimated = false;
+  }
+  // 12 小时制修正（与 bmParseCNDateTime 一致）
+  if (seg === '下午' || seg === '午后' || seg === '傍晚' || seg === '黄昏') { if (h >= 1 && h <= 11) h += 12; }
+  else if (seg === '晚上' || seg === '今晚' || seg === '夜里' || seg === '深夜') { if (h >= 1 && h <= 11) h += 12; else if (h === 12) h = 0; }
+  else if (seg === '中午') { if (h >= 1 && h <= 2) h += 12; }
+  else if (seg === '半夜') { if (h === 12) h = 0; }
+  if (h > 23 || mi > 59) return null;
+  let at;
+  if (hasDate && /(\d{1,2})月|(\d{4})年|(\d{1,2})[日号]/.test(dateText)) {
+    const dd = new Date(y, mo, day);
+    if (dd.getDate() !== day) mo += 1;
+    at = new Date(y, mo, day, h, mi, 0, 0).getTime();
+    if (rollMode === 'month' && at <= now) { mo += 1; at = new Date(y, mo, day, h, mi, 0, 0).getTime(); }
+    if (rollMode === 'year' && at <= now) { y += 1; at = new Date(y, mo, day, h, mi, 0, 0).getTime(); }
+  } else {
+    at = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, mi, 0, 0).getTime() + dateOff * 864e5;
+  }
+  return { at, timeEstimated };
 }
 
 /* 中文「日期+时刻」解析：从一句话解析出 { at, title }；解析不出完整时刻返回 null（无法定闹钟） */
@@ -5069,6 +5178,74 @@ async function maybeDetectScheduleReminder(charId, text) {
   } catch (e) { console.error('[日程检测]', e); }
 }
 
+/* 20261005dt：日程「记录类」旁路检测（不复用提醒语气词，不改 maybeDetectScheduleReminder）。
+   触发双闸门：① 有日期信息；② 有记录动作词。缺时间默认 09:00（timeEstimated:true）。
+   「改成X点」→ 更新已有未触发记录，不新增重复。 */
+async function maybeDetectScheduleRecord(charId, text) {
+  try {
+    if (!charId || !text) return;
+    if (chatSettings.bmSchedDetect === false) return;          // 总开关
+    if (BM_SCHED_RECORD_NEG_RE.test(text)) return;             // 明确否定（不用记/别记）→ 不触发
+    const c = characters.find(x => x.id === charId);
+    if (!c) return;
+    // ① 日期信息闸门
+    const dateInfo = bmExtractScheduleDate(text);
+    if (!dateInfo) return;                                     // 无日期 → 不触发（「今天安排怎么样」无日期）
+    // ② 触发闸门：有日期 +（有具体时间 或 有记录动作）任一即可。
+    //    - 「9月4日下午3点开会」：日期+时间 → 触发（无记录动作词也算，因日期+明确时刻=强日程信号）
+    //    - 「记录9月4日的日程」：日期+记录动作 → 触发（缺时间默认09:00）
+    //    - 「看看9月4日的日程」：仅日期，无时间无记录动作 → 不触发
+    const hasRecordAction = BM_SCHED_RECORD_RE.test(text);
+    const hasExplicitTime = BM_SCHED_TIME_RE.test(text) || /(\d{1,2})\s*[::：]\s*(\d{2})/.test(text);
+    if (!hasRecordAction && !hasExplicitTime) return;
+    // 「改成X点/改到X点」→ 更新已有未触发记录，不新增
+    const modifyRe = /(改成|改到|改为|改成早上|改成上午|改成下午|改成晚上|调整到|调到|改为|挪到|换到)/;
+    const isModify = modifyRe.test(text);
+    const built = bmBuildScheduleAt(dateInfo, text);
+    if (!built) return;
+    const list = await bmLoadSchedules();
+    // 行程内容：剔除日期/时刻/意图词后的剩余文本（复用 bmParseCNDateTime 的 title 清洗思路）
+    let title = String(text)
+      .replace(/[，,。.!！？?~～、；;：:\s]+/g, ' ')
+      .replace(/凌晨|清晨|清早|今晚|今早|早上|早晨|上午|中午|午后|下午|傍晚|黄昏|晚上|夜里|深夜|半夜/g, ' ')
+      .replace(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/g, ' ')
+      .replace(/(\d{1,2})月(\d{1,2})[日号]/g, ' ')
+      .replace(/(\d{1,2})[日号](?!\d)/g, ' ')
+      .replace(/大后天|后天|明天|明早|明晚|明儿|今晚|今早|今天|今日/g, ' ')
+      .replace(/(下下|下|这|本)?个?(周|星期)([一二三四五六日天])/g, ' ')
+      .replace(BM_SCHED_TIME_RE, ' ')
+      .replace(/(\d{1,2})\s*[::：]\s*(\d{2})/g, ' ')
+      .replace(BM_SCHED_RECORD_RE, ' ')
+      .replace(/改成|改到|改为|调整到|调到|挪到|换到|到时候|到点|麻烦|拜托|帮忙|帮我|请你|一下|我要|我得|我打算|我准备|我需要|的|事情|的事/g, ' ')
+      .replace(/^[，,。.!！？?~～、；;：:\s]*(?:我|要|帮我|请你)+[，,。.!！？?~～、；;：:\s]*/, '')
+      .replace(/[，,。.!！？?~～、；;：:\s]*[哦啊呀哈了呢吧嘛呀]?[，,。.!！？?~～、；;：:\s]*$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!title) title = '日程记录';
+    if (title.length > 24) title = title.slice(0, 24) + '…';
+
+    if (isModify) {
+      // 更新已有未触发记录：同访客 + 标题含当前事项（或最近一条未触发记录）→ 改时间
+      const target = list.find(it => it && !it.fired && it.charId === charId && (it.title === title || (it.title && title && (it.title.includes(title) || title.includes(it.title)))));
+      if (target) {
+        target.at = built.at;
+        target.timeEstimated = built.timeEstimated;
+        await bmSaveSchedules(list);
+        miniToast('✅ ' + c.name + ' 已把这条行程改到 ' + bmFormatCNTime(built.at));
+        return;
+      }
+      // 没找到可改的记录 → 当作新增
+    }
+    // 防重：同访客 + 同标题未触发记录已存在 → 不重复
+    if (list.some(it => it && !it.fired && it.charId === charId && it.title === title)) return;
+    setTimeout(() => {
+      try {
+        showScheduleRecordModal({ charId, charName: c.name, at: built.at, title, timeEstimated: built.timeEstimated }, c);
+      } catch (e) {}
+    }, 700);
+  } catch (e) { console.error('[日程记录检测]', e); }
+}
+
 /* 弹窗①：「xx访客正在记录你的重要行程」（展示解析结果，确认后写入系统） */
 function showScheduleRecordModal(item, c) {
   openModal(`
@@ -5078,7 +5255,7 @@ function showScheduleRecordModal(item, c) {
       <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:6px;">系统在聊天里检测到了日程与提醒请求</div>
     </div>
     <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
-      <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}</div>
+      <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}${item.timeEstimated ? '<span style="font-size:11px;color:var(--warn,#fbbf24);margin-left:6px;">（系统推测，可修改）</span>' : ''}</div>
       <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">安装版将写入<b>系统日历（日程提醒）</b>并在到点前 1 分钟弹出<b>提醒通知</b>（锁屏可见）；网页版在白日梦页面打开时到点提醒。如识别有误可取消。</div>
@@ -5140,7 +5317,7 @@ async function bmCommitScheduleReminder(item) {
   /* 存档（防重 + 网页端调度；同时清 7 天前的已触发记录） */
   try {
     const list = await bmLoadSchedules();
-    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, createdAt: Date.now(), fired: false });
+    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, timeEstimated: !!item.timeEstimated, createdAt: Date.now(), fired: false });
     await bmSaveSchedules(list.filter(it => !it || (!it.fired || Date.now() - it.at < 7 * 864e5)).slice(-200));
   } catch (e) {}
   closeModal();
@@ -13538,6 +13715,11 @@ async function sharePostToChar(post, c) {
     id: uid('msg'), charId: c.id, from: 'me', type: 'share',
     content: {
       authorName: author.name,
+      // 20261005du：补齐作者标识与帖子标识——AI 上下文据此知道「这是谁发的哪条」，
+      // 点赞/评论用 [[LIKE:postId]]/[[COMMENT:postId:内容]] 精确关联，不做模糊序号匹配
+      postId: post.id,
+      authorId: post.authorType === 'player' ? 'player' : (post.authorId || ''),
+      authorType: post.authorType || 'player',
       text: post.content || '',
       sticker: post.sticker || null,
       img: (post.images || [])[0] || null, // 分享卡片首图（渲染端一直读 sc.img，构建端此前漏传）
@@ -13564,6 +13746,9 @@ async function sharePostToGroup(post, g) {
     id: uid('msg'), groupId: g.id, from: 'me', type: 'share',
     content: {
       authorName: author.name,
+      postId: post.id, // 20261005du：同单聊，群成员 AI 上下文可见作者与帖子标识
+      authorId: post.authorType === 'player' ? 'player' : (post.authorId || ''),
+      authorType: post.authorType || 'player',
       text: post.content || '',
       sticker: post.sticker || null,
       img: (post.images || [])[0] || null,
@@ -18219,6 +18404,27 @@ function msgBodyText(m) {
   return String(m.content == null ? '' : m.content);
 }
 
+/* 20261005du：朋友圈分享消息 → AI 可读完整描述（作者/作者标识/发布时间/内容/配图数/帖子标识）。
+   玩家把一条朋友圈分享给角色时，角色必须知道「这是谁发的哪条」，而不是只看到一句正文 */
+function shareMsgAIText(m) {
+  try {
+    const c = (m && m.content) || {};
+    const authorName = c.authorName || '未知';
+    const authorId = c.authorId || '';
+    const pid = c.postId || '';
+    let timeStr = '';
+    if (c.time) {
+      const d = new Date(c.time);
+      if (!isNaN(d.getTime())) {
+        timeStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      }
+    }
+    const imgN = Array.isArray(c.images) ? c.images.length : (c.img ? 1 : 0);
+    const text = String(c.text || '').replace(/\s+/g, ' ').slice(0, 120) || '(无文字)';
+    return `[分享的朋友圈] 作者：${authorName}${authorId ? `（作者标识:${authorId}）` : ''}${timeStr ? `，发布时间：${timeStr}` : ''}；内容：${text}${imgN ? `（配图${imgN}张）` : ''}${pid ? `；朋友圈标识:${pid}` : ''}`;
+  } catch (e) { return '[分享的朋友圈]'; }
+}
+
 /* 20261001ci：收集最近消息里的图片/表情包 → base64 dataURL（OpenAI vision 格式）。
    支持视觉的模型（gpt-4o 等）可直接"看到"图；不支持的模型由调用方去图重试降级。
    只取最近 maxN 张（默认 3），图片消息用原图 blob 转码，表情包本身即 dataURL */
@@ -18268,9 +18474,9 @@ async function momentBriefForAI(charId, limit) {
       const extra = (imgN ? `（配图${imgN}张）` : '') + (sts.length ? `（表情：${sts.join(' ')}）` : '');
       const likedNames = (p.likes || []).map(l => l.who === 'player' ? (playerProfile.name || '我') : (characters.find(x => x.id === l.who)?.name || '梦角'));
       const likedStr = likedNames.length ? `〔已赞：${likedNames.join('、')}〕` : '';
-      return `#${i + 1} 「${author}」：${String(p.content || '').replace(/\s+/g, ' ').slice(0, 60)}${extra}${likedStr}`;
+      return `#${i + 1}[标识:${p.id}] 「${author}」：${String(p.content || '').replace(/\s+/g, ' ').slice(0, 60)}${extra}${likedStr}`;
     });
-    return `【朋友圈最新动态（#1 最新；编号供 [[LIKE:编号]] 点赞用）】\n${lines.join('\n')}`;
+    return `【朋友圈最新动态（#1 最新；点赞/评论用 [[LIKE:标识]]/[[COMMENT:标识:内容]]，标识取每行的[标识:]，用标识最精确，编号也兼容）】\n${lines.join('\n')}`;
   } catch (e) { return ''; }
 }
 
@@ -18306,6 +18512,104 @@ async function aiLikeMomentByIndex(charId, idxList) {
       if (document.body.dataset.view === 'moments') renderMoments();
       miniToast('❤️ ' + (c ? c.name : 'TA') + ' 赞了一条朋友圈');
     }
+  } catch (e) {}
+}
+
+/* 20261005du：执行 AI 的 [[LIKE:帖子标识]] 点赞（分享场景直接给标识，精确不串位） */
+async function aiLikeMomentById(charId, postIds) {
+  try {
+    if (!postIds || !postIds.length) return;
+    const c = characters.find(x => x.id === charId);
+    const posts = await loadMomentPosts();
+    let changed = false;
+    for (const pid of postIds) {
+      const post = posts.find(p => p.id === pid);
+      if (!post) continue;
+      post.likes = Array.isArray(post.likes) ? post.likes : [];
+      if (!post.likes.some(l => l.who === charId)) {
+        post.likes.push({ who: charId, time: Date.now() });
+        changed = true;
+      }
+    }
+    if (changed) {
+      await saveMomentPosts();
+      if (document.body.dataset.view === 'moments') renderMoments();
+      miniToast('❤️ ' + (c ? c.name : 'TA') + ' 赞了一条朋友圈');
+    }
+  } catch (e) {}
+}
+
+/* 20261005du：执行 AI 的 [[COMMENT:标识:评论内容]] 评论朋友圈。
+   ref 可以是帖子标识（moXXXX，优先/推荐）或编号（与 momentBriefForAI 同一套过滤排序，编号不模糊）。
+   防重复：同一角色同一内容绝不重复；自动触发（force=false）时该角色已评论过这条就不再追加；
+   玩家明确要求（force=true）时仍执行，但同内容依旧不重复 */
+async function aiCommentMoment(charId, ref, text, opts = {}) {
+  try {
+    if (!charId || !ref || !text) return false;
+    const c = characters.find(x => x.id === charId);
+    const posts = await loadMomentPosts();
+    let post = null;
+    if (/^\d+$/.test(String(ref))) {
+      const sorted = [...posts].filter(p => {
+        if (p.authorType === 'char') {
+          const cc = characters.find(x => x.id === p.authorId);
+          if (cc && cc.momentsBlocked) return false;
+        }
+        if (c && !momentVisibleToChar(p, c)) return false;
+        return true;
+      }).sort((a, b) => b.createTime - a.createTime);
+      post = sorted[parseInt(ref, 10) - 1] || null;
+    } else {
+      post = posts.find(p => p.id === ref) || null;
+    }
+    if (!post) return false;
+    post.comments = Array.isArray(post.comments) ? post.comments : [];
+    if (post.comments.some(x => x.who === charId && (x.content || '') === text)) return false;
+    if (!opts.force && post.comments.some(x => x.who === charId)) return false;
+    post.comments.push({ id: uid('mc'), who: charId, replyTo: null, content: String(text).slice(0, 200), time: Date.now() });
+    await saveMomentPosts();
+    if (document.body.dataset.view === 'moments') renderMoments();
+    miniToast('💬 ' + (c ? c.name : 'TA') + ' 评论了一条朋友圈');
+    return true;
+  } catch (e) { return false; }
+}
+
+/* 20261005du：B 是否「认识」作者 A——关系网（一方设了关系即相识）或 B 的记忆宫殿里
+   已有该作者的「认识的人」条目。只读判断：这里绝不写 peerRelations、不自动建关系 */
+async function palKnowsChar(charId, authorId) {
+  try {
+    if (!charId || !authorId || authorId === 'player') return true; // 玩家帖不存在陌生问题
+    const a = characters.find(x => x.id === authorId);
+    const b = characters.find(x => x.id === charId);
+    if (a && b && charKnowsChar(b, a)) return true;
+    const entries = await palEntries();
+    return entries.some(e => (e.folderId === 'pf_char_' + charId || e.charId === charId) &&
+      (e.meetWho === authorId || String(e.text || '').includes('作者标识:' + authorId)));
+  } catch (e) { return true; } // 查询异常时按「认识」处理，避免反复骚扰玩家
+}
+
+/* 20261005du：陌生角色认知流程——玩家解释「TA是谁」后，把「知道这个人是谁」存进该访客的
+   记忆文件夹（meetWho 标记作者 id）。只存认知，绝不写 peerRelations / 不建关系 */
+async function aiPalStoreMeetMemo(charId, memo, authorId) {
+  try {
+    if (!memo) return;
+    await palEnsureFolders();
+    const c = characters.find(x => x.id === charId);
+    const entry = {
+      id: uid('pal'), kind: 'manual',
+      folderId: 'pf_char_' + charId, subFolderId: '',
+      charId: charId || '', groupId: '',
+      messages: [], baseMsgId: '',
+      title: memo.replace(/\s+/g, ' ').trim().slice(0, 30) || '认识的人',
+      summary: '', summaryByAI: false,
+      text: memo, img: null,
+      dateLabel: palDateLabel(Date.now()),
+      time: Date.now(), createdAt: Date.now(),
+      allowAI: null, auto: true,
+      meetWho: authorId || '', // 认知标记：再次遇到同一作者时读取，不重复询问
+    };
+    await idbPut('palace', entry);
+    miniToast('🏛️ ' + (c ? c.name : 'TA') + ' 记住了一个人');
   } catch (e) {}
 }
 
@@ -18371,11 +18675,13 @@ async function buildCharAIContext(charId, recentMessages) {
   if (c && typeof c.wallet === 'number') {
     parts.push(`【该访客当前钱包余额】${c.wallet}`);
   }
-  // 5. 近期聊天记录（最近若干条，帮 AI 接上下文；20261001ci：图片/表情包等转可读描述）
+  // 5. 近期聊天记录（最近若干条，帮 AI 接上下文；20261001ci：图片/表情包等转可读描述；
+  //    20261005du：朋友圈分享消息转完整描述——作者/作者标识/发布时间/内容/配图/帖子标识）
   if (recentMessages && recentMessages.length) {
     const tail = recentMessages.slice(-12).map(m => {
       const who = m.from === 'me' ? (playerProfile.name || '玩家') : (c ? c.name : 'TA');
-      return `${who}：${msgBodyText(m)}`;
+      const body = (m && m.type === 'share') ? shareMsgAIText(m) : msgBodyText(m);
+      return `${who}：${body}`;
     }).join('\n');
     parts.push(`【最近的对话（按时间顺序）】\n${tail}`);
   }
@@ -18676,6 +18982,10 @@ function playModeBeep(aiOn) {
 }
 
 /* ---------- 六、聊天回复分流（AI / 字卡） ---------- */
+/* 20261005du：陌生角色认知流程的「待解释」标记——分享陌生作者的朋友圈给 B 时记录 {authorId,authorName}，
+   玩家随后发一句解释（非分享消息）时，系统直接把这句解释存成「认识的人」记忆条目（见 share 检测分支），
+   不依赖 AI 主动输出 [[MEMO:]]，避免真实模型忘记输出导致解释丢失 */
+const _bmMeetPending = {};
 /* 给 scheduleCharReply / scheduleGroupReply 用：按当前模式决定回复内容。
    返回 { type:'card'|'ai', text }。AI 失败时返回 { type:'card', text, fallback:true }。 */
 async function generateCharReply(charId, opts = {}) {
@@ -18695,12 +19005,48 @@ async function generateCharReply(charId, opts = {}) {
     const momentBrief = await momentBriefForAI(charId, 8);
     const imgs = await collectMsgImageDataUrls(recent, 3);
     const userLast = (opts.quote && opts.quote.content) ? opts.quote.content : '';
+    // 20261005du：分享朋友圈场景——检测玩家最近一条消息是否为朋友圈分享，构建专项互动指令。
+    // 玩家帖→正常反应；认识的角色帖→按关系互动；陌生角色帖→第一次自然询问「是谁」，解释后存记忆
+    let shareDirective = '';
+    try {
+      const lastMine = [...(recent || [])].reverse().find(m => m && m.from === 'me' && !m.groupId);
+      if (lastMine && lastMine.type === 'share') {
+        const sc = lastMine.content || {};
+        const isPlayerPost = (sc.authorType || 'player') === 'player' || sc.authorId === 'player';
+        let authorLine = '作者就是玩家本人。';
+        if (!isPlayerPost && sc.authorId) {
+          const authorChar = characters.find(x => x.id === sc.authorId);
+          if (authorChar && authorChar.id !== charId) {
+            const known = await palKnowsChar(charId, authorChar.id);
+            if (known) {
+              const meC = characters.find(x => x.id === charId) || {};
+              const rel = (meC.peerRelations || {})[authorChar.id] || (authorChar.peerRelations || {})[charId] || authorChar.relation;
+              authorLine = `作者 ${authorChar.name} 是你认识的人${rel && rel !== '无' ? `（你们的关系：${rel}）` : ''}，按你们的关系自然互动。`;
+            } else {
+              _bmMeetPending[charId] = { authorId: authorChar.id, authorName: authorChar.name }; // 待认知标记
+              authorLine = `作者 ${authorChar.name}（作者标识:${authorChar.id}）你并不认识——你和TA没有交集。第一次看到 TA 的朋友圈，不要假装认识，自然表现出陌生感，可以问玩家「这个人是谁呀？我好像不认识TA」。等玩家解释了 TA 是谁之后，系统会自动替你记下来，你之后就知道TA了、不要再问。`;
+            }
+          }
+        }
+        shareDirective = `\n\n【刚刚玩家给你分享了一条朋友圈】\n${shareMsgAIText(lastMine)}\n这是玩家转发给你看的。${authorLine}你可以像刷到这条朋友圈一样自然反应：\n· 想点赞：另起一行输出 [[LIKE:这条动态的标识]]（标识=上面「朋友圈标识:」后面的那串，如 [[LIKE:moXXXX]]）。\n· 想评论：另起一行输出 [[COMMENT:这条动态的标识:你想评论的话]]。\n· 按你的人设和与作者的关系决定是否点赞/评论、说什么；不想互动就不输出指令，正常聊天即可。`;
+      } else if (lastMine && lastMine.from === 'me' && _bmMeetPending[charId]) {
+        // 20261005du：玩家在「待解释」状态下回复（非分享消息）→ 直接把这句解释存成「认识的人」记忆，
+        // 不依赖 AI 主动输出 [[MEMO:]]（真实模型经常忘记输出，导致解释丢失）
+        const pend = _bmMeetPending[charId];
+        const explain = (typeof lastMine.content === 'string' ? lastMine.content : (lastMine.content && lastMine.content.text)) || '';
+        if (explain && explain.trim()) {
+          const memo = `认识的人 ${pend.authorName}（作者标识:${pend.authorId}）：玩家说TA是${explain.trim().slice(0, 80)}`;
+          delete _bmMeetPending[charId];
+          await aiPalStoreMeetMemo(charId, memo, pend.authorId);
+        }
+      }
+    } catch (e) {}
     // 20260929bf：count>1 = 单聊 AI 也连发多条（每条单独一行，像真人连着发消息）；默认 1 条
     const wantN = Math.max(1, Math.min(3, parseInt(opts.count, 10) || 1));
     const multiLine = wantN > 1
       ? `\n你会连着发 ${wantN} 条消息：每条单独一行输出（共 ${wantN} 行），像真实聊天里连着发几条，几条之间可以是补充、吐槽或自问自答；每条 1 句左右，不要编号。`
       : '';
-    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:编号]]（编号取自下方【朋友圈最新动态】列表，#1 是最新一条）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。\n4. 玩家在这段对话里提到了「和你们两个人有关的重要日期」（玩家的生日、你的生日、你们认识的纪念日、你或玩家生平里的某件大事的具体日期）时：另起一行输出 [[ANNIV:日期|原因]]，日期尽量写成「YYYY-MM-DD」或「MM-DD」格式（如 [[ANNIV:10-05|玩家生日]]），由系统存成你们的权重记忆。必须是与你俩关系相关的日期才输出，普通的日程/会议日期不要输出。${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
+    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:标识或编号]]（取自下方【朋友圈最新动态】每行的[标识:]，用标识最精确；编号#1 是最新一条，也兼容）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。\n4. 玩家在这段对话里提到了「和你们两个人有关的重要日期」（玩家的生日、你的生日、你们认识的纪念日、你或玩家生平里的某件大事的具体日期）时：另起一行输出 [[ANNIV:日期|原因]]，日期尽量写成「YYYY-MM-DD」或「MM-DD」格式（如 [[ANNIV:10-05|玩家生日]]），由系统存成你们的权重记忆。必须是与你俩关系相关的日期才输出，普通的日程/会议日期不要输出。\n5. 玩家让你给某条朋友圈「点赞并评论/回复」时：必须同时输出两行——[[LIKE:标识或编号]] 和 [[COMMENT:标识或编号:你想评论的话]]，两个动作缺一不可；找不到对应动态就省略并在回复里自然说明。${shareDirective}${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
     const sysNoImg = sysBase('');
     const messages = [
       { role: 'system', content: imgs.length ? sysBase('\n【视觉输入】本条消息末尾附上了最近聊天里的图片/表情包（按时间顺序），你可以直接看到它们的内容。') : sysNoImg },
@@ -18718,11 +19064,17 @@ async function generateCharReply(charId, opts = {}) {
     }
     if (r.ok && r.text) {
       // 解析隐藏指令：发朋友圈 / 存记忆宫殿 / 点赞朋友圈 / 自赞（20260929ah + 20261001ci）
+      // 20261005du：[[LIKE:标识]]/[[COMMENT:标识:内容]] 精确点赞评论；陌生认知的「认识的人」
+      //             记忆已由 share 检测分支在玩家解释时直接落库（不依赖 AI 输出 [[MEMO:]]）
       const parsed = parseAITags(r.text);
-      if (parsed.memo) aiPalStoreMemo(charId, parsed.memo);
-      if (parsed.anniv) aiStoreAnnivMemo(charId, parsed.anniv); // 20261002ch：重要日期→权重记忆
-      if (parsed.moment) aiPostMomentFromTag(charId, parsed.moment, { selfLike: parsed.selfLike });
-      if (parsed.likes && parsed.likes.length) aiLikeMomentByIndex(charId, parsed.likes);
+      if (parsed.memo) await aiPalStoreMemo(charId, parsed.memo);
+      if (parsed.anniv) await aiStoreAnnivMemo(charId, parsed.anniv); // 20261002ch：重要日期→权重记忆
+      if (parsed.moment) await aiPostMomentFromTag(charId, parsed.moment, { selfLike: parsed.selfLike });
+      if (parsed.likes && parsed.likes.length) await aiLikeMomentByIndex(charId, parsed.likes);
+      if (parsed.likeIds && parsed.likeIds.length) await aiLikeMomentById(charId, parsed.likeIds);
+      if (parsed.comments && parsed.comments.length) {
+        for (const cm of parsed.comments) await aiCommentMoment(charId, cm.ref, cm.text);
+      }
       return { type: 'ai', text: parsed.clean };
     }
     // 失败：弹窗报错 + 回退字卡；模式开关同步回滚到字卡（20260929af）
@@ -19387,11 +19739,22 @@ async function momentReplyText(char, relation, post = null, opts = {}) {
    字卡模式不注入这些指令，随机收藏仍走 palAutoCollectMaybe（聊天）/随机朋友圈收藏。
    ============================================================ */
 function parseAITags(text) {
-  const out = { clean: String(text || ''), memo: '', moment: '', likes: [], selfLike: false, anniv: null };
+  const out = { clean: String(text || ''), memo: '', moment: '', likes: [], likeIds: [], comments: [], selfLike: false, anniv: null };
   out.clean = out.clean.replace(/\[\[\s*MOMENT\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.moment = v.trim(); return ''; });
   out.clean = out.clean.replace(/\[\[\s*MEMO\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.memo = v.trim(); return ''; });
   // 20261001ci：[[LIKE:编号]] 点赞朋友圈（可多个）；[[SELF_LIKE]] 给自己刚发的动态点赞
-  out.clean = out.clean.replace(/\[\[\s*LIKE\s*[:：]\s*(\d+)\s*\]\]/gi, (_, n) => { const k = parseInt(n, 10); if (k > 0) out.likes.push(k); return ''; });
+  // 20261005du：LIKE 兼容「帖子标识」形式 [[LIKE:moXXXX]]（分享场景给 AI 的就是标识，精确不串位）；
+  //             新增 [[COMMENT:标识:评论内容]] 评论朋友圈（标识或编号均可，优先标识）
+  out.clean = out.clean.replace(/\[\[\s*LIKE\s*[:：]\s*([0-9a-zA-Z_\-]{1,48})\s*\]\]/gi, (_, n) => {
+    if (/^\d+$/.test(n)) { const k = parseInt(n, 10); if (k > 0) out.likes.push(k); }
+    else out.likeIds.push(n);
+    return '';
+  });
+  out.clean = out.clean.replace(/\[\[\s*COMMENT\s*[:：]\s*([^\]:：]{1,64}?)\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, ref, txt) => {
+    const t = String(txt || '').trim();
+    if (ref && t) out.comments.push({ ref: String(ref).trim(), text: t });
+    return '';
+  });
   out.clean = out.clean.replace(/\[\[\s*SELF_LIKE\s*\]\]/gi, () => { out.selfLike = true; return ''; });
   // 20261002ch：[[ANNIV:日期|原因]] 玩家提到的与「玩家×角色关系相关」的重要日期（生日/纪念日/生平大事）
   out.clean = out.clean.replace(/\[\[\s*ANNIV\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.anniv = v.trim(); return ''; });
