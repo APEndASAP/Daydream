@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = '20261004dn'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
+const APP_VERSION = '20261004dq'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）
 
 let characters = [];
 let cards = null;
@@ -2003,7 +2003,9 @@ async function putGroupMsg(g, member, text, extra = {}) {
     renderChatList();
     const cs = getCharChatSettings(member);
     if (document.body.dataset.view !== 'chat' && !cs.muteNotifications) playDing();
-    notifyIncoming(member, m.content, g ? (groupMemberName(g, member.id) + ' 在「' + g.name + '」') : undefined); // 20260929bi：群消息后台通知
+    // 20261004dq：群消息走独立群聊通知通道（不再复用单聊 notifyIncoming）——
+    // 通知主体是「群」而非「成员」，conversationId 用 g.id 让同群所有消息归并成一条会话通知
+    notifyGroupIncoming(g, member, m.content);
     // 20260929ba 细则六：成员在消息里 @ 了玩家 → 顶部细条弹窗提醒（谁 @ 了你），点横幅跳进该群
     notifyGroupMention(g, member, m);
   }
@@ -4261,6 +4263,107 @@ function setupNotifyFirstGesture() {
    且（页面挂后台 document.hidden / 窗口失焦 / 不在该聊天页）任一成立。
    —— 修复「软件挂后台收不到通知」：此前所有通知点只判 view!=='chat'，
    挂后台时 view 仍是 'chat'，通知全被跳过。 */
+/* 20261004dq：独立群聊通知通道（不复用单聊 notifyIncoming）。
+   群消息通知主体 = 群（不是发言成员），conversationId 用 g.id 让同一个群
+   所有成员的消息归并成「同一条会话通知」，标题显示群名、正文显示「成员名：内容」。
+   第一阶段（本阶段）：群名 / 成员名+内容 / 按群归并；不做微信级群聊系统。
+   与单聊 notifyIncoming 完全隔离：不改 merge/each、不改 bmNotifIdFor、
+   不改 bmClearAlarm/bmRegisterAlarm、不改单聊通知。 */
+async function notifyGroupIncoming(g, member, content) {
+  try {
+    if (!g || !member) return;
+    if (chatSettings.notifySystem === false) return;
+    if ((g.mutedIds || []).includes(member.id)) return; // 该成员在群内被静音
+    const ms = getCharChatSettings(member);
+    if (ms && ms.muteNotifications) return;   // 成员级静音（与单聊一致）
+    const inChatView = document.body.dataset.view === 'chat';
+    // 正在盯着该群聊页且页面活跃 → 不打扰（与单聊一致的判断）
+    if (inChatView && !document.hidden && document.hasFocus()) return;
+
+    const gname = g.name || '群聊';
+    const who = groupMemberName(g, member.id);
+    const bodyText = who + '：' + String(content == null ? '' : content).slice(0, 120);
+
+    const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+    // 会话式通知出口（灰度开关打开时走插件）；失败/插件不存在 fallback 回原生本地通知
+    if (LN && typeof LN.schedule === 'function') {
+      if (bmConversationEnabled()) {
+        const ok = await bmConversationGroupNotify(g, member, bodyText);
+        if (!ok) {
+          // fallback：原生本地通知，标题=群名，正文=成员名：内容，固定 id 按群归并
+          await bmNativeGroupNotify(LN, g, member, bodyText);
+        }
+        return;
+      }
+      await bmNativeGroupNotify(LN, g, member, bodyText);
+      return;
+    }
+    // 网页端 Web Notification 兜底
+    if (!('Notification' in window)) return;
+    const N = window.Notification;
+    if (!N || N.permission !== 'granted') return;
+    const n = new N(gname, { body: bodyText, tag: 'bm-group-' + g.id + '|' + Date.now() });
+    n.onclick = () => { try { window.focus(); n.close(); } catch (e) {} };
+  } catch (e) {}
+}
+
+/* 群聊走会话式插件：conversationId 用群 id（前缀区分单聊），senderName=群名（原生标题=群名），
+   messageText=成员名：内容。同群所有消息 → 同一 conversationId → 原生按 conversationId.hashCode()
+   覆盖合并成同一条会话通知，展开看历史。 */
+async function bmConversationGroupNotify(g, member, bodyText) {
+  try {
+    const CN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmConversationNotify;
+    if (!CN || typeof CN.showConversation !== 'function') return false;
+    const cid = 'group:' + String(g.id);
+    const senderName = g.name || '群聊';
+    const messageText = String(bodyText || '').slice(0, 120);
+    // 群头像：g.avatar 若为 {blob,thumb} 结构则转 base64，失败置空
+    let avatar = '';
+    try {
+      const a = g.avatar;
+      if (a) {
+        if (typeof a === 'string' && a.startsWith('data:image/')) avatar = a;
+        else if (typeof a === 'object') {
+          const b = a.thumb || a.blob;
+          if (b) {
+            if (typeof b === 'string' && b.startsWith('data:image/')) avatar = b;
+            else if (b instanceof Blob) avatar = await blobToDataURL(b);
+          }
+        }
+      }
+    } catch (e) { avatar = ''; }
+    const opts = { conversationId: cid, senderName, messageText };
+    if (avatar) opts.avatar = avatar;
+    let ret = null;
+    try { ret = await CN.showConversation(opts); } catch (e) { return false; }
+    return !!(ret && ret.ok === true);
+  } catch (e) { return false; }
+}
+
+/* 群聊 fallback：原生本地通知，标题=群名，正文=成员名：内容，固定 id 按群归并（后到替换先到） */
+async function bmNativeGroupNotify(LN, g, member, bodyText) {
+  try {
+    let allowed = true;
+    try { const st = await LN.checkPermissions(); allowed = !st || st.display !== 'denied'; } catch (e) {}
+    if (!allowed) return;
+    await bmEnsureChannel(LN);
+    const gid = 'group:' + String(g.id);
+    const id = bmNotifIdFor(gid, 'msg');
+    const gname = g.name || '群聊';
+    try { await LN.cancel({ notifications: [{ id }] }); } catch (e) {}
+    await LN.schedule({
+      notifications: [{
+        id,
+        title: gname,
+        body: String(bodyText || '').slice(0, 120),
+        channelId: 'bm-messages',
+        smallIcon: 'ic_launcher',
+        group: 'bm-group-' + g.id,
+      }],
+    });
+  } catch (e) {}
+}
+
 function notifyIncoming(c, body, title, kind = 'msg') {
   try {
     if (chatSettings.notifySystem === false) return;
