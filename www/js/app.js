@@ -3954,6 +3954,7 @@ let _checkinCount = {};  // 随机查岗：按角色+日期记录当天已查岗
 let _callUntil = {};     // 随机通话：按角色记录「下次来电时间点」
 let _callCount = {};     // 随机通话：按角色+日期记录当天来电次数
 let _packetUntil = {};   // 20260929ba 随机红包：按角色记录「下次发红包时间点」
+let _emojiUntil = {};    // 20261005dy 表情包主动发：按角色记录「下次发表情包时间点」（随机区间，比主动消息更长）
 let _ocNextAt = {};      // 超频：按访客记录下一次独立随机触发时刻（20260929at 起持久化到 kv，跨会话累计）
 let _ocPending = new Set(); // 超频：避免同一访客的交互动画期间重复触发
 function _ocSaveNextAt() { try { _ocSet('nextAt', _ocNextAt).catch(() => {}); } catch (e) {} }
@@ -4065,6 +4066,30 @@ async function __proactiveScan() {
           // 20261002ca：本轮已触发 → 预排下一轮原生闹钟（挂后台/进程冻结也照常到点提醒）
           bmRegisterAlarm(c, 'msg', s.proactiveRandom ? _proactiveRandUntil[c.id] : (now + (s.proactiveMin || 10) * 60000));
           // 超频已从主动消息分离，固定在 15 秒 tick 每访客独立计时；此处不再触发
+        }
+      }
+
+      // —— 表情包主动发（20261005dy：改为「独立消息 + 随机区间」，替代原先「回复后 12% 追加」的过低保率）。
+      //     跟随「主动发消息」开关（proactive），只对开了主动消息的角色生效；
+      //     随机区间 20~180 分钟（主动消息随机区间 10~120，表情包整体拉得更长、更不打扰）；
+      //     不预排原生闹钟（轻量内容，靠本 tick 前台 15s / 后台 60s 检查即可，守住省电红线）；
+      //     到点用 pickCharSticker 抽一张（TA 专属库优先→玩家库(需开关)→兜底字符 emoji），
+      //     落成一条独立 emoji/text 消息。 ——
+      if (s.proactive) {
+        const ELO = 20, EHI = 180; // 表情包随机区间（分钟）
+        if (!_emojiUntil[c.id] || _emojiUntil[c.id] <= now) {
+          _emojiUntil[c.id] = now + randInt(ELO, EHI) * 60000;
+          try {
+            const st = await pickCharSticker(c);
+            if (st) {
+              const m = (st && st.img)
+                ? { id: uid('msg'), charId: c.id, from: 'them', type: 'emoji', content: st.img, time: Date.now() }
+                : { id: uid('msg'), charId: c.id, from: 'them', type: 'text', content: (st && st.sticker) || '🌙', time: Date.now() };
+              await idbPut('messages', m);
+              if (currentCharId === c.id && document.body.dataset.view === 'chat') appendMessage(m);
+              else renderChatList();
+            }
+          } catch (e) {}
         }
       }
 
@@ -12422,8 +12447,23 @@ async function deepImagesFromExport(node) {
 
 async function doImport(data, mode = 'overwrite') {
   try {
-    // 20260929g：新格式图片载荷转回 Blob；旧备份 base64 字符串原样保留（玩家选择：不迁移）
-    data = await deepImagesFromExport(data);
+    // 20261005ea：3.0 自动备份（图片独立文件）——图片是 {__img:3, ref} 引用，需 FS.readFile 读回；
+    // 2.2 及旧备份（图片 base64 内嵌）走原 deepImagesFromExport 逻辑不变。
+    if (data && data.version === '3.0' && data.imagesDir) {
+      const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+      if (FS && typeof FS.readFile === 'function') {
+        const imagesDir = String(data.imagesDir);
+        const readImage = async (ref, mime) => {
+          const r = await FS.readFile({ path: imagesDir + '/' + ref, directory: 'DOCUMENTS' });
+          return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + r.data);
+        };
+        data = await restoreImagesV3(data, readImage);
+      }
+      // 若 FS.readFile 不可用（如网页端误导入 3.0），保留 {__img:3} 原样，图片按缺失处理，不崩溃
+    } else {
+      // 20260929g：新格式图片载荷转回 Blob；旧备份 base64 字符串原样保留（玩家选择：不迁移）
+      data = await deepImagesFromExport(data);
+    }
     if (mode === 'overwrite') {
       // 清空现有数据
       await idbClear('characters');
@@ -12552,13 +12592,92 @@ async function deepImagesToExport(node, label = '正在打包图片') {
   return topConv !== null ? topConv : node;
 }
 
+/* 20261005ea：自动备份 3.0 图片收集——把 {blob,thumb} 描述符替换成 {__img:3, ref, mime} 引用，
+   并把每张图（主图+缩略图）的 dataURL 收集到 images 列表，供 autoBackup 逐张独立 writeFile，
+   不再把所有图片 base64 内嵌进一个巨型 JSON（消除 ~98MB 单次 Capacitor Bridge payload 的 OOM）。
+   ref 设计：文件名 img-N / thumb-N（N=本次备份集合内全局递增序号）——稳定唯一、不含
+   / \ : * ? " < > | 等危险字符、不依赖数组下标、非随机；manifest 顶层另存 imagesDir 定位目录，
+   恢复时用 imagesDir + '/' + ref 读回，无需额外映射。返回 { data, images:[{ref, dataUrl}] }。 */
+async function collectImagesV3(node) {
+  const found = []; // { parent, key, n, ref, thumbRef, mime, thumbMime }
+  let seq = 0;
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.blob instanceof Blob) {
+      const ref = 'img-' + String(++seq).padStart(4, '0');
+      const item = { parent, key, n, ref, mime: (n.blob.type || 'image/png') };
+      if (n.thumb instanceof Blob) {
+        item.thumbRef = 'thumb-' + String(++seq).padStart(4, '0');
+        item.thumbMime = (n.thumb.type || 'image/jpeg');
+      }
+      found.push(item);
+      return;
+    }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+
+  const images = [];
+  const total = found.length;
+  let idx = 0;
+  const worker = async () => {
+    while (idx < total) {
+      const i = idx++;
+      const it = found[i];
+      const dataUrl = await blobToDataURL(it.n.blob);
+      images.push({ ref: it.ref, dataUrl });
+      const out = { __img: 3, w: (it.n.w || 0), h: (it.n.h || 0), mime: it.mime, ref: it.ref };
+      if (it.thumbRef) {
+        const thumbUrl = await blobToDataURL(it.n.thumb);
+        images.push({ ref: it.thumbRef, dataUrl: thumbUrl });
+        out.thumbRef = it.thumbRef;
+        out.thumbMime = it.thumbMime;
+      }
+      it.parent[it.key] = out;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  return { data: node, images };
+}
+
+/* 20261005ea：自动备份 3.0 图片还原——把 {__img:3, ref, mime} 引用读回 {blob, thumb, w, h}。
+   readImage(ref, mime) 由调用方提供（恢复端用 FS.readFile 读文件转 Blob）；8 路并发还原。
+   还原后 IndexedDB 数据结构保持 {blob, thumb, w, h} 不变，不改数据库 schema。 */
+async function restoreImagesV3(node, readImage) {
+  if (!node || typeof node !== 'object') return node;
+  const found = [];
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.__img === 3 && typeof n.ref === 'string') { found.push({ parent, key, n }); return; }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+  if (!found.length) return node;
+  const total = found.length;
+  let idx = 0;
+  const worker = async () => {
+    while (idx < total) {
+      const i = idx++;
+      const it = found[i];
+      const n = it.n;
+      const blob = await readImage(n.ref, n.mime || 'image/png');
+      let thumb = null;
+      if (n.thumbRef) thumb = await readImage(n.thumbRef, n.thumbMime || 'image/jpeg');
+      const out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
+      if (it.parent) it.parent[it.key] = out;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  return node;
+}
+
 /* 20261002ce：把"打包全量备份数据"抽成公共函数，手动导出 exportAll 与自动备份 autoBackup 共用，
    保证两处导出的内容一字不差（灰度殿堂/书信/世界树/朋友圈/记事簿/字体等 kv 数据都完整包含）。 */
-async function buildBackupPayload() {
+async function buildBackupPayload(mode = '2.2') {
   const data = {
     app: 'bairimeng',
     format: 'ocdata',
-    version: '2.2',
+    version: mode === '3.0' ? '3.0' : '2.2',
     exportDate: new Date().toISOString(),
     characters: await idbGetAll('characters'),
     messages: await idbGetAll('messages'),
@@ -12599,6 +12718,10 @@ async function buildBackupPayload() {
       // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
     },
   };
+  // 20261005ea：mode '3.0' 用于自动备份——图片独立文件，不内嵌 base64；
+  // 返回含 {blob,thumb} 的原始 data，由 autoBackup 调 collectImagesV3 处理。
+  // 默认 2.2（手动备份 exportAll）走原逻辑不变。
+  if (mode === '3.0') return data;
   // .ocdata：单文件备份（JSON 结构 + 图片 base64 内嵌，无需手动解压，可直接导入导出）
   return await deepImagesToExport(data, '正在打包全量备份'); // Blob → base64 内嵌（JSON 可序列化）
 }
@@ -12632,17 +12755,51 @@ async function autoBackup() {
     // 有访客数据才备份，避免全新空库也写一份空备份覆盖掉已有的有效备份
     const chars = await idbGetAll('characters');
     if (!chars || !chars.length) return;
-    const safeData = await buildBackupPayload();
-    const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
-    const b64 = await new Promise((res, rej) => {
+    // 20261005dz：自动备份限频止血——同一天内最多备份一次，防「每次切后台都打包全量图片
+    // base64（~98MB）→ Java Heap OOM」。判断依据复用既有 lastAutoBackupAt 时间戳（只在下方
+    // writeFile 真正成功后才写入），当天已成功备份过则直接跳过；跨自然日自动放行再次备份。
+    const lastAt = await getSetting('lastAutoBackupAt', 0);
+    if (lastAt) {
+      const d = new Date(lastAt), nowD = new Date();
+      if (d.getFullYear() === nowD.getFullYear() && d.getMonth() === nowD.getMonth() && d.getDate() === nowD.getDate()) {
+        return; // 今天已成功自动备份过，跳过
+      }
+    }
+    const safeData = await buildBackupPayload('3.0'); // 20261005ea：3.0 图片独立文件，返回含 {blob,thumb} 的原始 data
+    const { data, images } = await collectImagesV3(safeData); // 图片替换为 {__img:3, ref}，收集 dataUrl
+
+    // 独立 backup-set 目录（每次自动备份一个完整集合，互不污染；不覆盖旧备份）
+    const setDir = '白日梦备份/auto-' + Date.now();
+    const imagesRelDir = setDir + '/images';
+
+    // 逐张写图片（每张独立 writeFile，单次 bridge payload = 单张图大小，不再全量 98MB）
+    for (const img of images) {
+      const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
+      await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
+    }
+
+    // 写 manifest（全部图片写成功后才写——manifest 是「本次备份完成」的提交标记）
+    data.imagesDir = imagesRelDir; // 恢复端据此 FS.readFile 定位图片
+    const manifestJson = JSON.stringify(data);
+    const manifestB64 = await new Promise((res, rej) => {
       const r = new FileReader();
       r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
       r.onerror = () => rej(new Error('读取失败'));
-      r.readAsDataURL(blob);
+      r.readAsDataURL(new Blob([manifestJson], { type: 'application/json' }));
     });
-    await FS.writeFile({ path: '白日梦备份/白日梦自动备份.ocdata', data: b64, directory: 'DOCUMENTS', recursive: true });
-    // 静默记账：本次自动备份时间（下次可据此判断是否过期）
+    await FS.writeFile({ path: setDir + '/manifest.json', data: manifestB64, directory: 'DOCUMENTS', recursive: true });
+
+    // 全部成功 → 才更新 lastAutoBackupAt（失败走 catch，不标记，下次可重试）
     try { await setSetting('lastAutoBackupAt', Date.now()); } catch (e) {}
+
+    // 清理旧 backup-set（新备份完整成功后才清理；失败静默忽略，不影响本次成功）
+    try {
+      const oldSet = await getSetting('lastAutoBackupSet', '');
+      if (oldSet && oldSet !== setDir && FS.rmdir) {
+        try { await FS.rmdir({ path: oldSet, directory: 'DOCUMENTS', recursive: true }); } catch (e) {}
+      }
+    } catch (e) {}
+    try { await setSetting('lastAutoBackupSet', setDir); } catch (e) {}
   } catch (e) { /* 静默失败，不打扰 */ }
 }
 
