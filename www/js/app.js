@@ -12748,7 +12748,10 @@ async function exportAll() {
    · 网页端：Filesystem 不可用 → 静默跳过（网页版数据在浏览器，用户仍可手动导出）。
    触发：应用启动后延迟 40s 首备（避开启动加载高峰）；之后每次切后台（appStateChange）补备一次。
    全程静默、不弹窗、不打断；失败静默忽略（不打扰用户）。 */
+let _autoBackupRunning = false; // 20261006：防重入锁——写 518 图约 20s，期间切后台补备+40s首备可能并发触发，防重复写/重复清理
 async function autoBackup() {
+  if (_autoBackupRunning) return; // 已有备份在执行，直接跳过（不创建第二个 backup-set）
+  _autoBackupRunning = true;
   try {
     const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
     if (!FS || !FS.writeFile) return; // 非 APK 环境（网页版）静默跳过
@@ -12801,6 +12804,7 @@ async function autoBackup() {
     } catch (e) {}
     try { await setSetting('lastAutoBackupSet', setDir); } catch (e) {}
   } catch (e) { /* 静默失败，不打扰 */ }
+  finally { _autoBackupRunning = false; } // 无论成功/异常都释放锁，避免一次失败永久锁死
 }
 
 /* 自动备份调度：启动后延迟首备 + 每次切后台补备（省电：切后台时顺带一次即可） */
