@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.0'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.0.1'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
 
 let characters = [];
 let cards = null;
@@ -10092,6 +10092,7 @@ async function showChatThemeModal() {
   $('#theme-css').oninput = () => {
     chatTheme.customCss = $('#theme-css').value;
     applyChatTheme(); // 实时预览：当前输入立即注入 <style>，聊天页同步变化
+    try { syncBubbleFallback(); } catch (e) {} // 20261005dx：输入涉及气泡选择器时同步浅底兜底开关
     clearTimeout(_cssVdTimer);
     _cssVdTimer = setTimeout(() => renderCssStatus(bmValidateCustomCss($('#theme-css').value)), 350);
   };
@@ -10132,7 +10133,17 @@ async function showChatThemeModal() {
       // 浅底时给预览气泡一个临时 class，让玩家自定义 CSS 之外也能看清默认气泡色；
       // 深底维持原样。真实聊天页不受影响。
       cssStage.classList.toggle('pv-light', light);
+      syncBubbleFallback();
     }
+  };
+  // 20261005dx：浅底兜底的生效开关——玩家自定义 CSS 里写了气泡选择器（.bubble /
+  // .message-sent / .message-received）时，浅底不再套默认气泡兜底。否则兜底规则带
+  // ID 特异性（1,2,2）恒高于玩家选择器，切浅底会整体盖住玩家自定义，
+  // 表现为「浅色底预览不跟实时输入」。无自定义时兜底照常（浅底上看清默认气泡）。
+  const syncBubbleFallback = () => {
+    if (!cssStage) return;
+    const hasBubbleCss = /\.bubble|\.message-sent|\.message-received/i.test(chatTheme.customCss || '');
+    cssStage.classList.toggle('pv-bubble-fallback', !hasBubbleCss);
   };
   // 默认跟随主题
   setPreviewBg(isLightTheme() ? 'light' : 'dark');

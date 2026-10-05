@@ -759,6 +759,24 @@ select.input option:checked { color: #fff; }
 }
 .chip.ghost { background: transparent; }
 
+/* —— 20261005dx：玩家主页「个性签名 / 引用」ghost chip 可读性兼容（普通模式）。
+      这两个 chip 透明无底、直接压在用户自选的背景图上，而文字色跟全局主题走：
+      深色主题浅字落浅色背景图（用户截图「做个好梦/记录和 TA 们的日常」几乎不可见）、
+      浅色主题深字落深色背景图同样不可读。玻璃模式自带玻璃衬底不受影响，
+      故此处限定 body:not(.glass-ui)；半透明衬底 + 轻模糊让任何深浅底都可读，
+      低端机自动关闭 blur 后仍有半透明底兜底。仅限玩家主页这两个 chip（.player-chips 内），
+      不波及角色主页的 .chip.ghost（关系标签）。 —— */
+body:not(.glass-ui) .player-chips .chip.ghost {
+  background: rgba(20, 16, 30, 0.38);   /* 深色主题：深衬底配浅字，浅图/深图上都可读 */
+  border-color: rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+body:not(.glass-ui).theme-light .player-chips .chip.ghost {
+  background: rgba(255, 255, 255, 0.58); /* 浅色主题：浅衬底配深字，深图/浅图上都可读 */
+  border-color: rgba(0, 0, 0, 0.10);
+}
+
 /* 统计卡片（参考图2风格提取：三个并排浅卡） */
 .player-stats {
   display: grid;
@@ -5144,13 +5162,17 @@ body:not(.theme-light) .msg-quote {
    预览窗默认跟随主题（深色主题深底/浅色主题浅底），并支持手动切「深色底/浅色底」。
    浅底时若玩家自定义 CSS 未覆盖气泡底色，用浅色主题默认气泡变量兜底（紫渐变/浅灰），
    避免「深色气泡落浅底」的观感错位；深底维持原有深色气泡。真实聊天页不受影响。
+   20261005dx：兜底规则加 .pv-bubble-fallback 前置条件——玩家自定义 CSS 写了气泡
+   选择器时（JS 检测后不加该 class），兜底不再生效。原实现带 ID 特异性（1,2,2）
+   无条件覆盖玩家自定义（如 .msg-row.me .bubble 仅 0,2,1），导致切浅色底后
+   玩家的气泡样式全部失效、预览「不跟手」。现在：无自定义→兜底照常；有自定义→玩家说了算。
    ============================================================ */
-#css-preview-stage.pv-light .msg-row.me .bubble {
+#css-preview-stage.pv-light.pv-bubble-fallback .msg-row.me .bubble {
   background: linear-gradient(145deg, #8b5cf6 0%, #7c5cf0 100%);
   color: #ffffff;
   border: none;
 }
-#css-preview-stage.pv-light .msg-row.them .bubble {
+#css-preview-stage.pv-light.pv-bubble-fallback .msg-row.them .bubble {
   background: #e7e3ef;
   color: #2a2340;
   border: none;

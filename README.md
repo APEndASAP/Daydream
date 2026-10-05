@@ -2,7 +2,7 @@
 
 一款「聊天 + 朋友圈」形态的**角色陪伴应用**。你可以添加自己的梦角（虚拟角色 / 原创 OC），和它们聊天、发朋友圈、模拟通话、占卜、记录纪念日与日记，并自由定制大量美化内容。
 
-> 当前版本：`V1.0` · 纯前端 · 单机优先 · 数据全部本地存储
+> 当前版本：`V1.0.1` · 纯前端 · 单机优先 · 数据全部本地存储
 
 ---
 
@@ -114,6 +114,7 @@ python -m http.server 8901
 
 | 版本 | 主要内容 |
 | --- | --- |
+| `V1.0.1` | **两处可读性修复**：① CSS 预览浅色底不跟手——浅底兜底规则带 ID 特异性无条件覆盖玩家自定义气泡样式，改为 `.pv-bubble-fallback` 前置开关 + JS 检测自定义 CSS 是否含气泡选择器（写了就让位）；② 主页「状态/个性签名」ghost chip 普通模式无衬底压在背景图上深浅失衡，加半透明衬底+轻模糊（深色主题深衬底/浅色主题浅衬底），限定玩家主页两个 chip、不波及玻璃模式与角色主页关系标签。 |
 | `V1.0` | **正式版命名 V1.0**（自 20261005du 起）：软件版本号从日期制改为正式版本号。 |
 | `20261005du` | **朋友圈互动增强**：① 分享朋友圈给角色后，AI 上下文由 `shareMsgAIText` 注入**作者/作者标识/发布时间/内容/配图数/朋友圈标识**完整描述（单聊 `buildCharAIContext` + 群聊 `generateGroupReplyText` 都走它），不再是「有人分享了一条」；`sharePostToChar/Group` 的 content 补 `postId/authorId/authorType`。② **自动点赞评论**：`parseAITags` 新增 `[[LIKE:标识]]`（兼容原编号）+ `[[COMMENT:标识:内容]]`；新增 `aiLikeMomentById`/`aiCommentMoment` 按标识精确点赞评论（同角色同内容防重、自动场景同角色已评论不追加）；`momentBriefForAI` 每行带 `[标识:xxx]`。③ **玩家主动要求点赞并评论**：隐藏指令第 5 条「点赞并回复→双动作缺一不可」。④ **跨角色分享**：B 收到 A 的帖知道作者是 A（authorId/authorName/postId）。⑤ **陌生角色认知流程**：`palKnowsChar` 判关系网+记忆宫殿（只读，绝不写 peerRelations）；B 不认识 A 时第一次自然询问「是谁」；玩家解释后系统直接存「认识的人」记忆（`meetWho` 标记，`aiPalStoreMeetMemo`），再次遇到从记忆读取不再询问。⑥ 执行层 MEMO/点赞/评论全改 `await` 消除 fire-and-forget 竞态。只改 js/app.js，未碰数据库结构/关系网系统/聊天生成核心/通知系统/主动消息系统。 |
 | `20261005ds` | **群聊后台自主聊天最小修复（挂后台收不到通知的根因）**：`groupAutoChatTick` 首行 `if (bmIsBg()) return;` 导致挂后台群聊完全停摆（叠加 `bmSetBgState(true)` 停 20s 定时器，后台一条消息都不生成）。修复：① 去掉 `groupAutoChatTick` 的 bmIsBg 拦截；② `bmBgTick`（后台 60s 低频调度）末尾加 `groupAutoChatTick()` 调用——复用现有低频调度、不新增高频 timer；③ 顺手修正过时注释。只改 js/app.js，未碰单聊主动消息逻辑 / bmRegisterAlarm / bmClearAlarm / 通知插件 / 数据库 / 聊天生成核心 / 生命周期。 |
