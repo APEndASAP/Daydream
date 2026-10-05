@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- 20260930cf：声明应用同时支持浅/深两种配色（自管 color-scheme），
+       阻止手机系统暗色模式用 Auto Dark / Force Dark 强制反转本页浅色界面。
+       20260930cg：图片/表情包反色已由 CSS 物理锁死（filter:none + forced-color-adjust:none），
+       color-scheme 保留双值以贴合「默认深色 + 可选浅色」双主题现状 -->
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f1eef8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121116" media="(prefers-color-scheme: dark)">
+  <!-- 20261001：网站图标（添加到桌面/收藏夹时显示），使用手绘 logo（星辰与轨道） -->
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" sizes="192x192" href="android-chrome-192x192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>白日梦</title>
+  <script>
+    /* 20260929ah：数据源门卫（最早执行，任何入口都先过这里）。
+       IndexedDB 按 origin 隔离，正式数据只在 127.0.0.1:8902。从别的入口打开本文件
+       （如对话里的文件卡片落在宿主静态服务 [::1]:55625、或 localhost:8902、或 file://）时：
+       ① 先 location.replace 跳回 8902（正常浏览器直接成功，到此结束）；
+       ② 若跳转被宿主预览面板拦截（iframe sandbox 等场景），DOMContentLoaded 后
+          注入全屏「数据源保护页」——不再渲染应用、不建库，从根源上杜绝
+          "点了文件卡片 → 空库界面 → 以为数据又串了/丢了"。
+       正式数据永远只在 8902：请用对话里的「浏览器预览」卡（http://127.0.0.1:8902）进入。 */
+    (function () {
+      try {
+        // 20260930cd：GitHub Pages（*.github.io）为正式发布入口，与 8902 同为合法数据源，不再拦截跳转
+        // 20260930cg-apk：Capacitor 安卓壳（webDir=www，androidScheme=https）通过 https://localhost 加载，
+        //   也是合法数据源（APK 内离线 IndexedDB），放行不跳转
+        var hn = location.hostname;
+        var ok = (location.hostname === '127.0.0.1' && location.port === '8902')
+          || /(^|\.)github\.io$/i.test(hn)
+          || hn === 'localhost'
+          || hn === '127.0.0.1'   // Capacitor androidScheme 兼容（http scheme 时 localhost/127.0.0.1）
+          || location.protocol === 'capacitor:';
+        window.__BM_ORIGIN_OK = ok;
+        if (ok) return;
+        location.replace('http://127.0.0.1:8902/index.html?v=V1.0' + location.hash);
+        // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
+        document.addEventListener('DOMContentLoaded', function () {
+          if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
+          try {
+            document.body.innerHTML = ''
+              + '<div style="position:fixed;inset:0;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;background:radial-gradient(ellipse at 50% 0%,#2b2340 0%,#1a1626 55%,#121016 100%);font-family:\'PingFang SC\',\'Microsoft YaHei\',system-ui,sans-serif;text-align:center;padding:28px;user-select:none;">'
+              +   '<svg width="64" height="64" viewBox="0 0 24 24" fill="none" style="filter:drop-shadow(0 0 16px rgba(167,139,250,.55));"><defs><linearGradient id="bmg" x1="6" y1="2" x2="19" y2="21" gradientUnits="userSpaceOnUse"><stop stop-color="#ddd6fe"/><stop offset="1" stop-color="#8b74e8"/></linearGradient></defs><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="url(#bmg)"/></svg>'
+              +   '<div style="margin-top:18px;font-size:22px;letter-spacing:8px;text-indent:8px;font-weight:300;color:#c4b5fd;">数据源保护</div>'
+              +   '<div style="margin-top:14px;max-width:420px;font-size:13px;line-height:1.9;color:rgba(255,255,255,.72);">本页从 <b style="color:#c4b5fd;word-break:break-all;">' + (location.protocol === 'file:' ? '本地文件' : location.hostname + (location.port ? ':' + location.port : '')) + '</b> 打开，与正式数据空间（127.0.0.1:8902）<b>互不相通</b>。<br>为避免产生第二套空数据，软件已在当前入口停止加载。<br><b style="color:#e9e4ff;">你的数据一份没丢，全部都在 8902。</b></div>'
+              +   '<button id="bm-go" style="margin-top:26px;padding:12px 34px;border:none;border-radius:999px;background:linear-gradient(135deg,#8b74e8,#a78bfa);color:#fff;font-size:14px;letter-spacing:2px;cursor:pointer;">进入白日梦（正式数据）</button>'
+              +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
+              + '</div>';
+            var btn = document.getElementById('bm-go');
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=V1.0'); };
+          } catch (e) {}
+        });
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="css/style.css?v=V1.0">
+</head>
+<body>
+  <div id="app">
+    <!-- 星光背景 -->
+    <div class="starfield" id="starfield"></div>
+
+    <!-- 全局页面背景层（聊天导航/朋友圈的自定义背景铺满全屏，含底栏后方，玻璃透出） -->
+    <div id="app-fullbg"></div>
+
+    <!-- 20260929z 删除应用内旧开屏（与启动器动画重复）；20260929br 开屏动画回归，
+         独立承担于 js/splash.js，启动器已改为直接跳转不再播动画；
+         20260929bs 重制为「宇宙手稿 · Heliodream」（双彗星入轨+天文手稿日心系+ENTROPY 反转）；
+         20260930bt 换装 v2「星轨手稿」（双星互绕入场→最高点交汇→星盘白反转+拉丁箴言+BGM）；
+         20260930bu 细节收尾（删原生 emoji / 书信改固定间隔 / 消息时间戳 / BGM 提响度+结尾余韵 / 聊天页内当前角色发消息提示音）；
+         20260930bv 修复开屏（点击不再误跳过、点击任意处激活 BGM 出声）；
+         20260930bw 总设置加「开屏音乐自动播放」开关（splash 读开关更积极 resume+播放；修正提示文案）；
+         20260930bx 通话灰字/挂断图标四模式可读性；开屏音乐语义纠正=开屏结束后继续循环播放全程（主页顶栏小型开关）+每次进入显示点按提醒；总设置加白名单引导+开屏音乐/软件内提示音更换上传；悬浮窗2号设置移到通话悬浮窗模式下方+功能示意图；
+         20260930by 音乐开关补全语义：开=立即从头播放（无论开屏是否结束）、已在播则延续不重播；关=淡出式立即停止；
+         20260930bz 世界树检索细则落地：权限三态（条目「跟随文件夹/单独设置」区分）、本地关键词预提取（高频词+人名地名）、玩家手动补充关键词、AI 精炼后台串行队列（摘要+核心关键词，>200字防重复）、开发者命中日志；
+         20260930ca 世界树标签补全：跟随条目也显示文件夹有效权限（跟随·全部可读/N 个访客/禁读），未设置过权限的文件夹不再误标「AI·禁读」；超频动画下方新增「跳过动画」按钮（点击快速结束本段动画，礼物/惊喜弹窗照常弹出）；
+         20260930cb 问卷感想（玩家答完角色逐题回感想：字卡抽卡/AI 生成）；问卷新增「添加选择题」（问题框+逐行选项框最多 5 个）；创建角色页新增「角色开场白」（留空则从字卡库抽一张打招呼）；消息送达/已读标识（本地状态机：写库成功=送达，访客回复/主动发消息生成前=已读）；生成中打字点点跟随气泡文字色修复可读性；总设置新增两条独立音乐音量条（开屏动画 / 软件内，开屏默认 130% 更响）；
+         20260930cc 修复角色自答问卷大 bug（角色向玩家提问的问卷曾被答题队列捞起 20 秒后自答——队列只收 from:'me' + _answerSurvey 兜底守卫）；删除送达/已读标识（状态机与 UI 全部移除）；问卷批量选择就地更新不跳顶+选中框改 inset 阴影修复两侧被裁；占卜示例问题换中性文案（最近的运势怎么样）；
+         20260930cd 撤回提示可读性（硬编码浅灰改变量四模式自适应）；弹窗滚动位全局修复（超频礼物库点详情/送礼物取消返回、礼物柜重建、世界树根↔文件夹往返、问卷详情返回列表——从哪返回就恢复到哪不跳顶）；BGM 增响（压缩器补偿增益+6dB、前半段初始增益 1.25、淡入 0.4s→0.12s、更早起播、开屏默认 150%、滑杆上限 200%）；音频引导删站点地址；数据源门卫放行 GitHub Pages（部署入口）；
+         20260930ce 修复手机端开屏动画整体拉伸（canvas CSS 用 100vh=大视口恒大于 innerHeight，内部按小高度绘制被竖向拉长，正圆变竖椭圆——改 px 逐像素同步，星轨/圆环在任意屏幕与地址栏状态下恒为正圆）；
+         20260930cf 杜绝手机系统暗色模式强制变暗浅色界面（Auto Dark/Force Dark 反转）：head 加 <meta name="color-scheme" content="light dark">+theme-color 双 media 值；:root 锁 color-scheme:dark、body.theme-light 锁 color-scheme:only light；CSS 末尾补 @media(prefers-color-scheme:dark) 下浅色主题变量 !important 兜底（系统偏好不再接管配色）；
+         20261001ch 修复移动端「侧滑直接退出」：JS history 守卫（replaceState 根锚点+pushState 守卫条目，popstate 拦截侧滑改走应用内返回——弹窗→长按菜单→多选→聊天页→聊天导航逐级回退，顶层仅拦截；守卫自动补位历史栈永不耗尽）；CSS 全局 overscroll-behavior-x:none 禁横向回弹；APK 物理返回键接管（@capacitor/app backButton，有上一级应用内返回、顶层双击 2 秒退出）；浅色主题可读性补漏（长按菜单/引用条/多选条/图片裁剪器/回信按钮固定深底浮层容器内还原深色变量，杜绝深底深字）；
+         20261001ci AI 看得见图与表情包（聊天+群聊+朋友圈：消息上下文图片/表情包/红包等转可读描述杜绝 [object Object]，最近 3 张图自动转 base64 走 vision 附图，模型不支持视觉自动去图重试；朋友圈帖子配图/表情贴纸/评论表情全部喂给 AI）；AI 能执行点赞（聊天中让 AI 点赞朋友圈→[[LIKE:编号]] 隐藏指令真执行，上下文注入朋友圈编号列表含已赞名单；发贴角色自点赞：字卡 40% 随机、AI 模式 [[SELF_LIKE]] 判定）；修复三指下滑截屏误弹长按菜单（多指守卫：≥2 指后 1.2 秒内不弹菜单+多指不启动长按+touchcancel 取消）；弹窗小屏加固（max-height 叠加 mask 相对值防 84vh 大视口裁底、overscroll contain 防滚动穿透；占卜弹窗三张牌按视口高度压缩保证按钮完整）；API 接入弹窗「测试链接」右侧加独立保存配置按钮（不依赖底部保存、保存后不关弹窗）；APK 通知权限根治（集成 @capacitor/local-notifications：启动即申请系统通知权限 Android 13+ 弹授权框、统一通知出口走原生本地通知含渠道创建，通知栏终于有记录；记事簿提醒同步切换；总设置通知状态适配）；
+         20261001cj 修复 APK 首启「跳过开屏后按钮全失灵」真机必现 bug：软件声明未同意期间（_noticeGate）声明弹窗被透明遮罩点击误关、gate 永久卡 true 导致所有弹窗被抑制——现在声明弹窗禁遮罩点击关闭（只能点「同意」进），openModal 被抑制时返回 false 供调用方跳过后续元素绑定（showChatListMenu 等不再取 null 崩溃）；
+         20261001ck APK 覆盖安装 + 数据导出落盘：① 固化签名（仓库内置 debug.keystore，构建时 keytool 转 JKS 覆盖 ~/.android/debug.keystore，签名永久一致）+ versionCode 时间戳递增（YYYYMMDDHHMM），同签名 APK 可直接覆盖安装、保留数据不再强制卸载；② 导出改走 @capacitor/filesystem 写公共「文档/白日梦备份」目录（原 <a download> 在 WebView 是 no-op 永远导不出，卸载不删，重装可导入）；
+         20261001cl ① 开屏 BGM 网页端加载优化：原 bgm_intro.mp3 是 5 分钟完整版（5MB），运行时全量 fetch 导致手机网页首载无音乐、点击播放延迟高；现无损截取开头 17 秒生成 bgm_intro.web.mp3（267KB，128kbps 原码率音质不变），splash.js 按 window.Capacitor 环境判断——软件端仍用原 5 分钟无损完整版、网页端用 17 秒小文件（软件端无损体验不受影响）；② 模拟视频通话「更换通话背景」接入图片裁剪器 openImageCropper（网页+APK 均改，取消返回 null 不生效）；
+         20261002ca ① 省电分级（前台动画面停，后台调度不断）：切后台（visibilitychange + Capacitor appStateChange 双监听）挂 html.bm-bg 全局暂停全部 CSS 动画 + BGM AudioContext 挂起（__bmSplashVol.suspend/resume）+ <audio> 暂停回前台续播 + 开屏 canvas 动画冻结（t0 补偿隐藏时长不快进）；主动消息 15s/问卷 20s/群聊 20s/朋友圈 45s/回信轮询 10s/状态栏 60s 等高频定时器全部挂后台停摆，只保留 bmBgTick 60 秒一次的低频事件调度（静默查超频/主动消息/到期回信，不碰 DOM 不播动画），回前台立即补投到期事件并恢复全部视觉；② APK 原生通知接管（把后台提醒交给系统挂机）：bmRegisterAlarm 在调度时就把已知触达时刻经 @capacitor/local-notifications schedule 预排成安卓精确闹钟（底层 AlarmManager，exact:true + allowWhileIdle，manifest 已注入 USE_EXACT_ALARM/SCHEDULE_EXACT_ALARM）——App 进程被冻结/杀死也照常到点弹通知，系统唤醒只发通知不唤醒网页，发完继续休眠；预排点=单聊回复延迟（scheduleCharReply）、书信回信队列 dueAt（scheduleLetterReply）、超频下轮时刻（_ocTickRandom 撤本轮预排下轮）、主动消息下轮触发（随机/固定双模式）；送达即 bmClearAlarm 撤钟（dueAt ±30s 精确匹配防误清）；③ 通知合并防轰炸：bmNotifIdFor 同访客同类别固定通知 id（消息/书信/超频/转账/朋友圈各自独立通道），后到替换先到绝不叠罗汉；挂后台期间同访客连续多条合并标题「N 条新消息 / N 封信」，回前台计数清零；notifyIncoming 增加 kind 参数分类合并；④ 灰度殿堂列表化补强：板块行点击记录 _ghNavAt，列表行 600ms 内的滞后点击一律忽略（修移动端幽灵点击穿透——点板块后原生 click 落到新列表同坐标行、直接跳进详情卡看起来「没有列表」）；板块列表加「共 N 条残留 · 点条目可查看完整内容」头部；旧日书信行标题改取信文首行（多行信不再糊成一坨）；
+         20261002cg 悬浮窗2号完整交互 + 闪退根治 + 通知方式开关：① 原生悬浮窗（系统级）三手势交互对齐软件内模拟通话——单击在小方块(1号)⇄大卡片(2号)间循环切换形态、双击进入软件（回到通话界面）、拖动移动位置（插件 Java 端 onTouch 用 getRaw 绝对坐标 + 4dp 死区区分拖动 + 两次按下抬起 <300ms 判定双击 + toggleExpand 切换文字列显隐）；② 根治「点通知/点悬浮窗回应用 → Activity 重建 → WebView 重载 → 通话挂断 + 界面闪退 + 重播开屏」——插件 bringAppToFront 改用 moveTaskToFront（优先）或 launchIntent+SINGLE_TOP+REORDER_TO_FRONT（兜底）把已有任务栈带前台，workflow 注入 MainActivity launchMode="singleTask" 保证复用同一 Activity 实例不重建 WebView；③ 聊天设置最顶端新增「消息通知方式」开关（chatSettings.notifyMerge）：逐条通知(each，默认)/合并通知(merge)，玩家自主选择——merge 模式下后台期间同一访客多条合成「发来 N 条新消息」一条（固定 id 覆盖更新计数），each 模式保持每条独立（唯一递增 id + group 聚合）；④ 聊天设置「通话悬浮窗模式」说明补充悬浮窗手势标注（单击切形态/双击进软件/拖动移动）；
+         20261002cf 开屏动画必播修复 + 悬浮窗插件注册修复：① 移除 splash.js 里「prefers-reduced-motion 则跳过开屏动画」的误判——开屏动画是前台必播内容，与「挂后台省电」无关；用户手机只要在软件内动画一个都不能少，省电跳过只应由后台状态（bmSetBgState/document.hidden）触发；② 修悬浮窗插件从未真正生效的根因（workflow 注入）：Capacitor 6 的 cap add 生成的 MainActivity 默认只 extends BridgeActivity、不会自动 registerPlugin 自定义插件——即使 capacitor.plugins.json 列了 bm-overlay、JS 端能拿到代理对象，Java 端 BmOverlayPlugin 从未实例化，show()/checkPermission() 调用空转、原生悬浮窗永不出现；在 workflow「生成安卓原生壳」后新增「注册 BmOverlay 插件到 MainActivity」步骤，注入 registerPlugin(BmOverlayPlugin.class)（含 import + Bundle 保护），这才是悬浮窗能真正浮到系统层的最后一块拼图；
+         20261002ce 数据防丢失加固（用户卸载丢数据后补强）：① 补全全量备份此前遗漏的 kv 数据——原 .ocdata「全量备份」其实漏了大量存 kv store 的数据：灰度殿堂 grayHall（删除角色的「旧日余晖」归档）、书信 letterFolders/letterFolderMap/pendingLetterReplies、世界树 worldBook/worldBookDrafts、朋友圈 momentsPosts/momentsCover、记事簿 notebookItems、自定义字体 customFonts、悬浮窗设置 floatSettings、行程提醒 bmScheduleReminders 等全部补齐（关系网在角色 c.relations 字段已随 characters 导出、占卜不记录历史，无需单独键）；抽公共函数 buildBackupPayload() 供手动导出与自动备份共用；② 新增自动备份兜底——autoBackup()：APK 端（Capacitor Filesystem 可用时）静默把全量数据写到公共「文档/白日梦备份/白日梦自动备份.ocdata」（卸载应用不被删除），有访客数据才备份防空库覆盖；scheduleAutoBackup() 启动后延迟 40s 首备 + 每次切后台（appStateChange !isActive）补备一次，全程静默不弹窗不打断；
+         20261002cd APK 首启「跳转浏览器+黑屏」修复：恢复数据源门卫的 APK 放行条件（hn==='localhost' / hn==='127.0.0.1' / capacitor: 协议——20260930cg-apk 引入的原有放行，后被本地源码同步覆盖丢失），APK 内 WebView（https://localhost）不再被拦截跳转 127.0.0.1:8902 开发地址（此前表现为「白日梦想要打开Edge」+ ERR_CONNECTION_REFUSED + 应用黑屏）；app.js 数据源警示条同步恢复同款放行，APK 内不再误显「数据互不相通」警示；
+         20261002cc bm-overlay 原生悬浮窗插件前端接入（通话真正浮到系统层）：① 新增统一封装模块——bmOverlayNative()（检测 window.Capacitor.Plugins.BmOverlay 自研插件）、bmOverlayAvailable()、bmOverlayCheckPermission()、bmOverlayShow(name,sub)、bmOverlayUpdateSub(sub)、bmOverlayHide()，网页端/无插件/无权限一律静默降级返回 false 绝不抛异常；② 修正 requestOverlayPermission() 指向自研插件 BmOverlay（原误指向旧 capacitor-overlay 的 PLG.Overlay，方法名也从 openOverlaySettings 改为 requestPermission）；③ 通话接入：缩小悬浮窗（minimizeCall）在「悬浮窗模式=在手机/其他软件上悬浮」且原生可用时，优先 show 原生系统级悬浮窗（其他应用之上可见、可拖动、点按回应用），原生失败自动回退软件内 DOM 浮窗；计时跳动 updateCallFloatTime 同步 updateSub 到系统层小窗；挂断/切回/结束统一经 removeCallFloat 收口 hide 原生悬浮窗（新增 _bmOverlayShown 状态标记）；④ 回前台体验：点原生悬浮窗回应用后 DOM 层无通话界面，appStateChange 回前台检测到 _bmOverlayShown 且通话仍在则自动 backToFullCall 恢复完整通话界面（收起原生悬浮窗）；
+         20261002cb 三项更新（用户需求）：① 模拟通话计时超 1 小时自动进位——通话界面/悬浮胶囊/群通话/挂断后聊天里的通话时长统一改「X小时Y分(秒)」，不再显示「114:23」纯分钟；② 表情包库分家+开关：角色（访客）发表情包默认只用 TA 自己的专属表情包库（TA 主页上传那套），不再抽玩家的表情包库——聊天设置新增「允许使用玩家的表情包库」开关（总设置对所有访客生效+访客主页可单独覆盖，默认关），开启后玩家库才进抽取池（TA 自己的库优先），覆盖聊天自动追加表情包/开发者命令发表情包/朋友圈配图表情全部入口；③ 角色主页表情包库新增「批量管理」：进入多选模式（选中紫色描边+✓），「删除选中(N)」二次确认后批量删除，照问卷列表批量管理同款交互；
+         20261001cs ① 字卡组合发送：随机字卡发消息逻辑从「只能单独抽表情字卡/消息字卡」升级为有概率将两者合并成同一条消息——combineCardEmoji 按 30% 概率给文本字卡拼接一个表情字卡（尾随 70% / 前置 30%，表情池取字卡库 customEmojis 优先、库空回退 EMOJI_LIB），接入单聊 splitReplyParts（每条落定各组合一次）与群聊 card() 抽取、maybeAttachSticker 字符表情也优先抽字卡库表情字卡；② 灰度殿堂全板块「可点进详情」：旧日书信/旧日记忆/旧日超频/旧日问卷四个板块从不可点击占位列表升级为「点条目 → graySectionDetail 滑动详情卡」（仿记忆宫殿卡页，左右按钮+滑动手势切换上一条/下一条，返回回对应板块列表），旧日朋友圈走 grayMomentDetail（展示正文/图片/点赞/评论，正文改用 post.content 修复此前恒显「（图文帖）」占位），旧日生平维持整体详情卡片——六大板块全部可回顾具体内容；
+         20261001cr 四项修复（用户真机反馈）：① 修灰度殿堂板块回顾点击无反应（真机必现）——grayViewSection 里引用了未定义的 c 变量（bio 生平/关系网渲染依赖角色快照），点任何有残留数据的板块直接 ReferenceError、页面毫无反应，看起来像「按钮点不动/看不到内容」；修复=补 const c = gh.char || {}；② 灰度殿堂图标与记忆宫殿区分：个人主页入口 + 殿堂头部 + 空状态改用 archive 档案盒线性图标；③ 修关系网批量「清除所选关系」后整个页面直接关闭——改为退出批量并重渲染关系网列表（子功能退出返回上一界面铁律）；④ 修颜文字/符号串气泡截断（用户真机：((٩( ÷∀÷ )۶))、~~~~~~~~ 被裁）——单行气泡上限从 72%×90% 嵌套（≈64.8% 行宽）放宽到 90% 行宽 + 渲染后 Range 实测内容宽度（不能用 scrollWidth，气泡 ✦ 伪元素星星伸出右缘会污染测量），超宽逐级缩字号（15→12px）仍放不下再自动换行兜底；⑤ 删除角色弹窗（单聊+批量）增加「全选（彻底删除，不留灰度殿堂）」复选框：一键勾选/取消全部六项删除范围，单项变动同步全选框三态（全选/半选/未选）；
+         20261001cq ① 群聊与单聊功能面板新增「拍摄」：手机端（APK）经 @capacitor/camera 调系统相机（先 cam.requestPermissions 申请 CAMERA 权限、getPhoto resultType DataUrl source CAMERA），网页端用隐藏 <input capture=environment> 触发移动浏览器相机；拍完转 File 走 sendImageMessage 上传；② 聊天日程+闹钟自动检测在总设置新增开关（bmSchedDetect，默认开，关闭时 maybeDetectScheduleReminder 直接返回）；③ 修玻璃拟态模式下底部导航栏图标/文字白字白底不可读：浅色玻璃下非激活 tab 深色字（tab-icon rgba(42,35,64,.82)、tab-item rgba(42,35,64,.72)）；④ 聊天导航长按群聊/右键群聊改为进入批量管理（原弹群聊个人主页）；⑤ 批量删除角色统一弹出「删除范围」六项勾选弹窗（对所有涉及删除角色的地方生效），未勾选范围的数据归档进个人主页新增「灰度殿堂」；⑥ 灰度殿堂（kv grayHall，仿记忆宫殿灰石布局，兼容各预设配色/玻璃/普通模式可读性）：每个被删角色生成「X的旧日余晖」文件夹（旧日书信/旧日生平[生平+关系网]/旧日记忆[记忆宫殿]/旧日朋友圈/旧日超频/旧日问卷六板块）、恢复按钮（弹「正在施法将该访客复活」→成功「访客已复活」/失败报错）、非批量模式每行恢复按钮前「彻底删除」按钮（提醒不可撤销）、批量模式勾选后「彻底删除」——彻底删除抹除该角色聊天记录/记忆宫殿/朋友圈/问卷/书信/礼物/他人指向关系，朋友圈不再见其帖、记忆宫殿不再见其记忆；⑦ 关系网批量管理模式改为「清除所选关系」（清除选中角色所有关系、角色保留可重新分配），不再直接删除角色；⑧ 子功能退出后返回上一功能；
+         20261001cp 五项修复：① 总设置「清除多余缓存与数据」下加说明——与数据管理→数据迁移→清除冗余缓存是同一功能双入口，只清缓存类冗余（Cache/SW/localStorage/旧库/孤儿消息）不动正式数据；② 修普通模式导航页「未分组」标题顶部被顶栏盖住（真机必现）：u 版顶栏改 absolute 悬浮时列表 padding-top 按旧高度估 58px，实测顶栏 70px——改 78px（玻璃模式 72px），朋友圈 moments-scroll 同步修；③ 修超频礼物「跳过动画」按钮成死按钮：keepAlive 跳出动画 settle 交棒开箱场景后按钮残留在「打开礼物」下方且点击撞 burstDone 直接 return——settle 时（自然/手动两路）移除按钮；④ 修超频动画×书信信封冲突（用户真机：礼物/惊喜弹窗没弹直接变书信页面）：进入聊天页 _ocOnEnterChat 与 _letterOnEnterChat 并发，信封层(z320)垫底、礼物动画(z500/704)盖上来，走完礼物流程面对的下一层就是信封——新增 _ocAnimBusy/_waitOcAnimDone（检测 #oc-drop/#oc-glitch/#oc-rift/#oc-open/.oc-unbox-scene/#oc-surprise-big），信封到达前（charSendLetter 聊天页内分支 + _letterOnEnterChat）先等全部超频全屏层退场再开信，礼物/惊喜弹窗优先、信封排队随后；⑤ 批量管理支持群聊与整组勾选：renderBatchList 重写为导航页同款分组结构（💬未收录群聊区+📁分组+未分组），群聊行可勾选（批量删除对群聊=解散同群设置语义），分组标题右侧「全组」勾选框一键勾选/取消整组，建群自动剔除群聊 id，移入分组对群聊 id 同样生效；
+         20261001cm ① 修记忆宫殿卡片视图点「AI 关」后整页卡死（真机必现）：卡片视图 showPalaceEntry 内点权限 chip 打开 openPalPerm 弹窗会替换 #modal-content 的卡片 DOM，而 back 回调只 setCardContent（刷新的是已脱离文档的游离节点）——权限弹窗永不关闭、遮罩拦截全部触摸，整页动不了；修复=back 改为重开 showPalaceEntry(e.id, backFid)（取消/保存后都重开卡片视图、定位当前卡），与「移动到…」及列表视图关闭语义对齐；② 开屏 BGM 恢复完整歌循环 + 网页端流式加载（用户澄清：cl 版网页端改 17 秒截取段导致「继续播放」循环段变短为 17 秒，需恢复完整 5:14 循环；软件端本就一直循环完整歌未受影响）：网页端（无 Capacitor）改走 <audio> preload+loop 流式边下边播 + createMediaElementSource 接入原 Gain→压缩器→makeup 链路（根治首载无音乐/点播延迟，同时循环整首完整歌）；软件端（有 Capacitor）仍走原 fetch+decode 全量解码；url 统一恢复 audio/bgm_intro.mp3（bgm_intro.web.mp3 不再引用、保留无害）；
+         20260930cg 防反色机制（物理锁死，杜绝系统暗色模式下图片/表情包/头像/礼物图被强制反色成底片）：CSS 顶部加最高优先级锁死块——img/picture/video/canvas/svg/emoji/sticker/avatar/gift 等所有媒体元素 filter:none+forced-color-adjust:none+color-scheme:only light（只锁反色属性、绝不锁背景色，深色默认主题不受影响）；@media(forced-colors:active) 高对比度模式二次兜底；APK 原生三重保险（styles.xml + AndroidManifest + forceDarkAllowed=false，system WebView 强制暗色一并关闭） -->
+
+    <!-- 聊天列表页 -->
+    <div class="view" id="view-chatlist">
+      <div class="topbar">
+        <div class="title">白日梦</div>
+        <div class="spacer"></div>
+        <button class="icon-btn" id="btn-char-groups" title="分组管理" data-icon="cards"></button>
+        <button class="icon-btn" id="btn-add-char" title="添加访客" data-icon="plus"></button>
+      </div>
+      <div class="list" id="chat-list"></div>
+    </div>
+
+    <!-- 聊天页 -->
+    <div class="view" id="view-chat">
+      <div class="topbar" style="padding-bottom:10px;">
+        <button class="icon-btn" id="btn-chat-back" data-icon="back"></button>
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer;" id="chat-header" title="查看访客主页">
+          <div class="avatar sm" id="chat-avatar"></div>
+          <div style="min-width:0;flex:1;">
+            <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+              <div style="font-size:15px;font-weight:600;white-space:nowrap;" id="chat-name"></div>
+              <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="chat-status">在线</div>
+            </div>
+            <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;" id="chat-sign"></div>
+          </div>
+        </div>
+        <button class="icon-btn" id="btn-group-regen" data-icon="regen" title="生成一轮群回复" style="display:none;" aria-label="生成一轮群回复"></button>
+        <button class="icon-btn" id="btn-chat-aimode" data-icon="aitoggle" title="字卡模式 · 点击切换 AI" aria-label="AI/字卡模式开关"></button>
+        <button class="icon-btn" id="btn-char-profile" data-icon="dots"></button>
+      </div>
+      <div class="chat-scroll" id="chat-scroll"></div>
+
+      <!-- 拓展功能面板（5.5） -->
+      <div class="chat-panel" id="plus-panel">
+        <div class="chat-panel-grid" id="plus-grid"></div>
+        <input type="file" id="plus-file-input" accept="image/*" style="display:none;">
+        <!-- 20261001cq：拍摄——网页端 capture=environment 移动浏览器直接弹相机拍照；APK 端由 JS 走 @capacitor/camera -->
+        <input type="file" id="plus-camera-input" accept="image/*" capture="environment" style="display:none;">
+      </div>
+
+      <!-- 表情包面板（5.10 + 5.6 戳一戳合并）：我的表情包 / 戳一戳 两个 tab -->
+      <div class="chat-panel" id="emoji-panel">
+        <div class="emoji-tabs">
+          <button class="emoji-tab active" data-etab="emoji">表情包 <span id="emoji-count"></span></button>
+          <button class="emoji-tab" data-etab="emojilib">Emoji 库</button>
+          <button class="emoji-tab" data-etab="poke">戳一戳</button>
+          <div style="flex:1;"></div>
+          <label class="btn" style="padding:5px 12px;font-size:12px;cursor:pointer;" for="emoji-file-input" id="emoji-add-btn">＋ 添加</label>
+          <button class="icon-btn" style="width:30px;height:30px;" id="btn-emoji-manage" title="批量管理" data-icon="trash" data-size="15"></button>
+        </div>
+        <div class="emoji-grid" id="emoji-grid"></div>
+        <div class="emoji-grid" id="emojilib-grid" style="display:none;"></div>
+        <div class="poke-list" id="poke-list" style="display:none;"></div>
+        <input type="file" id="emoji-file-input" accept="image/*" multiple style="display:none;">
+      </div>
+
+      <div class="chat-input-bar">
+        <button class="icon-btn" id="btn-plus" title="功能" data-icon="plus"></button>
+        <button class="icon-btn" id="btn-emoji" title="表情包" data-icon="sticker"></button>
+        <button class="icon-btn" id="btn-call" title="模拟通话" data-icon="call"></button>
+        <input class="input" id="chat-input" placeholder="说点什么…" autocomplete="off">
+        <button class="send-btn" id="btn-send" data-icon="send" data-size="19"></button>
+      </div>
+    </div>
+
+    <!-- 个人主页（3.3：启动后默认进入；8.1 布局） -->
+    <div class="view active" id="view-home">
+      <div class="topbar" id="home-topbar">
+        <button class="btn" id="btn-anniversary" title="纪念日" style="background:rgba(20,16,25,0.72);color:rgba(255,255,255,0.92);padding:7px 14px;font-size:13px;gap:6px;">
+          <span data-icon="anniversary" data-size="15" style="display:inline-flex;"></span> 纪念日
+        </button>
+        <!-- 20260930bz：开屏音乐继续播放开关（小型化放纪念日右侧；开=开屏结束后音乐循环播放贯穿全程） -->
+        <button class="icon-btn" id="btn-splash-music" title="开屏音乐继续播放" style="width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;">
+          <span data-icon="music" data-size="15" style="display:inline-flex;"></span>
+        </button>
+        <div class="topbar-profile" id="topbar-profile">
+          <div class="avatar sm" id="topbar-avatar"></div>
+          <div class="topbar-profile-name" id="topbar-name"></div>
+        </div>
+        <div class="spacer"></div>
+        <button class="hero-change" id="btn-bg-change" title="更换背景图" style="margin-right:6px;"><span data-icon="camera" data-size="13" style="display:inline-flex;"></span>更换背景</button>
+        <button class="icon-btn" id="btn-daily-open" title="入梦签" data-icon="daily"></button>
+      </div>
+      <div class="home-scroll" id="home-scroll">
+        <!-- 背景与内容都包在 .home-content 里：两层背景随页面一起滚动 -->
+        <div class="home-content">
+          <!-- 聊天美化上传的"个人主页美化背景"：独立底层，随页面滚动 -->
+          <div id="home-pagebg"></div>
+          <!-- 全屏融合背景：铺在美化背景之上、内容之下，顶栏浮在它上面（参考小红书个人主页） -->
+          <div id="home-fullbg"></div>
+          <!-- 上半部分：260px 圆角面板（背景图铺在面板内）+ 白边框圆头像（20260926a 版式恢复） -->
+          <div class="player-hero" id="player-hero">
+            <!-- 三层卡片结构（20260929t）：底层=聊天美化的主页背景(#app-fullbg 全屏承接)，
+                 中层=磨砂玻璃卡(.hero-glass，与面板同宽高、下移露出下缘一条)，
+                 顶层=玩家上传的背景图(.hero-clip 圆角面板)。未上传背景时 hero 全透明直接透出底层 -->
+            <div class="hero-glass" aria-hidden="true"></div>
+            <!-- 圆角裁切层：背景图的圆角裁切与亚像素溢出都由它统一处理（20260929s） -->
+            <div class="hero-clip"><div class="hero-bg" id="hero-bg"></div></div>
+            <div class="hero-avatar-wrap" id="hero-avatar-wrap" title="点击编辑资料 / 更换头像">
+              <div class="player-avatar-round" id="player-avatar">梦</div>
+            </div>
+          </div>
+
+          <!-- 下半部分：昵称 / 状态 / 签名 / 统计 / 功能 -->
+          <div class="player-info">
+            <div class="player-name-lg" id="player-name">白日梦主人</div>
+            <div class="player-chips">
+              <span class="chip" id="player-status-chip">🌙 入梦中</span>
+              <span class="chip ghost" id="player-sign-chip">做个好梦</span>
+            </div>
+            <div class="player-chips" style="margin-top:8px;">
+              <span class="chip ghost" id="player-quote-chip" style="font-style:italic;"></span>
+            </div>
+
+            <div class="player-stats">
+              <div class="stat-card"><div class="stat-num" id="stat-chars">0</div><div class="stat-label">访客数量</div></div>
+              <div class="stat-card"><div class="stat-num" id="stat-days">1</div><div class="stat-label">聊天天数</div></div>
+              <div class="stat-card stat-wallet" id="stat-wallet-card" style="cursor:pointer;"><div class="stat-num" id="stat-wallet">¥0</div><div class="stat-label">我的钱包</div></div>
+            </div>
+
+            <div class="player-funcs">
+              <button class="func-row" id="btn-home-memory"><span class="func-ic" data-icon="memory"></span><span class="func-label">记忆宫殿</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-world"><span class="func-ic" data-icon="tree"></span><span class="func-label">世界树</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-relations"><span class="func-ic" data-icon="relation"></span><span class="func-label">关系网</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-gray"><span class="func-ic" data-icon="archive"></span><span class="func-label">灰度殿堂</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-cards"><span class="func-ic" data-icon="cards"></span><span class="func-label">字卡库</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-theme"><span class="func-ic" data-icon="palette"></span><span class="func-label">织梦点</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-emoji"><span class="func-ic" data-icon="sticker"></span><span class="func-label">表情包</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-chatsettings"><span class="func-ic" data-icon="chatset"></span><span class="func-label">聊天设置</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-data"><span class="func-ic" data-icon="data"></span><span class="func-label">数据管理</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-ai"><span class="func-ic" data-icon="ai"></span><span class="func-label">API 接入</span><span class="func-arrow">›</span></button>
+              <button class="func-row" id="btn-home-settings"><span class="func-ic" data-icon="settings"></span><span class="func-label">总设置</span><span class="func-arrow">›</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PC 宽屏：未选择聊天时的占位 -->
+    <div id="pc-placeholder">
+      <div class="empty-icon">🌙</div>
+      <div>选择一个访客，开始你们的对话</div>
+    </div>
+
+    <!-- 朋友圈（第九章：类微信朋友圈——玩家/角色发帖、点赞、评论、可见范围） -->
+    <div class="view" id="view-moments">
+      <div class="topbar" id="moments-topbar">
+        <div class="title">朋友圈</div>
+        <div class="spacer"></div>
+        <button class="icon-btn" id="btn-moments-aimode" data-icon="aitoggle" title="字卡模式 · 点击切换 AI" aria-label="AI/字卡模式开关"></button>
+        <button class="icon-btn" id="btn-moments-bg" title="更换朋友圈封面" data-icon="palette"></button>
+        <button class="icon-btn" id="btn-moments-publish" title="发动态" data-icon="camera"></button>
+      </div>
+      <div class="moments-scroll" id="moments-scroll">
+        <!-- 封面（点击更换）+ 玩家头像昵称（微信布局） -->
+        <div class="moments-cover" id="moments-cover" title="点击更换封面">
+        <div class="mc-me">
+          <div style="text-align:right;">
+            <div class="mc-me-name" id="moments-me-name">白日梦主人</div>
+            <div class="mc-me-sign" id="moments-me-sign"></div>
+          </div>
+          <div class="avatar sm" id="moments-me-avatar">梦</div>
+        </div>
+        </div>
+        <div class="moments-list" id="moments-list"></div>
+      </div>
+    </div>
+
+    <!-- 底部导航（3.3：聊天 · 个人主页 · 朋友圈） -->
+    <div class="tabbar">
+      <div class="tab-item" data-view="chatlist">
+        <div class="tab-icon" data-icon="chat" data-size="20"></div>
+        <div>聊天</div>
+      </div>
+      <div class="tab-item active" data-view="home">
+        <div class="tab-icon" data-icon="home" data-size="20"></div>
+        <div>主页</div>
+      </div>
+      <div class="tab-item" data-view="moments">
+        <div class="tab-icon" data-icon="moments" data-size="20"></div>
+        <span class="tab-badge" id="moments-badge" style="display:none;"></span>
+        <div>朋友圈</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 气泡右键菜单（引用/删除/转发/多选/撤回） -->
+  <div id="ctx-menu"></div>
+
+  <!-- 弹窗容器 -->
+  <div class="modal-mask" id="modal-mask">
+    <div class="modal" id="modal-content"></div>
+  </div>
+
+  <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
+  <script src="js/splash.js?v=V1.0"></script>
+  <script src="js/db.js?v=V1.0"></script>
+  <script src="js/icons.js?v=V1.0"></script>
+  <script src="js/emoji-img.js?v=V1.0"></script>
+  <script src="js/cards.js?v=V1.0"></script>
+  <script src="js/app.js?v=V1.0"></script>
+  <!-- 20261002ch：新手引导（沙盒隔离：独立 js/css，动态创建全屏 overlay，不碰核心代码与 DOM 结构，
+       一键「开始探索/跳过新手指引」后彻底移除并 localStorage 记录永不再弹） -->
+  <script src="js/guide-sandbox.js?v=V1.0"></script>
+</body>
+</html>
