@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.0.2'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.0.3'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
 
 let characters = [];
 let cards = null;
@@ -15851,10 +15851,11 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
       ${e.kind === 'chat' ? `<div class="pal-dc-sum">摘要：${escapeHtml(palWithPlayerName(e.summary || e.title || ''))}</div>` : ''}
       <div class="pal-dc-body">${entryBody(e)}</div>
       <div class="pal-dc-foot">
-        ${e.folderId === PAL_H ? '' : `<button class="pal-card-chip star${palIsWeighted(e, folders) ? ' on' : ''}" data-cact="star" title="${palIsWeighted(e, folders) ? '已设为权重记忆，点击取消' : '设为权重记忆'}">${icon('star', 14)} 权重</button>`}
         ${e.folderId === PAL_H ? '' : `<button class="pal-card-chip" data-cact="perm" title="点击设置 AI 读取权限">${icon('shield', 13)} ${palPermTagText(e, folders)}</button>`}
         <button class="pal-card-chip" data-cact="move">移动到…</button>
+        ${e.folderId === PAL_H ? '' : '<i style="flex-basis:100%;height:0;"></i>'}
         <button class="pal-card-chip danger" data-cact="del">删除</button>
+        ${e.folderId === PAL_H ? '' : `<button class="pal-card-chip wstar${palIsWeighted(e, folders) ? ' on' : ''}" data-cact="star" title="${palIsWeighted(e, folders) ? '已设为权重记忆，点击取消' : '设为权重记忆'}">${icon('star', 14)} 权重</button>`}
       </div>`;
   }
 
@@ -17318,7 +17319,8 @@ async function charSendLetter(c, opts = {}) {
       appendMessage(msg); scrollToBottom();
       // 20261001cp：超频全屏动画（礼物跳出/开箱/惊喜大字）进行中 → 等它退场再开信封，
       // 避免信封垫底被礼物动画盖住、礼物流程走完后「直接变成书信页面」
-      (async () => { try { await _waitOcAnimDone(); } catch (e) {} openLetterOverlay(msg, c); })();
+      // 20261007：maxMs 提到 180s——首触发动画含多段说明弹窗，时长取决于玩家阅读速度
+      (async () => { try { await _waitOcAnimDone(180000); } catch (e) {} openLetterOverlay(msg, c); })();
       // 20260929aw：正在看的信件直接标记已读——防退出聊天后导航页仍提示未读
       setSetting('lastRead_' + c.id, Date.now());
     } else {
@@ -21256,12 +21258,12 @@ async function maybeTriggerOverclockIntro(force = false) {
   await _ocSet('unlocked', true);
 
   // 动画性能降级：低端机 或 跳过动画开关 → 直接弹简短提示
+  // 20261007：skip 路径的 _ocIntroRunning 保持到确认弹窗点掉为止——书信照样排队，不得盖住提示弹窗
   const skip = chatSettings.skipOverclockAnim || isLowEndDevice();
   if (skip) {
-    _ocIntroRunning = false;
     await _ocGrantInitialGift();
     await buildPlusPanel();
-    showConfirm('系统好像发生了一点异变，聊天页面的加号菜单里多了一个「超频」功能，去看看吧。', () => {});
+    showConfirm('系统好像发生了一点异变，聊天页面的加号菜单里多了一个「超频」功能，去看看吧。', () => { _ocIntroRunning = false; });
     return;
   }
 
@@ -21744,15 +21746,18 @@ async function _ocGiftPanelHtml() {
   const customs = await _ocCustomGifts();
   const allGifts = OVERCLOCK_GIFTS.map(g => ({ ...g, custom: false }))
     .concat(customs.map(g => ({ ...g, custom: true })));
+  // 20261007：标题与三个操作按钮同行在窄屏（~360px）会把「（点礼物查看说明）」挤到折行错版——
+  // 标题只留「礼物库」并允许收缩省略，说明下沉为独立小字行，任何宽度都不再换行错版
   return `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-        <div style="font-size:13px;font-weight:600;">🎁 礼物库（点礼物查看说明）</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
+        <div style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🎁 礼物库</div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="oc-side-action" id="oc-gift-batch" title="批量管理">${icon('trash',19)}</button>
           <button class="oc-side-action" id="oc-gift-cabinet" title="礼物柜">${icon('archive',19)}</button>
           <button class="oc-side-action" id="oc-add-menu" title="添加">${icon('plus',19)}</button>
         </div>
       </div>
+      <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px;">点礼物查看说明</div>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px;">
       ${allGifts.map(g => `
         <div class="oc-gift-card" data-gift-id="${g.id}" data-gift-price="${g.price}" style="background:var(--bg-elevated-2);border-radius:12px;padding:10px;cursor:pointer;">
@@ -21767,13 +21772,14 @@ async function _ocGiftPanelHtml() {
 /* 惊喜面板：预设惊喜（友情/爱人 tab），自定义惊喜通过礼物栏加号入口 */
 async function _ocSurprisePanelHtml() {
   return `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:13px;font-weight:600;">✨ 惊喜（免费，不做记录）</div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button class="oc-side-action" id="oc-surprise-batch" title="批量管理">${icon('trash',19)}</button>
-        <button class="oc-side-action" id="oc-add-menu-surprise" title="添加">${icon('plus',19)}</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
+        <div style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">✨ 惊喜</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="oc-side-action" id="oc-surprise-batch" title="批量管理">${icon('trash',19)}</button>
+          <button class="oc-side-action" id="oc-add-menu-surprise" title="添加">${icon('plus',19)}</button>
+        </div>
       </div>
-    </div>
+      <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px;">免费 · 不做记录</div>
     <div style="display:flex;gap:8px;margin-bottom:10px;">
       <button class="btn oc-stab" data-oc-stab="friend" style="flex:1;background:var(--purple);color:#141019;">友情版</button>
       <button class="btn oc-stab" data-oc-stab="lover" style="flex:1;">爱人版</button>
@@ -22035,7 +22041,10 @@ function _gcBindDeck(startIdx = 0) {
     let drag = null;
     function onDown(ev) {
       const el = ev.currentTarget;
-      if (busy || n < 2 || el !== cards[0]) return;
+      // 20261007：n<2 一刀切导致「只有 1 件礼物时轻点看详情完全无响应」——
+      // 单卡放行轻点详情（开关关闭时单卡才无任何交互）；翻页仍由 advance 内部的 n<2 拦截
+      if (busy || el !== cards[0]) return;
+      if (n < 2 && !_gcTapDetail) return;
       drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, dx: 0, dy: 0, t: Date.now(), moved: false, el };
       try { el.setPointerCapture(ev.pointerId); } catch (e) {}
       el.addEventListener('pointermove', onMove);
@@ -22773,15 +22782,24 @@ function _ocAnimQueue(run) {
    信封先垫底、礼物动画盖上来，玩家走完礼物流程后面对的下一层就是信封——
    观感「礼物/惊喜弹窗没弹，直接变成书信页面」。
    现在信封到达前先等全部超频全屏层退场（自然结束/跳过/开箱完成均会移除层），
-   保证礼物/惊喜的弹窗优先呈现，信封排队随后。maxMs 兜底防死等。 */
+   保证礼物/惊喜的弹窗优先呈现，信封排队随后。maxMs 兜底防死等。
+   20261007：首触发动画（glitch→裂隙→项链）中段有多段 z100 普通弹窗（前往查看 /
+   礼物星际详情 / 收尾确认），这些阶段全屏层已移除、此前被误判「空闲」→ 信封直接
+   插队盖住弹窗（z320>z100），观感「触发动画被书信打断」。现在 _ocIntroRunning 期间
+   一律视为忙碌，信封排队到整段触发动画走完；另要求连续两拍空闲才放行，堵住
+   「轮询时动画层尚未挂载」的挂载竞态。 */
 function _ocAnimBusy() {
-  return !!document.querySelector('#oc-glitch, #oc-rift, #oc-drop, #oc-open, .oc-unbox-scene, #oc-surprise-big');
+  return _ocIntroRunning || !!document.querySelector('#oc-glitch, #oc-rift, #oc-drop, #oc-open, .oc-unbox-scene, #oc-surprise-big');
 }
 function _waitOcAnimDone(maxMs = 60000) {
   return new Promise(resolve => {
     const t0 = Date.now();
+    let idleStreak = 0;
     const tick = () => {
-      if (!_ocAnimBusy() || Date.now() - t0 > maxMs) return resolve();
+      if (Date.now() - t0 > maxMs) return resolve();
+      if (_ocAnimBusy()) { idleStreak = 0; setTimeout(tick, 300); return; }
+      idleStreak++;
+      if (idleStreak >= 2) return resolve(); // 连续两拍（约600ms）都空闲才算真的空闲
       setTimeout(tick, 300);
     };
     tick();
@@ -22837,7 +22855,8 @@ async function _letterOnEnterChat(c) {
     if (latest) {
       // 20261001cp：与 _ocOnEnterChat 并发——先等超频全屏动画退场再播开信动画，
       // 保证礼物/惊喜弹窗优先，信封不垫底（详见 _waitOcAnimDone 注释）
-      try { await _waitOcAnimDone(); } catch (err2) {}
+      // 20261007：maxMs 180s 覆盖首触发动画全程（含说明弹窗阶段），信封必须排队
+      try { await _waitOcAnimDone(180000); } catch (err2) {}
       openLetterOverlay(latest, c);
     }
     // 有多封时细窗提示

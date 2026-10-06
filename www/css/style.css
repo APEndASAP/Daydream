@@ -3567,11 +3567,14 @@ body.glass-ui #view-moments .topbar.scrolled {
 }
 .pal-card-chip.danger { color: var(--danger); border-color: rgba(248,113,113,.35); }
 .pal-card-chip.dim { opacity: .6; cursor: default; }
-/* 20261002ch：权重记忆星星（卡片 chip 形态）——正常线条不发光，点亮金色发光 */
-.pal-card-chip.star { color: rgba(213,200,255,.5); border-color: rgba(213,200,255,.22); }
-.pal-card-chip.star svg { transition: filter .2s; }
-.pal-card-chip.star.on { color: #fcd34d; border-color: rgba(252,211,77,.55); background: rgba(252,211,77,.10); }
-.pal-card-chip.star.on svg { filter: drop-shadow(0 0 5px rgba(252,211,77,.75)); }
+/* 20261002ch：权重记忆星星（卡片 chip 形态）——正常线条不发光，点亮金色发光
+   20261007：类名 star→wstar——原 .star 与星空闪烁星点(.star{position:absolute;width:3px;
+   opacity:0;twinkle}) 撞名，chip 被拉出 flex 流压成 3px 小点周期性闪烁、叠在其他按钮上
+   （真机观感「权重标记与其他按钮重叠」的根因），改用不冲突的 wstar */
+.pal-card-chip.wstar { color: rgba(213,200,255,.5); border-color: rgba(213,200,255,.22); }
+.pal-card-chip.wstar svg { transition: filter .2s; }
+.pal-card-chip.wstar.on { color: #fcd34d; border-color: rgba(252,211,77,.55); background: rgba(252,211,77,.10); }
+.pal-card-chip.wstar.on svg { filter: drop-shadow(0 0 5px rgba(252,211,77,.75)); }
 /* 星星按钮（列表行/文件夹行的独立小按钮） */
 .pal-star {
   display: inline-flex; align-items: center; justify-content: center;
