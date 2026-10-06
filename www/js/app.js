@@ -4032,7 +4032,10 @@ async function __proactiveScan() {
           // 随机模式：在设置的 最小～最大 分钟区间内随机取下一次触发时刻（每次只发一条；20260929bf 区间可设置）
           const lo = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
           const hi = Math.max(lo, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
-          if (!_proactiveRandUntil[c.id] || _proactiveRandUntil[c.id] <= now) {
+          // 20261006 修复：进入条件收紧为「仅首次为空」。原 `|| <= now` 会把「到期」也当作「需初始化」，
+          //   导致到点后先重排到未来 → triggerAt 永远取未来值 → 发送分支(now>=triggerAt)恒 false → 随机消息永不触发。
+          //   现在：首次为空才初始化+预排 alarm；已到期则跳过初始化、让 triggerAt 保留为过期值，落入下方发送分支。
+          if (!_proactiveRandUntil[c.id]) {
             _proactiveRandUntil[c.id] = now + randInt(lo, hi) * 60000;
             bmRegisterAlarm(c, 'msg', _proactiveRandUntil[c.id]); // 20261002ca：预排原生精确闹钟（进程冻结也能到点提醒）
           }
@@ -10743,8 +10746,16 @@ function showCharEmojiModal(c) {
     let ok = 0, fail = 0;
     for (const f of list) {
       try {
-        const data = await compressImage(f, 240, 0.85, true);
-        c.emojis.push({ id: uid('emoji'), img: data });
+        let img;
+        if (f.type === 'image/gif' || /\.gif$/i.test(f.name)) {
+          // 20261006：GIF 原样入库（参照玩家库 addEmojiFiles）——canvas 重绘会丢动画帧，
+          //   故 GIF 不压缩（8MB 上限），用 gifBlobDesc 存 Blob 描述符保留动画
+          if (f.size > 8 * 1024 * 1024) { fail++; continue; }
+          img = await gifBlobDesc(f);
+        } else {
+          img = await compressImage(f, 240, 0.85, true);
+        }
+        c.emojis.push({ id: uid('emoji'), img });
         ok++;
       } catch (err) { fail++; }
     }
