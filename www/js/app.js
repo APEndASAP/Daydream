@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.0.1'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.0.2'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
 
 let characters = [];
 let cards = null;
@@ -2598,6 +2598,192 @@ function jumpToQuotedMessage(msgId) {
   setTimeout(() => { try { row.classList.remove('msg-jump-flash'); } catch (e) {} }, 1800);
 }
 
+/* ============================================================
+   聊天记录搜索（20261006，单聊+群聊共用）
+   · 数据源：当前会话已在内存的 _chatWin.all（不重查 IndexedDB）
+   · 文本提取：复用 msgBodyText(m)
+   · 定位：jumpToChatMessage(msgId) —— 复用现有虚拟滚动窗口，绝不 start→all.length 全量渲染
+   ============================================================ */
+
+let _searchOpen = false;      // 搜索浮层是否打开
+let _searchResults = [];      // 当前匹配结果（按 time 降序）
+let _searchShown = 0;         // 已渲染条数（UI 分批）
+const SEARCH_BATCH = 30;      // 每批显示 30 条
+const SEARCH_DEBOUNCE = 300;  // 输入防抖 ms
+
+/* 搜索文本提取（复用 msgBodyText，不重造）；sender 按单聊/群聊取 */
+function chatSearchSender(m) {
+  if (m.from === 'me') return '我';
+  if (_chatWin && _chatWin.mode === 'group') {
+    const g = chatGroups.find(x => x.id === currentGroupId);
+    return groupMemberName(g, m.charId);
+  }
+  const c = characters.find(x => x.id === m.charId);
+  return c ? c.name : 'TA';
+}
+
+/* 安全高亮：先找关键词位置，对三段分别 escapeHtml 后再拼 <mark>，杜绝 XSS 与 entity 长度错位 */
+function highlightSearchKw(text, kw) {
+  const s = String(text == null ? '' : text);
+  const q = (kw || '').trim();
+  if (!q) return escapeHtml(s);
+  const idx = s.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return escapeHtml(s);
+  const before = s.slice(0, idx);
+  const hit = s.slice(idx, idx + q.length);
+  const after = s.slice(idx + q.length);
+  return escapeHtml(before) + '<mark>' + escapeHtml(hit) + '</mark>' + escapeHtml(after);
+}
+
+/* 执行搜索：遍历 _chatWin.all，msgBodyText 匹配，按 time 降序 */
+function chatSearchRun(kw) {
+  _searchResults = [];
+  _searchShown = 0;
+  const q = (kw || '').trim();
+  const box = $('#chat-search-results');
+  const empty = $('#chat-search-empty');
+  if (!_chatWin || !_chatWin.all || !_chatWin.all.length) {
+    if (box) box.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (!q) {
+    if (box) box.innerHTML = '';
+    if (empty) empty.style.display = 'none';
+    return;
+  }
+  const ql = q.toLowerCase();
+  const hits = [];
+  for (const m of _chatWin.all) {
+    const text = msgBodyText(m);
+    if (!text) continue;
+    if (String(text).toLowerCase().indexOf(ql) >= 0) {
+      hits.push({ id: m.id, time: m.time, text, sender: chatSearchSender(m) });
+    }
+  }
+  // all 为 time 升序 → 倒序（由近到远）
+  _searchResults = hits.reverse();
+  if (!_searchResults.length) {
+    if (box) box.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+  } else {
+    if (empty) empty.style.display = 'none';
+    chatSearchRenderBatch();
+  }
+}
+
+/* UI 分批渲染：每次追加 SEARCH_BATCH 条，滚动到底再追加 */
+function chatSearchRenderBatch() {
+  const box = $('#chat-search-results');
+  if (!box) return;
+  const end = Math.min(_searchResults.length, _searchShown + SEARCH_BATCH);
+  const frag = document.createDocumentFragment();
+  const kw = ($('#chat-search-input').value || '').trim();
+  for (let i = _searchShown; i < end; i++) {
+    const r = _searchResults[i];
+    const item = document.createElement('div');
+    item.className = 'chat-search-item';
+    item.dataset.msgid = r.id;
+    item.innerHTML = `
+      <div class="csi-head"><span class="csi-sender">${escapeHtml(r.sender)}</span><span class="csi-time">${escapeHtml(msgTimeLabel(r.time))}</span></div>
+      <div class="csi-text">${highlightSearchKw(r.text, kw)}</div>`;
+    item.addEventListener('click', () => { closeChatSearch(); jumpToChatMessage(r.id); });
+    frag.appendChild(item);
+  }
+  box.appendChild(frag);
+  _searchShown = end;
+}
+
+/* 打开搜索浮层 */
+function openChatSearch() {
+  if (_searchOpen) return;
+  _searchOpen = true;
+  let overlay = $('#chat-search-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'chat-search-overlay';
+    overlay.className = 'chat-search-overlay';
+    overlay.innerHTML = `
+      <div class="chat-search-panel">
+        <div class="chat-search-bar">
+          <input id="chat-search-input" type="text" placeholder="搜索当前聊天记录" autocomplete="off" />
+          <button class="icon-btn" id="chat-search-close" aria-label="关闭搜索">${icon('close', 18)}</button>
+        </div>
+        <div class="chat-search-results" id="chat-search-results"></div>
+        <div class="chat-search-empty" id="chat-search-empty" style="display:none;">未找到对应的梦境碎片。</div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeChatSearch(); });
+    overlay.querySelector('#chat-search-close').addEventListener('click', closeChatSearch);
+    const input = overlay.querySelector('#chat-search-input');
+    let debounceTimer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => chatSearchRun(input.value), SEARCH_DEBOUNCE);
+    });
+    // 结果区滚动到底 → 追加下一批
+    const resBox = overlay.querySelector('#chat-search-results');
+    resBox.addEventListener('scroll', () => {
+      if (resBox.scrollTop + resBox.clientHeight >= resBox.scrollHeight - 40
+          && _searchShown < _searchResults.length) {
+        chatSearchRenderBatch();
+      }
+    });
+  }
+  overlay.style.display = 'flex';
+  const input = overlay.querySelector('#chat-search-input');
+  input.value = '';
+  _searchResults = [];
+  _searchShown = 0;
+  overlay.querySelector('#chat-search-results').innerHTML = '';
+  overlay.querySelector('#chat-search-empty').style.display = 'none';
+  setTimeout(() => { try { input.focus(); } catch (e) {} }, 50);
+}
+
+/* 关闭搜索浮层 */
+function closeChatSearch() {
+  _searchOpen = false;
+  const overlay = $('#chat-search-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+/* 精准定位：复用现有虚拟滚动窗口，绝不 start→all.length 全量渲染。
+   只重渲染目标附近 CHAT_WINDOW 大小的窗口，再 scrollIntoView + 高亮。 */
+function jumpToChatMessage(msgId) {
+  if (!_chatWin || !_chatWin.all || !_chatWin.all.length) {
+    miniToast('原消息已不在当前记录中');
+    return;
+  }
+  const idx = _chatWin.all.findIndex(m => m.id === msgId);
+  if (idx < 0) {
+    miniToast('原消息已不在当前记录中');
+    return;
+  }
+  const scroll = $('#chat-scroll');
+  if (!scroll) return;
+  // 目标消息放在窗口偏前位置，四周留出上下文
+  _chatWin.start = Math.max(0, idx - 20);
+  const end = Math.min(_chatWin.all.length, _chatWin.start + CHAT_WINDOW);
+  // 复用现有窗口渲染语义：suspend 挂起避免 appendX 重复 push 进 all
+  scroll.innerHTML = '';
+  _chatWin.suspend = true;
+  for (let i = _chatWin.start; i < end; i++) {
+    if (_chatWin.mode === 'group') appendGroupMessage(_chatWin.all[i], false);
+    else appendMessage(_chatWin.all[i], false);
+  }
+  _chatWin.suspend = false;
+  // 若窗口未盖到末尾，补「加载更早」哨兵（保持向上滚动加载旧消息能力）
+  chatRenderSentinel(scroll);
+  // 定位 + 高亮（复用 jumpToQuotedMessage 尾段逻辑）
+  const row = scroll.querySelector(`.msg-row[data-msgid="${CSS.escape(msgId)}"]`);
+  if (!row) return;
+  try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { try { row.scrollIntoView(); } catch (e2) {} }
+  row.classList.remove('msg-jump-flash');
+  void row.offsetWidth;
+  row.classList.add('msg-jump-flash');
+  setTimeout(() => { try { row.classList.remove('msg-jump-flash'); } catch (e) {} }, 1800);
+}
+
 /* 查岗是否已完成一轮应答（20260925i：角色已回应过玩家的回复）。
    完成后卡片闭合，不再显示「回复查岗」——与书信线程同一套「一轮即闭合」逻辑，杜绝无限回复 */
 function checkinAnswered(m) {
@@ -4872,11 +5058,12 @@ function restoreAppState(isActive) {
       bmSetBgState(false);
       return;
     }
-    /* 普通回前台：只做省电态恢复 + 通话恢复（白名单，绝不碰 view/bindEvents/splash） */
+    /* 普通回前台：只做省电态恢复（白名单，绝不碰 view/bindEvents/splash）。
+       20261006 修复：移除「回前台自动 backToFullCall」——原逻辑会在用户切回 App 时把系统
+       悬浮窗（BmOverlay）强制展开成完整通话大界面（backToFullCall → removeCallFloat →
+       bmOverlayHide 隐藏原生窗）。现在回前台仅恢复省电态，原生悬浮窗保持原状，
+       只有用户主动点击悬浮窗上的「切回完整通话」按钮才进入完整通话页。 */
     bmSetBgState(false);
-    if (_bmOverlayShown && _callActive && _callActive.c) {
-      backToFullCall(_callActive.c, _callActive.kind);
-    }
   } catch (e) {}
 }
 function markAppBackground() {                  // 挂后台：复位去重标记，供下次回前台判定
@@ -8790,6 +8977,8 @@ function bindEvents() {
   // 聊天页返回
   $('#btn-chat-back').onclick = () => { closeModalPanels(); cancelQuote(); switchView('chatlist'); };
   $('#btn-char-profile').onclick = () => showCharProfile();
+  // 20261006：聊天记录搜索（单聊+群聊共用，搜索当前 _chatWin.all）
+  $('#btn-chat-search').onclick = () => openChatSearch();
   // 20260929af：顶栏 AI/字卡模式开关（三个点左侧），切换带「滴」声；be 起逻辑抽为共用函数
   $('#btn-chat-aimode').onclick = () => toggleAImodeFromUI();
   // 20260929be：朋友圈顶栏同款 AI/字卡开关

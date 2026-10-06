@@ -1,22 +1,22 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<html lang="zh-CN" data-page-node-id="ZpYSiXbGvKmJtkZHUletON">
+<head data-page-node-id="QCf1BiUET1owAHmFgJYMj7">
+  <meta charset="UTF-8" data-page-node-id="weoXaXQhDbzEDgGl6Bfckc">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" data-page-node-id="gWhhClOdERd19jqvXtwONx">
   <!-- 20260930cf：声明应用同时支持浅/深两种配色（自管 color-scheme），
        阻止手机系统暗色模式用 Auto Dark / Force Dark 强制反转本页浅色界面。
        20260930cg：图片/表情包反色已由 CSS 物理锁死（filter:none + forced-color-adjust:none），
        color-scheme 保留双值以贴合「默认深色 + 可选浅色」双主题现状 -->
-  <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#f1eef8" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#121116" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark" data-page-node-id="lxFqmsHqJlWrvynDJzFIp8">
+  <meta name="theme-color" content="#f1eef8" media="(prefers-color-scheme: light)" data-page-node-id="UrfpihqucmDRP2iNGDxM6n">
+  <meta name="theme-color" content="#121116" media="(prefers-color-scheme: dark)" data-page-node-id="zCCyiCPgNGpwFjd119UYIp">
   <!-- 20261001：网站图标（添加到桌面/收藏夹时显示），使用手绘 logo（星辰与轨道） -->
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
-  <link rel="icon" type="image/png" sizes="192x192" href="android-chrome-192x192.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
+  <link rel="icon" type="image/x-icon" href="favicon.ico" data-page-node-id="u5L5vDRaRxAJoo4c3hOCrf">
+  <link rel="icon" type="image/png" sizes="192x192" href="android-chrome-192x192.png" data-page-node-id="kVFe5Vtgjfhu45CjXnh8Bf">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" data-page-node-id="j3bkZz8iAqTg4h3nNhGlzu">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" data-page-node-id="KeNjaV7TY2pVgm8uI7Hxzm">
+  <meta http-equiv="Pragma" content="no-cache" data-page-node-id="alDkBmXy6bzQmqggaCygz7">
+  <meta http-equiv="Expires" content="0" data-page-node-id="jMhIj6x14QO4cDsXyRJE5F">
   <title>白日梦</title>
   <script>
     /* 20260929ah：数据源门卫（最早执行，任何入口都先过这里）。
@@ -40,7 +40,7 @@
           || location.protocol === 'capacitor:';
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=V1.0.1' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=V1.0.2' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -54,21 +54,21 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=V1.0.1'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=V1.0.2'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=V1.0.1">
+  <link rel="stylesheet" href="css/style.css?v=V1.0.2" data-page-node-id="n0w2CgjCPXWgXrFRx4J0vZ">
 </head>
-<body>
-  <div id="app">
+<body data-page-node-id="xlctMM5lKFyJIFahDJjiue">
+  <div id="app" data-page-node-id="6k7EwA5mjLsFJliDXGADK9">
     <!-- 星光背景 -->
-    <div class="starfield" id="starfield"></div>
+    <div class="starfield" id="starfield" data-page-node-id="YWt4L8wiOCjxJBbiTkQlow"></div>
 
     <!-- 全局页面背景层（聊天导航/朋友圈的自定义背景铺满全屏，含底栏后方，玻璃透出） -->
-    <div id="app-fullbg"></div>
+    <div id="app-fullbg" data-page-node-id="SctMAkhi7yBlQDZAA886Pk"></div>
 
     <!-- 20260929z 删除应用内旧开屏（与启动器动画重复）；20260929br 开屏动画回归，
          独立承担于 js/splash.js，启动器已改为直接跳转不再播动画；
@@ -106,136 +106,137 @@
          20260930cg 防反色机制（物理锁死，杜绝系统暗色模式下图片/表情包/头像/礼物图被强制反色成底片）：CSS 顶部加最高优先级锁死块——img/picture/video/canvas/svg/emoji/sticker/avatar/gift 等所有媒体元素 filter:none+forced-color-adjust:none+color-scheme:only light（只锁反色属性、绝不锁背景色，深色默认主题不受影响）；@media(forced-colors:active) 高对比度模式二次兜底；APK 原生三重保险（styles.xml + AndroidManifest + forceDarkAllowed=false，system WebView 强制暗色一并关闭） -->
 
     <!-- 聊天列表页 -->
-    <div class="view" id="view-chatlist">
-      <div class="topbar">
-        <div class="title">白日梦</div>
-        <div class="spacer"></div>
-        <button class="icon-btn" id="btn-char-groups" title="分组管理" data-icon="cards"></button>
-        <button class="icon-btn" id="btn-add-char" title="添加访客" data-icon="plus"></button>
+    <div class="view" id="view-chatlist" data-page-node-id="BR2UiFmZwJd5IgLPoAUSAV">
+      <div class="topbar" data-page-node-id="Zehe0ELBn4nywbCtqdC4Wu">
+        <div class="title" data-page-node-id="730MhWYOYCKaKVDrFE08O6">白日梦</div>
+        <div class="spacer" data-page-node-id="OEl7T3zN6c9AX3z868kMkp"></div>
+        <button class="icon-btn" id="btn-char-groups" title="分组管理" data-icon="cards" data-page-node-id="DJkBo14dGZKNYCsjSxxIOB"></button>
+        <button class="icon-btn" id="btn-add-char" title="添加访客" data-icon="plus" data-page-node-id="ZIpPrSnEMdOaAniHiZ9Zln"></button>
       </div>
-      <div class="list" id="chat-list"></div>
+      <div class="list" id="chat-list" data-page-node-id="VDKXZvDF5PI6hDfPfilaoM"></div>
     </div>
 
     <!-- 聊天页 -->
-    <div class="view" id="view-chat">
-      <div class="topbar" style="padding-bottom:10px;">
-        <button class="icon-btn" id="btn-chat-back" data-icon="back"></button>
-        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer;" id="chat-header" title="查看访客主页">
-          <div class="avatar sm" id="chat-avatar"></div>
-          <div style="min-width:0;flex:1;">
-            <div style="display:flex;align-items:center;gap:6px;min-width:0;">
-              <div style="font-size:15px;font-weight:600;white-space:nowrap;" id="chat-name"></div>
-              <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="chat-status">在线</div>
+    <div class="view" id="view-chat" data-page-node-id="kW5656GV46ZJEAy7GrfKit">
+      <div class="topbar" style="padding-bottom:10px;" data-page-node-id="YEjGg3nkuUeT0u5dtZHDko">
+        <button class="icon-btn" id="btn-chat-back" data-icon="back" data-page-node-id="MbpR2950zHloDp4aK7Lvuy"></button>
+        <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer;" id="chat-header" title="查看访客主页" data-page-node-id="rCSmsvV5o4bfRzwrggFPqC">
+          <div class="avatar sm" id="chat-avatar" data-page-node-id="f1mqjlJ8tk0dDNigKZDKZ4"></div>
+          <div style="min-width:0;flex:1;" data-page-node-id="ZV79TyyxgkybkVlhPkHHCA">
+            <div style="display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;" data-page-node-id="NHkGvyw8J1FcQTOBqG82Xr">
+              <div style="font-size:15px;font-weight:600;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;" id="chat-name" data-page-node-id="Wg31MUExZp1VLtRqt77vKz"></div>
+              <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;max-width:100%;" id="chat-status" data-page-node-id="FOAGsSw9SUJBE7zLggh7Sg">在线</div>
             </div>
-            <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;" id="chat-sign"></div>
+            <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;" id="chat-sign" data-page-node-id="XSqYliQ7C8XQiQjewC1DTR"></div>
           </div>
         </div>
-        <button class="icon-btn" id="btn-group-regen" data-icon="regen" title="生成一轮群回复" style="display:none;" aria-label="生成一轮群回复"></button>
-        <button class="icon-btn" id="btn-chat-aimode" data-icon="aitoggle" title="字卡模式 · 点击切换 AI" aria-label="AI/字卡模式开关"></button>
-        <button class="icon-btn" id="btn-char-profile" data-icon="dots"></button>
+        <button class="icon-btn" id="btn-group-regen" data-icon="regen" title="生成一轮群回复" style="display:none;" aria-label="生成一轮群回复" data-page-node-id="4VRh2p3znCVHcqITmySIAn"></button>
+        <button class="icon-btn" id="btn-chat-aimode" data-icon="aitoggle" title="字卡模式 · 点击切换 AI" aria-label="AI/字卡模式开关" data-page-node-id="7uwVLuQarW4GVJqqKAwG4o"></button>
+        <button class="icon-btn" id="btn-chat-search" data-icon="search" title="查找聊天记录" aria-label="查找聊天记录" data-page-node-id="lFxfR6Wi8cGa9PpTrUcysP"></button>
+        <button class="icon-btn" id="btn-char-profile" data-icon="dots" data-page-node-id="8lH7u453NKZnH5JZ51lUVo"></button>
       </div>
-      <div class="chat-scroll" id="chat-scroll"></div>
+      <div class="chat-scroll" id="chat-scroll" data-page-node-id="tssvK1JsrXFOCSWMg5404Z"></div>
 
       <!-- 拓展功能面板（5.5） -->
-      <div class="chat-panel" id="plus-panel">
-        <div class="chat-panel-grid" id="plus-grid"></div>
-        <input type="file" id="plus-file-input" accept="image/*" style="display:none;">
+      <div class="chat-panel" id="plus-panel" data-page-node-id="M2L03Ma9q3Zzz8zNqK1lXZ">
+        <div class="chat-panel-grid" id="plus-grid" data-page-node-id="gMtH12dLZFVWG1koXhsUoR"></div>
+        <input type="file" id="plus-file-input" accept="image/*" style="display:none;" data-page-node-id="bhcobeSMS1nJcZ3BM8W4dH">
         <!-- 20261001cq：拍摄——网页端 capture=environment 移动浏览器直接弹相机拍照；APK 端由 JS 走 @capacitor/camera -->
-        <input type="file" id="plus-camera-input" accept="image/*" capture="environment" style="display:none;">
+        <input type="file" id="plus-camera-input" accept="image/*" capture="environment" style="display:none;" data-page-node-id="0btdV44ITBYrW0VAjjmZC9">
       </div>
 
       <!-- 表情包面板（5.10 + 5.6 戳一戳合并）：我的表情包 / 戳一戳 两个 tab -->
-      <div class="chat-panel" id="emoji-panel">
-        <div class="emoji-tabs">
-          <button class="emoji-tab active" data-etab="emoji">表情包 <span id="emoji-count"></span></button>
-          <button class="emoji-tab" data-etab="emojilib">Emoji 库</button>
-          <button class="emoji-tab" data-etab="poke">戳一戳</button>
-          <div style="flex:1;"></div>
-          <label class="btn" style="padding:5px 12px;font-size:12px;cursor:pointer;" for="emoji-file-input" id="emoji-add-btn">＋ 添加</label>
-          <button class="icon-btn" style="width:30px;height:30px;" id="btn-emoji-manage" title="批量管理" data-icon="trash" data-size="15"></button>
+      <div class="chat-panel" id="emoji-panel" data-page-node-id="vMrIMBsMgDSIyOUqcNBY9s">
+        <div class="emoji-tabs" data-page-node-id="czML9MMl3ISOb9on7dxlQ0">
+          <button class="emoji-tab active" data-etab="emoji" data-page-node-id="xCDASJ5Yt86llQf2IVb62f">表情包 <span id="emoji-count" data-page-node-id="oF8Bk76EQ3T4WixmIx7qtb"></span></button>
+          <button class="emoji-tab" data-etab="emojilib" data-page-node-id="D74bCaa2Yrjc3sB4MMlZa5">Emoji 库</button>
+          <button class="emoji-tab" data-etab="poke" data-page-node-id="7vYjDBABsTAXoFEIwXJvcs">戳一戳</button>
+          <div style="flex:1;" data-page-node-id="Yhf3bWkGhMzVYXpBtOiVb6"></div>
+          <label class="btn" style="padding:5px 12px;font-size:12px;cursor:pointer;" for="emoji-file-input" id="emoji-add-btn" data-page-node-id="mfNxq79H8fhSLBAtWUCUy4">＋ 添加</label>
+          <button class="icon-btn" style="width:30px;height:30px;" id="btn-emoji-manage" title="批量管理" data-icon="trash" data-size="15" data-page-node-id="e96YmqqOk4Eizv5F1lmY13"></button>
         </div>
-        <div class="emoji-grid" id="emoji-grid"></div>
-        <div class="emoji-grid" id="emojilib-grid" style="display:none;"></div>
-        <div class="poke-list" id="poke-list" style="display:none;"></div>
-        <input type="file" id="emoji-file-input" accept="image/*" multiple style="display:none;">
+        <div class="emoji-grid" id="emoji-grid" data-page-node-id="f1fcKGOU6zbv6vFphZhlKm"></div>
+        <div class="emoji-grid" id="emojilib-grid" style="display:none;" data-page-node-id="05m8Eq3V1fFVkYXaVZiEoJ"></div>
+        <div class="poke-list" id="poke-list" style="display:none;" data-page-node-id="H4jFXfxPyXlnbOSF32Xajv"></div>
+        <input type="file" id="emoji-file-input" accept="image/*" multiple style="display:none;" data-page-node-id="5UDFu5JyTOQS8S8q2opHeH">
       </div>
 
-      <div class="chat-input-bar">
-        <button class="icon-btn" id="btn-plus" title="功能" data-icon="plus"></button>
-        <button class="icon-btn" id="btn-emoji" title="表情包" data-icon="sticker"></button>
-        <button class="icon-btn" id="btn-call" title="模拟通话" data-icon="call"></button>
-        <input class="input" id="chat-input" placeholder="说点什么…" autocomplete="off">
-        <button class="send-btn" id="btn-send" data-icon="send" data-size="19"></button>
+      <div class="chat-input-bar" data-page-node-id="tCWcKBx19eDLaisiT7TCCf">
+        <button class="icon-btn" id="btn-plus" title="功能" data-icon="plus" data-page-node-id="nLGobkD59AX0fMpEIicTtv"></button>
+        <button class="icon-btn" id="btn-emoji" title="表情包" data-icon="sticker" data-page-node-id="UJDYtsHF3vwxudZ4Jpa0St"></button>
+        <button class="icon-btn" id="btn-call" title="模拟通话" data-icon="call" data-page-node-id="Qac8uvdwroGblGxA6B2phW"></button>
+        <input class="input" id="chat-input" placeholder="说点什么…" autocomplete="off" data-page-node-id="ScaxbNhqaPGyr1uzzE4I6R">
+        <button class="send-btn" id="btn-send" data-icon="send" data-size="19" data-page-node-id="5VxI8692vrVW4WtMIq3g5e"></button>
       </div>
     </div>
 
     <!-- 个人主页（3.3：启动后默认进入；8.1 布局） -->
-    <div class="view active" id="view-home">
-      <div class="topbar" id="home-topbar">
-        <button class="btn" id="btn-anniversary" title="纪念日" style="background:rgba(20,16,25,0.72);color:rgba(255,255,255,0.92);padding:7px 14px;font-size:13px;gap:6px;">
-          <span data-icon="anniversary" data-size="15" style="display:inline-flex;"></span> 纪念日
+    <div class="view active" id="view-home" data-page-node-id="WjCR4b9znErVXmGx0wSSOx">
+      <div class="topbar" id="home-topbar" data-page-node-id="5BUINQn66GLIcrHtptXob7">
+        <button class="btn" id="btn-anniversary" title="纪念日" style="background:rgba(20,16,25,0.72);color:rgba(255,255,255,0.92);padding:7px 14px;font-size:13px;gap:6px;" data-page-node-id="8g7bYDVUsHXM0omFgHrpZN">
+          <span data-icon="anniversary" data-size="15" style="display:inline-flex;" data-page-node-id="i21oOYOqXxSrl1EFPIPELH"></span> 纪念日
         </button>
         <!-- 20260930bz：开屏音乐继续播放开关（小型化放纪念日右侧；开=开屏结束后音乐循环播放贯穿全程） -->
-        <button class="icon-btn" id="btn-splash-music" title="开屏音乐继续播放" style="width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;">
-          <span data-icon="music" data-size="15" style="display:inline-flex;"></span>
+        <button class="icon-btn" id="btn-splash-music" title="开屏音乐继续播放" style="width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;" data-page-node-id="scCyDRElzAsUtxGFE6RHhV">
+          <span data-icon="music" data-size="15" style="display:inline-flex;" data-page-node-id="P3HHKWBRyzmmYChryUDYtx"></span>
         </button>
-        <div class="topbar-profile" id="topbar-profile">
-          <div class="avatar sm" id="topbar-avatar"></div>
-          <div class="topbar-profile-name" id="topbar-name"></div>
+        <div class="topbar-profile" id="topbar-profile" data-page-node-id="NCVny90BXDWvHtE5KwOM1e">
+          <div class="avatar sm" id="topbar-avatar" data-page-node-id="RgtNoc1z2NyUyEyueDyWBW"></div>
+          <div class="topbar-profile-name" id="topbar-name" data-page-node-id="7hvD0U3nt67EMmnv3XOFyn"></div>
         </div>
-        <div class="spacer"></div>
-        <button class="hero-change" id="btn-bg-change" title="更换背景图" style="margin-right:6px;"><span data-icon="camera" data-size="13" style="display:inline-flex;"></span>更换背景</button>
-        <button class="icon-btn" id="btn-daily-open" title="入梦签" data-icon="daily"></button>
+        <div class="spacer" data-page-node-id="NfxPmzKhF44utFMSPPXUA2"></div>
+        <button class="hero-change" id="btn-bg-change" title="更换背景图" style="margin-right:6px;" data-page-node-id="SX5rvckHAOBx7xBj2O2Yeu"><span data-icon="camera" data-size="13" style="display:inline-flex;" data-page-node-id="r6vag6J2ECLJAahFD9VHrk"></span>更换背景</button>
+        <button class="icon-btn" id="btn-daily-open" title="入梦签" data-icon="daily" data-page-node-id="JO3z6QcnK4qC86H23Hs2KN"></button>
       </div>
-      <div class="home-scroll" id="home-scroll">
+      <div class="home-scroll" id="home-scroll" data-page-node-id="dTWpMO6ZZuVbFh8r9TVhWf">
         <!-- 背景与内容都包在 .home-content 里：两层背景随页面一起滚动 -->
-        <div class="home-content">
+        <div class="home-content" data-page-node-id="z32YwL4f8zcdIisMoczUhN">
           <!-- 聊天美化上传的"个人主页美化背景"：独立底层，随页面滚动 -->
-          <div id="home-pagebg"></div>
+          <div id="home-pagebg" data-page-node-id="1lEFDNipGPwKvmMwwB3a1U"></div>
           <!-- 全屏融合背景：铺在美化背景之上、内容之下，顶栏浮在它上面（参考小红书个人主页） -->
-          <div id="home-fullbg"></div>
+          <div id="home-fullbg" data-page-node-id="H0wg7OPYP6E5k2JrZP18qi"></div>
           <!-- 上半部分：260px 圆角面板（背景图铺在面板内）+ 白边框圆头像（20260926a 版式恢复） -->
-          <div class="player-hero" id="player-hero">
+          <div class="player-hero" id="player-hero" data-page-node-id="a7O0Qg4q4s4TfRGHaouprw">
             <!-- 三层卡片结构（20260929t）：底层=聊天美化的主页背景(#app-fullbg 全屏承接)，
                  中层=磨砂玻璃卡(.hero-glass，与面板同宽高、下移露出下缘一条)，
                  顶层=玩家上传的背景图(.hero-clip 圆角面板)。未上传背景时 hero 全透明直接透出底层 -->
-            <div class="hero-glass" aria-hidden="true"></div>
+            <div class="hero-glass" aria-hidden="true" data-page-node-id="witX6PekJCZC3G24HOGhr2"></div>
             <!-- 圆角裁切层：背景图的圆角裁切与亚像素溢出都由它统一处理（20260929s） -->
-            <div class="hero-clip"><div class="hero-bg" id="hero-bg"></div></div>
-            <div class="hero-avatar-wrap" id="hero-avatar-wrap" title="点击编辑资料 / 更换头像">
-              <div class="player-avatar-round" id="player-avatar">梦</div>
+            <div class="hero-clip" data-page-node-id="3lGuS078AZkSCgo7YiD8ji"><div class="hero-bg" id="hero-bg" data-page-node-id="rokEhWfQByn01EIMehgIFt"></div></div>
+            <div class="hero-avatar-wrap" id="hero-avatar-wrap" title="点击编辑资料 / 更换头像" data-page-node-id="t2RubhujHOlgGV81PiCrK8">
+              <div class="player-avatar-round" id="player-avatar" data-page-node-id="CfuzsDM18S1NAUCgErpD3L">梦</div>
             </div>
           </div>
 
           <!-- 下半部分：昵称 / 状态 / 签名 / 统计 / 功能 -->
-          <div class="player-info">
-            <div class="player-name-lg" id="player-name">白日梦主人</div>
-            <div class="player-chips">
-              <span class="chip" id="player-status-chip">🌙 入梦中</span>
-              <span class="chip ghost" id="player-sign-chip">做个好梦</span>
+          <div class="player-info" data-page-node-id="cYeXeE0MOvYIXUdstTQgD8">
+            <div class="player-name-lg" id="player-name" data-page-node-id="vyDSEJyiN7x7Ki2sdEZFdF">白日梦主人</div>
+            <div class="player-chips" data-page-node-id="zVf9VRrh7NQPdduo7p9pvz">
+              <span class="chip" id="player-status-chip" data-page-node-id="XAnfJXdIrMs1l3zl1f62eI">🌙 入梦中</span>
+              <span class="chip ghost" id="player-sign-chip" data-page-node-id="C2gqHv6fkARyvLpqqiGL2p">做个好梦</span>
             </div>
-            <div class="player-chips" style="margin-top:8px;">
-              <span class="chip ghost" id="player-quote-chip" style="font-style:italic;"></span>
-            </div>
-
-            <div class="player-stats">
-              <div class="stat-card"><div class="stat-num" id="stat-chars">0</div><div class="stat-label">访客数量</div></div>
-              <div class="stat-card"><div class="stat-num" id="stat-days">1</div><div class="stat-label">聊天天数</div></div>
-              <div class="stat-card stat-wallet" id="stat-wallet-card" style="cursor:pointer;"><div class="stat-num" id="stat-wallet">¥0</div><div class="stat-label">我的钱包</div></div>
+            <div class="player-chips" style="margin-top:8px;" data-page-node-id="5L19g94SJeoHtADzQb4QJg">
+              <span class="chip ghost" id="player-quote-chip" style="font-style:italic;" data-page-node-id="Uzvy1D6DreryJAc78GYnP1"></span>
             </div>
 
-            <div class="player-funcs">
-              <button class="func-row" id="btn-home-memory"><span class="func-ic" data-icon="memory"></span><span class="func-label">记忆宫殿</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-world"><span class="func-ic" data-icon="tree"></span><span class="func-label">世界树</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-relations"><span class="func-ic" data-icon="relation"></span><span class="func-label">关系网</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-gray"><span class="func-ic" data-icon="archive"></span><span class="func-label">灰度殿堂</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-cards"><span class="func-ic" data-icon="cards"></span><span class="func-label">字卡库</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-theme"><span class="func-ic" data-icon="palette"></span><span class="func-label">织梦点</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-emoji"><span class="func-ic" data-icon="sticker"></span><span class="func-label">表情包</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-chatsettings"><span class="func-ic" data-icon="chatset"></span><span class="func-label">聊天设置</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-data"><span class="func-ic" data-icon="data"></span><span class="func-label">数据管理</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-ai"><span class="func-ic" data-icon="ai"></span><span class="func-label">API 接入</span><span class="func-arrow">›</span></button>
-              <button class="func-row" id="btn-home-settings"><span class="func-ic" data-icon="settings"></span><span class="func-label">总设置</span><span class="func-arrow">›</span></button>
+            <div class="player-stats" data-page-node-id="JFCtWkedi3xNiShtZyZfW5">
+              <div class="stat-card" data-page-node-id="XTb2dJKckSW67Da3p43sBF"><div class="stat-num" id="stat-chars" data-page-node-id="PUQ88xEg17jlJFcC9VFmTc">0</div><div class="stat-label" data-page-node-id="gq4AfOG0HSzhgExdQ7OiAl">访客数量</div></div>
+              <div class="stat-card" data-page-node-id="KfeoMWbkKKX72KDO4AZNQx"><div class="stat-num" id="stat-days" data-page-node-id="q3P1VgsTN9FAzLRghZpu76">1</div><div class="stat-label" data-page-node-id="bUBIV4ydkknHqwg1JcxzCx">聊天天数</div></div>
+              <div class="stat-card stat-wallet" id="stat-wallet-card" style="cursor:pointer;" data-page-node-id="YKPHiGGcqM9Fmetd7QWJGe"><div class="stat-num" id="stat-wallet" data-page-node-id="o2ozDQdzM47gIxs4iIFVPX">¥0</div><div class="stat-label" data-page-node-id="9iHkx6nal8hS9FKB4zG1dv">我的钱包</div></div>
+            </div>
+
+            <div class="player-funcs" data-page-node-id="FU5CSbuY2Qk4REGMFQLqTo">
+              <button class="func-row" id="btn-home-memory" data-page-node-id="Dy1cpCAUGslN96WX2Gspie"><span class="func-ic" data-icon="memory" data-page-node-id="0y6GIYdVKNaDwLYbdl8MXE"></span><span class="func-label" data-page-node-id="forF0tzDGe53MEelObZXK1">记忆宫殿</span><span class="func-arrow" data-page-node-id="9i4dHBG14DcbgDc5RduIAT">›</span></button>
+              <button class="func-row" id="btn-home-world" data-page-node-id="2Y8MTYrDPBSyTLP6zQ1SEl"><span class="func-ic" data-icon="tree" data-page-node-id="Lzrk851XN8R7JpfdlxrXyl"></span><span class="func-label" data-page-node-id="QmzDtleRwxOHp7a9gCaS5Y">世界树</span><span class="func-arrow" data-page-node-id="7Xdwm2gvgGI5QTFqpgplUv">›</span></button>
+              <button class="func-row" id="btn-home-relations" data-page-node-id="FrC5KWnzKza0b7ijCvQGJL"><span class="func-ic" data-icon="relation" data-page-node-id="NTFRXwrgqd1BzguUyLRp4m"></span><span class="func-label" data-page-node-id="kYfVHyGkowAPFoTqGjBtE2">关系网</span><span class="func-arrow" data-page-node-id="JCEOKvp1eA934niEhB3j0u">›</span></button>
+              <button class="func-row" id="btn-home-gray" data-page-node-id="YK6jKMtT3hdEpPb2SDh0FD"><span class="func-ic" data-icon="archive" data-page-node-id="CQUAACsB42f9YiMbDXM4OT"></span><span class="func-label" data-page-node-id="LjcIfFEtZzxKgIYVSbyHa2">灰度殿堂</span><span class="func-arrow" data-page-node-id="YJns260yYyiuHyC3OMuYPu">›</span></button>
+              <button class="func-row" id="btn-home-cards" data-page-node-id="zQ3iQWzwf1soJOFryi3Gm5"><span class="func-ic" data-icon="cards" data-page-node-id="CvX4Hz8ElNWeJCu2dWqaO1"></span><span class="func-label" data-page-node-id="ZnMbYZrgqzTvlI6iNnuzC6">字卡库</span><span class="func-arrow" data-page-node-id="vo1RNogb89MhMjlJhbm7JD">›</span></button>
+              <button class="func-row" id="btn-home-theme" data-page-node-id="DoTsH5JKqrH0lCUB16VF8L"><span class="func-ic" data-icon="palette" data-page-node-id="f6khwMwdlOSoVgSRJiMvku"></span><span class="func-label" data-page-node-id="rooCvJxyGsVKBMmSLkAsQi">织梦点</span><span class="func-arrow" data-page-node-id="XyM68uK5KdU8qT0eWIGN1h">›</span></button>
+              <button class="func-row" id="btn-home-emoji" data-page-node-id="bezPYMxDpCRhzptDN8i4ss"><span class="func-ic" data-icon="sticker" data-page-node-id="CJ7z4S5vNjOCLa7J1FpGFW"></span><span class="func-label" data-page-node-id="rlzBNcGDwu34axnCIfJNip">表情包</span><span class="func-arrow" data-page-node-id="dDK9C0C89w64yfGgcfcx5y">›</span></button>
+              <button class="func-row" id="btn-home-chatsettings" data-page-node-id="D5LF35OCU4HB5dwsJsxIuy"><span class="func-ic" data-icon="chatset" data-page-node-id="fwfyo8AZAEBVPvQkpl4lgF"></span><span class="func-label" data-page-node-id="W9u4CGHm1aoHSAfx8FVbJI">聊天设置</span><span class="func-arrow" data-page-node-id="7gb9qTOvEwdaVTnBRy4vXH">›</span></button>
+              <button class="func-row" id="btn-home-data" data-page-node-id="DnH2WwmooVIVDaBILEpHNZ"><span class="func-ic" data-icon="data" data-page-node-id="7Wua4UoGmwQvaef09mOtTT"></span><span class="func-label" data-page-node-id="255pyB6r9UmTv9EGmHZP13">数据管理</span><span class="func-arrow" data-page-node-id="2vkIGraLo7PDtrxg7XAt5Y">›</span></button>
+              <button class="func-row" id="btn-home-ai" data-page-node-id="AVKcTM9CmHW9NZztLizisK"><span class="func-ic" data-icon="ai" data-page-node-id="Waf7TGokDBhzE3p1vOsBHZ"></span><span class="func-label" data-page-node-id="KAQxMUUVZvCs8eWC9e2dZ7">API 接入</span><span class="func-arrow" data-page-node-id="a1wwXKAwvA15y1dOtZYCO3">›</span></button>
+              <button class="func-row" id="btn-home-settings" data-page-node-id="jdGyoBlArAGIXGvoTzjaGP"><span class="func-ic" data-icon="settings" data-page-node-id="fI7wHTtuCmLddqhBHjRV8b"></span><span class="func-label" data-page-node-id="cRO3aSI39jAL5QVWLhZRTm">总设置</span><span class="func-arrow" data-page-node-id="xoggKpX3py3QgCIPeNwlrq">›</span></button>
             </div>
           </div>
         </div>
@@ -243,70 +244,70 @@
     </div>
 
     <!-- PC 宽屏：未选择聊天时的占位 -->
-    <div id="pc-placeholder">
-      <div class="empty-icon">🌙</div>
-      <div>选择一个访客，开始你们的对话</div>
+    <div id="pc-placeholder" data-page-node-id="USIlC2nAkl8LdcnnrN6ht7">
+      <div class="empty-icon" data-page-node-id="6iU4icSspEwSOl5Rm5XH1G">🌙</div>
+      <div data-page-node-id="N7nn1L1f72sDtr3Je9nEmj">选择一个访客，开始你们的对话</div>
     </div>
 
     <!-- 朋友圈（第九章：类微信朋友圈——玩家/角色发帖、点赞、评论、可见范围） -->
-    <div class="view" id="view-moments">
-      <div class="topbar" id="moments-topbar">
-        <div class="title">朋友圈</div>
-        <div class="spacer"></div>
-        <button class="icon-btn" id="btn-moments-aimode" data-icon="aitoggle" title="字卡模式 · 点击切换 AI" aria-label="AI/字卡模式开关"></button>
-        <button class="icon-btn" id="btn-moments-bg" title="更换朋友圈封面" data-icon="palette"></button>
-        <button class="icon-btn" id="btn-moments-publish" title="发动态" data-icon="camera"></button>
+    <div class="view" id="view-moments" data-page-node-id="LGjDN1uumzKs4TsVnoD4rU">
+      <div class="topbar" id="moments-topbar" data-page-node-id="DGLNupgqQ4MZuOUhkcuSBd">
+        <div class="title" data-page-node-id="jKkkDfAoLst0IrnKZf1Age">朋友圈</div>
+        <div class="spacer" data-page-node-id="df7uCX2sdLFv9UfPRp8M9e"></div>
+        <button class="icon-btn" id="btn-moments-aimode" data-icon="aitoggle" title="字卡模式 · 点击切换 AI" aria-label="AI/字卡模式开关" data-page-node-id="u4ES72NztpANm3ukaJktl2"></button>
+        <button class="icon-btn" id="btn-moments-bg" title="更换朋友圈封面" data-icon="palette" data-page-node-id="xCXKAYzlLDeKLexXI2lWEk"></button>
+        <button class="icon-btn" id="btn-moments-publish" title="发动态" data-icon="camera" data-page-node-id="89Szj3F9D0XCgXEZ7WE5Pd"></button>
       </div>
-      <div class="moments-scroll" id="moments-scroll">
+      <div class="moments-scroll" id="moments-scroll" data-page-node-id="0HtwPlrvw4XIAPe9gtsuu6">
         <!-- 封面（点击更换）+ 玩家头像昵称（微信布局） -->
-        <div class="moments-cover" id="moments-cover" title="点击更换封面">
-        <div class="mc-me">
-          <div style="text-align:right;">
-            <div class="mc-me-name" id="moments-me-name">白日梦主人</div>
-            <div class="mc-me-sign" id="moments-me-sign"></div>
+        <div class="moments-cover" id="moments-cover" title="点击更换封面" data-page-node-id="1Xh5pvWQEnYAjEy69cev6e">
+        <div class="mc-me" data-page-node-id="oauHj86AjaTeBsaSeiTJgo">
+          <div style="text-align:right;" data-page-node-id="kKFF0Uw24h2tLfLfNcZz1Z">
+            <div class="mc-me-name" id="moments-me-name" data-page-node-id="aqHzZawO9TuV07oAJgEGov">白日梦主人</div>
+            <div class="mc-me-sign" id="moments-me-sign" data-page-node-id="FcriLDrjTXbPCJ9BKWoJAP"></div>
           </div>
-          <div class="avatar sm" id="moments-me-avatar">梦</div>
+          <div class="avatar sm" id="moments-me-avatar" data-page-node-id="AXiA2Rc7abx3sKCUqTOsAz">梦</div>
         </div>
         </div>
-        <div class="moments-list" id="moments-list"></div>
+        <div class="moments-list" id="moments-list" data-page-node-id="ClZW8EMH8nZNSuqKxnc0H7"></div>
       </div>
     </div>
 
     <!-- 底部导航（3.3：聊天 · 个人主页 · 朋友圈） -->
-    <div class="tabbar">
-      <div class="tab-item" data-view="chatlist">
-        <div class="tab-icon" data-icon="chat" data-size="20"></div>
-        <div>聊天</div>
+    <div class="tabbar" data-page-node-id="PzTAZG8ReKY1bsOsxAWK4j">
+      <div class="tab-item" data-view="chatlist" data-page-node-id="6TWKyC19dB8BFJBYxinjyM">
+        <div class="tab-icon" data-icon="chat" data-size="20" data-page-node-id="VrK4ZhymiHVJamFolfVYBN"></div>
+        <div data-page-node-id="Bki2PNGA4MFGXvUBoBtpRO">聊天</div>
       </div>
-      <div class="tab-item active" data-view="home">
-        <div class="tab-icon" data-icon="home" data-size="20"></div>
-        <div>主页</div>
+      <div class="tab-item active" data-view="home" data-page-node-id="Qt8AW3pXwYq0YkKpevj2e2">
+        <div class="tab-icon" data-icon="home" data-size="20" data-page-node-id="jh1tlDjbnJgAsCKtJR19NS"></div>
+        <div data-page-node-id="bHwGCtc9GFteDtQBjxIPkX">主页</div>
       </div>
-      <div class="tab-item" data-view="moments">
-        <div class="tab-icon" data-icon="moments" data-size="20"></div>
-        <span class="tab-badge" id="moments-badge" style="display:none;"></span>
-        <div>朋友圈</div>
+      <div class="tab-item" data-view="moments" data-page-node-id="Zl6DmlFINuT8HE3sZf8ZW1">
+        <div class="tab-icon" data-icon="moments" data-size="20" data-page-node-id="GzJgF9vlcRrKaFcuvpy3IZ"></div>
+        <span class="tab-badge" id="moments-badge" style="display:none;" data-page-node-id="p8u48CeT0ZgStXUYMX8k4G"></span>
+        <div data-page-node-id="JKNLuWIAFz44ddg5orI5Ad">朋友圈</div>
       </div>
     </div>
   </div>
 
   <!-- 气泡右键菜单（引用/删除/转发/多选/撤回） -->
-  <div id="ctx-menu"></div>
+  <div id="ctx-menu" data-page-node-id="t0J94FeFtsga79CNMcvf07"></div>
 
   <!-- 弹窗容器 -->
-  <div class="modal-mask" id="modal-mask">
-    <div class="modal" id="modal-content"></div>
+  <div class="modal-mask" id="modal-mask" data-page-node-id="NEonZeiCy235ZlZZcNURLs">
+    <div class="modal" id="modal-content" data-page-node-id="6aRQfErXNj7PU9nyiycscZ"></div>
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=V1.0.1"></script>
-  <script src="js/db.js?v=V1.0.1"></script>
-  <script src="js/icons.js?v=V1.0.1"></script>
-  <script src="js/emoji-img.js?v=V1.0.1"></script>
-  <script src="js/cards.js?v=V1.0.1"></script>
-  <script src="js/app.js?v=V1.0.1"></script>
+  <script src="js/splash.js?v=V1.0.2"></script>
+  <script src="js/db.js?v=V1.0.2"></script>
+  <script src="js/icons.js?v=V1.0.2"></script>
+  <script src="js/emoji-img.js?v=V1.0.2"></script>
+  <script src="js/cards.js?v=V1.0.2"></script>
+  <script src="js/app.js?v=V1.0.2"></script>
   <!-- 20261002ch：新手引导（沙盒隔离：独立 js/css，动态创建全屏 overlay，不碰核心代码与 DOM 结构，
        一键「开始探索/跳过新手指引」后彻底移除并 localStorage 记录永不再弹） -->
-  <script src="js/guide-sandbox.js?v=V1.0.1"></script>
+  <script src="js/guide-sandbox.js?v=V1.0.2"></script>
 </body>
 </html>
