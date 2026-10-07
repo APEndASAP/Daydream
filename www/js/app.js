@@ -21758,9 +21758,9 @@ async function _ocGiftPanelHtml() {
         </div>
       </div>
       <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px;">点礼物查看说明</div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px;">
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px;">
       ${allGifts.map(g => `
-        <div class="oc-gift-card" data-gift-id="${g.id}" data-gift-price="${g.price}" style="background:var(--bg-elevated-2);border-radius:12px;padding:10px;cursor:pointer;">
+        <div class="oc-gift-card" data-gift-id="${g.id}" data-gift-price="${g.price}" style="min-width:0;background:var(--bg-elevated-2);border-radius:12px;padding:10px;cursor:pointer;">
           <div style="width:100%;aspect-ratio:1/1;border-radius:9px;overflow:hidden;background:var(--bg);">${g.img ? `<img src="${imgSrc(g.img)}" style="width:100%;height:100%;object-fit:cover;display:block;">` : `<div style="font-size:34px;text-align:center;line-height:60px;">${g.emoji || '🎁'}</div>`}</div>
           <div style="font-size:12.5px;font-weight:600;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.name)}</div>
           <div style="font-size:11px;color:var(--text-tertiary);">¥${g.price}</div>
