@@ -1164,7 +1164,10 @@ body:not(.glass-ui).theme-light .player-chips .chip.ghost {
 #oc-surprise-big .ocsb-main {
   margin-top: 14px;
   min-height: 1.2em;
-  font-size: clamp(46px, 13.5vw, 104px);
+  /* 20261008 窄屏兼容（保持大字）：13.5vw 在 360px 手机上 5 字标题只差 0.4px 就撑爆
+     →「偶尔两行」。降到 12.8vw 后 320~430px 全段 5 字单行，字号仍在 41~55px 大字量级；
+     宽屏封顶 104px 不变。超长标题按大字自然换行，绝不为长标题缩成小字（用户定案）。 */
+  font-size: clamp(36px, 12.8vw, 104px);
   font-weight: 900;
   line-height: 1.12;
   letter-spacing: 3px;

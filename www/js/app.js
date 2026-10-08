@@ -1,8 +1,8 @@
-﻿/* ============================================================
+/* ============================================================
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.0.3'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.0.4'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
 
 let characters = [];
 let cards = null;
@@ -43,6 +43,14 @@ let chatSettings = {
   lettersEnabled: true,          // 访客随机来信总开关（书信 13）
   lettersDailyLimit: 2,          // 访客随机来信每日上限（0~5，书信 13）
   skipOverclockAnim: false,      // 超频：跳过裂隙动画（20260929ao；低端机/卡顿时建议开启）
+  typecardOn: false,             // 20261008：打字卡总开关（默认关；总设置对所有访客生效，访客主页聊天设置可单独覆盖）
+  typecardMode: 'bubble',        // 20261008：打字卡展示模式 bubble=气泡内嵌 / float=悬浮窗（默认气泡内嵌）
+  typecardSpeed: 1.0,            // 20261008：打字卡速度连续倍率（0.6=最快 ~ 3.0=最慢，默认 1.0 中间值）
+  typecardCoherence: 0,          // 20261008：打字卡通顺度滑块（0=纯拼字 ~ 1=沿语料游走 ~ 2=完整句子，默认 0 纯拼字）
+  typecardCards: true,           // 20261008：打字卡「拼字卡/表情」开关（默认开；关闭后打字卡只纯打字，不抽字卡/表情，不影响主线）
+  typecardSummon: false,         // 20261008 晚（碎梦重拼召唤）：常驻悬浮窗+「生成一条消息」按钮，独立于 typecardOn 互不干涉；速度/通顺度跟随打字卡设置
+  typecardSummonIntervalMin: 40,   // 20261009：召唤自动发消息随机区间下限（分钟）；上限 240 与查岗区间惯例一致，玩家可在召唤开关旁自设
+  typecardSummonIntervalMax: 240,  // 20261009：召唤自动发消息随机区间上限（分钟）；每次触发后在 [min,max] 内随机取下一次间隔
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -215,6 +223,7 @@ async function init() {
   // Q9 绘制开销降级：低端机统一打标，CSS 侧关闭 backdrop-filter 毛玻璃（最大绘制开销源）
   if (isLowEndDevice()) document.body.classList.add('low-end');
   await initGlassLevel(); // 20260929bh：玻璃三档精度——读上次的自动降级档位（避免每次会话重走降级）
+  await initTypecardFloatGlass(); // 20261009：悬浮窗玻璃精度三档（独立于全局玻璃拟态，默认跟随系统）
   await loadGlobalTheme(); // 20260929bo：全局色彩预设（先于 applyChatTheme，浅色主题 class 一次到位）
   applyChatTheme();
   try {
@@ -440,6 +449,8 @@ function isLowEndDevice() {
    降级结果持久化（kv glassAutoLevel），下次启动直接沿用；手动切换玻璃开关时清除重判。 */
 let _glassLevel = 'hi';    // hi | mid | low（当前生效档位）
 let _glassManual = '';      // 20260929bj：手动选择的档位 hi|mid|low；''=跟随系统自动
+let _tcFloatGlass = 'hi';   // 20261009：悬浮窗（召唤+非召唤）玻璃精度当前生效档位 hi|mid|low
+let _tcFloatGlassManual = ''; // 20261009：悬浮窗玻璃精度手动档位 hi|mid|low；''=跟随系统自动
 let _noticeGate = false;    // 20260929bk：软件声明弹窗显示期间=true，抑制来电/超频/书信等打断弹窗，保证声明始终在最前
 let _glassFpsState = null; // { raf, frames, winStart, lowSec }
 let _glassFpsDelay = null;
@@ -472,6 +483,29 @@ async function initGlassLevel() {
     const saved = await getSetting('glassAutoLevel');
     if (saved === 'mid' || saved === 'low') _glassLevel = saved;
   } catch (e) {}
+}
+
+/* ---------- 20261009：悬浮窗（召唤+非召唤）玻璃精度三档，独立于全局玻璃拟态模式 ----------
+   与主线玻璃精度同一套判定（glassBaseLevel 设备检测），但用独立的 body.tcf-hi/mid/low 类，
+   不依赖 body.glass-ui 总开关——玩家没开玻璃拟态时，悬浮窗也能按设备/手动选择独立控制模糊精度。
+   默认跟随系统（_tcFloatGlassManual='' → 用 glassBaseLevel 设备判定）；
+   手动选择 hi/mid/low 则锁定该档，帧率不足也不自动降级（尊重玩家选择）。 */
+async function initTypecardFloatGlass() {
+  _tcFloatGlass = glassBaseLevel();
+  try {
+    const manual = await getSetting('typecardFloatGlass');
+    if (manual === 'hi' || manual === 'mid' || manual === 'low') {
+      _tcFloatGlassManual = manual;
+      _tcFloatGlass = manual;
+    }
+  } catch (e) {}
+  applyTypecardFloatGlass();
+}
+
+/* 应用悬浮窗玻璃档位：挂 body.tcf-hi/mid/low（hi 为默认态，无需额外类） */
+function applyTypecardFloatGlass() {
+  document.body.classList.toggle('tcf-mid', _tcFloatGlass === 'mid');
+  document.body.classList.toggle('tcf-low', _tcFloatGlass === 'low');
 }
 
 /* 统一应用玻璃档位：glass-ui 总开关 + glass-mid/glass-low 档位类 + 帧率监测启停 */
@@ -3216,8 +3250,9 @@ function showMsgMenu(m, x, y) {
   // 记忆宫殿（20260929w 全量落地：以这条消息为基准点，前后各截 50 条存入访客文件夹）
   items.push({ icon: 'memory', label: '存入记忆宫殿', act: () => palCaptureMenu(m) });
   items.push({ icon: 'checklist', label: '多选', act: () => enterMultiSelect(m.id) });
-  if (m.from === 'me' && (m.type === 'text' || m.type === 'emoji') && chatSettings.allowRecall) {
-    // 5.3：只有单纯的字卡消息和表情包可以撤回
+  if (m.from === 'me' && chatSettings.allowRecall) {
+    // 20261008 用户要求：玩家的每条消息都可以撤回（不再限定字卡/表情包；
+    // 戳一戳等系统消息走独立分支不进本菜单，不受影响）。撤回行/查看原文渲染本就全类型通用。
     items.push({ icon: 'back', label: '撤回', act: () => recallMessage(m) });
   }
   items.push({ icon: 'trash', label: '删除该条消息', danger: true, act: () => {
@@ -3253,7 +3288,8 @@ function showGroupMsgMenu(g, m, x, y) {
   const items = [];
   items.push({ icon: 'quote', label: '引用该条消息', act: () => startQuote(m) });
   items.push({ icon: 'forward', label: '转发该条消息', act: () => showForwardModal(m) });
-  if (m.from === 'me' && (m.type === 'text' || m.type === 'emoji') && chatSettings.allowRecall) {
+  if (m.from === 'me' && chatSettings.allowRecall) {
+    // 20261008 与单聊同步：玩家的每条消息都可以撤回（不限字卡/表情包）
     items.push({ icon: 'back', label: '撤回', act: async () => {
       m.recalled = true;
       m.recallTime = Date.now();
@@ -3668,7 +3704,29 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
       const bannedGroups = curChar ? (curChar.bannedGroups || []) : []; // 角色勾选禁用的字卡分组
       // 20260929ae：AI 模式分流（AI 生成 / 失败自动回退字卡；字卡模式走原逻辑）
       // 20260929bf：AI 模式也随机 1~3 条——先抽条数，再让 AI 按条数分行输出
-      const gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
+      // 20261008 打字卡拦截：角色开启打字卡时，跳过主线 generateCharReply，
+      // 改由 typecard 自己从字库随机拼句生成回复（typing_card），字卡/表情穿插其中。
+      // 这是唯一允许修改主线核心逻辑的地方，最小侵入：只在生成入口分流，不重写后续落库/渲染。
+      const tcSettings = curChar ? getCharChatSettings(curChar) : chatSettings;
+      let gen;
+      let typecardBlocks = null;
+      if (tcSettings.typecardOn && window.bmTypecard && window.bmTypecard.generate) {
+        try {
+          const tc = await window.bmTypecard.generate(charId, {
+            banWords: banWords, relation: relation, bannedGroups: bannedGroups,
+            coherence: (typeof tcSettings.typecardCoherence === 'number') ? tcSettings.typecardCoherence : 0,
+            allowCards: tcSettings.typecardCards !== false
+          });
+          gen = { type: 'typing_card', text: tc.text };
+          typecardBlocks = tc.blocks;
+        } catch (e) {
+          // 打字卡生成失败：回退主线字卡生成，绝不静默不回复
+          gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
+          typecardBlocks = null;
+        }
+      } else {
+        gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
+      }
       // 20260929ah：随机 1~3 条回复——字卡模式按概率连发（此前只有单条，规则缺失），
       // AI 模式按 AI 输出分段拆条（最多 3 条），像真人连续发消息
       const parts = splitReplyParts(gen, curChar);
@@ -3681,9 +3739,26 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
         }
         const replyMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: parts[i], time: Date.now() };
         if (i === 0 && finalQuote) replyMsg.quote = finalQuote;
+        // 20261008：typing_card 消息附带 blocks（普通文字/字卡/表情的区分结构），
+        // 供打字卡演出时按块驱动（text 逐字打、card/emoji 整块飞入）。不破坏消息结构。
+        if (typecardBlocks && i === 0) {
+          replyMsg.meta = Object.assign({}, replyMsg.meta || {}, { typecardBlocks: typecardBlocks });
+        }
         await idbPut('messages', replyMsg);
         if (currentCharId === charId && document.body.dataset.view === 'chat') {
-          appendMessage(replyMsg);
+          // V1.1 打字卡 renderer 旁路：真实消息已落库，若该消息该演出则交给 typecard 接管展示。
+          // 不阻塞 deliverReply（fire-and-forget），render 内部失败兜底走 appendMessage。
+          if (window.bmTypecard && window.bmTypecard.shouldRender(replyMsg)) {
+            // 20261008 修复：shouldRender 不含开关判断（开关在 render 内部），打字卡关闭时
+            // render 仍被调用并 resolve(false)=「未接管」。原 .catch 只兜异常，正常模式下
+            // 消息被拦截后永不上屏（角色"没反应"根因）。上屏约定：
+            //   resolve(true)      = 演出接管（_finish 会上屏，主链不再插）
+            //   resolve(false)     = 未接管 → 主链 appendMessage
+            //   resolve(undefined) = render 内部异常已兜底上屏 → 主链不重复插
+            Promise.resolve(window.bmTypecard.render(replyMsg)).then(ok => { if (ok === false) appendMessage(replyMsg); }).catch(() => { appendMessage(replyMsg); });
+          } else {
+            appendMessage(replyMsg);
+          }
         }
         lastMsg = replyMsg;
         // 后续条目间隔 1.2~3.5 秒连续发出；引用只带在第一条上
@@ -3754,6 +3829,11 @@ function splitReplyParts(gen, c) {
     if (segs.length <= 1) return [gen.text];
     if (segs.length <= 3) return segs;
     return [segs[0], segs[1], segs.slice(2).join('\n')];
+  }
+  // 20261008：typing_card 是打字卡自己生成的单条消息（content 已含字卡/表情块拼接），
+  // 不再走主线字卡连发/组合逻辑，直接作为单条返回。
+  if (gen.type === 'typing_card') {
+    return [gen.text];
   }
   const r = Math.random();
   const n = r < 0.55 ? 1 : (r < 0.85 ? 2 : 3);
@@ -3890,6 +3970,35 @@ function restoreChatHeaderStatus() {
   setChatHeaderStatus(getCharPeriodStatus(c));
   setChatHeaderSign(c);
 }
+/* 20261008：打字卡演出专用「正在输入中」指示——演出全程显示（聊天流三点气泡 + 顶部签名），
+   演出结束/打断时移除。主线 deliverReply 在生成完就撤掉了指示，而打字卡演出还要打 8~15 秒，
+   用户要求演出期间必须一直显示。id 用 tc-typing-<charId> 与主线 typing-indicator-<charId>
+   区分开，并发时互不误删；签名/状态复用 setChatHeaderStatus / restoreChatHeaderStatus。 */
+function tcShowTyping(charId) {
+  try {
+    const c = characters.find(x => x.id === charId);
+    if (!c || currentCharId !== charId || document.body.dataset.view !== 'chat') return;
+    if (document.getElementById('tc-typing-' + charId)) return; // 幂等
+    const sc = $('#chat-scroll');
+    if (!sc) return;
+    const typing = document.createElement('div');
+    typing.className = 'msg-row them';
+    typing.id = 'tc-typing-' + charId;
+    typing.innerHTML = `${avatarHtml(c && c.avatar, c && c.name)}<div class="msg-body"><div class="bubble typing"><span></span><span></span><span></span></div></div>`;
+    sc.appendChild(typing);
+    scrollToBottom();
+    setChatHeaderStatus('', true);
+  } catch (e) {}
+}
+function tcHideTyping(charId) {
+  try {
+    const t = document.getElementById('tc-typing-' + charId);
+    if (t) t.remove();
+    if (document.body.dataset.view === 'chat') restoreChatHeaderStatus();
+  } catch (e) {}
+}
+window.tcShowTyping = tcShowTyping;
+window.tcHideTyping = tcHideTyping;
 /* 每分钟校准一次状态（跨时段自动换） */
 function startStatusTimer() {
   if (_statusTimer) clearInterval(_statusTimer);
@@ -4134,7 +4243,71 @@ function shouldDingFor(c) {
    即使玩家没打开聊天页也会触发（模拟后台消息）
    修复：首次启动即初始化计时起点，到间隔后稳定触发（不再被额外概率挡住） */
 let _lastProactive = {}; // 按角色 id 记录上次主动发消息时间
-let _proactiveRandUntil = {}; // 随机模式下，按角色记录「下次触发时间点」
+let _proactiveRandUntil = {}; // 随机模式下，按角色记录「下次触发时间点」（内存态；见下 nextProactiveAt 持久化）
+/* 20261008 随机调度持久化：把「下次随机触发时间点」从易失内存态提升为可恢复状态。
+   nextProactiveAt = _proactiveRandUntil 的持久化镜像（kv key 'proactiveNextAt'，复用现有 kv store，
+   不新建第二套库）。语义：
+     · 开启随机模式/首次播种/发送成功后 → 生成新的 nextProactiveAt 并落库；
+     · 应用重启 → 从 kv 恢复 _proactiveRandUntil（绝不重新随机，保留原调度时间）；
+     · 恢复后若 nextProactiveAt 已到期 → 保留过期值，由 __proactiveScan 的 now>=triggerAt 分支
+       识别为「已到期」，直接补发一条再生成下一次（不额外随机漂移）；
+     · 关闭随机模式（proactiveRandom=false）或关闭主动消息（proactive=false）→ 清除该角色持久化。 */
+const PROACTIVE_NEXT_KEY = 'proactiveNextAt';
+let _proactiveNextLoaded = false;   // 是否已从 kv 恢复过（一次性懒加载哨兵）
+let _proactiveNextPromise = null;   // 懒加载互斥锁：并发只读一次 kv
+function _proactiveNextSave() {
+  try { setSetting(PROACTIVE_NEXT_KEY, _proactiveRandUntil).catch(() => {}); } catch (e) {}
+}
+function _proactiveNextLoad() {
+  if (_proactiveNextPromise) return _proactiveNextPromise;
+  _proactiveNextPromise = (async () => {
+    try {
+      const saved = await getSetting(PROACTIVE_NEXT_KEY, null);
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        for (const k in saved) {
+          const v = saved[k];
+          // 只接受正数时间戳；跳过脏值（NaN/0/字符串）
+          if (typeof v === 'number' && isFinite(v) && v > 0) _proactiveRandUntil[k] = v;
+        }
+      }
+    } catch (e) {}
+    _proactiveNextLoaded = true;
+  })();
+  return _proactiveNextPromise;
+}
+
+/* 20261009 召唤自动发消息持久化：把「下次召唤触发时间点」持久化到 kv（key 'summonAutoNextAt'），
+   复用主线 nextProactiveAt 同一套语义与懒加载互斥模式。召唤开关（typecardSummon）独立于主动消息，
+   区间随机间隔（typecardSummonIntervalMin~Max，默认 40~240 分钟）到点自动拼发一条碎梦重拼消息。 */
+const SUMMON_AUTO_NEXT_KEY = 'summonAutoNextAt';
+let _summonAutoUntil = {};          // 内存态：charId -> 下次召唤触发时间点
+let _summonAutoLoaded = false;      // 懒加载哨兵
+let _summonAutoPromise = null;      // 懒加载互斥锁
+function _summonAutoSave() {
+  try { setSetting(SUMMON_AUTO_NEXT_KEY, _summonAutoUntil).catch(() => {}); } catch (e) {}
+}
+function _summonAutoLoad() {
+  if (_summonAutoPromise) return _summonAutoPromise;
+  _summonAutoPromise = (async () => {
+    try {
+      const saved = await getSetting(SUMMON_AUTO_NEXT_KEY, null);
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        for (const k in saved) {
+          const v = saved[k];
+          if (typeof v === 'number' && isFinite(v) && v > 0) _summonAutoUntil[k] = v;
+        }
+      }
+    } catch (e) {}
+    _summonAutoLoaded = true;
+  })();
+  return _summonAutoPromise;
+}
+// 让 engine 的 resetSummonAuto 能清空 app.js 的 _summonAutoUntil（间隔变更即时重排）
+function _summonAutoReset() {
+  try { for (const k in _summonAutoUntil) delete _summonAutoUntil[k]; } catch (e) {}
+  _summonAutoSave();
+}
+
 let _checkinUntil = {}; // 随机查岗：按角色记录「下次查岗时间点」
 let _checkinCount = {};  // 随机查岗：按角色+日期记录当天已查岗次数
 let _callUntil = {};     // 随机通话：按角色记录「下次来电时间点」
@@ -4187,16 +4360,48 @@ function charCardPools(c) {
     mottos: applyWordBan(rawMottos.filter(t => !junk(t))),
   };
 }
+/* 20261009：主动扫描统一入口（带并发锁）——前台 15s 与后台 60s fallback 都经由它进入 __proactiveScan。
+   修复「双停摆」：原前台 15s 用 bmIsBg() return、后台 60s 用 !bmIsBg() return，状态错乱时两个互补 return
+   同时成立 → 扫描完全停摆。现统一入口只做「并发去重」，不再用 bmIsBg 互斥；到点落库+通知由
+   __proactiveScan 内部既有守卫负责，前台 60s 多扫几次只做轻量判断、不碰 DOM，省电影响可忽略。 */
+let _proactiveScanBusy = false;   // 扫描并发锁：两个定时器同时触发时只放行一个，避免重入
+let _proactiveScanPending = false; // 扫描期间有新的触发请求排队（本轮结束后再补扫一次，防止漏判到点）
+async function requestProactiveScan() {
+  if (_proactiveScanBusy) { _proactiveScanPending = true; return; }
+  _proactiveScanBusy = true;
+  try {
+    await __proactiveScan();
+  } catch (e) {}
+  finally {
+    _proactiveScanBusy = false;
+    if (_proactiveScanPending) {
+      _proactiveScanPending = false;
+      requestProactiveScan();
+    }
+  }
+}
+
 function startProactiveTimer() {
   // 初始化计时起点：避免首次 last=0 导致 Date.now()-0 恒判定「已到时间」
   for (const c of characters) {
     if (!_lastProactive[c.id]) _lastProactive[c.id] = Date.now();
   }
-  // 20261002ca：挂后台时 15s 高频扫描全停（省电红线），交给 60s 低频调度 tick bmBgTick 调用同一扫描体
-  setInterval(async () => {
+  // 20261008：恢复随机调度「下次触发时间点」——从 kv 懒加载到内存态 _proactiveRandUntil，
+  // 绝不重新随机（否则每次刷新都重新 1~5 分钟，短会话永远等不到，破坏随机调度语义）。
+  // 已过期的值会原样保留，由 __proactiveScan 的 now>=triggerAt 分支识别为「已到期」补发。
+  _proactiveNextLoad();
+  // 20261009：恢复召唤自动发消息调度（懒加载幂等；与主线 nextProactiveAt 同语义）
+  _summonAutoLoad();
+  // 前台 15s 高频扫描（经统一入口，bmIsBg 只作省电软开关：后台时跳过省电）
+  setInterval(() => {
     if (bmIsBg()) return;
-    __proactiveScan().catch(() => {});
+    requestProactiveScan();
   }, 15000);
+  // 20261009 后台 60s fallback：改为「启动即常驻」，不再依赖 bmSetBgState(true) 才创建。
+  // 这是根治双停摆的关键：即使 __bmBgOn/document.hidden 状态错乱，60s 兜底也永远活着。
+  setInterval(() => {
+    requestProactiveScan();
+  }, 60000);
 }
 
 /* 20261002ca：主动行为扫描体（前台 15s / 后台 60s 共用）——
@@ -4204,12 +4409,23 @@ function startProactiveTimer() {
    挂后台时由 bmBgTick 每 60 秒调用一次：只做静默时间计算 + 消息落库 + 系统通知，
    绝不唤醒任何 DOM 渲染与动画（deliverCharMessage/charSendLetter 内部已有非聊天页不渲染守卫）。 */
 async function __proactiveScan() {
+  // 20261008：先确保随机调度「下次触发时间点」已从 kv 恢复（幂等懒加载，只读一次）。
+  // 否则首次扫描会因 _proactiveRandUntil 还是空而重新随机，覆盖掉持久化的原调度时间。
+  await _proactiveNextLoad();
   {
     const day = todayKey();
     for (const c of characters) {
       const s = getCharChatSettings(c);
       const now = Date.now();
       if (!_lastProactive[c.id]) _lastProactive[c.id] = now;
+
+      // 20261008：关闭随机模式（proactiveRandom=false）或关闭主动消息（proactive=false）时，
+      // 清除该角色残留的随机调度时间点并同步落库——关闭即清除，重开后从新随机（语义干净，
+      // 避免残留的过期 nextProactiveAt 在重开瞬间触发一次「补发」）。只在有残留时才删+写，幂等。
+      if (!(s.proactive && s.proactiveRandom) && _proactiveRandUntil[c.id]) {
+        delete _proactiveRandUntil[c.id];
+        _proactiveNextSave();
+      }
 
       // —— 主动发消息（双模式互斥：随机模式优先） ——
       if (s.proactive) {
@@ -4221,8 +4437,13 @@ async function __proactiveScan() {
           // 20261006 修复：进入条件收紧为「仅首次为空」。原 `|| <= now` 会把「到期」也当作「需初始化」，
           //   导致到点后先重排到未来 → triggerAt 永远取未来值 → 发送分支(now>=triggerAt)恒 false → 随机消息永不触发。
           //   现在：首次为空才初始化+预排 alarm；已到期则跳过初始化、让 triggerAt 保留为过期值，落入下方发送分支。
-          if (!_proactiveRandUntil[c.id]) {
+          // 20261009 自愈：除「空」外，再兜住「非法值」（undefined/NaN/≤0）与「明显过期残留」（早于 now-24h，
+          //   说明是卡死的远古时间戳）——这些坏值会让 now>=triggerAt 恒 false 造成永久停发，一律强制重新播种。
+          //   正常随机区间逻辑不受影响：合法且未过期的值原样保留，绝不重新随机。
+          const _pv = _proactiveRandUntil[c.id];
+          if (!_pv || !isFinite(_pv) || _pv <= 0 || _pv < now - 24 * 3600 * 1000) {
             _proactiveRandUntil[c.id] = now + randInt(lo, hi) * 60000;
+            _proactiveNextSave(); // 20261008：首次播种的 nextProactiveAt 落库（跨会话恢复）
             bmRegisterAlarm(c, 'msg', _proactiveRandUntil[c.id]); // 20261002ca：预排原生精确闹钟（进程冻结也能到点提醒）
           }
           triggerAt = _proactiveRandUntil[c.id];
@@ -4235,6 +4456,7 @@ async function __proactiveScan() {
             const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
             const hi2 = Math.max(lo2, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
             _proactiveRandUntil[c.id] = now + randInt(lo2, hi2) * 60000;
+            _proactiveNextSave(); // 20261008：发送成功后重新生成下一次 nextProactiveAt 并落库
           }
           // 20260929ba：转账/红包不再搭载在主动消息里——独立「随机红包」模式（下方 s.randomPacket 块）
           // 20260929ah：AI 模式下主动消息由 AI 生成（节奏不变）；失败软回退字卡（不回滚模式开关）
@@ -4280,6 +4502,36 @@ async function __proactiveScan() {
             }
           } catch (e) {}
         }
+      }
+
+      // —— 碎梦重拼召唤自动发消息（20261009：独立于主动消息，到点自动拼发一条碎梦重拼消息）——
+      // 20261009晚：间隔改为区间随机（typecardSummonIntervalMin~Max），每次播种/重排独立随机取值
+      if (s.typecardSummon) {
+        await _summonAutoLoad();
+        const ivLo = Math.max(1, Math.min(720, parseInt(s.typecardSummonIntervalMin, 10) || 40));
+        const ivHi = Math.max(1, Math.min(720, parseInt(s.typecardSummonIntervalMax, 10) || 240));
+        const ivMin2 = Math.min(ivLo, ivHi), ivMax2 = Math.max(ivLo, ivHi); // 存量数据可能 min>max，取有序对
+        const nextIv = () => ivMin2 + Math.floor(Math.random() * (ivMax2 - ivMin2 + 1)); // [lo,hi] 闭区间随机分钟
+        if (!_summonAutoUntil[c.id]) {
+          _summonAutoUntil[c.id] = now + nextIv() * 60000; // 首次播种：区间随机后触发
+          _summonAutoSave();
+          // 预排原生闹钟（挂后台/进程冻结也能到点提醒）
+          try { bmRegisterAlarm(c, 'msg', _summonAutoUntil[c.id]); } catch (e) {}
+        } else if (now >= _summonAutoUntil[c.id]) {
+          // 到点：自动触发一次召唤拼字消息（engine.summonAuto 内部自检开关/防重入）
+          _summonAutoUntil[c.id] = now + nextIv() * 60000; // 重排下一次：再次区间随机
+          _summonAutoSave();
+          try { bmRegisterAlarm(c, 'msg', _summonAutoUntil[c.id]); } catch (e) {}
+          try {
+            if (window.bmTypecard && typeof window.bmTypecard.summonAuto === 'function') {
+              await window.bmTypecard.summonAuto(c.id);
+            }
+          } catch (e) {}
+        }
+      } else if (_summonAutoUntil[c.id]) {
+        // 召唤关闭：清除残留调度并落库（重开后从新播种，避免过期值瞬间补发）
+        delete _summonAutoUntil[c.id];
+        _summonAutoSave();
       }
 
       // —— 访客随机查岗（15.1：默认不限次数；角色聊天设置里可设每日上限，0=不限） ——
@@ -4955,7 +5207,7 @@ function bmSetBgState(hidden) {
 /* 后台 60s 低频事件调度 tick：只做「静默时间计算 + 到期事件投递」，不碰 DOM/动画 */
 async function bmBgTick() {
   if (!bmIsBg()) return;
-  try { await __proactiveScan(); } catch (e) {}   // 超频/主动消息/查岗/通话/红包 到期检查
+  try { await requestProactiveScan(); } catch (e) {}   // 超频/主动消息/查岗/通话/红包 到期检查（经统一入口，并发锁保护）
   try { await deliverDueLetterReplies(); } catch (e) {} // 到期回信投递
   try { await groupAutoChatTick(); } catch (e) {}  // 20261005ds：后台群聊自主聊天（60s 级，复用本低频调度，不新增高频 timer）
 }
@@ -5786,6 +6038,9 @@ function switchView(viewName) {
   if (viewName === 'moments') enterMoments();
   // 进入主页时重算统计（访客数量 / 聊天天数），保证添加/删除访客后数字即时刷新
   if (viewName === 'home') renderPlayerHome();
+  // 20261008：打字卡悬浮窗常驻圆点显隐同步（仅单聊聊天页+打字卡开+悬浮窗模式才显示；
+  // 离开聊天页/进群聊时自动收起待机面板并隐藏圆点）
+  try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
 }
 
 /* ---------- 多指触摸守卫（20261001ci）----------
@@ -5914,6 +6169,9 @@ function openModal(html, opts) {
   $('#modal-mask').classList.toggle('mask-oc-clear', !!o.noBackdrop);
   $('#modal-mask').classList.add('show');
   box.innerHTML = html;
+  // 20261008 晚九轮：打字卡悬浮球/悬浮窗只在单聊聊天页出现——弹窗（个人主页/朋友圈封面/
+  // 设置等）打开时同步藏起（面板 z 远高于弹窗，不藏会浮在弹窗上），关弹窗自动恢复
+  try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
 }
 function closeModal() {
   const wasOpen = $('#modal-mask').classList.contains('show');
@@ -5940,6 +6198,9 @@ function closeModal() {
       return;
     }
   }
+  // 20261008 晚九轮：真关闭（未重开子弹窗）→ 打字卡悬浮球/悬浮窗按条件恢复。
+  // 子功能 return 路径由 showCharProfile/showSettingsModal 内部的 openModal 挂点同步。
+  try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
 }
 
 /* 访客主页子功能上下文标记（关闭后回到访客主页） */
@@ -5954,6 +6215,8 @@ function forceCloseModal() {
   $('#modal-mask').classList.remove('show');
   setCallGlass(false);
   resetModalSizing(); // 20260929bg：同 closeModal，清理缩放残留
+  // 20261008 晚九轮：强制关弹窗后同步打字卡悬浮球/悬浮窗显隐
+  try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
 }
 
 // 点击遮罩空白处关闭弹窗
@@ -10084,6 +10347,20 @@ async function showChatThemeModal() {
     </div>
 
     <div class="field">
+      <label>悬浮窗玻璃精度</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">独立控制「碎梦重拼悬浮窗 / 召唤悬浮窗」的毛玻璃模糊精度，与上方玻璃拟态模式无关（没开玻璃拟态也能单独调）。默认跟随系统自动检测设备性能</div>
+      <div style="margin-top:10px;">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;" id="tc-float-glass-pick">
+          <button class="btn tc-float-glass-btn" data-tier="" style="padding:7px 13px;font-size:12px;">跟随系统</button>
+          <button class="btn tc-float-glass-btn" data-tier="hi" style="padding:7px 13px;font-size:12px;">高精度</button>
+          <button class="btn tc-float-glass-btn" data-tier="mid" style="padding:7px 13px;font-size:12px;">中精度</button>
+          <button class="btn tc-float-glass-btn" data-tier="low" style="padding:7px 13px;font-size:12px;">低精度</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;" id="tc-float-glass-now">当前：跟随系统自动</div>
+      </div>
+    </div>
+
+    <div class="field">
       <label>我的气泡颜色</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;" id="theme-me-colors">
         ${BUBBLE_ME_COLORS.map(col => `
@@ -10235,6 +10512,39 @@ async function showChatThemeModal() {
       }
       applyChatTheme();
       refreshGlassTierUI();
+    };
+  });
+
+  // 20261009：悬浮窗玻璃精度手动三档选择（跟随系统 / 高 / 中 / 低），独立于玻璃拟态总开关
+  const _tcFloatTierName = (lv) => lv === 'hi' ? '高精度' : lv === 'mid' ? '中精度' : '低精度';
+  const refreshTcFloatGlassUI = () => {
+    $$('#tc-float-glass-pick .tc-float-glass-btn').forEach(b => {
+      const active = (b.dataset.tier || '') === _tcFloatGlassManual;
+      b.style.outline = active ? '2px solid var(--purple-soft)' : 'none';
+      b.style.background = active ? 'var(--purple-soft)' : '';
+      b.style.color = active ? '#fff' : '';
+      b.style.fontWeight = active ? '600' : '400';
+    });
+    const nowEl = $('#tc-float-glass-now');
+    if (nowEl) nowEl.textContent = `当前：${_tcFloatGlassManual ? _tcFloatTierName(_tcFloatGlass) + '（手动锁定）' : _tcFloatTierName(_tcFloatGlass) + '（跟随系统）'}`;
+  };
+  refreshTcFloatGlassUI();
+  $$('#tc-float-glass-pick .tc-float-glass-btn').forEach(b => {
+    b.onclick = async () => {
+      const tier = b.dataset.tier || ''; // '' = 跟随系统
+      if (!tier) {
+        _tcFloatGlassManual = '';
+        _tcFloatGlass = glassBaseLevel();
+        try { await setSetting('typecardFloatGlass', ''); } catch (e) {}
+        miniToast('悬浮窗玻璃精度已切换为跟随系统自动');
+      } else {
+        _tcFloatGlassManual = tier;
+        _tcFloatGlass = tier;
+        try { await setSetting('typecardFloatGlass', tier); } catch (e) {}
+        miniToast('悬浮窗玻璃精度已锁定为' + _tcFloatTierName(tier));
+      }
+      applyTypecardFloatGlass();
+      refreshTcFloatGlassUI();
     };
   });
 
@@ -11371,7 +11681,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span>允许撤回消息</span>
         <input type="checkbox" id="cs-recall" ${s.allowRecall ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">长按自己发送的字卡/表情包可撤回；撤回后仍可点击查看，永久保留</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">长按自己发送的消息可撤回；撤回后仍可点击查看，永久保留</div>
     </div>
 
     <div class="field">
@@ -11380,6 +11690,54 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <input type="checkbox" id="cs-char-emoji-lib" ${s.charUsePlayerEmojis ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">20261002cb：默认关闭——TA 发表情包只用 TA 自己的专属表情包库（TA 主页里上传的那套）；开启后，TA 也会随机使用你（玩家）上传的表情包库（TA 自己的库优先）。总设置对所有访客生效，访客主页的聊天设置可单独覆盖</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>碎梦重拼（复古打字机输入法演出）</span>
+        <input type="checkbox" id="cs-typecard-on" ${s.typecardOn ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，访客回复会以「复古打字机逐字拼字」的方式演出（拼音→候选字→上屏），模拟 TA 跨越维度、信号受损、努力拼凑语言的过程。关闭则直接显示回复。总设置对所有访客生效，访客主页的聊天设置可单独覆盖。与下方「碎梦重拼召唤」互斥：开启其一会自动关闭另一个</div>
+      <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">展示模式</label>
+      <div style="display:flex;gap:8px;margin-top:6px;" id="cs-typecard-mode">
+        <button class="btn typecard-mode-btn" data-mode="bubble" style="padding:7px 13px;font-size:12px;flex:1;">气泡内嵌</button>
+        <button class="btn typecard-mode-btn" data-mode="float" style="padding:7px 13px;font-size:12px;flex:1;">悬浮窗</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">气泡内嵌：打字过程嵌在聊天气泡内部；悬浮窗：打字过程显示在独立浮动面板中。面板文字已做深浅色 + 高对比可读性兜底，任何背景/主题下都清晰可见</div>
+      <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">打字速度</label>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">快</span>
+        <input type="range" id="cs-typecard-speed" min="0.6" max="3.0" step="0.1" value="${typeof s.typecardSpeed === 'number' ? s.typecardSpeed : 1.0}" style="flex:1;accent-color:var(--purple);">
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">慢</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+        <span style="font-size:12px;color:var(--text-tertiary);">连续速度滑条：越靠右越慢、越能看清每个字</span>
+        <span id="cs-typecard-speed-val" style="font-size:13px;font-weight:700;color:var(--purple-soft);white-space:nowrap;">${typeof s.typecardSpeed === 'number' ? s.typecardSpeed.toFixed(1) : '1.0'}×</span>
+      </div>
+      <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;">
+        <span>拼字卡与表情</span>
+        <input type="checkbox" id="cs-typecard-cards" ${s.typecardCards !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，碎梦重拼演出过程中会随机穿插字卡与表情（每打一个字都可能抽到，整体随机排列组合）；关闭后碎梦重拼只纯拼字，不出现字卡和表情。此开关只影响碎梦重拼，不影响主线正常聊天</div>
+      <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">句子通顺度</label>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">纯拼字</span>
+        <input type="range" id="cs-typecard-coherence" min="0" max="2" step="0.05" value="${typeof s.typecardCoherence === 'number' ? s.typecardCoherence : 0}" style="flex:1;accent-color:var(--purple);">
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">完整句子</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">句子通顺度：越靠右越像真人说话——左半段从纯随机拼字逐步过渡到沿真实口语句子走；右半段进一步过渡到直接说完整通顺的句子。默认纯拼字</div>
+      <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;">
+        <span>碎梦重拼召唤（常驻悬浮窗 · 手动生成）</span>
+        <input type="checkbox" id="cs-typecard-summon" ${s.typecardSummon ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后聊天中常驻碎梦重拼悬浮窗（毛玻璃+水晶花饰+藤蔓+碎镜纹理），点上面的「✦ 生成一条消息」按钮，TA 就会主动拼出一条碎梦重拼消息并发送。与上方碎梦重拼开关互斥：同一时间只能开启一个，开启其一会自动关闭另一个。打字速度与句子通顺度跟随碎梦重拼设置。只多发这一条消息，绝不影响正常聊天与抽字卡回复</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">自动发消息区间（分钟）</span>
+        <input type="number" id="cs-typecard-summon-interval-min" min="1" max="720" step="1" value="${typeof s.typecardSummonIntervalMin === 'number' ? s.typecardSummonIntervalMin : 40}" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-typecard-summon-interval-max" min="1" max="720" step="1" value="${typeof s.typecardSummonIntervalMax === 'number' ? s.typecardSummonIntervalMax : 240}" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔">
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">召唤开启后，TA 会在最小～最大分钟之间的随机时刻自动拼发一条碎梦重拼消息（无需你点按钮）；挂后台/锁屏时同样会通过系统通知提醒你。可设 1~720 分钟，最小大于最大时自动对调，默认 40～240 分钟</div>
     </div>
 
     ${!isPerChar && s.overclockUnlocked ? `
@@ -11433,7 +11791,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
   `;
 }
 
-function bindChatSettings(s, onSave) {
+function bindChatSettings(s, onSave, tcChar) {
   $('#cs-close').onclick = closeModal;
   // 20260929bi：悬浮窗2号浮游开关（仅总聊天设置；立即生效）
   const f2cb = $('#cs-float2');
@@ -11464,6 +11822,150 @@ function bindChatSettings(s, onSave) {
       if (s.float2Mode === 'system') requestOverlayPermission();
     };
   });
+  // 20261008b：打字卡设置即时落库——修复「刷新后打字卡设置恢复默认」。
+  // 旧实现有两个洞：①只写内存（s/chatSettings），不点底部「保存」就关弹窗 → 全丢；
+  // ②访客弹窗里错误地同步写全局 chatSettings，导致保存时 s[k]===chatSettings[k]
+  //   被当成「继承全局」把访客覆盖值删掉，而全局又没落库 → 保存了仍丢。
+  // 现在：只写 s；每项变更即时持久化——全局弹窗 setSetting('chatSettings')，
+  // 访客弹窗按差异写 c.chatSettings 后 saveChar；滑条用 change（松手才落库，防连写）。
+  async function tcPersist(key, val) {
+    s[key] = val;
+    try {
+      if (!tcChar || s === chatSettings) {
+        await setSetting('chatSettings', chatSettings);
+      } else {
+        tcChar.chatSettings = tcChar.chatSettings || {};
+        if (val !== chatSettings[key]) tcChar.chatSettings[key] = val;
+        else delete tcChar.chatSettings[key]; // 与全局相同=继承，删覆盖
+        await saveChar(tcChar);
+      }
+    } catch (e) {}
+    // 展示模式/开关变化会影响悬浮窗常驻圆点的显隐，立即同步
+    try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
+  }
+  // 20261008 晚三轮（用户反馈「设置里关了悬浮窗，悬浮窗还悬浮在上面」）：
+  // 总设置=总闸。全局关闭 typecardOn/typecardSummon 时，必须级联清除所有访客的
+  // 独立覆盖——否则「全局关了、访客覆盖还开着」，tcSettingsFor 合并结果仍是开，
+  // 悬浮窗关不掉（用户在总设置关开关无效果的根因）。仅在总设置弹窗（!tcChar）级联，
+  // 访客弹窗关开关只影响该访客，不动别人。
+  function tcCascadeClear(key) {
+    try {
+      characters.forEach(c => {
+        if (c && c.chatSettings && c.chatSettings[key] !== undefined) {
+          delete c.chatSettings[key];
+          saveChar(c); // 异步落库，不阻塞 UI
+        }
+      });
+    } catch (e) {}
+  }
+  // 20261008：打字卡总开关 + 展示模式切换（总设置与访客级都渲染；立即生效）
+  const tcOnCb = $('#cs-typecard-on');
+  const tcModeBtns = $$('#cs-typecard-mode .typecard-mode-btn');
+  const refreshTcModeUI = () => {
+    tcModeBtns.forEach(b => {
+      const active = (b.dataset.mode || 'bubble') === (s.typecardMode || 'bubble');
+      b.style.outline = active ? '2px solid var(--purple-soft)' : 'none';
+      b.style.background = active ? 'var(--purple-soft)' : '';
+      b.style.color = active ? '#141019' : '';
+      b.style.fontWeight = active ? '600' : '400';
+    });
+  };
+  refreshTcModeUI();
+  if (tcOnCb) tcOnCb.onchange = () => {
+    const on = tcOnCb.checked;
+    // 20261008 晚二轮：碎梦重拼与召唤互斥——开启总开关时自动关闭召唤
+    const summonWasOn = !!s.typecardSummon;
+    if (on && summonWasOn) {
+      if (tcSummonEl) tcSummonEl.checked = false;
+      if (!tcChar) tcCascadeClear('typecardSummon'); // 总设置互斥关闭也级联（访客覆盖会让召唤悬浮窗残留）
+      tcPersist('typecardSummon', false);
+    }
+    // 20261008 晚三轮：总设置关闭=总闸，级联清所有访客覆盖（否则访客 true 顶回全局 false）
+    if (!on && !tcChar) tcCascadeClear('typecardOn');
+    tcPersist('typecardOn', on);
+    miniToast(on ? (summonWasOn ? '碎梦重拼已开启（召唤已自动关闭）' : '碎梦重拼已开启') : '碎梦重拼已关闭');
+  };
+  tcModeBtns.forEach(b => {
+    b.onclick = () => {
+      const mode = b.dataset.mode || 'bubble';
+      tcPersist('typecardMode', mode);
+      refreshTcModeUI();
+      miniToast(mode === 'float' ? '碎梦重拼展示模式：悬浮窗' : '碎梦重拼展示模式：气泡内嵌');
+    };
+  });
+  // 20261008：打字卡速度连续滑条（0.6~3.0，默认 1.0）——总设置与访客级都渲染，实时显示倍率数字
+  const tcSpeedEl = $('#cs-typecard-speed');
+  const tcSpeedVal = $('#cs-typecard-speed-val');
+  const refreshTcSpeed = () => {
+    const v = tcSpeedEl ? (parseFloat(tcSpeedEl.value) || 1.0) : 1.0;
+    if (tcSpeedVal) tcSpeedVal.textContent = v.toFixed(1) + '×';
+  };
+  refreshTcSpeed();
+  if (tcSpeedEl) {
+    tcSpeedEl.oninput = () => {
+      // 拖动中只更新内存与数字显示，不落库（change 事件松手时才写）
+      s.typecardSpeed = parseFloat(tcSpeedEl.value) || 1.0;
+      refreshTcSpeed();
+    };
+    tcSpeedEl.onchange = () => {
+      tcPersist('typecardSpeed', parseFloat(tcSpeedEl.value) || 1.0);
+    };
+  }
+  // 20261008：打字卡通顺度滑条（0=纯拼字 ~ 1=沿语料游走 ~ 2=完整句子，默认 0）——总设置与访客级都渲染
+  const tcCoherenceEl = $('#cs-typecard-coherence');
+  if (tcCoherenceEl) {
+    tcCoherenceEl.oninput = () => {
+      const v = parseFloat(tcCoherenceEl.value);
+      s.typecardCoherence = (typeof v === 'number' && !isNaN(v)) ? v : 0;
+    };
+    tcCoherenceEl.onchange = () => {
+      const v = parseFloat(tcCoherenceEl.value);
+      tcPersist('typecardCoherence', (typeof v === 'number' && !isNaN(v)) ? v : 0);
+    };
+  }
+  // 20261008：打字卡「拼字卡/表情」开关——只影响打字卡演出，不影响主线；默认开
+  const tcCardsEl = $('#cs-typecard-cards');
+  if (tcCardsEl) tcCardsEl.onchange = () => {
+    const on = tcCardsEl.checked;
+    tcPersist('typecardCards', on);
+    miniToast(on ? '碎梦重拼：拼字卡与表情已开启' : '碎梦重拼：拼字卡与表情已关闭');
+  };
+  // 20261008 晚（碎梦重拼召唤）：常驻悬浮窗+手动生成按钮，独立于碎梦重拼总开关。
+  // tcPersist 自动处理全局/访客差异落库，并同步悬浮窗显隐（updateFloatDot）。
+  const tcSummonEl = $('#cs-typecard-summon');
+  if (tcSummonEl) tcSummonEl.onchange = () => {
+    const on = tcSummonEl.checked;
+    // 20261008 晚二轮：召唤与碎梦重拼互斥——开启召唤时自动关闭碎梦重拼
+    const tcWasOn = !!s.typecardOn;
+    if (on && tcWasOn) {
+      if (tcOnCb) tcOnCb.checked = false;
+      if (!tcChar) tcCascadeClear('typecardOn'); // 总设置互斥关闭也级联
+      tcPersist('typecardOn', false);
+    }
+    // 20261008 晚三轮：总设置关闭=总闸，级联清所有访客覆盖（访客覆盖开着会让悬浮窗残留）
+    if (!on && !tcChar) tcCascadeClear('typecardSummon');
+    tcPersist('typecardSummon', on);
+    miniToast(on ? (tcWasOn ? '碎梦重拼召唤已开启：悬浮窗已唤出（碎梦重拼已自动关闭）' : '碎梦重拼召唤已开启：悬浮窗已唤出') : '碎梦重拼召唤已关闭');
+  };
+  // 20261009晚：召唤自动发消息随机区间（分钟）——双输入框，最小>最大时自动对调（同主线随机区间惯例）
+  const tcSummonIvMinEl = $('#cs-typecard-summon-interval-min');
+  const tcSummonIvMaxEl = $('#cs-typecard-summon-interval-max');
+  if (tcSummonIvMinEl && tcSummonIvMaxEl) {
+    const tcSummonIvApply = () => {
+      let lo = Math.min(720, Math.max(1, parseInt(tcSummonIvMinEl.value, 10) || 40));
+      let hi = Math.min(720, Math.max(1, parseInt(tcSummonIvMaxEl.value, 10) || 240));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }   // 最小>最大 → 自动对调
+      tcSummonIvMinEl.value = String(lo);
+      tcSummonIvMaxEl.value = String(hi);
+      tcPersist('typecardSummonIntervalMin', lo);
+      tcPersist('typecardSummonIntervalMax', hi);
+      // 区间变更即时重置所有访客的召唤自动调度计时，让新区间立即生效（不清除，只重排下一次）
+      try { window.bmTypecard && bmTypecard.resetSummonAuto && bmTypecard.resetSummonAuto(); } catch (e) {}
+      miniToast('召唤自动发消息区间已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    tcSummonIvMinEl.onchange = tcSummonIvApply;
+    tcSummonIvMaxEl.onchange = tcSummonIvApply;
+  }
   // 20260929bi：系统通知开关 + 权限状态 + 申请按钮（用户手势内申请，浏览器才会弹授权框）
   const nsEl = $('#cs-notify-sys');
   if (nsEl) nsEl.onchange = async () => {
@@ -11615,6 +12117,7 @@ function bindChatSettings(s, onSave) {
     // 重新锚定主动消息计时：从现在开始算，避免保存后因旧计时点已过期而立刻弹出一堆消息
     _lastProactive = {};
     _proactiveRandUntil = {};
+    _proactiveNextSave(); // 20261008：清空随机调度持久化（重新锚定后由扫描体重新播种并落库）
     // 悬浮窗模式：全局设置
     floatSettings.floatMode = $('#cs-float-mode').value;
     await setSetting('floatSettings', floatSettings);
@@ -11678,14 +12181,14 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
     await saveChar(c);
     miniToast('已保存该访客的聊天设置');
     closeModal();
-  });
+  }, c); // 20261008b：传角色引用，打字卡设置即时按差异落库（tcPersist）
 }
 
 /* ---------- 总设置（18.1：清缓存/清所有聊天记录/重置） ---------- */
@@ -17386,8 +17889,12 @@ async function deliverDueLetterReplies() {
 
 function startLetterReplyWatcher() {
   deliverDueLetterReplies().catch(() => {}); // 启动即补投到期的（含上次关页面错过的）
-  // 20261002ca：挂后台时 10s 高频轮询全停（省电），回信补投交给 60s 低频调度 tick + 原生精确闹钟
-  setInterval(() => { if (bmIsBg()) return; deliverDueLetterReplies().catch(() => {}); }, 10 * 1000);
+  // 20261009：去掉 if(bmIsBg()) return 拦截——与主线随机消息同款「bmIsBg 状态盲区」：
+  //   挂原生悬浮窗时 document.hidden 卡 true 而 __bmBgOn 未置位 → 前台 10s 扫描被 return、后台 60s tick
+  //   又因 bmSetBgState(true) 未触发而不存在 → 回信扫描双停摆。现无条件轮询，deliverDueLetterReplies
+  //   内部自带 _deliveringLetterReplies 并发锁 + 轻量 kv 时间戳比较，后台多扫几次省电影响可忽略；
+  //   charSendLetter 内部已有非聊天页不渲染守卫，绝不唤醒 DOM/动画，不触碰任何通知逻辑。
+  setInterval(() => { deliverDueLetterReplies().catch(() => {}); }, 10 * 1000);
 }
 
 /* 火漆印开信全屏动画：点击信封 → 火漆印上移消失 + 盖片翻开 + 信纸弹出。
@@ -22744,16 +23251,31 @@ async function _ocClearUnreadFor(charId) {
 }
 
 /* 播放「进入聊天页时」的待播动画：只取最后一条（惊喜优先），并播细窗提醒剩余未读
-   20260929av：改走收到方向（跳出动画+弹窗/大字），不再是掉落吸入 */
+   20260929av：改走收到方向（跳出动画+弹窗/大字），不再是掉落吸入
+   20261009：惊喜素材缺失/类型不匹配时，不再用 content:{} 空素材播「空大字弹窗」
+   （旧表现：红色感叹号+「，决定跨越维度，」残缺文案，且聊天页无记录）——
+   改为现场补抽一条真惊喜：完整落库+上屏，再用它播动画与弹窗，
+   保证「未读计数承诺过的惊喜」最终一定是一条真实存在的消息。 */
 async function _ocPlayPendingAnim(c, lastMsg) {
   const e = _unreadEvents[c.id] || { gifts: 0, surprises: 0 };
   const hasSurprise = (e.surprises || 0) > 0;
   const total = (e.gifts || 0) + (e.surprises || 0);
   const kind = hasSurprise ? 'surprise' : 'gift';
-  // 素材消息：库里的最后一条；类型不符/缺失时兜底空内容（动画与弹窗仍可播）
-  const msg = (lastMsg && lastMsg.type === kind)
-    ? lastMsg
-    : { id: 'pending', charId: c.id, from: 'them', type: kind, time: Date.now(), content: {} };
+  // 素材消息：库里的最后一条；类型不符/缺失时惊喜现场补真消息，礼物维持旧兜底
+  let msg = (lastMsg && lastMsg.type === kind) ? lastMsg : null;
+  if (!msg && kind === 'surprise') {
+    try {
+      const mode = await _ocCharSurpriseMode(c.id);
+      const presets = OVERCLOCK_SURPRISES[mode] || OVERCLOCK_SURPRISES.lover;
+      const s = presets[randInt(0, presets.length - 1)];
+      if (s) {
+        msg = { id: uid('msg'), charId: c.id, from: 'them', type: 'surprise', time: Date.now(), content: { act: s.act, move: s.move, big: s.big, direction: 'char_to_me' } };
+        await idbPut('messages', msg);
+        if (_inChatWith(c.id)) appendMessage(msg, true); // 进聊天页时 renderMessages 已跑过，补上屏
+      }
+    } catch (err) {}
+  }
+  if (!msg) msg = { id: 'pending', charId: c.id, from: 'them', type: kind, time: Date.now(), content: {} };
   // 20260929ax：进聊天页看到动画即算「看过」——先清未读再播动画。
   // 此前等「打开礼物」交互完成才清，玩家不点开 ⇒ 未读红点一直挂着（列表/加号都不灭）。
   await _ocClearUnreadFor(c.id);

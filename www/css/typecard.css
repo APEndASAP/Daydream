@@ -1,0 +1,454 @@
+/* ============================================================================
+   白日梦 · 打字卡（Typecard）样式 —— typecard.css
+   ----------------------------------------------------------------------------
+   职责：占位演出气泡（ghost）【外层】样式。
+   · ghost 复用真实气泡结构（.bubble.message.message-received），
+     背景/圆角/边框/文字色全部继承用户自定义气泡美化，本文件不重定义；
+   · 只补充「打字卡演出」专属的状态约束：锁高、溢出裁切、正文预览、淡出。
+
+   隔离边界：输入法面板（拼音/候选/操作/动画）的样式内联进 Shadow DOM（ui.js），
+   不写在本文件，防止污染全局。
+   ============================================================================ */
+
+/* 演出占位气泡：面板在上、正文预览在下，垂直排列，随内容自然长高。
+   不做固定锁高——保证「正文实时预览」永远完整显示、不被面板挤出去或裁掉。
+
+   20261008 修复「删除/确定按钮、尾部候选字溢出气泡」：
+   主线 .msg-row .msg-body { min-width: 0 } 允许气泡收缩到比 shadow 面板还窄，
+   面板右对齐的键帽/尾部候选字就露在气泡外（实测面板超气泡 49px）。
+   这里给气泡和 msg-body 设宽度下限 244px = 面板三行最宽内容(候选行 196px)
+   + 面板左右 padding 16 + 气泡左右 padding 28，保证面板三行完整落在气泡内。 */
+.typecard-ghost {
+  position: relative;
+  overflow: visible;
+  display: block;
+  /* 只设最小高度兜底（面板本身需要的高度），不设 max-height、不裁切正文 */
+  min-height: 60px;
+  min-width: 244px;
+}
+.msg-row[data-typecard-ghost] .msg-body {
+  min-width: 244px; /* 覆盖主线 .msg-row .msg-body 的 min-width:0，气泡不再收缩到面板以下 */
+}
+
+/* Shadow DOM 面板宿主（透传主题变量的锚点，本身不参与视觉） */
+.tc-panel-host {
+  display: block;
+}
+
+/* 正文逐字预览区：气泡内、面板下方，逐字上屏的文字在这里实时显示。
+   完整显示、不裁切：不设 max-height/overflow:hidden，正文多长显示多长。
+   长文本自然撑高（white-space:pre-wrap + break 换行），面板绝不挤压正文。
+   20261008 晚八轮：字号还原 13px（用户：上块的字放大，打字渲染区不用改大）；
+   加打字机字体效果——等宽字体栈（英文数字呈打字机风格，中文等宽排布）+微字距。 */
+.tc-body-preview {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border, rgba(255,255,255,0.12)); /* 极细分隔线 */
+  font-family: 'Courier New', Courier, Consolas, 'Nimbus Mono PS', monospace;
+  letter-spacing: 0.4px;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  min-height: 1.4em;
+  /* 正文完整显示：不裁切，随内容自然增高 */
+  overflow: visible;
+}
+
+/* 淡出（演出完成，真消息已上屏）：只用 transform/opacity，不进 layout */
+.typecard-ghost.tc-fading {
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+}
+
+/* ============================================================================
+   悬浮窗模式（float）：独立 position:fixed 面板，挂 document.body
+   ----------------------------------------------------------------------------
+   · 脱离聊天列表 DOM：不受滚动 / 气泡 overflow / max-height 影响，绝不裁切；
+   · 固定屏幕底部居中，桌面端与手机端都不贴边（safe-area 兜底）；
+   · 主题可读性：背景用 --bg-elevated-2（深浅色 surface 均正确）、
+     文字用 --text（深浅色对比度足够），切换主题自动跟随；
+   · height:auto 内容自然撑开，不设 overflow:hidden，正文完整显示。
+   ============================================================================ */
+.typecard-float-panel {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 2147482000;               /* 与开屏/引导同级，确保盖过普通聊天层、不盖系统级 */
+  width: auto;
+  min-width: 240px;                  /* 20261008：与气泡内嵌下限对齐，面板三行不塌、候选行完整 */
+  max-width: min(88vw, 420px);       /* 窄屏不贴边，桌面端不无限拉宽 */
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 18px;
+  /* 20261008 晚六轮（用户参考 Spotify 玻璃：「把透明度拉高，像参考图那样高」）：
+     底色 alpha 0.40→0.26，靠 26px 重模糊均化背景保持文字可读；
+     高光渐变层保留（Spotify 边缘光感） */
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 34%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, 0.07) 86%, rgba(255, 255, 255, 0.15) 100%),
+    radial-gradient(120% 90% at 18% 0%, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 55%),
+    rgba(30, 26, 44, 0.26);
+  border: 1px solid rgba(205, 185, 255, 0.34);
+  backdrop-filter: blur(26px) saturate(165%) brightness(1.05);
+  -webkit-backdrop-filter: blur(26px) saturate(165%) brightness(1.05);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.30),
+    inset 0 0 24px rgba(255, 255, 255, 0.05);
+  /* 浮层可读性：正文预览文字用主文字色，深浅色均高对比 */
+  color: var(--text, #f5f4f7);
+  /* 高度：内容自然撑开，绝不裁切（不设 height/max-height/overflow:hidden） */
+  height: auto;
+  overflow: visible;
+}
+/* 磨砂颗粒：极淡噪点铺满玻璃面（z0，在文字层之下），增加「磨砂玻璃」的质感颗粒 */
+.typecard-float-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0.055;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='140'%20height='140'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.85'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='140'%20height='140'%20filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+}
+/* 浅色主题默认毛玻璃：白玻璃底 + 斜向高光 + 淡紫描边（不依赖玻璃拟态开关，同步调透：
+   晚六轮 alpha 0.50→0.32 向参考图看齐） */
+body.theme-light .typecard-float-panel {
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.08) 38%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.2) 100%),
+    rgba(250, 248, 255, 0.32);
+  border-color: rgba(140, 120, 220, 0.30);
+  box-shadow:
+    0 12px 40px rgba(60, 45, 110, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 0 24px rgba(255, 255, 255, 0.35);
+}
+
+/* 面板内容层级：压在裂纹层(z0)之上、花饰(z2)之下 */
+.typecard-float-panel .tc-panel-host,
+.typecard-float-panel .tc-body-preview,
+.typecard-float-panel .tc-summon-row {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---- 毛玻璃装饰层（ui.js _renderFloatDecor 注入，pointer-events:none） ---- */
+/* 碎玻璃（20261008 晚六轮）：整块硬边多边形碎片+粗亮捕光棱边（零辐射线），
+   数量少而精，绝不干扰文字阅读 */
+.typecard-float-panel .tc-shards {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.9;
+}
+/* 花簇（20261008 晚七轮）：完整建模水晶花束，沿边错落分布（不堆四角），
+   z0=压在文字层之下（用户红线：任何美化绝不影响可读性），尺寸位置由 ui.js 内联 */
+.typecard-float-panel .tc-cluster {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.16)) drop-shadow(0 0 6px rgba(255, 255, 255, 0.22));
+}
+.typecard-float-panel .tc-cluster svg { display: block; width: 100%; height: 100%; }
+/* 水晶链：银链+星形坠饰（用户认可保留），z0 在文字之下 */
+.typecard-float-panel .tc-chain {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+/* 藤蔓（20261008 晚七轮定稿）：真缠绕观感——四边攀爬、节间短、成对互生叶+卷须，
+   z0 在文字层之下（叶尖绝不盖字） */
+.typecard-float-panel .tc-vines {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  z-index: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.14));
+}
+.typecard-float-panel .tc-vines svg { display: block; width: 100%; height: 100%; }
+/* 玻璃纹理·磨砂颗粒（Spotify 参考）：feTurbulence 灰度噪点 + overlay 混合，
+   中灰中和、亮暗斑点浮现——可见的 dither 质感；圆角裁剪不越出玻璃面 */
+.typecard-float-panel .tc-frost {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: hidden;
+  mix-blend-mode: overlay;
+  opacity: 0.30;
+}
+/* 玻璃纹理·皱褶压纹（PS 参考）：抖动晶格亮暗成对折痕 + 长波纹 + 斜向光带
+   （晚六轮 0.75→0.55：透明度拉高后压纹同步减淡，不奶白） */
+.typecard-float-panel .tc-crinkle {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: hidden;
+  opacity: 0.55;
+}
+/* 闪光点：四角星，透明度随机，z0 在文字之下 */
+.typecard-float-panel .tc-sparkle {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+}
+.typecard-float-panel .tc-sparkle svg { display: block; width: 100%; height: 100%; }
+
+/* ---- 碎梦重拼召唤按钮（summon 形态悬浮窗专属） ---- */
+.tc-summon-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 7px;
+}
+.tc-summon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 18px;
+  border-radius: 999px;
+  /* 玻璃拟态：半透面 + 白细边 + 内高光，与整块毛玻璃悬浮窗/花簇/银链同一质感 */
+  border: 1px solid rgba(255, 255, 255, 0.30);
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.05) 40%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 0.12) 100%),
+    rgba(139, 116, 232, 0.22);
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow:
+    0 2px 12px rgba(100, 80, 200, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.30),
+    inset 0 0 14px rgba(255, 255, 255, 0.10);
+  transition: transform 0.1s ease, opacity 0.12s ease, background 0.15s ease;
+}
+.tc-summon-btn:hover {
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.08) 40%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 0.16) 100%),
+    rgba(139, 116, 232, 0.30);
+}
+.tc-summon-btn:active { transform: scale(0.96); }
+.tc-summon-btn:disabled { opacity: 0.45; cursor: default; }
+.tc-summon-btn:disabled:active { transform: none; }
+.tc-summon-ico { font-size: 12px; }
+/* 浅色主题：白字压浅紫玻璃对比度不足（可读性红线），文字改深紫 */
+body.theme-light .tc-summon-btn {
+  color: #453a70;
+  text-shadow: none;
+}
+
+/* 拖拽中：面板加轻微抬升阴影，视觉反馈「正在拖动」。
+   （20261008 用户要求：三横杠手柄已删除，整块面板都可拖动，光标反馈由 ui.js 内联设置） */
+.typecard-float-panel.tc-dragging {
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.60);
+  cursor: grabbing;
+}
+
+/* 悬浮窗淡出（演出完成/abort 后移除）：只用 opacity，不碰 transform——
+   面板可能已被拖拽成显式 left/top + transform:none，若这里再写 translateX(-50%) 会跳回居中再淡出 */
+.typecard-float-panel.tc-fading {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+/* 悬浮窗内的正文预览区：继承 .tc-body-preview，但文字色显式绑定主文字色，
+   确保脱离气泡（无气泡文字色继承）后深浅色仍清晰可读 */
+.typecard-float-panel .tc-body-preview {
+  color: var(--text, #f5f4f7);
+  border-top-color: var(--border, rgba(255, 255, 255, 0.12));
+}
+
+/* 悬浮窗内的 Shadow DOM 面板宿主：透明，让 .typecard-float-panel 的背景透出。
+   20261008 晚八轮：内容整体下移（padding-top），给收里后的左上主花让位，
+   标题不再顶到花心——「字稍微往下移一点儿」 */
+.typecard-float-panel .tc-panel-host {
+  display: block;
+  padding-top: 10px;
+}
+
+/* ============================================================================
+   玻璃拟态跟随（20261008 用户要求：玻璃模式下悬浮窗也要是玻璃质感）
+   与主线 body.glass-ui .modal / .chat-panel 同一配方：
+   半透面 + 白细边 + backdrop 模糊；浅色主题走白玻璃特化；中/低精度档随主线降级。
+   ============================================================================ */
+body.glass-ui .typecard-float-panel {
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.03) 36%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.10) 100%),
+    rgba(24, 20, 34, 0.36);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  backdrop-filter: blur(28px) saturate(170%) brightness(1.05);
+  -webkit-backdrop-filter: blur(28px) saturate(170%) brightness(1.05);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), 0 0 16px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 0 26px rgba(255, 255, 255, 0.05);
+}
+body.theme-light.glass-ui .typecard-float-panel {
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.1) 42%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 0.28) 100%),
+    rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(46, 36, 84, 0.14);
+  box-shadow: 0 24px 70px rgba(40, 30, 80, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+/* 中精度：与主线 glass-mid 一致（模糊统一 8px、去外泛光） */
+body.glass-ui.glass-mid .typecard-float-panel {
+  backdrop-filter: blur(8px) saturate(140%);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+body.theme-light.glass-ui.glass-mid .typecard-float-panel { background: rgba(255, 255, 255, 0.88); }
+/* 低精度：不做模糊运算（半透明纯色模拟玻璃），与主线 glass-low 一致 */
+body.glass-ui.glass-low .typecard-float-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+body.theme-light.glass-ui.glass-low .typecard-float-panel { background: rgba(255, 255, 255, 0.96); }
+
+/* ============================================================================
+   20261009：悬浮窗玻璃精度三档（独立于玻璃拟态总开关）
+   与上方 body.glass-ui 系列解耦——用独立的 body.tcf-mid / body.tcf-low 类，
+   无论玩家是否开启「玻璃拟态模式」，悬浮窗（召唤+非召唤）都能按设备/手动选择控制模糊精度。
+   高精度（默认）不设类，直接用 .typecard-float-panel 默认 blur(26px)。
+   ============================================================================ */
+/* 中精度：模糊统一降到 8px、去外泛白光（与主线 glass-mid 同配方） */
+body.tcf-mid .typecard-float-panel {
+  backdrop-filter: blur(8px) saturate(140%);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+body.theme-light.tcf-mid .typecard-float-panel { background: rgba(255, 255, 255, 0.88); }
+/* 低精度：不做模糊运算（半透明纯色模拟玻璃），零 backdrop-filter 开销 */
+body.tcf-low .typecard-float-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+body.theme-light.tcf-low .typecard-float-panel { background: rgba(255, 255, 255, 0.96); }
+/* 召唤按钮同步降级：中/低精度下也去掉自身的 10px 模糊 */
+body.tcf-mid .tc-summon-btn { backdrop-filter: blur(6px) saturate(1.15); -webkit-backdrop-filter: blur(6px) saturate(1.15); }
+body.tcf-low .tc-summon-btn { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+
+/* ============================================================================
+   字卡 / 表情 演出层 overlay（非输入事件，浮在气泡上方，绝不写入正文预览）
+   ----------------------------------------------------------------------------
+   · 由 ui.js 的 _showCardOverlay / _showEmojiOverlay 动态创建，挂到 bubble 内；
+   · 绝对定位居中浮层，淡入→停留→淡出，纯演出，不触碰 .tc-body-preview；
+   · 事件结束后自动移除，不留任何字符在正文里。
+   ============================================================================ */
+.tc-event-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.7);
+  z-index: 3;
+  pointer-events: none;              /* 演出层不拦截交互 */
+  opacity: 0;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  will-change: opacity, transform;
+}
+.tc-event-overlay.tc-event-in {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.tc-event-overlay.tc-event-out {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+/* 字卡：纯色圆角卡（白日梦深色紫风格，label 单字/短词） */
+.tc-event-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* 表情：大号 emoji，带柔和发光 */
+.tc-event-emoji {
+  font-size: 34px;
+  line-height: 1;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.35));
+}
+
+/* ============================================================================
+   悬浮窗模式 · 常驻圆点（20261008）：双圈靶心
+   ----------------------------------------------------------------------------
+   · 悬浮窗模式的悬浮窗是常驻的：普通状态下只有一个圆点，点击才展开面板；
+   · 形态（规格 D）：双圈=外圈半透明淡紫呼吸 + 内芯实心紫；视觉直径 22px；
+   · 热区 44px（视觉圆点居中在热区里）；拖拽中暂停呼吸并放大 1.1 倍；
+   · 位置由 ui.js 指定（left/top），吸附与记忆也在 ui.js，本文件只管视觉。
+   ============================================================================ */
+.typecard-float-dot {
+  position: fixed;
+  z-index: 2147481980;               /* 悬浮面板(2147482000)之下、普通聊天层之上 */
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: none;                /* 手势全交给 pointer 拖拽/点击判定 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.typecard-float-dot .tfd-ring {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  /* 可读性（20261008 用户反馈：浅色壁纸上几乎看不见）：
+     白瓷衬底 + 紫描边 + 深色投影，不再依赖主题/透明淡紫——
+     深浅背景与任意壁纸上都有稳定对比（靶心形态不变） */
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid var(--purple, #8b74e8);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.32);
+  animation: tc-dot-breathe 2.4s ease-in-out infinite;
+}
+.typecard-float-dot .tfd-core {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--purple, #8b74e8);            /* 内芯：实心紫（白圈衬托） */
+}
+@keyframes tc-dot-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.75; }
+  50%      { transform: scale(1.12); opacity: 1; }
+}
+.typecard-float-dot.tfd-dragging { cursor: grabbing; }
+.typecard-float-dot.tfd-dragging .tfd-ring {
+  animation: none;                   /* 拖拽中暂停呼吸（规格 D） */
+  transform: scale(1.1);             /* 拖拽中放大 1.1 倍（规格 D） */
+}
