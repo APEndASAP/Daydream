@@ -4187,6 +4187,37 @@ async function dataURLToBlob(s) {
   return await res.blob();
 }
 
+/* 20261009：单文件分块写盘——把一份 base64 内容分块 appendFile 写成「单个文件」，
+   规避「一次性 writeFile 传 ~167MB base64 字符串过 Capacitor Bridge → Java Heap OOM」。
+   每块 ~3MB 原始字节（base64 后 ~4MB），单次 Bridge payload 小、原生端流式追加，
+   既不 OOM、又保持 .ocdata 是用户能直接选中的单文件（导入端 file.text() 完全兼容）。 */
+async function writeSingleFileChunked(path, base64, directory) {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!FS || typeof FS.appendFile !== 'function') {
+    // 无 appendFile 能力（极老插件）：退回一次性 writeFile
+    await FS.writeFile({ path, data: base64, directory, recursive: true });
+    return;
+  }
+  const CHUNK = 4 * 1024 * 1024; // 4MB base64 字符 ≈ 3MB 原始字节
+  const total = base64.length;
+  if (total <= CHUNK) {
+    await FS.writeFile({ path, data: base64, directory, recursive: true });
+    return;
+  }
+  const chunks = Math.ceil(total / CHUNK);
+  let written = 0;
+  for (let i = 0; i < chunks; i++) {
+    const seg = base64.slice(i * CHUNK, (i + 1) * CHUNK);
+    if (i === 0) {
+      await FS.writeFile({ path, data: seg, directory, recursive: true });
+    } else {
+      await FS.appendFile({ path, data: seg, directory });
+    }
+    written += seg.length;
+    if (chunks > 3 && (i === chunks - 1 || (i + 1) % 3 === 0)) exportProgress(true, `💾 正在写入 ${written}/${total}…`);
+  }
+}
+
 /* 消息提示音（5.3：WebAudio 合成，无需外部资源，兼容 App 打包）
    soundName 支持多种音色：默认/清脆/柔和/叮咚/风铃 */
 const SOUND_PRESETS = {
@@ -13440,44 +13471,27 @@ async function exportAll() {
     if (save.cancelled) return;
     const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
     if (FS && FS.writeFile) {
-      // 20261009：APK（Capacitor）环境改走 3.0 独立文件模式——图片逐张独立 writeFile，
-      // 单次 Bridge payload = 单张图大小；旧 2.2 单文件把 667 张图 base64 内嵌成 ~167MB
-      // 巨型 JSON 一次性过 Bridge，直接 Java Heap OOM → 闪退（点"导出全局数据"就崩的根因）。
+      // 20261009：APK（Capacitor）环境——改回「单文件」+ 分块写盘。旧 3.0 文件夹模式
+      // 导出成一整个文件夹（manifest + images 散落），用户无法用文件选择器选单文件导入，
+      // 违背手动导出「单个 .ocdata 文件」的初衷。现在用 writeSingleFileChunked 把单文件
+      // 逐块 appendFile 写盘，既保持单文件（导入端 file.text() 完全兼容）、又规避
+      // 「一次性 writeFile 传 ~167MB base64 过 Bridge → OOM 闪退」。
       miniToast('正在导出全量数据（图片较多，请稍候）…');
-      const safeData = await buildBackupPayload('3.0');
-      const { data, images } = await collectImagesV3(safeData);
-
-      // 复用「文档/白日梦备份」公共目录；手动导出用固定文件名，覆盖上一次手动导出（不无限堆积）
-      const setDir = '白日梦备份/手动导出-' + Date.now();
-      const imagesRelDir = setDir + '/images';
-
-      // 20261009：写图提速——旧版逐张串行 await（667 张图每张一次 Bridge 调用，累积几分钟且零反馈）；
-      // 改为 6 路并发分批 + 实时进度。单次 Bridge payload 仍是单张图大小，不引入 OOM 风险。
-      const totalImg = images.length;
-      let wi = 0, wdone = 0;
-      const writeWorker = async () => {
-        while (wi < totalImg) {
-          const img = images[wi++];
-          const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
-          await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
-          wdone++;
-          if (totalImg > 10 && (wdone % 10 === 0 || wdone === totalImg)) exportProgress(true, `💾 正在写入图片 ${wdone}/${totalImg}…`);
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(6, totalImg) }, writeWorker));
-      if (totalImg > 10) exportProgress(false);
-
-      // 写 manifest（全部图片写成功后才写——manifest 是「本次导出完成」的提交标记）
-      data.imagesDir = imagesRelDir;
-      const manifestJson = JSON.stringify(data);
-      const manifestB64 = await new Promise((res, rej) => {
+      exportProgress(true, '📦 正在打包全量备份…');
+      const safeData = await buildBackupPayload(); // 2.2：图片 base64 内嵌成单文件
+      exportProgress(false);
+      const json = JSON.stringify(safeData);
+      // JSON 字符串 → base64（分块写盘用纯 base64，避免 UTF8 编码歧义）
+      const b64 = await new Promise((res, rej) => {
         const r = new FileReader();
         r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
         r.onerror = () => rej(new Error('读取失败'));
-        r.readAsDataURL(new Blob([manifestJson], { type: 'application/json' }));
+        r.readAsDataURL(new Blob([json], { type: 'application/json' }));
       });
-      await FS.writeFile({ path: setDir + '/manifest.json', data: manifestB64, directory: 'DOCUMENTS', recursive: true });
-      miniToast('全量备份已导出到「文档/白日梦备份/' + setDir.split('/').pop() + '」，卸载重装后可导入恢复');
+      // 单文件落点：文档/白日梦备份/白日梦数据备份.ocdata（固定文件名，覆盖上次手动导出）
+      await writeSingleFileChunked('白日梦备份/白日梦数据备份.ocdata', b64, 'DOCUMENTS');
+      exportProgress(false);
+      miniToast('已导出单文件「白日梦数据备份.ocdata」到「文档/白日梦备份」，导入时选该文件即可');
       return;
     }
     // 网页端（无 Capacitor）：仍走 2.2 单文件 <a download> 下载
@@ -16924,40 +16938,25 @@ async function exportPalaceData(folderIds = null) {
       entries: selEntries,
       settings: await palSettings(),
     };
-    // 20261009：APK 环境宫殿导出也走 3.0 独立文件模式，与全局导出一致——
-    // 图片逐张独立 writeFile，单次 Bridge payload = 单张图；旧 2.2 内嵌在宫殿存大量记忆图时
-    // 同样会巨型 JSON 一次过 Bridge → OOM 闪退。
+    // 20261009：APK 环境宫殿导出也改回「单文件」+ 分块写盘——旧 3.0 文件夹模式
+    // 导出成一整个文件夹，用户无法用文件选择器选单文件导入，违背手动导出初衷。
+    // 用 writeSingleFileChunked 把单文件 .palacedata 逐块 appendFile 写盘，规避 OOM。
     const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
     if (FS && FS.writeFile) {
       miniToast('正在导出记忆宫殿（图片较多，请稍候）…');
-      const { data: v3data, images } = await collectImagesV3(data);
-      const setDir = '白日梦备份/宫殿导出-' + Date.now();
-      const imagesRelDir = setDir + '/images';
-      // 20261009：写图提速——6 路并发 + 实时进度（旧版逐张串行零反馈）
-      const totalImg = images.length;
-      let wi = 0, wdone = 0;
-      const writeWorker = async () => {
-        while (wi < totalImg) {
-          const img = images[wi++];
-          const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1);
-          await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
-          wdone++;
-          if (totalImg > 10 && (wdone % 10 === 0 || wdone === totalImg)) exportProgress(true, `💾 正在写入图片 ${wdone}/${totalImg}…`);
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(6, totalImg) }, writeWorker));
-      if (totalImg > 10) exportProgress(false);
-      v3data.imagesDir = imagesRelDir;
-      v3data.version = '3.0';
-      const manifestJson = JSON.stringify(v3data);
-      const manifestB64 = await new Promise((res, rej) => {
+      exportProgress(true, '📦 正在打包宫殿图片…');
+      await deepImagesToExport(data, '正在打包宫殿图片'); // 图片 base64 内嵌成单文件
+      exportProgress(false);
+      const json = JSON.stringify(data);
+      const b64 = await new Promise((res, rej) => {
         const r = new FileReader();
         r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
         r.onerror = () => rej(new Error('读取失败'));
-        r.readAsDataURL(new Blob([manifestJson], { type: 'application/json' }));
+        r.readAsDataURL(new Blob([json], { type: 'application/json' }));
       });
-      await FS.writeFile({ path: setDir + '/manifest.json', data: manifestB64, directory: 'DOCUMENTS', recursive: true });
-      miniToast('已导出记忆宫殿到「文档/白日梦备份/' + setDir.split('/').pop() + '」，卸载重装后可导入恢复');
+      await writeSingleFileChunked('白日梦备份/白日梦记忆宫殿备份.palacedata', b64, 'DOCUMENTS');
+      exportProgress(false);
+      miniToast('已导出单文件「白日梦记忆宫殿备份.palacedata」到「文档/白日梦备份」，导入时选该文件即可');
       return;
     }
     // 网页端：2.2 单文件内嵌（通用格式，网页/App 导入端都认）
