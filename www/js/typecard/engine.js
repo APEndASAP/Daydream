@@ -713,6 +713,10 @@
       this._state = STATE.IDLE;
       // 召唤开启时重建常驻待机面板（内部自检开关，幂等）
       this._ensureSummonPanel();
+      // 20261009 晚（圆点根治）：演出收尾统一重派生圆点显隐/点击绑定——
+      // 不管演出期间圆点被任何路径藏过（弹窗/切页竞态残留），float/召唤模式
+      // 下圆点必然在演出结束后恢复，「圆点与悬浮窗互斥」结构性消除。
+      try { this.updateFloatDot(); } catch (e) {}
     },
 
     // ghost 被 renderMessages 清掉（切页/翻页）——只处理 PLAYING 态的「意外回收」。
@@ -735,6 +739,8 @@
       this._state = STATE.IDLE;
       // 召唤开启时重建常驻待机面板（内部自检开关+在聊天页，幂等）
       this._ensureSummonPanel();
+      // 20261009 晚（圆点根治）：意外回收同样重派生圆点（与 _finish 同理）
+      try { this.updateFloatDot(); } catch (e) {}
     },
 
     // 打断：按原因区分收尾方式
@@ -769,11 +775,14 @@
             }
             // 旧 summon 演出面板被新演出（可能是 bubble）顶掉后，重建常驻待机面板
             engine._ensureSummonPanel();
+            // 20261009 晚（圆点根治）：淡出收尾重派生圆点
+            try { engine.updateFloatDot(); } catch (e) {}
           });
         } else if (oldMsg && inThisChat(oldMsg) && !oldMsg.recalled) {
           // 无 ghost 可淡出（极端兜底）：直接落地
           try { appendOnce(oldMsg); } catch (e) {}
           engine._ensureSummonPanel();
+          try { engine.updateFloatDot(); } catch (e) {}
         }
         this._state = STATE.IDLE;
         return;

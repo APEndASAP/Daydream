@@ -339,7 +339,11 @@
 
       panel._shadow = shadow;
       panel._preview = preview;
-      panel._charId = replyMsg.charId; // 20261009：供图片表情实时抽图（emoji 块不含 charId）
+      // 20261009 晚根因修复：待机面板/召唤面板走 buildFloatPanel(null)，replyMsg.charId
+      // 直接 TypeError → toggleFloatPanel/toggleSummonPanel/_ensureSummonPanel 全链炸掉、
+      // 异常被 _onDotTap 的 catch 静默吞掉 = 「圆点点击完全没反应」「待机面板建不出来」真因。
+      // 待机面板不演出不需要抽图，charId 置 null 即可（演出面板传真消息不受影响）。
+      panel._charId = (replyMsg && replyMsg.charId) ? replyMsg.charId : null;
       panel._tc = {
         committed: '',
         caret: null
@@ -914,8 +918,9 @@
       frag.appendChild(_frostSVG());
       frag.appendChild(_crinkleSVG(w, h, isLight));
 
-      // ---- 1) 碎玻璃：整块硬边多边形碎片（零辐射线=绝无蜘蛛网）----
-      frag.appendChild(_shardsSVG(w, h, isLight));
+      // ---- 1) 碎玻璃碎片层（20261009 晚用户要求移除）：碎片填充透明度极低暗背景不可见，
+      //      只剩 rim/glint 亮色描边，读作「三条平行斜杠」+「空心三角」，观感杂乱——
+      //      整层移除（纹理/花/藤/链/闪光保留）。tc-shards 保留在清理列表里（老面板重建时清旧节点）。
 
       // ---- 2) 水晶花簇（八轮定稿）：花往里收（只微微越出边框）、
       //      两朵主花坐对角 + 边框散簇 + 藤蔓节点小碎花（连接全部花簇）----
@@ -991,104 +996,7 @@
     } catch (e) {}
   }
 
-  // ---- 碎玻璃（20261008 晚六轮用户定稿）：整块硬边多边形碎片。
-  //      六轮否决五轮的「撞击点辐射线+外环弦线」（像蜘蛛网、边缘不硬）——
-  //      本版只有碎玻璃块本身：不规则凸多边形（按角度序生成、全直线、
-  //      miter 尖角闭合）+ 最长边重描的粗亮捕光主棱 + 贴邻小碎块 +
-  //      贴边小缺口。数量少（疏密），分布在角/边带，绝不横穿正文区 ----
-  function _shardsSVG(w, h, isLight) {
-    const ns = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('class', 'tc-shards');
-    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-    svg.setAttribute('preserveAspectRatio', 'none');
-    const rim = isLight ? 'rgba(110, 88, 180, 0.42)' : 'rgba(235, 228, 255, 0.55)';
-    const rimSoft = isLight ? 'rgba(130, 108, 200, 0.30)' : 'rgba(200, 188, 245, 0.32)';
-    const glint = isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.85)';
-    const facet1 = isLight ? 'rgba(255, 255, 255, 0.30)' : 'rgba(220, 214, 255, 0.08)';
-    const facet2 = isLight ? 'rgba(180, 160, 235, 0.14)' : 'rgba(190, 178, 240, 0.05)';
-    let inner = '';
-
-    // 啮合碎片对：断口折线 A→m1→B（中点带折角）为共享边，两片玻璃沿断口
-    // 向法线两侧崩开（主片深、次片浅，闭合顶点沿基线滑移=不规则），
-    // 断口重描粗亮主棱=捕光硬边。读作「沿断口裂开的两片」，绝无正多边形感
-    function pair(ax, ay, bx, by, nx, ny) {
-      const dx = bx - ax, dy = by - ay;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const ux = dx / len, uy = dy / len;
-      const mx = (ax + bx) / 2 + ux * (Math.random() * 8 - 4);
-      const my = (ay + by) / 2 + uy * (Math.random() * 8 - 4);
-      const k = 2.2 + Math.random() * 3.2;                 // 断口中点折角深度
-      const m1x = mx + nx * k, m1y = my + ny * k;
-      const d1 = 9 + Math.random() * 6;                    // 主片崩开深度
-      const d2 = 4.5 + Math.random() * 3.5;                // 次片崩开深度
-      const s1 = (Math.random() - 0.5) * 8;                // 闭合顶点沿基线滑移
-      const c1x = mx + nx * d1 + ux * s1, c1y = my + ny * d1 + uy * s1;
-      const s2 = (Math.random() - 0.5) * 8;
-      const c2x = mx + nx * d2 + ux * s2, c2y = my + ny * d2 + uy * s2;
-      let s = '';
-      s += '<path d="M' + ax.toFixed(1) + ',' + ay.toFixed(1)
-        + ' L' + m1x.toFixed(1) + ',' + m1y.toFixed(1)
-        + ' L' + bx.toFixed(1) + ',' + by.toFixed(1)
-        + ' L' + c1x.toFixed(1) + ',' + c1y.toFixed(1) + ' Z" fill="' + facet1 + '" stroke="' + rim + '" stroke-width="1.2"/>';
-      s += '<path d="M' + ax.toFixed(1) + ',' + ay.toFixed(1)
-        + ' L' + m1x.toFixed(1) + ',' + m1y.toFixed(1)
-        + ' L' + bx.toFixed(1) + ',' + by.toFixed(1)
-        + ' L' + c2x.toFixed(1) + ',' + c2y.toFixed(1) + ' Z" fill="' + facet2 + '" stroke="' + rimSoft + '" stroke-width="0.9"/>';
-      s += '<path d="M' + ax.toFixed(1) + ',' + ay.toFixed(1)
-        + ' L' + m1x.toFixed(1) + ',' + m1y.toFixed(1)
-        + ' L' + bx.toFixed(1) + ',' + by.toFixed(1)
-        + '" fill="none" stroke="' + glint + '" stroke-width="1.8"/>';
-      return s;
-    }
-
-    // 两组啮合碎片：右上贴顶边 + 左下贴底边（法线指向玻璃内，绝不横穿正文区）
-    {
-      const y1 = h * (0.06 + Math.random() * 0.06);
-      const xA1 = w * (0.60 + Math.random() * 0.08);
-      const ang1 = (Math.random() - 0.5) * 0.42;           // 基线近似沿顶边
-      const L1 = 20 + Math.random() * 10;
-      inner += pair(xA1, y1, xA1 + Math.cos(ang1) * L1, y1 + Math.sin(ang1) * L1, 0.3, 0.954);
-    }
-    {
-      const y2 = h * (0.86 + Math.random() * 0.06);
-      const xA2 = w * (0.14 + Math.random() * 0.1);
-      const ang2 = Math.PI + (Math.random() - 0.5) * 0.42; // 沿底边反向
-      const L2 = 18 + Math.random() * 10;
-      inner += pair(xA2, y2, xA2 + Math.cos(ang2) * L2, y2 + Math.sin(ang2) * L2, 0.3, -0.954);
-    }
-
-    // 贴边小缺口碎屑 2~3 个（硬边三角）
-    const chips = 2 + Math.floor(Math.random() * 2);
-    for (let i = 0; i < chips; i++) {
-      const edge = Math.floor(Math.random() * 4);
-      const s1 = 3 + Math.random() * 3, s2 = 2.5 + Math.random() * 3;
-      let d;
-      if (edge === 0) {
-        const cx = (w * (0.15 + Math.random() * 0.7)).toFixed(1);
-        d = 'M' + cx + ',0 l' + s1.toFixed(1) + ',' + s2.toFixed(1) + ' l-' + (s1 * 0.85).toFixed(1) + ',' + (s2 * 0.55).toFixed(1) + ' Z';
-      } else if (edge === 1) {
-        const cx = (w * (0.15 + Math.random() * 0.7)).toFixed(1);
-        d = 'M' + cx + ',' + h.toFixed(1) + ' l' + s1.toFixed(1) + ',-' + s2.toFixed(1) + ' l-' + (s1 * 0.85).toFixed(1) + ',-' + (s2 * 0.55).toFixed(1) + ' Z';
-      } else if (edge === 2) {
-        const cy = (h * (0.2 + Math.random() * 0.6)).toFixed(1);
-        d = 'M0,' + cy + ' l' + s2.toFixed(1) + ',' + s1.toFixed(1) + ' l' + (s2 * 0.55).toFixed(1) + ',-' + (s1 * 0.85).toFixed(1) + ' Z';
-      } else {
-        const cy = (h * (0.2 + Math.random() * 0.6)).toFixed(1);
-        d = 'M' + w.toFixed(1) + ',' + cy + ' l-' + s2.toFixed(1) + ',' + s1.toFixed(1) + ' l-' + (s2 * 0.55).toFixed(1) + ',-' + (s1 * 0.85).toFixed(1) + ' Z';
-      }
-      inner += '<path d="' + d + '" fill="' + facet2 + '" stroke="' + rimSoft + '" stroke-width="0.9"/>';
-    }
-
-    // square 端头 + miter 尖角=硬边；组透明度 0.8
-    svg.innerHTML = '<g fill="none" stroke-linecap="square" stroke-linejoin="miter" opacity="0.8">' + inner + '</g>';
-    return svg;
-  }
-
-  // ---- 藤蔓（20261008 晚八轮定稿）：「串花藤」——
-  //      茎蔓起止钉在花簇锚点上（从主花缘起笔、路过每簇边框散簇、尾端拖出），
-  //      沿途节点再开 2~4 簇「小碎花」（比散簇更小，长在藤上——花与花不再断开）；
-  //      顶/底/左右四条茎，节间短、成对互生叶+卷须。z0 在文字层之下 ----
+  // （20261009 晚：碎玻璃碎片装饰层已按用户要求整体移除——低透明填充在暗背景上不可见，只剩亮描边读作「三条杠」）
   function _borderVinesSVG(w, h, anchors) {
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
