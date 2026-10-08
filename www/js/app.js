@@ -13322,7 +13322,7 @@ async function collectImagesV3(node) {
 
   const images = [];
   const total = found.length;
-  let idx = 0;
+  let idx = 0, done = 0;
   const worker = async () => {
     while (idx < total) {
       const i = idx++;
@@ -13337,9 +13337,13 @@ async function collectImagesV3(node) {
         out.thumbMime = it.thumbMime;
       }
       it.parent[it.key] = out;
+      done++;
+      // 20261009：打包阶段实时进度（旧版零反馈，图一多就像"点了没反应"）
+      if (total > 6 && (done % 6 === 0 || done === total)) exportProgress(true, `📦 正在打包图片 ${done}/${total}…`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  if (total > 6) exportProgress(false);
   return { data: node, images };
 }
 
@@ -13447,11 +13451,21 @@ async function exportAll() {
       const setDir = '白日梦备份/手动导出-' + Date.now();
       const imagesRelDir = setDir + '/images';
 
-      // 逐张写图片（每张独立 writeFile，单次 bridge payload = 单张图大小，不再全量 ~167MB）
-      for (const img of images) {
-        const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
-        await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
-      }
+      // 20261009：写图提速——旧版逐张串行 await（667 张图每张一次 Bridge 调用，累积几分钟且零反馈）；
+      // 改为 6 路并发分批 + 实时进度。单次 Bridge payload 仍是单张图大小，不引入 OOM 风险。
+      const totalImg = images.length;
+      let wi = 0, wdone = 0;
+      const writeWorker = async () => {
+        while (wi < totalImg) {
+          const img = images[wi++];
+          const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
+          await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
+          wdone++;
+          if (totalImg > 10 && (wdone % 10 === 0 || wdone === totalImg)) exportProgress(true, `💾 正在写入图片 ${wdone}/${totalImg}…`);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(6, totalImg) }, writeWorker));
+      if (totalImg > 10) exportProgress(false);
 
       // 写 manifest（全部图片写成功后才写——manifest 是「本次导出完成」的提交标记）
       data.imagesDir = imagesRelDir;
@@ -13512,10 +13526,17 @@ async function autoBackup() {
     const imagesRelDir = setDir + '/images';
 
     // 逐张写图片（每张独立 writeFile，单次 bridge payload = 单张图大小，不再全量 98MB）
-    for (const img of images) {
-      const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
-      await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
-    }
+    // 20261009：6 路并发提速（保持静默不弹进度——自动备份是后台兜底，不打扰用户）
+    const totalImg = images.length;
+    let wi = 0;
+    const writeWorker = async () => {
+      while (wi < totalImg) {
+        const img = images[wi++];
+        const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
+        await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, totalImg) }, writeWorker));
 
     // 写 manifest（全部图片写成功后才写——manifest 是「本次备份完成」的提交标记）
     data.imagesDir = imagesRelDir; // 恢复端据此 FS.readFile 定位图片
@@ -16912,10 +16933,20 @@ async function exportPalaceData(folderIds = null) {
       const { data: v3data, images } = await collectImagesV3(data);
       const setDir = '白日梦备份/宫殿导出-' + Date.now();
       const imagesRelDir = setDir + '/images';
-      for (const img of images) {
-        const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1);
-        await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
-      }
+      // 20261009：写图提速——6 路并发 + 实时进度（旧版逐张串行零反馈）
+      const totalImg = images.length;
+      let wi = 0, wdone = 0;
+      const writeWorker = async () => {
+        while (wi < totalImg) {
+          const img = images[wi++];
+          const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1);
+          await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
+          wdone++;
+          if (totalImg > 10 && (wdone % 10 === 0 || wdone === totalImg)) exportProgress(true, `💾 正在写入图片 ${wdone}/${totalImg}…`);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(6, totalImg) }, writeWorker));
+      if (totalImg > 10) exportProgress(false);
       v3data.imagesDir = imagesRelDir;
       v3data.version = '3.0';
       const manifestJson = JSON.stringify(v3data);
