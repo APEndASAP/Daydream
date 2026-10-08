@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.0.4'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.0.5'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
 
 let characters = [];
 let cards = null;
@@ -45,7 +45,7 @@ let chatSettings = {
   skipOverclockAnim: false,      // 超频：跳过裂隙动画（20260929ao；低端机/卡顿时建议开启）
   typecardOn: false,             // 20261008：打字卡总开关（默认关；总设置对所有访客生效，访客主页聊天设置可单独覆盖）
   typecardMode: 'bubble',        // 20261008：打字卡展示模式 bubble=气泡内嵌 / float=悬浮窗（默认气泡内嵌）
-  typecardSpeed: 1.0,            // 20261008：打字卡速度连续倍率（0.6=最快 ~ 3.0=最慢，默认 1.0 中间值）
+  typecardSpeed: 1.0,            // 20261008：打字卡速度连续倍率（0.6=最快 ~ 5.0=最慢，默认 1.0 中间值；20261009 上限延长到 5.0）
   typecardCoherence: 0,          // 20261008：打字卡通顺度滑块（0=纯拼字 ~ 1=沿语料游走 ~ 2=完整句子，默认 0 纯拼字）
   typecardCards: true,           // 20261008：打字卡「拼字卡/表情」开关（默认开；关闭后打字卡只纯打字，不抽字卡/表情，不影响主线）
   typecardSummon: false,         // 20261008 晚（碎梦重拼召唤）：常驻悬浮窗+「生成一条消息」按钮，独立于 typecardOn 互不干涉；速度/通顺度跟随打字卡设置
@@ -11707,7 +11707,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">打字速度</label>
       <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
         <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">快</span>
-        <input type="range" id="cs-typecard-speed" min="0.6" max="3.0" step="0.1" value="${typeof s.typecardSpeed === 'number' ? s.typecardSpeed : 1.0}" style="flex:1;accent-color:var(--purple);">
+        <input type="range" id="cs-typecard-speed" min="0.6" max="5.0" step="0.1" value="${typeof s.typecardSpeed === 'number' ? s.typecardSpeed : 1.0}" style="flex:1;accent-color:var(--purple);">
         <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">慢</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
@@ -13434,6 +13434,39 @@ async function exportAll() {
   try {
     save = await beginExport('白日梦数据备份.ocdata'); // 先取保存句柄（点击激活期内），再慢慢打包图片
     if (save.cancelled) return;
+    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    if (FS && FS.writeFile) {
+      // 20261009：APK（Capacitor）环境改走 3.0 独立文件模式——图片逐张独立 writeFile，
+      // 单次 Bridge payload = 单张图大小；旧 2.2 单文件把 667 张图 base64 内嵌成 ~167MB
+      // 巨型 JSON 一次性过 Bridge，直接 Java Heap OOM → 闪退（点"导出全局数据"就崩的根因）。
+      miniToast('正在导出全量数据（图片较多，请稍候）…');
+      const safeData = await buildBackupPayload('3.0');
+      const { data, images } = await collectImagesV3(safeData);
+
+      // 复用「文档/白日梦备份」公共目录；手动导出用固定文件名，覆盖上一次手动导出（不无限堆积）
+      const setDir = '白日梦备份/手动导出-' + Date.now();
+      const imagesRelDir = setDir + '/images';
+
+      // 逐张写图片（每张独立 writeFile，单次 bridge payload = 单张图大小，不再全量 ~167MB）
+      for (const img of images) {
+        const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
+        await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
+      }
+
+      // 写 manifest（全部图片写成功后才写——manifest 是「本次导出完成」的提交标记）
+      data.imagesDir = imagesRelDir;
+      const manifestJson = JSON.stringify(data);
+      const manifestB64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
+        r.onerror = () => rej(new Error('读取失败'));
+        r.readAsDataURL(new Blob([manifestJson], { type: 'application/json' }));
+      });
+      await FS.writeFile({ path: setDir + '/manifest.json', data: manifestB64, directory: 'DOCUMENTS', recursive: true });
+      miniToast('全量备份已导出到「文档/白日梦备份/' + setDir.split('/').pop() + '」，卸载重装后可导入恢复');
+      return;
+    }
+    // 网页端（无 Capacitor）：仍走 2.2 单文件 <a download> 下载
     miniToast('正在打包全量数据，图库大时需要几秒…');
     const safeData = await buildBackupPayload();
     const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
@@ -16860,7 +16893,6 @@ async function exportPalaceData(folderIds = null) {
     const selFolders = folders.filter(f => !scoped || folderIds.includes(f.id) || f.id === PAL_P || f.id === PAL_H);
     save = await beginExport('白日梦记忆宫殿备份.palacedata');
     if (save.cancelled) return;
-    exportProgress(true, '⬇️ 正在打包宫殿图片…');
     const data = {
       app: 'bairimeng',
       format: 'palacedata',
@@ -16871,6 +16903,34 @@ async function exportPalaceData(folderIds = null) {
       entries: selEntries,
       settings: await palSettings(),
     };
+    // 20261009：APK 环境宫殿导出也走 3.0 独立文件模式，与全局导出一致——
+    // 图片逐张独立 writeFile，单次 Bridge payload = 单张图；旧 2.2 内嵌在宫殿存大量记忆图时
+    // 同样会巨型 JSON 一次过 Bridge → OOM 闪退。
+    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    if (FS && FS.writeFile) {
+      miniToast('正在导出记忆宫殿（图片较多，请稍候）…');
+      const { data: v3data, images } = await collectImagesV3(data);
+      const setDir = '白日梦备份/宫殿导出-' + Date.now();
+      const imagesRelDir = setDir + '/images';
+      for (const img of images) {
+        const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1);
+        await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
+      }
+      v3data.imagesDir = imagesRelDir;
+      v3data.version = '3.0';
+      const manifestJson = JSON.stringify(v3data);
+      const manifestB64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
+        r.onerror = () => rej(new Error('读取失败'));
+        r.readAsDataURL(new Blob([manifestJson], { type: 'application/json' }));
+      });
+      await FS.writeFile({ path: setDir + '/manifest.json', data: manifestB64, directory: 'DOCUMENTS', recursive: true });
+      miniToast('已导出记忆宫殿到「文档/白日梦备份/' + setDir.split('/').pop() + '」，卸载重装后可导入恢复');
+      return;
+    }
+    // 网页端：2.2 单文件内嵌（通用格式，网页/App 导入端都认）
+    exportProgress(true, '⬇️ 正在打包宫殿图片…');
     await deepImagesToExport(data, '正在打包宫殿图片');
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     await finishExport(save, blob, `已导出记忆宫殿（${selEntries.length} 段记忆）`);
@@ -16913,7 +16973,23 @@ function showImportPalaceModal(back = null) {
         return;
       }
       exportProgress(true, '⬇️ 正在还原宫殿图片…');
-      const data = await deepImagesFromExport(raw); // {__img} base64 → Blob 描述符（返回新树，需重新取 entries）
+      // 20261009：兼容 3.0 独立文件格式（APK 导出），其余走 2.2 内嵌还原
+      let data;
+      if (raw && raw.version === '3.0' && raw.imagesDir) {
+        const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+        if (FS && typeof FS.readFile === 'function') {
+          const imagesDir = String(raw.imagesDir);
+          const readImage = async (ref, mime) => {
+            const r = await FS.readFile({ path: imagesDir + '/' + ref, directory: 'DOCUMENTS' });
+            return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + r.data);
+          };
+          data = await restoreImagesV3(raw, readImage);
+        } else {
+          data = raw; // 网页端误导入 3.0：保留原样，图片按缺失处理不崩溃
+        }
+      } else {
+        data = await deepImagesFromExport(raw); // {__img} base64 → Blob 描述符（返回新树，需重新取 entries）
+      }
       exportProgress(false);
       const entries = Array.isArray(data.entries) ? data.entries : rawEntries;
       await palEnsureFolders();

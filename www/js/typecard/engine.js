@@ -108,7 +108,7 @@
   //   倍率 > 1 = 更慢（更从容），< 1 = 更快。speedFactor 直接乘基础延时。
   //   20261008 用户定案：范围 0.6× ~ 1.5×，默认 1.0×（速度值统一从配置传入，真正控制播放节奏）。
   const SPEED_MIN = 0.6;   // 最快
-  const SPEED_MAX = 3.0;   // 最慢（20261008 用户要求加更慢档位到 3.0×）
+  const SPEED_MAX = 5.0;   // 最慢（20261009 用户要求延长上限到 5.0×）
   const SPEED_DEFAULT = 1.0;
   // 兼容旧的 slow/normal/fast 档位映射（若设置里残留旧值）
   const SPEED_FACTOR = {
@@ -135,7 +135,7 @@
       ? global.bmTypecardGenerator.buildSession(text, o)
       : null;
 
-    // 速度系数：支持连续倍率 speedFactor（0.6~3.0），兼容旧档位 speed 字符串
+    // 速度系数：支持连续倍率 speedFactor（0.6~5.0），兼容旧档位 speed 字符串
     const speedKey = o.speed || 'normal';
     let speedFactor;
     if (typeof o.speedFactor === 'number') {
@@ -619,7 +619,7 @@
             // 打字目标 = msg.meta.typecardBlocks（生成时定好的 blocks），回退 msg.content 纯文本。
             const blocks = (msg.meta && Array.isArray(msg.meta.typecardBlocks))
               ? msg.meta.typecardBlocks : msg.content;
-            // 速度：连续倍率（chatSettings.typecardSpeed 数值，0.6~1.5，默认 1.0）；
+            // 速度：连续倍率（chatSettings.typecardSpeed 数值，0.6~5.0，默认 1.0）；
             // 兼容旧档位字符串 slow/normal/fast。
             let spd = cfg.typecardSpeed;
             if (typeof spd !== 'number') spd = SPEED_DEFAULT;

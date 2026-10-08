@@ -101,6 +101,9 @@
     inset 0 0 24px rgba(255, 255, 255, 0.05);
   /* 浮层可读性：正文预览文字用主文字色，深浅色均高对比 */
   color: var(--text, #f5f4f7);
+  /* 20261009 渲染稳定：提升为独立合成层，减轻 WebView 上 backdrop-filter
+     随背景动画（聊天页星星闪烁）每帧重采样带来的间歇丢帧/闪烁 */
+  will-change: left, top;
   /* 高度：内容自然撑开，绝不裁切（不设 height/max-height/overflow:hidden） */
   height: auto;
   overflow: visible;
@@ -262,10 +265,27 @@ body.theme-light .tc-summon-btn {
 }
 
 /* 拖拽中：面板加轻微抬升阴影，视觉反馈「正在拖动」。
-   （20261008 用户要求：三横杠手柄已删除，整块面板都可拖动，光标反馈由 ui.js 内联设置） */
+   （20261008 用户要求：三横杠手柄已删除，整块面板都可拖动，光标反馈由 ui.js 内联设置）
+   20261009 渲染修复：移动端 WebView 上 backdrop-filter 元素每帧位移都要对背后内容
+   重新采样+26px 大半径模糊，GPU 扛不住时合成器在「模糊帧/跳过帧」间摇摆 →
+   磨砂时有时无（用户报"拖动时磨砂一直在跳"的根因）。
+   对策：拖动期间临时关闭磨砂（!important 压过所有玻璃档位：默认26px/glass-ui 28px/mid/low），
+   背景补偿为高不透明实色玻璃（观感仍是深色玻璃面板、文字更清晰），松手立刻恢复磨砂。
+   拖动全程零模糊开销 → 绝不闪烁。pointercancel 也走 endDrag，class 不会残留。 */
 .typecard-float-panel.tc-dragging {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 40%, rgba(255, 255, 255, 0.10) 100%),
+    rgba(30, 26, 44, 0.92) !important;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.60);
   cursor: grabbing;
+}
+/* 浅色主题拖拽态：白玻璃实色补偿（同上，零模糊开销） */
+body.theme-light .typecard-float-panel.tc-dragging {
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.30) 50%, rgba(255, 255, 255, 0.55) 100%),
+    rgba(250, 248, 255, 0.94) !important;
 }
 
 /* 悬浮窗淡出（演出完成/abort 后移除）：只用 opacity，不碰 transform——
