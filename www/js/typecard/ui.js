@@ -271,6 +271,7 @@
 
       ghost._shadow = shadow;
       ghost._preview = preview;
+      ghost._charId = replyMsg.charId; // 20261009：供图片表情实时抽图（emoji 块不含 charId）
       ghost._tc = {          // 渲染上下文：play(step) 期间维护
         committed: '',       // 正文预览区当前已显示的文本（= session.text 的镜像）
         caret: null          // 拼音行光标节点引用
@@ -338,6 +339,7 @@
 
       panel._shadow = shadow;
       panel._preview = preview;
+      panel._charId = replyMsg.charId; // 20261009：供图片表情实时抽图（emoji 块不含 charId）
       panel._tc = {
         committed: '',
         caret: null
@@ -554,11 +556,21 @@
           case 'emoji': {
             // blocks 格式：{ type:'emoji', text, data:{ source, img?, sticker? } }
             // 兼容旧格式：{ type:'emoji', emoji: '😊' }
+            // 20261009 OOM/显示修复：data.img===true 表示「图片表情」，演出时实时从角色库
+            // 抽一张图渲染成 <img>（落库不存 base64，图不再丢失，也不再撑爆内存）。
             const emojiText = step.text || step.emoji || '✨';
-            _showEmojiOverlay(ghost, emojiText);
-            // 表情块文本也进入正文预览区（完整块上屏）
-            _appendPreviewChar(ghost, emojiText);
-            ctx.committed += emojiText;
+            const emojiData = step.data || {};
+            if (emojiData.img === true) {
+              // 图片表情：抽一张真实图 → 演出浮层 + 正文预览区都显示该图。
+              // 图片不进文字流（不 commit 字符），避免落库 content 混入占位文字。
+              const cid = ghost._charId;
+              _showEmojiImage(ghost, cid);
+              _appendPreviewImg(ghost, cid);
+            } else {
+              _showEmojiOverlay(ghost, emojiText);
+              _appendPreviewChar(ghost, emojiText);
+              ctx.committed += emojiText;
+            }
             break;
           }
 
@@ -865,13 +877,22 @@
     if (!panel || panel._decorated) return;
     panel._decorated = true;
     _renderFloatDecor(panel);
-    // 尺寸变化时重建装饰（防长正文撑高后裂纹/花还贴着旧边缘）
+    // 20261009 渲染稳定修复：装饰层只随「宽度」显著变化（旋屏/手动拉宽）重建，
+    // 不再随正文高度增长（打字过程中正文逐行撑高）反复清空重建——
+    // 否则每长一行就重建全部 SVG，磨砂 backdrop-filter 反复重采样 → 打字时一闪一闪。
+    // 装饰 SVG 用 inset:0 + preserveAspectRatio:none 自适应，高度增长无需重建。
     try {
       if (typeof ResizeObserver !== 'undefined') {
+        let lastW = panel.offsetWidth || 0;
         let t = null;
-        panel._decorRO = new ResizeObserver(function () {
-          clearTimeout(t);
-          t = setTimeout(function () { _renderFloatDecor(panel); }, 180);
+        panel._decorRO = new ResizeObserver(function (entries) {
+          const w = panel.offsetWidth || 0;
+          // 仅宽度变化超过 40px（旋屏/显著拉宽）才重建，高度增长忽略
+          if (Math.abs(w - lastW) >= 40) {
+            lastW = w;
+            clearTimeout(t);
+            t = setTimeout(function () { _renderFloatDecor(panel); }, 180);
+          }
         });
         panel._decorRO.observe(panel);
       }
@@ -1812,6 +1833,92 @@
         if (ov.parentNode) ov.parentNode.removeChild(ov);
       }, 160);
     }, 360);
+  }
+
+  // 20261009：图片表情实时抽图（emoji 块的 data.img 已改为轻量标记，不落 base64）。
+  // 演出时从角色对象实时抽一张图 → 居中弹出大图 → 停留 → 淡出移除。
+  // 抽图走主线 pickCharSticker（TA 专属库优先 → 玩家库(允许时) → 兜底字符），
+  // 抽不到图时安全回退纯文本 emoji 演出，绝不阻断 engine。
+  function _showEmojiImage(ghost, charId) {
+    const mount = _eventMount(ghost);
+    if (!mount) return;
+    let char = null;
+    try {
+      if (typeof characters !== 'undefined' && charId) {
+        char = characters.find(function (x) { return x && x.id === charId; }) || null;
+      }
+    } catch (e) {}
+    const doImg = function (src) {
+      if (!src) return; // 无图：静默跳过（正文预览区已用占位，不重复弹）
+      const ov = document.createElement('div');
+      ov.className = 'tc-event-overlay tc-event-emoji tc-event-emoji-img';
+      const im = document.createElement('img');
+      im.src = src;
+      im.alt = '';
+      ov.appendChild(im);
+      mount.appendChild(ov);
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { ov.classList.add('tc-event-in'); });
+      });
+      setTimeout(function () {
+        ov.classList.remove('tc-event-in');
+        ov.classList.add('tc-event-out');
+        setTimeout(function () { if (ov.parentNode) ov.parentNode.removeChild(ov); }, 160);
+      }, 420);
+    };
+    if (typeof global.pickCharSticker === 'function' && char) {
+      global.pickCharSticker(char).then(function (st) {
+        if (st && st.img) {
+          const src = (typeof global.imgSrc === 'function') ? global.imgSrc(st.img) : st.img;
+          doImg(src);
+        }
+        // 抽到字符而非图时：回退文本 emoji 演出
+        else if (st && st.sticker) _showEmojiOverlay(ghost, st.sticker);
+      }).catch(function () { /* 抽图失败静默 */ });
+    } else {
+      _showEmojiOverlay(ghost, '😊');
+    }
+  }
+
+  // 20261009：正文预览区插入一张图片表情（完整块上屏，与文本块并列）。
+  // 同样实时抽图；抽不到图时回退插入文本占位（保证预览区内容不缺失）。
+  function _appendPreviewImg(ghost, charId) {
+    const preview = ghost._preview;
+    if (!preview) return;
+    let char = null;
+    try {
+      if (typeof characters !== 'undefined' && charId) {
+        char = characters.find(function (x) { return x && x.id === charId; }) || null;
+      }
+    } catch (e) {}
+    const append = function (node) {
+      node.style.opacity = '0';
+      node.style.transition = 'opacity .15s';
+      preview.appendChild(node);
+      requestAnimationFrame(function () { node.style.opacity = '1'; });
+    };
+    if (typeof global.pickCharSticker === 'function' && char) {
+      global.pickCharSticker(char).then(function (st) {
+        if (st && st.img) {
+          const src = (typeof global.imgSrc === 'function') ? global.imgSrc(st.img) : st.img;
+          if (src) {
+            const im = document.createElement('img');
+            im.className = 'tc-preview-emoji';
+            im.src = src;
+            im.alt = '';
+            append(im);
+          }
+        } else if (st && st.sticker) {
+          const sp = document.createElement('span');
+          sp.textContent = st.sticker;
+          append(sp);
+        }
+      }).catch(function () {});
+    } else {
+      const sp = document.createElement('span');
+      sp.textContent = '😊';
+      append(sp);
+    }
   }
 
   global.bmTypecardUi = ui;

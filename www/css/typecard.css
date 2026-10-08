@@ -296,6 +296,24 @@ body.theme-light .typecard-float-panel.tc-dragging {
   pointer-events: none;
 }
 
+/* 20261009 渲染稳定修复：打字演出期间（正文逐字上屏、面板高度持续变化）临时关闭磨砂，
+   换高不透明实色玻璃。根因与拖拽态一致：backdrop-filter 在正文每增长一行就重采样一次
+   26px 大半径模糊，GPU 在「模糊帧/跳过帧」间摇摆 → 打字时磨砂一闪一闪。
+   演出开始加 .tc-typing、结束/打断移除，全程零模糊开销 → 绝不闪烁。
+   与 .tc-dragging 复用同一套实色补偿观感。 */
+.typecard-float-panel.tc-typing {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 40%, rgba(255, 255, 255, 0.10) 100%),
+    rgba(30, 26, 44, 0.92) !important;
+}
+body.theme-light .typecard-float-panel.tc-typing {
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.30) 50%, rgba(255, 255, 255, 0.55) 100%),
+    rgba(250, 248, 255, 0.94) !important;
+}
+
 /* 悬浮窗内的正文预览区：继承 .tc-body-preview，但文字色显式绑定主文字色，
    确保脱离气泡（无气泡文字色继承）后深浅色仍清晰可读 */
 .typecard-float-panel .tc-body-preview {
@@ -420,6 +438,26 @@ body.tcf-low .tc-summon-btn { backdrop-filter: none; -webkit-backdrop-filter: no
   font-size: 34px;
   line-height: 1;
   filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.35));
+}
+
+/* 图片表情（20261009）：演出浮层显示真实表情图，圆角卡片式 */
+.tc-event-emoji-img img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 14px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42);
+}
+/* 正文预览区内的图片表情（20261009）：与文字同行显示，高约一行 */
+.tc-preview-emoji {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 6px;
+  vertical-align: -4px;
+  margin: 0 1px;
 }
 
 /* ============================================================================

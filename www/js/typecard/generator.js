@@ -621,10 +621,13 @@
         if (e && e.text) return { text: e.text, data: e.data || { source: 'provider' } };
       }
       // 主线表情抽取机制 pickCharSticker(c)：返回 {img}|{sticker}|null
+      // 20261009 OOM 修复：图片表情的 base64 大图绝不塞进 blocks（会随 meta.typecardBlocks
+      // 落库 IndexedDB + 演出期间长期驻留内存，多张叠加把 WebView 撑爆→打字过程闪退）。
+      // 这里只落「轻量标记」data.img=true，演出时由 ui 实时从角色库抽一张图渲染。
       try {
         if (typeof pickCharSticker === 'function' && o.char) {
           const st = await pickCharSticker(o.char);
-          if (st && st.img) return { text: '[表情]', data: { source: 'main', img: st.img } };
+          if (st && st.img) return { text: '', data: { source: 'main', img: true } };
           if (st && st.sticker) return { text: st.sticker, data: { source: 'main', sticker: st.sticker } };
         }
       } catch (e) {}

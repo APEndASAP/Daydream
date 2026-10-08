@@ -601,6 +601,13 @@
         self._active.ghost = ghost;
         self._state = STATE.PLAYING;
 
+        // 20261009 渲染稳定修复：float 演出期间给面板加 .tc-typing，临时关闭磨砂
+        // 换实色玻璃（与拖动态同思路），消除打字时 backdrop-filter 反复重采样闪烁。
+        // 演出结束 ghost 被 removeGhost 移除，class 随节点消失，无需显式清理。
+        if (isFloat && ghost && ghost.classList) {
+          ghost.classList.add('tc-typing');
+        }
+
         // 20261008 晚：演出全程显示「正在输入中」（聊天流三点气泡 + 顶部签名），
         // 结束（_finish）/打断（abort/回收）时由 tcHideTyping 移除。用户要求：
         // 上面一直在打字，气泡就要一直显示正在输入中。
