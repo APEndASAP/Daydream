@@ -270,6 +270,10 @@
     updateFloatDot: function () {
       const ui = global.bmTypecardUi;
       if (!ui || typeof ui.ensureFloatDot !== 'function') return;
+      // 20261009 状态机自愈：_state 卡在非 IDLE 但 _active 已空（演出早已结束/异常中断，
+      // 状态没复位）→ 强制复位 IDLE。否则圆点点击被 toggleFloatPanel/toggleSummonPanel
+      // 的「_state!==IDLE 守卫」拦下，圆点沦为「点了没反应」的摆设。
+      if (this._state !== STATE.IDLE && !this._active) this._state = STATE.IDLE;
       let showDot = false;
       let summon = false;
       let curCid = null;
@@ -494,6 +498,24 @@
     toggleFloatPanel: function () {
       const ui = global.bmTypecardUi;
       if (!ui) return;
+      // 20261009 兜底：点击时重新读配置——开关其实已关（用户关了但圆点残留）则收起圆点，
+      // 而不是静默无反应（「圆点是摆设」的真因：_onDotTap 指向 toggleFloatPanel，但开关关了）。
+      try {
+        const cid = curCharId();
+        if (cid && _tcInChat()) {
+          const cfg = tcSettingsFor({ charId: cid });
+          if (!cfg.typecardOn || cfg.typecardMode !== 'float') {
+            if (this._idlePanel) { try { ui.destroyGhost(this._idlePanel); } catch (e) {} this._idlePanel = null; }
+            ui._onDotTap = null;
+            ui.hideFloatDot();
+            return;
+          }
+        } else {
+          ui._onDotTap = null;
+          ui.hideFloatDot();
+          return;
+        }
+      } catch (e) {}
       if (this._state === STATE.PLAYING) return;
       if (this._idlePanel) {
         ui.destroyGhost(this._idlePanel);
@@ -518,6 +540,19 @@
     toggleSummonPanel: function () {
       const ui = global.bmTypecardUi;
       if (!ui) return;
+      // 20261009 兜底：点击时重新读召唤开关——已关（用户关了但圆点残留）则收起圆点，
+      // 而不是静默无反应（「圆点是摆设」真因：_onDotTap 指向 toggleSummonPanel，但开关关了）。
+      try {
+        const cid = curCharId();
+        const summonOn = (cid && _tcInChat()) ? !!tcSettingsFor({ charId: cid }).typecardSummon : false;
+        if (!summonOn) {
+          if (this._summonPanel) { try { ui.destroyGhost(this._summonPanel); } catch (e) {} this._summonPanel = null; }
+          this._summonDismissed = false;
+          ui._onDotTap = null;
+          ui.hideFloatDot();
+          return;
+        }
+      } catch (e) {}
       if (this._state !== STATE.IDLE) return;
       if (this._summonPanel) {
         try { ui.destroyGhost(this._summonPanel); } catch (e) {}

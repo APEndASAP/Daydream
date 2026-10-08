@@ -1619,6 +1619,10 @@
         } catch (err) {}
       } else if (typeof ui._onDotTap === 'function') {
         try { ui._onDotTap(); } catch (err) {}
+      } else {
+        // 20261009 兜底：圆点残留显示但无点击回调（开关已关、_onDotTap 被置 null 的竞态残留）——
+        // 点一下自动隐藏圆点，避免「圆点是摆设、点了没反应」的卡死观感。
+        try { hideFloatDot(); } catch (err) {}
       }
     }
     dot.addEventListener('pointerup', endDrag);
