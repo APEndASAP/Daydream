@@ -7996,11 +7996,15 @@ function openCallLayer(html) {
   box.innerHTML = html;
   layer.classList.remove('call-float2');
   layer.classList.add('show');
+  // 20261009 晚：通话全屏层打开=离开聊天页观感——打字卡圆点/召唤悬浮窗立即收起
+  try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
 }
 function closeCallLayer() {
   const layer = document.getElementById('call-layer');
   if (!layer) return;
   layer.classList.remove('show', 'call-float2');
+  // 20261009 晚：通话层关闭——回聊天页，恢复打字卡圆点/召唤悬浮窗（内部自检开关，幂等）
+  try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
   const box = document.getElementById('call-box');
   if (box) {
     box.classList.remove('call-scale-host');

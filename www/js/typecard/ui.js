@@ -597,10 +597,11 @@
             const emojiText = step.text || step.emoji || '✨';
             const emojiData = step.data || {};
             if (emojiData.img === true) {
-              // 图片表情：抽一张真实图 → 演出浮层 + 正文预览区都显示该图。
-              // 图片不进文字流（不 commit 字符），避免落库 content 混入占位文字。
+              // 图片表情：抽一张真实图 → 只在正文预览区显示（小图、按卡片尺寸）。
+              // 20261009 晚（用户定稿）：演出「居中弹出大图」浮层（_showEmojiImage）已删——
+              // 大图不按卡片尺寸裁切、溢出面板顶部与面板边缘叠出「拼接缝」观感；
+              // 函数定义保留为死代码（历史参考），不再调用。
               const cid = ghost._charId;
-              _showEmojiImage(ghost, cid);
               _appendPreviewImg(ghost, cid);
             } else {
               _showEmojiOverlay(ghost, emojiText);

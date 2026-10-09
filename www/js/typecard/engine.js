@@ -56,7 +56,12 @@
   function _tcModalOpen() {
     try {
       const m = document.getElementById('modal-mask');
-      return !!(m && m.classList.contains('show'));
+      if (m && m.classList.contains('show')) return true;
+      // 20261009 晚（用户反馈召唤悬浮窗浮在通话界面上）：语音/视频通话是独立全屏层
+      // #call-layer（不走 modal-mask），通话中同样不算「在聊天页」——悬浮窗必须收起。
+      const cl = document.getElementById('call-layer');
+      if (cl && cl.classList.contains('show') && !cl.classList.contains('call-float2')) return true;
+      return false;
     } catch (e) { return false; }
   }
   function _tcInChat() {
@@ -274,6 +279,14 @@
       // 状态没复位）→ 强制复位 IDLE。否则圆点点击被 toggleFloatPanel/toggleSummonPanel
       // 的「_state!==IDLE 守卫」拦下，圆点沦为「点了没反应」的摆设。
       if (this._state !== STATE.IDLE && !this._active) this._state = STATE.IDLE;
+      // 20261009 晚（用户反馈「打字演出悬浮窗浮在主页/朋友圈/导航页」）：切页/进弹窗/进通话
+      // 时，正在演出的 _active ghost 也要一并清掉——abort('leave_chat') 立即 destroyGhost，
+      // 不补上屏（真消息已落库，回聊天页由 renderMessages 正常展示）。
+      let inChatNow = false;
+      try { inChatNow = _tcInChat(); } catch (e) {}
+      if (!inChatNow && this._active) {
+        try { this.abort('leave_chat'); } catch (e) {}
+      }
       let showDot = false;
       let summon = false;
       let curCid = null;
@@ -480,11 +493,16 @@
     },
 
     // 内部：召唤自动发消息专用的「是否正看该角色聊天页」判断（不依赖 _tcModalOpen 的 curCharId）
+    // 20261009 晚补：与 _tcModalOpen 对齐——通话全屏层 #call-layer 也视为「不在聊天页」，
+    // 否则语音通话中（view 仍 chat、currentCharId 匹配）自动召唤会误走 render，演出面板浮在通话界面上。
     _tcModalOpenSafe: function () {
       try {
         const m = document.getElementById('modal-mask');
-        return !!(m && m.classList.contains('show'));
-      } catch (e) { return false; }
+        if (m && m.classList.contains('show')) return true;
+        const cl = document.getElementById('call-layer');
+        if (cl && cl.classList.contains('show') && !cl.classList.contains('call-float2')) return true;
+      } catch (e) {}
+      return false;
     },
 
     // 20261009：重置所有角色的召唤自动调度计时（间隔设置变更时调用，让新间隔立即生效）。
