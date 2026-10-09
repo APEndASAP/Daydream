@@ -85,52 +85,56 @@
   box-sizing: border-box;
   padding: 10px 12px;
   border-radius: 18px;
-  /* 20261008 晚六轮（用户参考 Spotify 玻璃：「把透明度拉高，像参考图那样高」）：
-     底色 alpha 0.40→0.26，靠 26px 重模糊均化背景保持文字可读；
-     高光渐变层保留（Spotify 边缘光感） */
+  /* 20261009 晚·真实磨砂玻璃终版（用户给 Apple Vision Pro / iOS glass UI / 相机镜片
+     质感参考，要求「真实磨砂玻璃，不要塑料、不要灰色半透明遮罩」）：
+     ① 底色改「低饱和雾面蓝灰」半透明——不是深灰紫遮罩，而是让背景透过后雾化的灰蓝雾面；
+     ② 边缘细白高光描边（1px 白描边）+ 双层 inset 内发光，模拟真实玻璃厚度与边缘反光；
+     ③ 折射感：极淡斜向折射光斑（大范围、低对比、有方向，非强渐变，不产生「白杠」）；
+     ④ 极淡顶部柔光 + 空气感；
+     ⑤ 阴影减轻——轻投影凸显「悬浮」而非「压黑一块」。
+     渲染稳定三原则不变：blur 14px（非重载区）、拖动改 transform、无实色切换。 */
   background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 34%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, 0.07) 86%, rgba(255, 255, 255, 0.15) 100%),
-    radial-gradient(120% 90% at 18% 0%, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 55%),
-    rgba(30, 26, 44, 0.26);
-  border: 1px solid rgba(205, 185, 255, 0.34);
-  backdrop-filter: blur(26px) saturate(165%) brightness(1.05);
-  -webkit-backdrop-filter: blur(26px) saturate(165%) brightness(1.05);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 30%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, 0.05) 100%),
+    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 50%),
+    linear-gradient(180deg, rgba(48, 55, 74, 0.62), rgba(36, 41, 56, 0.58));
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(14px) saturate(150%) brightness(1.12);
+  -webkit-backdrop-filter: blur(14px) saturate(150%) brightness(1.12);
   box-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.30),
-    inset 0 0 24px rgba(255, 255, 255, 0.05);
+    0 10px 34px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    inset 0 0 22px rgba(255, 255, 255, 0.05);
   /* 浮层可读性：正文预览文字用主文字色，深浅色均高对比 */
   color: var(--text, #f5f4f7);
-  /* 20261009 渲染稳定：提升为独立合成层，减轻 WebView 上 backdrop-filter
-     随背景动画（聊天页星星闪烁）每帧重采样带来的间歇丢帧/闪烁 */
-  will-change: left, top;
+  /* 20261009 晚终版：拖动已改 transform 位移（纯合成器动画），
+     提示独立合成层服务 transform，left/top 仅在按下/松手各写一次 */
+  will-change: transform;
   /* 高度：内容自然撑开，绝不裁切（不设 height/max-height/overflow:hidden） */
   height: auto;
   overflow: visible;
 }
-/* 磨砂颗粒：极淡噪点铺满玻璃面（z0，在文字层之下），增加「磨砂玻璃」的质感颗粒 */
-.typecard-float-panel::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0.055;
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='140'%20height='140'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.85'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3C/filter%3E%3Crect%20width='140'%20height='140'%20filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size: 140px 140px;
-}
-/* 浅色主题默认毛玻璃：白玻璃底 + 斜向高光 + 淡紫描边（不依赖玻璃拟态开关，同步调透：
-   晚六轮 alpha 0.50→0.32 向参考图看齐） */
+/* 20261009 午后：噪点颗粒已整体移除（用户要求光滑玻璃，深色背景上颗粒读作砂纸）。
+   ::after 噪点规则删除；tc-frost / tc-crinkle 不再由 ui.js 注入，display:none 兜底防残留。 */
+/* 浅色主题默认毛玻璃：白玻璃底 + 斜向高光 + 淡紫描边（不依赖玻璃拟态开关）。
+   20261009 晚终版：底色 0.32→0.46 与深色档同步（可读性不全依赖 blur，配合 14px 稳定渲染） */
 body.theme-light .typecard-float-panel {
+  /* 20261009 晚·真实磨砂玻璃（浅色=雾白亚克力）：iOS 典型白玻璃——
+     雾白半透明底 + 极淡折射光斑 + 边缘细白高光（玻璃厚度）+ 轻阴影悬浮 */
   background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.08) 38%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.2) 100%),
-    rgba(250, 248, 255, 0.32);
-  border-color: rgba(140, 120, 220, 0.30);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.18) 34%, rgba(255, 255, 255, 0.05) 60%, rgba(255, 255, 255, 0.30) 100%),
+    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 52%),
+    rgba(240, 242, 248, 0.72);
+  border-color: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(14px) saturate(140%) brightness(1.05);
+  -webkit-backdrop-filter: blur(14px) saturate(140%) brightness(1.05);
   box-shadow:
-    0 12px 40px rgba(60, 45, 110, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.85),
-    inset 0 0 24px rgba(255, 255, 255, 0.35);
+    0 10px 30px rgba(45, 40, 90, 0.16),
+    0 1px 2px rgba(45, 40, 90, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.90),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.30),
+    inset 0 -1px 0 rgba(180, 185, 210, 0.18);
 }
 
 /* 面板内容层级：压在裂纹层(z0)之上、花饰(z2)之下 */
@@ -142,17 +146,8 @@ body.theme-light .typecard-float-panel {
 }
 
 /* ---- 毛玻璃装饰层（ui.js _renderFloatDecor 注入，pointer-events:none） ---- */
-/* 碎玻璃（20261008 晚六轮）：整块硬边多边形碎片+粗亮捕光棱边（零辐射线），
-   数量少而精，绝不干扰文字阅读 */
-.typecard-float-panel .tc-shards {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0.9;
-}
+/* 20261009 晚：碎玻璃碎片层已按用户要求整体移除（ui.js 不再生成节点），CSS 规则同步删除。
+   「三条杠」=碎片亮描边在暗背景上的观感。tc-shards 仍保留在 ui.js 幂等清理列表。 */
 /* 花簇（20261008 晚七轮）：完整建模水晶花束，沿边错落分布（不堆四角），
    z0=压在文字层之下（用户红线：任何美化绝不影响可读性），尺寸位置由 ui.js 内联 */
 .typecard-float-panel .tc-cluster {
@@ -184,7 +179,13 @@ body.theme-light .typecard-float-panel {
 }
 .typecard-float-panel .tc-vines svg { display: block; width: 100%; height: 100%; }
 /* 玻璃纹理·磨砂颗粒（Spotify 参考）：feTurbulence 灰度噪点 + overlay 混合，
-   中灰中和、亮暗斑点浮现——可见的 dither 质感；圆角裁剪不越出玻璃面 */
+   中灰中和、亮暗斑点浮现——可见的 dither 质感；圆角裁剪不越出玻璃面。
+   20261009 晚终版：opacity 0.30→0.16——真机特写里 overlay 噪点过重（砂纸感），
+   减淡后保留细腻 dither 质感、不再抢观感 */
+/* 玻璃纹理·磨砂颗粒（20261009 午后定稿：光滑为主 + 极淡细颗粒）。
+   baseFrequency 已在 ui.js 降到 0.12（低频=大而柔的细颗粒，非高频砂纸）；
+   这里用 normal 混合 + 低透明度 0.05（不用 overlay，避免逐帧混合重算导致渲染跳变），
+   静态平铺、不随拖动重建——颗粒淡到「有玻璃质感但不抢光滑」，且渲染稳定不闪。 */
 .typecard-float-panel .tc-frost {
   position: absolute;
   inset: 0;
@@ -194,22 +195,11 @@ body.theme-light .typecard-float-panel {
   pointer-events: none;
   border-radius: inherit;
   overflow: hidden;
-  mix-blend-mode: overlay;
-  opacity: 0.30;
+  opacity: 0.05;
 }
 /* 玻璃纹理·皱褶压纹（PS 参考）：抖动晶格亮暗成对折痕 + 长波纹 + 斜向光带
-   （晚六轮 0.75→0.55：透明度拉高后压纹同步减淡，不奶白） */
-.typecard-float-panel .tc-crinkle {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  overflow: hidden;
-  opacity: 0.55;
-}
+   20261009 午后：皱褶层（含斜向光带=「白杠」来源之一）已整体移除，display:none 兜底 */
+.typecard-float-panel .tc-crinkle { display: none; }
 /* 闪光点：四角星，透明度随机，z0 在文字之下 */
 .typecard-float-panel .tc-sparkle {
   position: absolute;
@@ -264,29 +254,11 @@ body.theme-light .tc-summon-btn {
   text-shadow: none;
 }
 
-/* 拖拽中：面板加轻微抬升阴影，视觉反馈「正在拖动」。
-   （20261008 用户要求：三横杠手柄已删除，整块面板都可拖动，光标反馈由 ui.js 内联设置）
-   20261009 渲染修复：移动端 WebView 上 backdrop-filter 元素每帧位移都要对背后内容
-   重新采样+26px 大半径模糊，GPU 扛不住时合成器在「模糊帧/跳过帧」间摇摆 →
-   磨砂时有时无（用户报"拖动时磨砂一直在跳"的根因）。
-   对策：拖动期间临时关闭磨砂（!important 压过所有玻璃档位：默认26px/glass-ui 28px/mid/low），
-   背景补偿为高不透明实色玻璃（观感仍是深色玻璃面板、文字更清晰），松手立刻恢复磨砂。
-   拖动全程零模糊开销 → 绝不闪烁。pointercancel 也走 endDrag，class 不会残留。 */
-.typecard-float-panel.tc-dragging {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 40%, rgba(255, 255, 255, 0.10) 100%),
-    rgba(30, 26, 44, 0.92) !important;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.60);
-  cursor: grabbing;
-}
-/* 浅色主题拖拽态：白玻璃实色补偿（同上，零模糊开销） */
-body.theme-light .typecard-float-panel.tc-dragging {
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.30) 50%, rgba(255, 255, 255, 0.55) 100%),
-    rgba(250, 248, 255, 0.94) !important;
-}
+/* 20261009 晚终版：拖拽态实色切换已整体移除（用户要求「恢复最初磨砂观感且全程稳定」）。
+   稳定性改由三项根治手段保证，不再用「磨砂↔实色」模式切换（切换本身即观感跳变）：
+   ① 拖动位移改 transform: translate3d（ui.js）——纯合成器动画，不触发主线程重排重绘；
+   ② blur 26→14px + 底色 0.26→0.42——每帧重采样成本减半，可读性不全依赖重模糊；
+   ③ will-change: transform 提示独立合成层。拖拽「正在拖动」反馈由 ui.js cursor:grabbing 承担。 */
 
 /* 悬浮窗淡出（演出完成/abort 后移除）：只用 opacity，不碰 transform——
    面板可能已被拖拽成显式 left/top + transform:none，若这里再写 translateX(-50%) 会跳回居中再淡出 */
@@ -296,23 +268,9 @@ body.theme-light .typecard-float-panel.tc-dragging {
   pointer-events: none;
 }
 
-/* 20261009 渲染稳定修复：打字演出期间（正文逐字上屏、面板高度持续变化）临时关闭磨砂，
-   换高不透明实色玻璃。根因与拖拽态一致：backdrop-filter 在正文每增长一行就重采样一次
-   26px 大半径模糊，GPU 在「模糊帧/跳过帧」间摇摆 → 打字时磨砂一闪一闪。
-   演出开始加 .tc-typing、结束/打断移除，全程零模糊开销 → 绝不闪烁。
-   与 .tc-dragging 复用同一套实色补偿观感。 */
-.typecard-float-panel.tc-typing {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 40%, rgba(255, 255, 255, 0.10) 100%),
-    rgba(30, 26, 44, 0.92) !important;
-}
-body.theme-light .typecard-float-panel.tc-typing {
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.30) 50%, rgba(255, 255, 255, 0.55) 100%),
-    rgba(250, 248, 255, 0.94) !important;
-}
+/* 20261009 晚终版：打字态实色切换已整体移除（与拖拽态同理）。
+   演出中面板静止（仅内容文字增长），blur 14px 的每帧重采样开销可稳定承受，
+   演出全程保持恒定磨砂观感——不再「演出一开始就变成实色板」。 */
 
 /* 悬浮窗内的正文预览区：继承 .tc-body-preview，但文字色显式绑定主文字色，
    确保脱离气泡（无气泡文字色继承）后深浅色仍清晰可读 */
@@ -335,20 +293,32 @@ body.theme-light .typecard-float-panel.tc-typing {
    半透面 + 白细边 + backdrop 模糊；浅色主题走白玻璃特化；中/低精度档随主线降级。
    ============================================================================ */
 body.glass-ui .typecard-float-panel {
+  /* 20261009 晚·真实磨砂玻璃（glass-ui 档，同默认档的雾面蓝灰配方、blur 稍重） */
   background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.03) 36%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.10) 100%),
-    rgba(24, 20, 34, 0.36);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.015) 30%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, 0.045) 100%),
+    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0) 50%),
+    linear-gradient(180deg, rgba(44, 50, 66, 0.60), rgba(32, 36, 50, 0.56));
   border: 1px solid rgba(255, 255, 255, 0.20);
-  backdrop-filter: blur(28px) saturate(170%) brightness(1.05);
-  -webkit-backdrop-filter: blur(28px) saturate(170%) brightness(1.05);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), 0 0 16px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 0 26px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px) saturate(160%) brightness(1.10);
+  -webkit-backdrop-filter: blur(16px) saturate(160%) brightness(1.10);
+  box-shadow:
+    0 14px 44px rgba(0, 0, 0, 0.34),
+    0 1px 2px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    inset 0 0 28px rgba(255, 255, 255, 0.05);
 }
 body.theme-light.glass-ui .typecard-float-panel {
   background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.1) 42%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 0.28) 100%),
-    rgba(255, 255, 255, 0.52);
-  border: 1px solid rgba(46, 36, 84, 0.14);
-  box-shadow: 0 24px 70px rgba(40, 30, 80, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.18) 34%, rgba(255, 255, 255, 0.05) 60%, rgba(255, 255, 255, 0.30) 100%),
+    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 52%),
+    rgba(240, 242, 248, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.60);
+  box-shadow:
+    0 14px 40px rgba(45, 40, 90, 0.18),
+    0 1px 2px rgba(45, 40, 90, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.90),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.30);
 }
 /* 中精度：与主线 glass-mid 一致（模糊统一 8px、去外泛光） */
 body.glass-ui.glass-mid .typecard-float-panel {
