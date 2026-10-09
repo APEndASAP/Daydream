@@ -98,8 +98,12 @@
     radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 50%),
     linear-gradient(180deg, rgba(48, 55, 74, 0.62), rgba(36, 41, 56, 0.58));
   border: 1px solid rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(14px) saturate(150%) brightness(1.12);
-  -webkit-backdrop-filter: blur(14px) saturate(150%) brightness(1.12);
+  /* 20261009 晚终定稿：去掉 saturate/brightness 颜色滤镜，只保留纯 blur。
+     saturate+brightness 是颜色滤镜，移动端 WebView 上与 blur 一起在面板几何变化
+     （打字撑高/键盘弹出重排）时重采样，会渲染出色噪点/颗粒/闪烁（用户报「打字/点输入框
+     渲染异常」真因）。纯 blur 的雾面更接近真实磨砂玻璃（雾感来自模糊，非颜色滤镜）。 */
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   box-shadow:
     0 10px 34px rgba(0, 0, 0, 0.28),
     0 1px 2px rgba(0, 0, 0, 0.18),
@@ -127,8 +131,8 @@ body.theme-light .typecard-float-panel {
     radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 52%),
     rgba(240, 242, 248, 0.72);
   border-color: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(14px) saturate(140%) brightness(1.05);
-  -webkit-backdrop-filter: blur(14px) saturate(140%) brightness(1.05);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   box-shadow:
     0 10px 30px rgba(45, 40, 90, 0.16),
     0 1px 2px rgba(45, 40, 90, 0.08),
@@ -182,9 +186,10 @@ body.theme-light .typecard-float-panel {
    中灰中和、亮暗斑点浮现——可见的 dither 质感；圆角裁剪不越出玻璃面。
    20261009 晚终版：opacity 0.30→0.16——真机特写里 overlay 噪点过重（砂纸感），
    减淡后保留细腻 dither 质感、不再抢观感 */
-/* 玻璃纹理·磨砂颗粒（真机友好版，20261009 晚终定稿）：
-   baseFrequency 0.04 + discrete 低对比压缩（ui.js 控），真机呈现极淡雾面起伏；
-   这里 opacity 0.03（「一点点」颗粒的临界值，桌面端几乎不可见、真机刚好有一丝）。
+/* 玻璃纹理·磨砂颗粒（20261009 晚终定稿·位图版）：
+   SVG feTurbulence 在真机 WebView 渲染不可控（opacity 0.03 都成重沙沙），
+   已弃用。现由 ui.js 注入 canvas 生成的低对比中灰噪点 PNG（64×64 data URI 平铺），
+   位图渲染路径最稳、透明度完全可控。这里 opacity 0.06 = 真机「一点点」颗粒。
    静态平铺、不随拖动重建，渲染稳定不闪。 */
 .typecard-float-panel .tc-frost {
   position: absolute;
@@ -195,7 +200,9 @@ body.theme-light .typecard-float-panel {
   pointer-events: none;
   border-radius: inherit;
   overflow: hidden;
-  opacity: 0.03;
+  opacity: 0.06;
+  background-repeat: repeat;
+  background-size: 64px 64px;
 }
 /* 玻璃纹理·皱褶压纹（PS 参考）：抖动晶格亮暗成对折痕 + 长波纹 + 斜向光带
    20261009 午后：皱褶层（含斜向光带=「白杠」来源之一）已整体移除，display:none 兜底 */
@@ -225,8 +232,11 @@ body.theme-light .typecard-float-panel {
   background:
     linear-gradient(118deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.05) 40%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 0.12) 100%),
     rgba(139, 116, 232, 0.22);
-  backdrop-filter: blur(10px) saturate(1.2);
-  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  /* 20261009 晚终定稿：去掉按钮自身的 backdrop-filter（blur10 嵌套在面板 blur14 内，
+     真机 WebView 嵌套 backdrop-filter 触发合成层 bug → 召唤面板静止即渲染异常）。
+     按钮面积小，磨砂感由面板整体提供，这里改纯半透明背景即可，观感不变。 */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -301,8 +311,8 @@ body.glass-ui .typecard-float-panel {
     radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0) 50%),
     linear-gradient(180deg, rgba(44, 50, 66, 0.60), rgba(32, 36, 50, 0.56));
   border: 1px solid rgba(255, 255, 255, 0.20);
-  backdrop-filter: blur(16px) saturate(160%) brightness(1.10);
-  -webkit-backdrop-filter: blur(16px) saturate(160%) brightness(1.10);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   box-shadow:
     0 14px 44px rgba(0, 0, 0, 0.34),
     0 1px 2px rgba(0, 0, 0, 0.18),
@@ -326,8 +336,8 @@ body.theme-light.glass-ui .typecard-float-panel {
    20261009 晚：底色同步 fix5「真实磨砂玻璃」雾面配方——此前漏改仍是老白实色 0.88，
    开玻璃拟态的中档设备读作「白塑料板」。mid 保留 8px 模糊，底色 0.78 雾白让模糊透出来。 */
 body.glass-ui.glass-mid .typecard-float-panel {
-  backdrop-filter: blur(8px) saturate(140%);
-  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   box-shadow:
     0 8px 24px rgba(0, 0, 0, 0.25),
     inset 0 1px 0 rgba(255, 255, 255, 0.24),
@@ -370,8 +380,8 @@ body.theme-light.glass-ui.glass-low .typecard-float-panel {
    真机命中中档=「白塑料板」（用户报「没有同步更换效果」的成因之一）。
    mid 保留 8px 模糊，底色 0.78 雾白让模糊透出来，观感与 hi 档同族。 */
 body.tcf-mid .typecard-float-panel {
-  backdrop-filter: blur(8px) saturate(140%);
-  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   box-shadow:
     0 8px 24px rgba(0, 0, 0, 0.25),
     inset 0 1px 0 rgba(255, 255, 255, 0.24),
@@ -410,8 +420,9 @@ body.theme-light.tcf-low .typecard-float-panel {
     inset 0 1px 0 rgba(255, 255, 255, 0.92),
     inset 0 0 0 1px rgba(255, 255, 255, 0.32);
 }
-/* 召唤按钮同步降级：中/低精度下也去掉自身的 10px 模糊 */
-body.tcf-mid .tc-summon-btn { backdrop-filter: blur(6px) saturate(1.15); -webkit-backdrop-filter: blur(6px) saturate(1.15); }
+/* 召唤按钮同步降级：按钮自身 backdrop-filter 已整体移除（嵌套 backdrop-filter 真机 bug），
+   中/低精度档无需再单独设置（跟随默认 none 即可）。 */
+body.tcf-mid .tc-summon-btn { backdrop-filter: none; -webkit-backdrop-filter: none; }
 body.tcf-low .tc-summon-btn { backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 
