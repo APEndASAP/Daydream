@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>悬浮玻璃实测 · hyalite vs 静态雾面</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #1a1b2e;
+    overflow: hidden;
+    position: relative;
+    -webkit-user-select: none; user-select: none;
+  }
+  /* 背后背景：条纹 + 文字，用来检验磨砂/折射是否真实 */
+  .scene {
+    position: absolute; inset: 0;
+    background:
+      repeating-linear-gradient(90deg, #3a4a7a 0 24px, #2b3860 24px 48px),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0 2px, transparent 2px 20px);
+  }
+  .scene .bgtext {
+    position: absolute; font-size: 22px; color: #cfe0ff; font-weight: 700; letter-spacing: 1px;
+    opacity: 0.9;
+  }
+  .hint {
+    position: absolute; top: 12px; left: 0; right: 0; text-align: center;
+    color: #ffd27d; font-size: 13px; z-index: 5; pointer-events: none;
+  }
+
+  .panel {
+    position: absolute;
+    width: 240px;
+    min-height: 120px;
+    padding: 14px;
+    border-radius: 22px;
+    color: #fff;
+    touch-action: none;
+  }
+  .panel .title { font-size: 13px; opacity: 0.85; margin-bottom: 6px; }
+  .panel .body { font-size: 15px; line-height: 1.5; }
+
+  /* A: hyalite 真折射玻璃 */
+  .panel.hyalite {
+    left: 40px; top: 40%;
+    background: rgba(0, 0, 0, 0.13);
+    backdrop-filter: var(--hyalite, blur(6px));
+    -webkit-backdrop-filter: var(--hyalite, blur(6px));
+    box-shadow: var(--hyalite-edge, none);
+  }
+
+  /* B: 静态雾面（当前 APP 方向） */
+  .panel.static {
+    left: 40px; top: 58%;
+    background:
+      linear-gradient(150deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 58%, rgba(255,255,255,0.09)),
+      linear-gradient(180deg, rgba(96,110,146,0.30), rgba(64,76,104,0.24));
+    border: 1px solid rgba(255,255,255,0.28);
+    box-shadow: 0 14px 40px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.34);
+  }
+  .tag {
+    position: absolute; top: -22px; left: 0; font-size: 12px; font-weight: 700; color: #9fb4ff;
+  }
+  .tag b { color: #7dffb0; }
+</style>
+</head>
+<body>
+<div class="scene">
+  <div class="bgtext" style="top:20%;left:24%">一直修</div>
+  <div class="bgtext" style="top:34%;left:60%">别太在意</div>
+  <div class="bgtext" style="top:52%;left:30%">碎梦重拼</div>
+  <div class="bgtext" style="top:70%;left:18%">晴天</div>
+  <div class="bgtext" style="top:82%;left:55%">在输入中…</div>
+</div>
+<div class="hint">拖动面板看是否「叠层/闪烁」· A=hyalite 真折射 · B=静态雾面</div>
+
+<div class="panel hyalite" id="panelA">
+  <div class="tag">A · hyalite <b id="supA"></b></div>
+  <div class="title">真折射玻璃</div>
+  <div class="body">背后条纹和文字被真实折射/模糊透出</div>
+</div>
+
+<div class="panel static" id="panelB">
+  <div class="tag">B · 静态雾面</div>
+  <div class="title">确定性雾面</div>
+  <div class="body">不采样背景，纯渐变+描边模拟玻璃</div>
+</div>
+
+<script src="hyalite.js"></script>
+<script>
+  // 支持性标记
+  document.getElementById('supA').textContent = Hyalite.supported() ? '✓Chromium折射' : '✗仅回退blur';
+
+  // A 面板挂 hyalite
+  var A = document.getElementById('panelA');
+  if (Hyalite.supported()) {
+    Hyalite.attach(A, { bevel: 18, thickness: 30, blur: 3, shade: 0.6, rim: 1.2, edge: 1, materialize: 0 });
+  }
+
+  // 拖动（两个面板都能拖）
+  function drag(panel) {
+    var sx, sy, ox, oy, dragging = false;
+    panel.addEventListener('touchstart', function(e){
+      var t = e.touches[0];
+      sx = t.clientX; sy = t.clientY;
+      ox = panel.offsetLeft; oy = panel.offsetTop;
+      dragging = true;
+    }, {passive:false});
+    panel.addEventListener('touchmove', function(e){
+      if (!dragging) return;
+      e.preventDefault();
+      var t = e.touches[0];
+      panel.style.left = (ox + t.clientX - sx) + 'px';
+      panel.style.top  = (oy + t.clientY - sy) + 'px';
+    }, {passive:false});
+    panel.addEventListener('touchend', function(){ dragging = false; });
+  }
+  drag(A); drag(document.getElementById('panelB'));
+</script>
+</body>
+</html>
