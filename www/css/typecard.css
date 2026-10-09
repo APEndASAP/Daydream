@@ -433,10 +433,17 @@ body.theme-light.tcf-mid .typecard-float-panel {
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
-/* 低精度：不做模糊运算（零 backdrop-filter 开销），靠更实的雾面底还原玻璃板观感。 */
+/* 低精度：20261010 修正——真机实测 backdrop-filter 完全可用（WebView 130），
+   「零 blur」导致低档=没磨砂，且高透底直接透出壁纸文字/气泡边缘（用户报的「横线」真身）。
+   低档改保留轻量 blur(6px)，任何档位都有磨砂；底色同步加深到 0.42，
+   让透出的背景形状更弱（横线不再可辨），性能开销仍远小于 18px。 */
 body.tcf-low .typecard-float-panel {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.09) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, rgba(96, 110, 146, 0.42), rgba(64, 76, 104, 0.36));
   box-shadow:
     0 8px 22px rgba(0, 0, 0, 0.26),
     inset 0 1px 0 rgba(255, 255, 255, 0.24),

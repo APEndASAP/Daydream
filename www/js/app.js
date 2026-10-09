@@ -13048,13 +13048,24 @@ async function clearStaleCache() {
       for (const r of regs) { await r.unregister(); cleaned.push('Service Worker 注册'); }
     }
   } catch (e) {}
-  // ③ localStorage / sessionStorage（本应用不使用，存在即旧版遗留）
+  // ③ localStorage / sessionStorage（20261010 修复：只清真正的旧版遗留键。
+  //   bm_notify_asked / bm_guide_done / bm_srcwarn / __justAutocleared 是应用运行时活键，
+  //   清掉会导致「每次清完下次清除还有一项」+ 通知授权反复询问——它们不是冗余）
   try {
-    const ls = localStorage.length || 0, ss = sessionStorage.length || 0;
-    localStorage.clear();
-    sessionStorage.clear();
-    if (ls) cleaned.push('localStorage 旧数据 ' + ls + ' 项');
-    if (ss) cleaned.push('sessionStorage 旧数据 ' + ss + ' 项');
+    const keepLS = new Set(['bm_notify_asked', 'bm_guide_done', 'bm_srcwarn']);
+    let lsStale = 0;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && !keepLS.has(k)) { localStorage.removeItem(k); lsStale++; }
+    }
+    const keepSS = new Set(['bm_srcwarn', '__justAutocleared']);
+    let ssStale = 0;
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && !keepSS.has(k)) { sessionStorage.removeItem(k); ssStale++; }
+    }
+    if (lsStale) cleaned.push('localStorage 旧数据 ' + lsStale + ' 项');
+    if (ssStale) cleaned.push('sessionStorage 旧数据 ' + ssStale + ' 项');
   } catch (e) {}
   // ④ 旧版本遗留的 IndexedDB 数据库（正式库名固定为 bairimeng）
   try {
@@ -13062,7 +13073,15 @@ async function clearStaleCache() {
       const dbs = await indexedDB.databases();
       for (const d of (dbs || [])) {
         if (d && d.name && d.name !== DB_NAME) {
-          indexedDB.deleteDatabase(d.name);
+          // 20261010 修复：deleteDatabase 是异步的，之前没等待就报「已清理」——
+          // 实际可能没删完（库被占用时还会静默失败），导致「清完还有」
+          await new Promise(res => {
+            try {
+              const rq = indexedDB.deleteDatabase(d.name);
+              rq.onsuccess = res; rq.onerror = res; rq.onblocked = res;
+              setTimeout(res, 3000); // 兜底：极慢设备不卡住清理流程
+            } catch (e2) { res(); }
+          });
           cleaned.push('旧数据库「' + d.name + '」');
         }
       }
