@@ -85,35 +85,38 @@
   box-sizing: border-box;
   padding: 12px 14px;
   border-radius: 20px;                /* 大圆角矩形（iOS glass 风格） */
-  /* 20261009 深夜终版·iOS 磨砂玻璃重写（用户给 Apple Vision Pro / iOS glass UI /
-     相机镜片质感参考，逐条落实：雾白/浅灰/半透明蓝灰、柔和模糊、细白高光描边、
-     边缘发亮玻璃厚度、轻微折射、极淡光斑+反光+空气感、轻阴影悬浮、非塑料非灰遮罩）。
-     ★核心：所有状态（静态/拖动/演出/点输入框/召唤）共用这一套恒定 blur(14px)，
-       从创建到销毁绝不改 blur 值 → 永不触发真机 WebView 的 backdrop 采样重建 → 永无一条杠。 */
+  /* 20261010 液态玻璃重写（用户参考图2 + iOS 液态玻璃提示词，逐条落实）：
+     半透明雾面底（蓝灰，高透 0.30 让背景透出=水感）+ 大半径柔和 blur(18px) + 细白高光
+     描边 + 顶缘玻璃厚度内高光 + 斜向折射光斑（提亮水感）+ 左上柔光 + 轻阴影悬浮。
+     非塑料、非灰遮罩。
+     ★横线根因：已排除渐变 banding/噪点/状态切换/装饰越界，锁定 backdrop-filter 真机
+     tile 采样接缝——液态玻璃的压制手段：blur 半径足够大(18px)让采样充分混合 + 底色
+     不追求极透(0.30)给采样区一个稳定底，二者叠加消除 tile 缝。 */
   background:
-    /* ① 折射感：极淡斜向折射光斑（150deg，大范围低对比，有方向不产生白杠） */
-    linear-gradient(150deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.03) 30%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, 0.06) 100%),
-    /* ② 柔和反光/空气感：左上角柔和光晕（径向，像镜片反光） */
-    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 50%),
-    /* ③ 雾面蓝灰半透明底：非灰黑遮罩，背景透过后雾化成灰蓝雾面 */
-    /* [临时验证 banding] 20261010：等色纯色替换，观察横线是否消失（原：linear-gradient(180deg, rgba(74,82,102,0.52), rgba(58,66,86,0.48))） */
-    rgba(70, 78, 98, 0.50);
-  border: 1px solid rgba(255, 255, 255, 0.22);   /* 细白高光描边 */
-  /* 恒定纯 blur（去颜色滤镜，雾感来自模糊本身=真实磨砂玻璃） */
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+    /* ① 斜向折射光斑（150deg，大范围低对比，有方向） */
+    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.09) 100%),
+    /* ② 左上柔和反光/空气感（径向光晕，镜片反光） */
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0) 55%),
+    /* ③ 液态玻璃半透明底（蓝灰雾面，高透让 blur 透出背景=水感磨砂） */
+    linear-gradient(180deg, rgba(96, 110, 146, 0.30), rgba(64, 76, 104, 0.24));
+  border: 1px solid rgba(255, 255, 255, 0.28);   /* 细白高光描边（液态玻璃亮边） */
+  /* 纯 blur（历史铁律：saturate/brightness 颜色滤镜与 blur 复合，在真机几何变化时
+     重采样产生色噪/横线=「打字/点输入框异常」真因）。液态玻璃的「水感提亮」改由
+     背景层的白色折射光斑 + 左上柔光承担，不用颜色滤镜。 */
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   box-shadow:
-    /* 轻阴影悬浮（不压黑一块，只凸显浮起） */
-    0 12px 36px rgba(0, 0, 0, 0.22),
-    0 2px 6px rgba(0, 0, 0, 0.10),
-    /* 边缘发亮（玻璃厚度）：顶缘内高光 + 整圈内描边 + 内泛光 */
-    inset 0 1px 0 rgba(255, 255, 255, 0.30),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    inset 0 0 26px rgba(255, 255, 255, 0.05);
-  /* 可读性：深色预设用浅字 + 深色微光晕，任意壁纸上清晰 */
-  color: #f5f4f7;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  /* 高度：内容自然撑开，绝不裁切（不设 height/max-height/overflow:hidden） */
+    /* 轻阴影悬浮（浮起不压黑） */
+    0 14px 40px rgba(0, 0, 0, 0.26),
+    0 3px 8px rgba(0, 0, 0, 0.12),
+    /* 边缘发亮玻璃厚度：顶缘内高光 + 整圈内描边 + 内泛光 */
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 30px rgba(255, 255, 255, 0.06);
+  /* 可读性：深色预设浅字 + 深色微光晕 */
+  color: #f7f6fa;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
+  /* 高度：内容自然撑开，绝不裁切 */
   height: auto;
   overflow: visible;
 }
@@ -125,31 +128,31 @@
    背景透出 + 模糊效果全程都在（这就是「恒定 blur」而非「去掉 blur」）。 */
 /* 20261009 午后：噪点颗粒已整体移除（用户要求光滑玻璃，深色背景上颗粒读作砂纸）。
    ::after 噪点规则删除；tc-frost / tc-crinkle 不再由 ui.js 注入，display:none 兜底防残留。 */
-/* 浅色主题默认毛玻璃：iOS 雾白亚克力（不依赖玻璃拟态开关，自动跟随主题）。
-   20261009 深夜终版：可读性兼容——浅色预设下用深字 + 浅色微光晕，
-   底色雾白半透明适中（透背景又不影响可读），blur 恒定 14px 全程不变。 */
+/* 浅色主题默认毛玻璃：iOS 液态白玻璃（不依赖玻璃拟态开关，自动跟随主题）。
+   20261010 液态玻璃重写：可读性兼容——浅色预设深字 + 浅色微光晕，
+   底色高透(0.44)让背景透出=白玻璃水感，blur 18px 恒定。 */
 body.theme-light .typecard-float-panel {
   background:
     /* 折射感：极淡斜向折射光斑 */
-    linear-gradient(150deg, rgba(255, 255, 255, 0.58) 0%, rgba(255, 255, 255, 0.20) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.32) 100%),
+    linear-gradient(150deg, rgba(255, 255, 255, 0.70) 0%, rgba(255, 255, 255, 0.24) 34%, rgba(255, 255, 255, 0.08) 60%, rgba(255, 255, 255, 0.40) 100%),
     /* 柔和反光/空气感：左上角柔和光晕 */
-    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 52%),
-    /* 雾白亚克力底（非纯白塑料） */
-    rgba(240, 242, 248, 0.72);
-  border-color: rgba(255, 255, 255, 0.60);   /* 细白高光描边（浅色更亮） */
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.70), rgba(255, 255, 255, 0) 55%),
+    /* 液态白玻璃半透明底（非纯白塑料，高透让 blur 透出） */
+    rgba(240, 242, 248, 0.44);
+  border-color: rgba(255, 255, 255, 0.75);   /* 细白高光描边（浅色更亮） */
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   box-shadow:
     /* 轻阴影悬浮 */
-    0 12px 34px rgba(45, 40, 90, 0.18),
-    0 2px 6px rgba(45, 40, 90, 0.08),
+    0 14px 38px rgba(45, 40, 90, 0.20),
+    0 3px 8px rgba(45, 40, 90, 0.08),
     /* 边缘发亮玻璃厚度（浅色：更亮的顶缘内高光） */
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.34),
-    inset 0 -1px 0 rgba(180, 185, 210, 0.20);
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(180, 185, 210, 0.22);
   /* 可读性：浅色预设深字 + 浅色微光晕 */
-  color: #2a2a38;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.65);
+  color: #26262f;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
 }
 
 /* 面板内容层级：压在裂纹层(z0)之上、花饰(z2)之下 */
@@ -328,36 +331,38 @@ body.theme-light .typecard-float-panel .tc-body-preview {
    半透面 + 白细边 + backdrop 模糊；浅色主题走白玻璃特化；中/低精度档随主线降级。
    ============================================================================ */
 body.glass-ui .typecard-float-panel {
-  /* 20261009 深夜终版：iOS 磨砂玻璃（glass-ui 档，同默认档雾面蓝灰配方） */
+  /* 20261010 液态玻璃（glass-ui 档，同默认档配方） */
   background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.025) 30%, rgba(255, 255, 255, 0) 55%, rgba(255, 255, 255, 0.05) 100%),
-    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 50%),
-    linear-gradient(180deg, rgba(68, 76, 96, 0.52), rgba(52, 60, 80, 0.48));
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.09) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, rgba(96, 110, 146, 0.30), rgba(64, 76, 104, 0.24));
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   box-shadow:
     0 14px 44px rgba(0, 0, 0, 0.26),
-    0 2px 6px rgba(0, 0, 0, 0.10),
-    inset 0 1px 0 rgba(255, 255, 255, 0.30),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    inset 0 0 28px rgba(255, 255, 255, 0.05);
-  color: #f5f4f7;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    0 3px 8px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 30px rgba(255, 255, 255, 0.06);
+  color: #f7f6fa;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
 }
 body.theme-light.glass-ui .typecard-float-panel {
   background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.58) 0%, rgba(255, 255, 255, 0.20) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.32) 100%),
-    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 52%),
-    rgba(240, 242, 248, 0.74);
-  border: 1px solid rgba(255, 255, 255, 0.60);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.70) 0%, rgba(255, 255, 255, 0.24) 34%, rgba(255, 255, 255, 0.08) 60%, rgba(255, 255, 255, 0.40) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.70), rgba(255, 255, 255, 0) 55%),
+    rgba(240, 242, 248, 0.44);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   box-shadow:
-    0 14px 40px rgba(45, 40, 90, 0.18),
-    0 2px 6px rgba(45, 40, 90, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.34);
-  color: #2a2a38;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.65);
+    0 14px 40px rgba(45, 40, 90, 0.20),
+    0 3px 8px rgba(45, 40, 90, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+  color: #26262f;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
 }
 /* 中精度：与主线 glass-mid 一致（模糊统一 8px、去外泛光）。
    20261009 深夜终版：底色同步 iOS 雾面配方，浅色档补深字+浅光晕可读性。 */
@@ -371,12 +376,12 @@ body.glass-ui.glass-mid .typecard-float-panel {
 }
 body.theme-light.glass-ui.glass-mid .typecard-float-panel {
   background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.18) 34%, rgba(255, 255, 255, 0.05) 60%, rgba(255, 255, 255, 0.28) 100%),
-    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 52%),
-    rgba(240, 242, 248, 0.80);
-  border-color: rgba(255, 255, 255, 0.58);
-  color: #2a2a38;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.60);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.60) 0%, rgba(255, 255, 255, 0.22) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.32) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
+    rgba(240, 242, 248, 0.62);
+  border-color: rgba(255, 255, 255, 0.66);
+  color: #26262f;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
 /* 低精度：不做模糊运算（与主线 glass-low 一致），靠更实的雾面底还原玻璃板观感。 */
 body.glass-ui.glass-low .typecard-float-panel {
@@ -389,12 +394,12 @@ body.glass-ui.glass-low .typecard-float-panel {
 }
 body.theme-light.glass-ui.glass-low .typecard-float-panel {
   background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.58) 0%, rgba(255, 255, 255, 0.22) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.32) 100%),
-    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0) 52%),
-    rgba(240, 242, 248, 0.90);
-  border-color: rgba(255, 255, 255, 0.62);
-  color: #2a2a38;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.60);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.60) 0%, rgba(255, 255, 255, 0.24) 34%, rgba(255, 255, 255, 0.08) 60%, rgba(255, 255, 255, 0.36) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
+    rgba(240, 242, 248, 0.78);
+  border-color: rgba(255, 255, 255, 0.68);
+  color: #26262f;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
 
 /* ============================================================================
@@ -417,16 +422,16 @@ body.tcf-mid .typecard-float-panel {
 }
 body.theme-light.tcf-mid .typecard-float-panel {
   background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.18) 34%, rgba(255, 255, 255, 0.05) 60%, rgba(255, 255, 255, 0.28) 100%),
-    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 52%),
-    rgba(240, 242, 248, 0.80);
-  border-color: rgba(255, 255, 255, 0.58);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.60) 0%, rgba(255, 255, 255, 0.22) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.32) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
+    rgba(240, 242, 248, 0.62);
+  border-color: rgba(255, 255, 255, 0.66);
   box-shadow:
     0 8px 24px rgba(45, 40, 90, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.32);
-  color: #2a2a38;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.60);
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  color: #26262f;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
 /* 低精度：不做模糊运算（零 backdrop-filter 开销），靠更实的雾面底还原玻璃板观感。 */
 body.tcf-low .typecard-float-panel {
@@ -439,16 +444,16 @@ body.tcf-low .typecard-float-panel {
 }
 body.theme-light.tcf-low .typecard-float-panel {
   background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.58) 0%, rgba(255, 255, 255, 0.22) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.32) 100%),
-    radial-gradient(120% 85% at 22% -8%, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0) 52%),
-    rgba(240, 242, 248, 0.90);
-  border-color: rgba(255, 255, 255, 0.62);
+    linear-gradient(150deg, rgba(255, 255, 255, 0.60) 0%, rgba(255, 255, 255, 0.24) 34%, rgba(255, 255, 255, 0.08) 60%, rgba(255, 255, 255, 0.36) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
+    rgba(240, 242, 248, 0.78);
+  border-color: rgba(255, 255, 255, 0.68);
   box-shadow:
     0 8px 22px rgba(45, 40, 90, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.34);
-  color: #2a2a38;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.60);
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.36);
+  color: #26262f;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
 /* 召唤按钮同步降级：按钮自身 backdrop-filter 已整体移除（嵌套 backdrop-filter 真机 bug），
    中/低精度档无需再单独设置（跟随默认 none 即可）。 */
