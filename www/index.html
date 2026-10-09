@@ -40,7 +40,7 @@
           || location.protocol === 'capacitor:';
         window.__BM_ORIGIN_OK = ok;
         if (ok) return;
-        location.replace('http://127.0.0.1:8902/index.html?v=V1.0.7' + location.hash);
+        location.replace('http://127.0.0.1:8902/index.html?v=V1.0.8' + location.hash);
         // replace 被拦时页面会留下：DOMContentLoaded 后把 body 换成保护页
         document.addEventListener('DOMContentLoaded', function () {
           if (window.__BM_ORIGIN_OK) return;   // 已成功跳走则不会执行到这里
@@ -54,15 +54,15 @@
               +   '<div style="margin-top:16px;font-size:11px;line-height:1.8;color:rgba(255,255,255,.45);max-width:420px;">若点击无效（当前面板禁止跳转），请回到 AI 对话里点 <b style="color:#c4b5fd;">http://127.0.0.1:8902</b> 预览卡进入——<br>只有这个入口读写正式数据。</div>'
               + '</div>';
             var btn = document.getElementById('bm-go');
-            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=V1.0.7'); };
+            if (btn) btn.onclick = function () { location.replace('http://127.0.0.1:8902/index.html?v=V1.0.8'); };
           } catch (e) {}
         });
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="css/style.css?v=V1.0.7" data-page-node-id="n0w2CgjCPXWgXrFRx4J0vZ">
+  <link rel="stylesheet" href="css/style.css?v=V1.0.8" data-page-node-id="n0w2CgjCPXWgXrFRx4J0vZ">
   <!-- V1.1 打字卡（typecard）独立模块样式：只接管占位气泡外层，输入法面板样式内联进 Shadow DOM -->
-  <link rel="stylesheet" href="css/typecard.css?v=V1.0.7" data-page-node-id="n0w2CgjCPXWgXrFRx4J0vZ">
+  <link rel="stylesheet" href="css/typecard.css?v=V1.0.8" data-page-node-id="n0w2CgjCPXWgXrFRx4J0vZ">
 </head>
 <body data-page-node-id="xlctMM5lKFyJIFahDJjiue">
   <div id="app" data-page-node-id="6k7EwA5mjLsFJliDXGADK9">
@@ -302,19 +302,19 @@
   </div>
 
   <!-- 20260929br：开屏动画最先执行（20260929bs 重制、20260930bt 换装 v2；独立文件，改开屏只动 js/splash.js） -->
-  <script src="js/splash.js?v=V1.0.7"></script>
-  <script src="js/db.js?v=V1.0.7"></script>
-  <script src="js/icons.js?v=V1.0.7"></script>
-  <script src="js/emoji-img.js?v=V1.0.7"></script>
-  <script src="js/cards.js?v=V1.0.7"></script>
-  <script src="js/app.js?v=V1.0.7"></script>
+  <script src="js/splash.js?v=V1.0.8"></script>
+  <script src="js/db.js?v=V1.0.8"></script>
+  <script src="js/icons.js?v=V1.0.8"></script>
+  <script src="js/emoji-img.js?v=V1.0.8"></script>
+  <script src="js/cards.js?v=V1.0.8"></script>
+  <script src="js/app.js?v=V1.0.8"></script>
   <!-- V1.1 打字卡（typecard）独立模块：generator → data → ui → engine，挂载 window.bmTypecard* -->
-  <script src="js/typecard/generator.js?v=V1.0.7"></script>
-  <script src="js/typecard/data.js?v=V1.0.7"></script>
-  <script src="js/typecard/ui.js?v=V1.0.7"></script>
-  <script src="js/typecard/engine.js?v=V1.0.7"></script>
+  <script src="js/typecard/generator.js?v=V1.0.8"></script>
+  <script src="js/typecard/data.js?v=V1.0.8"></script>
+  <script src="js/typecard/ui.js?v=V1.0.8"></script>
+  <script src="js/typecard/engine.js?v=V1.0.8"></script>
   <!-- 20261002ch：新手引导（沙盒隔离：独立 js/css，动态创建全屏 overlay，不碰核心代码与 DOM 结构，
        一键「开始探索/跳过新手指引」后彻底移除并 localStorage 记录永不再弹） -->
-  <script src="js/guide-sandbox.js?v=V1.0.7"></script>
+  <script src="js/guide-sandbox.js?v=V1.0.8"></script>
 </body>
 </html>

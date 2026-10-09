@@ -964,9 +964,9 @@
       const isLight = document.body.classList.contains('theme-light');
       const frag = document.createDocumentFragment();
 
-      // ---- 0) 玻璃纹理（20261009 晚终定稿·位图版）：canvas 低对比噪点 PNG 平铺。
-      //      SVG feTurbulence 真机渲染不可控已弃用；位图噪点 css opacity 0.06
-      //      = 真机「一点点」颗粒。磨砂主体仍靠 backdrop-filter: blur(14px)。 ----
+      // ---- 0) 玻璃纹理（V1.0.8·alpha 烘焙版）：透明度烘进位图 alpha（14/255≈5.5%），
+      //      免疫真机「backdrop-filter 父层丢弃子元素 CSS opacity」合成 bug；
+      //      frost 全内联样式，不依赖外部 css 选择器。磨砂主体仍靠 blur(14px)。 ----
       frag.appendChild(_frostSVG());
 
       // ---- 1) 碎玻璃碎片层（20261009 晚用户要求移除）：碎片填充透明度极低暗背景不可见，
@@ -1215,13 +1215,14 @@
     return svg;
   }
 
-  // ---- 玻璃纹理·磨砂颗粒（20261009 晚终定稿·位图版）：
-  //      SVG feTurbulence 在真机 WebView 上渲染不可控（连 opacity 0.03 都渲染成重沙沙，
-  //      Chromium Android SVG filter 合成已知坑，调参数无效）——彻底弃用 SVG 滤镜方案。
-  //      改用 canvas 生成 64×64 低对比中灰噪点 PNG（data URI 位图平铺）：
-  //      灰度 118~137（有亮有暗、跨度极小=「一点点」颗粒），位图在移动 GPU 上
-  //      渲染路径最简单稳定，透明度/平铺完全可控，绝无 SVG filter 合成 bug。
-  //      模块级缓存 data URI（只生成一次），css 控 opacity 0.06。 ----
+  // ---- 玻璃纹理·磨砂颗粒（20261009 夜 V1.0.8 定稿·alpha 烘焙版）：
+  //      ★真机根因实锤：面板有 backdrop-filter + will-change:transform 时，
+  //      Android WebView 合成器会丢弃子元素的 CSS opacity（桌面正常）——
+  //      这解释了此前 0.12/0.05/0.03 每次降透明度真机都毫无变化、颗粒始终全强度。
+  //      修法：不再依赖任何 CSS opacity——直接把透明度烘进位图 alpha 通道
+  //      （alpha 14/255 ≈ 5.5%），位图 alpha 走纹理采样路径、合成器无法忽略。
+  //      同时 frost 全部内联样式（position/top/left/... 不用 inset 新语法，
+  //      兼容老 WebView；不依赖外部 css 选择器，Shadow DOM 边界也免疫）。 ----
   let _frostDataURICache = null;
   function _frostDataURI() {
     if (_frostDataURICache) return _frostDataURICache;
@@ -1233,7 +1234,8 @@
       const d = img.data;
       for (let i = 0; i < d.length; i += 4) {
         const v = 118 + Math.floor(Math.random() * 20);   // 118~137：中灰基准±10，低对比
-        d[i] = v; d[i + 1] = v; d[i + 2] = v; d[i + 3] = 255;
+        d[i] = v; d[i + 1] = v; d[i + 2] = v;
+        d[i + 3] = 14;                                    // ★alpha 直接烘进位图 ≈5.5%，勿依赖 css opacity
       }
       ctx.putImageData(img, 0, 0);
       _frostDataURICache = c.toDataURL('image/png');
@@ -1245,6 +1247,18 @@
     div.className = 'tc-frost';
     const uri = _frostDataURI();
     if (uri) div.style.backgroundImage = 'url(' + uri + ')';
+    // 全内联样式：不依赖外部 css 规则（真机 opacity 丢失/选择器失配/老 WebView inset 均免疫）
+    div.style.position = 'absolute';
+    div.style.top = '0'; div.style.left = '0';
+    div.style.right = '0'; div.style.bottom = '0';
+    div.style.width = '100%'; div.style.height = '100%';
+    div.style.zIndex = '0';
+    div.style.pointerEvents = 'none';
+    div.style.borderRadius = 'inherit';
+    div.style.overflow = 'hidden';
+    div.style.backgroundRepeat = 'repeat';
+    div.style.backgroundSize = '64px 64px';
+    div.style.opacity = '1';   // 透明度已烘进位图 alpha，元素本身恒为 1
     return div;
   }
 

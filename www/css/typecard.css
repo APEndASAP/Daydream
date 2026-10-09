@@ -186,21 +186,22 @@ body.theme-light .typecard-float-panel {
    中灰中和、亮暗斑点浮现——可见的 dither 质感；圆角裁剪不越出玻璃面。
    20261009 晚终版：opacity 0.30→0.16——真机特写里 overlay 噪点过重（砂纸感），
    减淡后保留细腻 dither 质感、不再抢观感 */
-/* 玻璃纹理·磨砂颗粒（20261009 晚终定稿·位图版）：
-   SVG feTurbulence 在真机 WebView 渲染不可控（opacity 0.03 都成重沙沙），
-   已弃用。现由 ui.js 注入 canvas 生成的低对比中灰噪点 PNG（64×64 data URI 平铺），
-   位图渲染路径最稳、透明度完全可控。这里 opacity 0.06 = 真机「一点点」颗粒。
-   静态平铺、不随拖动重建，渲染稳定不闪。 */
+/* 玻璃纹理·磨砂颗粒（20261009 夜 V1.0.8·alpha 烘焙版）：
+   ★真机根因：面板 backdrop-filter + will-change:transform 时，Android WebView
+   合成器会丢弃子元素的 CSS opacity（桌面正常）——此前 0.12/0.05/0.03 全部无效、
+   颗粒始终以 100% 强度渲染（=「灰色噪点实面」真凶）。
+   修法：透明度直接烘进位图 alpha（14/255≈5.5%，ui.js 控），元素 opacity 恒 1；
+   布局样式也已全部内联（此规则仅作兜底）。 */
 .typecard-float-panel .tc-frost {
   position: absolute;
-  inset: 0;
+  top: 0; left: 0; right: 0; bottom: 0;
   width: 100%;
   height: 100%;
   z-index: 0;
   pointer-events: none;
   border-radius: inherit;
   overflow: hidden;
-  opacity: 0.06;
+  opacity: 1;
   background-repeat: repeat;
   background-size: 64px 64px;
 }

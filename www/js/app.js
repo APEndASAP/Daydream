@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.0.7'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.0.8'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
 
 let characters = [];
 let cards = null;
