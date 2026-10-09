@@ -3,95 +3,160 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>悬浮玻璃实测 · hyalite vs 静态雾面</title>
+<title>悬浮玻璃可读性实测 · 4组合对比</title>
 <style>
   :root { color-scheme: dark; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: #1a1b2e;
     overflow: hidden;
     position: relative;
     -webkit-user-select: none; user-select: none;
   }
-  /* 背后背景：条纹 + 文字，用来检验磨砂/折射是否真实 */
+
+  /* 四个象限背景：深浅各一半 */
   .scene {
     position: absolute; inset: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  .quad {
+    position: relative;
+    overflow: hidden;
+  }
+  .quad.dark {
     background:
-      repeating-linear-gradient(90deg, #3a4a7a 0 24px, #2b3860 24px 48px),
-      repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0 2px, transparent 2px 20px);
+      repeating-linear-gradient(90deg, #3a4a7a 0 22px, #2b3860 22px 44px),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0 2px, transparent 2px 16px);
   }
-  .scene .bgtext {
-    position: absolute; font-size: 22px; color: #cfe0ff; font-weight: 700; letter-spacing: 1px;
-    opacity: 0.9;
+  .quad.light {
+    background:
+      repeating-linear-gradient(90deg, #e8ecf6 0 22px, #d5dbf0 22px 44px),
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.03) 0 2px, transparent 2px 16px);
   }
+  .quad .bgtext {
+    position: absolute; font-size: 20px; font-weight: 700; letter-spacing: 1px; opacity: 0.85;
+  }
+  .quad.dark .bgtext { color: #cfe0ff; }
+  .quad.light .bgtext { color: #5a6280; }
+  .quad .qtag {
+    position: absolute; top: 8px; left: 10px; font-size: 12px; font-weight: 700; z-index: 4;
+  }
+  .quad.dark .qtag { color: #ffd27d; }
+  .quad.light .qtag { color: #b8860b; }
+
   .hint {
     position: absolute; top: 12px; left: 0; right: 0; text-align: center;
-    color: #ffd27d; font-size: 13px; z-index: 5; pointer-events: none;
+    color: #ffd27d; font-size: 13px; z-index: 10; pointer-events: none;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
   }
 
+  /* 面板 */
   .panel {
     position: absolute;
-    width: 240px;
-    min-height: 120px;
-    padding: 14px;
-    border-radius: 22px;
-    color: #fff;
+    width: 44%;
+    min-height: 128px;
+    padding: 12px;
+    border-radius: 20px;
     touch-action: none;
+    z-index: 3;
   }
-  .panel .title { font-size: 13px; opacity: 0.85; margin-bottom: 6px; }
+  .panel .title { font-size: 12px; opacity: 0.75; margin-bottom: 4px; }
+  .panel .pinyin { font-size: 12px; opacity: 0.85; margin-bottom: 2px; }
   .panel .body { font-size: 15px; line-height: 1.5; }
+  .panel .cand { font-size: 13px; opacity: 0.8; margin-top: 6px; }
 
-  /* A: hyalite 真折射玻璃 */
+  /* 文字保护垫片：半透明深色底，测试加了保护层后文字是否更清晰 */
+  .pad {
+    margin-top: 8px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    background: rgba(20, 22, 40, 0.55);
+  }
+  .pad.lightpad { background: rgba(255, 255, 255, 0.55); }
+
+  /* A: hyalite 真折射玻璃（面板底色极淡，靠折射透出背景） */
   .panel.hyalite {
-    left: 40px; top: 40%;
-    background: rgba(0, 0, 0, 0.13);
+    background: rgba(0, 0, 0, 0.10);
     backdrop-filter: var(--hyalite, blur(6px));
     -webkit-backdrop-filter: var(--hyalite, blur(6px));
     box-shadow: var(--hyalite-edge, none);
   }
 
-  /* B: 静态雾面（当前 APP 方向） */
-  .panel.static {
-    left: 40px; top: 58%;
-    background:
-      linear-gradient(150deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 58%, rgba(255,255,255,0.09)),
-      linear-gradient(180deg, rgba(96,110,146,0.30), rgba(64,76,104,0.24));
-    border: 1px solid rgba(255,255,255,0.28);
-    box-shadow: 0 14px 40px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.34);
-  }
-  .tag {
-    position: absolute; top: -22px; left: 0; font-size: 12px; font-weight: 700; color: #9fb4ff;
-  }
-  .tag b { color: #7dffb0; }
+  /* 文字颜色主题 */
+  .panel.txt-dark { color: #1b1e33; }
+  .panel.txt-dark .title { color: #2a2e45; }
+  .panel.txt-dark .pinyin { color: #333a5e; }
+  .panel.txt-dark .cand { color: #2a2e45; }
+
+  .panel.txt-light { color: #f4f6ff; }
+  .panel.txt-light .title { color: #dfe6ff; }
+  .panel.txt-light .pinyin { color: #c3ccf5; }
+  .panel.txt-light .cand { color: #dfe6ff; }
 </style>
 </head>
 <body>
 <div class="scene">
-  <div class="bgtext" style="top:20%;left:24%">一直修</div>
-  <div class="bgtext" style="top:34%;left:60%">别太在意</div>
-  <div class="bgtext" style="top:52%;left:30%">碎梦重拼</div>
-  <div class="bgtext" style="top:70%;left:18%">晴天</div>
-  <div class="bgtext" style="top:82%;left:55%">在输入中…</div>
+  <div class="quad dark" id="q1">
+    <div class="qtag">① 深背景 + 深文字</div>
+    <div class="bgtext" style="top:24%;left:12%">碎梦重拼</div>
+    <div class="bgtext" style="top:52%;left:30%">晴天</div>
+  </div>
+  <div class="quad dark" id="q2">
+    <div class="qtag">② 深背景 + 浅文字</div>
+    <div class="bgtext" style="top:24%;left:12%">碎梦重拼</div>
+    <div class="bgtext" style="top:52%;left:30%">晴天</div>
+  </div>
+  <div class="quad light" id="q3">
+    <div class="qtag">③ 浅背景 + 深文字</div>
+    <div class="bgtext" style="top:24%;left:12%">碎梦重拼</div>
+    <div class="bgtext" style="top:52%;left:30%">晴天</div>
+  </div>
+  <div class="quad light" id="q4">
+    <div class="qtag">④ 浅背景 + 浅文字</div>
+    <div class="bgtext" style="top:24%;left:12%">碎梦重拼</div>
+    <div class="bgtext" style="top:52%;left:30%">晴天</div>
+  </div>
 </div>
-<div class="hint" id="envHint">拖动面板看是否「叠层/闪烁」· A=hyalite 真折射 · B=静态雾面</div>
+<div class="hint" id="envHint">4 组合可读性实测 · 拖动面板看是否闪跳</div>
 
-<div class="panel hyalite" id="panelA">
-  <div class="tag">A · hyalite <b id="supA"></b></div>
-  <div class="title">真折射玻璃</div>
-  <div class="body">背后条纹和文字被真实折射/模糊透出</div>
+<div class="panel hyalite txt-dark" id="p1">
+  <div class="title">深背景 · 深文字</div>
+  <div class="pinyin">suì mèng chóng pīn</div>
+  <div class="body">碎梦重拼，晴天在望。</div>
+  <div class="cand">候选：碎梦 / 碎梦重拼 / 碎梦重圆</div>
+  <div class="pad">↓ 加了文字保护垫片后：碎梦重拼，晴天在望。</div>
 </div>
 
-<div class="panel static" id="panelB">
-  <div class="tag">B · 静态雾面</div>
-  <div class="title">确定性雾面</div>
-  <div class="body">不采样背景，纯渐变+描边模拟玻璃</div>
+<div class="panel hyalite txt-light" id="p2">
+  <div class="title">深背景 · 浅文字</div>
+  <div class="pinyin">suì mèng chóng pīn</div>
+  <div class="body">碎梦重拼，晴天在望。</div>
+  <div class="cand">候选：碎梦 / 碎梦重拼 / 碎梦重圆</div>
+  <div class="pad">↓ 加了文字保护垫片后：碎梦重拼，晴天在望。</div>
+</div>
+
+<div class="panel hyalite txt-dark" id="p3">
+  <div class="title">浅背景 · 深文字</div>
+  <div class="pinyin">suì mèng chóng pīn</div>
+  <div class="body">碎梦重拼，晴天在望。</div>
+  <div class="cand">候选：碎梦 / 碎梦重拼 / 碎梦重圆</div>
+  <div class="pad lightpad">↓ 加了文字保护垫片后：碎梦重拼，晴天在望。</div>
+</div>
+
+<div class="panel hyalite txt-light" id="p4">
+  <div class="title">浅背景 · 浅文字</div>
+  <div class="pinyin">suì mèng chóng pīn</div>
+  <div class="body">碎梦重拼，晴天在望。</div>
+  <div class="cand">候选：碎梦 / 碎梦重拼 / 碎梦重圆</div>
+  <div class="pad lightpad">↓ 加了文字保护垫片后：碎梦重拼，晴天在望。</div>
 </div>
 
 <script src="hyalite.js"></script>
 <script>
-  // 环境探针：顶部 hint 实时显示运行环境
+  // 环境探针
   (function(){
     var ua = navigator.userAgent;
     var isChromium = /Chrom(e|ium)\//i.test(ua);
@@ -99,24 +164,38 @@
     var isWebView = isAndroid && /wv\)/i.test(ua);
     var isIos = /iPhone|iPad|iPod/i.test(ua);
     var mem = navigator.deviceMemory || '未知';
-    var sup = (typeof Hyalite !== 'undefined') ? Hyalite.supported() : 'Hyalite未加载';
+    var sup = (typeof Hyalite !== 'undefined') ? Hyalite.supported() : '未加载';
     var env = isWebView ? 'APP/WebView' : (isAndroid ? '安卓浏览器' : (isIos ? 'iOS浏览器' : '桌面浏览器'));
     var cdp = isChromium ? 'Chromium' : '非Chromium';
     document.getElementById('envHint').textContent =
       '环境=' + env + ' · 内核=' + cdp + ' · 内存=' + mem + 'GB · Hyalite支持=' + (sup?'true':'false')
-      + ' · 拖动面板看是否「叠层/闪烁」· A=真折射 B=静态雾面';
+      + ' · 拖动面板看是否闪跳 · 每个面板最后一行是「加了文字保护垫片」对照';
   })();
 
-  // 支持性标记
-  document.getElementById('supA').textContent = Hyalite.supported() ? '✓Chromium折射' : '✗仅回退blur';
+  // 4 个面板都挂 hyalite
+  var opts = { bevel: 18, thickness: 30, blur: 3, shade: 0.6, rim: 1.2, edge: 1, materialize: 0 };
+  ['p1','p2','p3','p4'].forEach(function(id){
+    var p = document.getElementById(id);
+    if (Hyalite.supported()) {
+      Hyalite.attach(p, opts);
+    }
+  });
 
-  // A 面板挂 hyalite
-  var A = document.getElementById('panelA');
-  if (Hyalite.supported()) {
-    Hyalite.attach(A, { bevel: 18, thickness: 30, blur: 3, shade: 0.6, rim: 1.2, edge: 1, materialize: 0 });
+  // 定位到四个象限
+  var W = window.innerWidth, H = window.innerHeight;
+  function place(id, left, top) {
+    var p = document.getElementById(id);
+    p.style.left = left + 'px';
+    p.style.top = top + 'px';
   }
+  var padX = W * 0.04, padY = H * 0.02;
+  var pw = W * 0.44;
+  place('p1', padX, padY + H * 0.05);
+  place('p2', W - padX - pw, padY + H * 0.05);
+  place('p3', padX, H/2 + padY + H * 0.03);
+  place('p4', W - padX - pw, H/2 + padY + H * 0.03);
 
-  // 拖动（两个面板都能拖）
+  // 拖动
   function drag(panel) {
     var sx, sy, ox, oy, dragging = false;
     panel.addEventListener('touchstart', function(e){
@@ -134,7 +213,7 @@
     }, {passive:false});
     panel.addEventListener('touchend', function(){ dragging = false; });
   }
-  drag(A); drag(document.getElementById('panelB'));
+  ['p1','p2','p3','p4'].forEach(function(id){ drag(document.getElementById(id)); });
 </script>
 </body>
 </html>
