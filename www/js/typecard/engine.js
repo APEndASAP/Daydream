@@ -312,8 +312,13 @@
         }
         if (this._state === STATE.IDLE) this._ensureSummonPanel();
       } else {
-        // 形态 B/C：先撤召唤面板（收起状态一并复位）
-        this._summonDismissed = false;
+        // 形态 B/C：先撤召唤面板
+        // 20261010：弹窗打开（_tcModalOpen）时是「临时离开聊天页」，不该复位用户「主动收起」
+        // 状态——否则关弹窗后 _ensureSummonPanel 会误弹悬浮窗（用户报：点撤回弹窗关闭后悬浮窗弹出）。
+        // 只在真正离开聊天页/关闭召唤（非弹窗）时才复位，让下次进入召唤模式正常出现。
+        if (!_tcModalOpen()) {
+          this._summonDismissed = false;
+        }
         this._destroySummonPanel();
         if (showDot) {
           ui.ensureFloatDot();
