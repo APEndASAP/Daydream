@@ -965,7 +965,7 @@
       const isLight = document.body.classList.contains('theme-light');
       const frag = document.createDocumentFragment();
 
-      // ---- 0) 玻璃纹理（V1.0.8·alpha 烘焙版）：透明度烘进位图 alpha（14/255≈5.5%），
+      // ---- 0) 玻璃纹理（alpha 烘焙版）：透明度烘进位图 alpha（14/255≈5.5%），
       //      免疫真机「backdrop-filter 父层丢弃子元素 CSS opacity」合成 bug；
       //      frost 全内联样式，不依赖外部 css 选择器。磨砂主体仍靠 blur(14px)。 ----
       frag.appendChild(_frostSVG());
@@ -1216,7 +1216,7 @@
     return svg;
   }
 
-  // ---- 玻璃纹理·磨砂颗粒（20261009 夜 V1.0.8 定稿·alpha 烘焙版）：
+  // ---- 玻璃纹理·磨砂颗粒（定稿·alpha 烘焙版）：
   //      ★真机根因实锤：面板有 backdrop-filter + will-change:transform 时，
   //      Android WebView 合成器会丢弃子元素的 CSS opacity（桌面正常）——
   //      这解释了此前 0.12/0.05/0.03 每次降透明度真机都毫无变化、颗粒始终全强度。
@@ -1915,55 +1915,11 @@
   }
 
   // ======================================================================
-  // 20261009 深夜根治：软键盘弹出检测（点输入框 → 键盘弹出 → 视口高度骤降）
-  // → 临时给 body 加 .tc-kb-open，CSS 切悬浮窗 backdrop-filter 为纯半透明底色，
-  //   避开真机 WebView「backdrop-filter 在视口 resize 时重采样撕裂=一条杠」的 bug；
-  //   键盘收起（视口高度恢复）自动移除 class、恢复毛玻璃。
-  // 判定基准：记录常态视口高度，若高度骤降超过 ~160px 即判定键盘弹出。
-  // 用 visualViewport（Android WebView/Capacitor 支持）优先，退化 window resize。
-  // 铁律：普通模式静态+拖动悬浮窗不动（它内容静止、backdrop 只采样一次，本就正常），
-  //      本监听只在「点输入框」这种视口变化场景介入，兜底所有模式的演出/待机面板。
+  // 20261009 深夜终版：已删除「软键盘弹出切换去模糊」监听（body.tc-kb-open）。
+  // 切换 backdrop-filter 数值这个动作本身在真机 WebView 触发采样重建=一条杠，
+  // 想靠切换避开撕裂反而制造撕裂。现所有状态共用一套恒定 blur(14px)，
+  // 视口 resize（键盘弹出）也不改 blur 值，无需任何监听。
   // ======================================================================
-  (function () {
-    try {
-      var vv = (typeof window.visualViewport !== 'undefined') ? window.visualViewport : null;
-      var baseH = null;      // 常态视口高度基准（键盘未弹出时的高度）
-      var kbOpen = false;
-
-      function applyKb(open) {
-        if (open === kbOpen) return;
-        kbOpen = open;
-        if (open) document.body.classList.add('tc-kb-open');
-        else document.body.classList.remove('tc-kb-open');
-      }
-
-      function onViewportChange() {
-        try {
-          var h = vv ? vv.height : (window.innerHeight || 0);
-          if (!h) return;
-          // 首次/键盘收起后更新基准（高度回升则刷新基准）
-          if (baseH === null || h > baseH - 60) {
-            baseH = h;
-            applyKb(false);
-            return;
-          }
-          // 高度骤降（软键盘弹出，一般降 250~400px）：判定键盘弹出
-          if (baseH - h > 120) applyKb(true);
-          else applyKb(false);
-        } catch (e) {}
-      }
-
-      if (vv) {
-        vv.addEventListener('resize', onViewportChange);
-        // 滚动偏移变化也可能伴随键盘，一并兜底
-        try { vv.addEventListener('scroll', onViewportChange); } catch (e) {}
-      } else {
-        window.addEventListener('resize', onViewportChange);
-      }
-      // 初始化基准
-      setTimeout(onViewportChange, 0);
-    } catch (e) {}
-  })();
 
   global.bmTypecardUi = ui;
 })(typeof window !== 'undefined' ? window : this);
