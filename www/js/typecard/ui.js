@@ -939,6 +939,33 @@
   function _decorateFloatPanel(panel) {
     if (!panel || panel._decorated) return;
     panel._decorated = true;
+    // 20261010 真折射玻璃（hyalite）：深浅色主题都挂 hyalite 液态玻璃真折射到
+    //   .tc-bd-clip 裁切层上。Chromium 支持（桌面浏览器/OPPO 等独立内核）→ 真折射；
+    //   不支持（老 WebView）→ CSS fallback（var(--hyalite, blur(...))）接管，观感平滑降级。
+    //   深色用官方默认观感（深色水感折射），浅色 shade 更低=更白更透、rim 更高=白玻璃亮边更强。
+    //   两个模式（召唤/普通）都走 buildFloatPanel → _decorateFloatPanel 这一个统一入口，
+    //   折射/装饰/边框天然全形态一致，不存在「只做一边」。
+    try {
+      if (typeof Hyalite !== 'undefined' && Hyalite.supported()) {
+        const clip = panel.querySelector('.tc-bd-clip');
+        if (clip) {
+          const isLight = document.body.classList.contains('theme-light');
+          // 官方默认参数（bevel37/thickness59/shade0.46/rim1.76/edge0.32/blur1/sat0.86）。
+          //   深色保持默认；浅色 shade 更低=玻璃更白更透、rim/edge 更高=白玻璃亮边更强。
+          Hyalite.attach(clip, {
+            bevel: 37, thickness: 59, slope: 2.7, shape: 'squircle',
+            blur: 1, dispersion: 1.6,
+            shade: isLight ? 0.22 : 0.46,
+            rim: isLight ? 2.0 : 1.76,
+            edgeW: 8, sat: 0.86,
+            edge: isLight ? 0.45 : 0.32,
+            light: -140, smooth: 1,
+            materialize: 0, settle: 0, self: false
+          });
+          panel._hyaliteClip = clip;
+        }
+      }
+    } catch (e) {}
     _renderFloatDecor(panel);
     // 20261009 渲染稳定修复：装饰层只随「宽度」显著变化（旋屏/手动拉宽）重建，
     // 不再随正文高度增长（打字过程中正文逐行撑高）反复清空重建——
