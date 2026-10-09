@@ -636,12 +636,9 @@
         self._active.ghost = ghost;
         self._state = STATE.PLAYING;
 
-        // 20261009 渲染稳定修复：float 演出期间给面板加 .tc-typing，临时关闭磨砂
-        // 换实色玻璃（与拖动态同思路），消除打字时 backdrop-filter 反复重采样闪烁。
-        // 演出结束 ghost 被 removeGhost 移除，class 随节点消失，无需显式清理。
-        if (isFloat && ghost && ghost.classList) {
-          ghost.classList.add('tc-typing');
-        }
+        // 20261009 晚终版：演出期间不再加 .tc-typing 关磨砂（实色切换=观感跳变，
+        // 用户要求恢复最初恒定磨砂）。稳定性已由 blur 14px + 底色 0.42 根治，
+        // 演出全程保持恒定毛玻璃观感。
 
         // 20261008 晚：演出全程显示「正在输入中」（聊天流三点气泡 + 顶部签名），
         // 结束（_finish）/打断（abort/回收）时由 tcHideTyping 移除。用户要求：
@@ -862,6 +859,14 @@
       return this.render(m);
     }
   };
+
+  // 20261009：engine 加载即预取悬浮窗记忆位置（填 ui 内存缓存），
+  // 冷启动首次打开悬浮窗也能同步定位、消除「先在初始位置闪一下」。
+  // ui.js 先于 engine.js 加载，此处 bmTypecardUi 必已就绪；容错 try 包裹。
+  try {
+    const _ui = global.bmTypecardUi;
+    if (_ui && typeof _ui.preloadFloatPos === 'function') _ui.preloadFloatPos();
+  } catch (e) {}
 
   global.bmTypecard = engine;
 })(typeof window !== 'undefined' ? window : this);

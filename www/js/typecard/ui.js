@@ -36,6 +36,12 @@
   // 无需 engine 显式绑定（本阶段不改 engine.js）。
   let activeGhost = null;
 
+  // 20261009：悬浮窗位置同步缓存。getSetting 是异步 Promise，若只在 then 回调里
+  // 恢复 left/top，面板会先按 CSS 默认（居中底部）渲染一帧、再跳回记忆位置 → 用户看到
+  // 「打开时先在初始位置闪一下」。缓存由 endDrag 同步写入，buildFloatPanel 创建后同步读取，
+  // 位置一步到位、零闪烁；getSetting 仅在缓存为空时（冷启动）异步兜底。
+  let _floatPanelPosCache = null;
+
   // 构建 Shadow DOM 面板的样式（内联注入，只作用于面板内部）
   function panelStyle() {
     return `
@@ -352,26 +358,37 @@
       // （按钮已 stopPropagation 隔离，其余区域纯视觉，整块拖拽不误触任何功能）
       _makeDraggable(panel);
       // 20261008 用户要求：记住上次拖到的位置，下次打开原地出现
-      // （恢复时按当前视口钳制，防旋屏/小屏后位置出界；无记忆走默认底部居中）
-      try {
-        if (typeof global.getSetting === 'function') {
-          global.getSetting('typecardFloatPanelPos', null).then(function (pos) {
-            if (pos && typeof pos.left === 'number' && typeof pos.top === 'number') {
-              const vw = window.innerWidth || document.documentElement.clientWidth;
-              const vh = window.innerHeight || document.documentElement.clientHeight;
-              const w = panel.offsetWidth || 280;
-              const h = panel.offsetHeight || 180;
-              const nx = Math.max(6, Math.min(pos.left, vw - w - 6));
-              const ny = Math.max(6, Math.min(pos.top, vh - h - 6));
-              panel.style.left = nx + 'px';
-              panel.style.top = ny + 'px';
-              panel.style.bottom = 'auto';
-              panel.style.right = 'auto';
-              panel.style.transform = 'none';
-            }
-          }).catch(function () {});
+      // （恢复时按当前视口钳制，防旋屏/小屏后位置出界；无记忆走默认底部居中）。
+      // 20261009 修复「打开先在初始位置闪一下」：优先用同步缓存 _floatPanelPosCache
+      // 一步到位定位（零闪烁）；缓存为空（冷启动）才异步 getSetting 兜底。
+      const _applyPos = function (pos) {
+        if (pos && typeof pos.left === 'number' && typeof pos.top === 'number') {
+          const vw = window.innerWidth || document.documentElement.clientWidth;
+          const vh = window.innerHeight || document.documentElement.clientHeight;
+          const w = panel.offsetWidth || 280;
+          const h = panel.offsetHeight || 180;
+          const nx = Math.max(6, Math.min(pos.left, vw - w - 6));
+          const ny = Math.max(6, Math.min(pos.top, vh - h - 6));
+          panel.style.left = nx + 'px';
+          panel.style.top = ny + 'px';
+          panel.style.bottom = 'auto';
+          panel.style.right = 'auto';
+          panel.style.transform = 'none';
+          return true;
         }
-      } catch (e) {}
+        return false;
+      };
+      if (_floatPanelPosCache) {
+        _applyPos(_floatPanelPosCache);
+      } else {
+        try {
+          if (typeof global.getSetting === 'function') {
+            global.getSetting('typecardFloatPanelPos', null).then(function (pos) {
+              if (_applyPos(pos)) { _floatPanelPosCache = pos; }
+            }).catch(function () {});
+          }
+        } catch (e) {}
+      }
       activeGhost = panel;   // 绑定为当前活动演出节点（供 play 定位）
       return panel;
     },
@@ -383,6 +400,21 @@
       document.body.appendChild(panel);
       _decorateFloatPanel(panel);
       return true;
+    },
+
+    // 20261009：预取悬浮窗记忆位置填内存缓存（冷启动首次打开也同步定位、零闪跳）。
+    // engine 在初始化时调一次，之后 buildFloatPanel 直接走同步缓存，不再等异步 getSetting。
+    preloadFloatPos: function () {
+      if (_floatPanelPosCache) return;
+      try {
+        if (typeof global.getSetting === 'function') {
+          global.getSetting('typecardFloatPanelPos', null).then(function (pos) {
+            if (pos && typeof pos.left === 'number' && typeof pos.top === 'number') {
+              _floatPanelPosCache = pos;
+            }
+          }).catch(function () {});
+        }
+      } catch (e) {}
     },
 
     // ======================================================================
@@ -788,16 +820,22 @@
 
   // ======================================================================
   // 悬浮窗拖拽（20261008 用户要求：去掉手柄，整块面板都能拖动）。
-  // 只做「定位」：pointerdown 记起点 → pointermove 更新 left/top → pointerup 结束。
+  // 只做「定位」：pointerdown 记起点 → pointermove 更新位置 → pointerup 结束。
   // 铁律：
-  //   · 拖拽只改 panel 的 left/top（第一次按下时把居中/记忆定位切换成显式坐标）；
+  //   · 20261009 晚终版：拖动位移改 transform: translate3d——纯合成器动画，
+  //     不触发主线程 layout/paint。left/top 位移会让 backdrop-filter 面板每帧
+  //     重排+重绘（主线程）再叠加模糊重采样（合成线程），移动端 GPU 扛不住 →
+  //     磨砂闪烁（「拖动时跳来跳去」根因）。translate3d 只走合成器，
+  //     磨砂层恒定渲染，拖动全程稳定。
+  //   · 按下时把「居中/记忆定位」固化成显式 left/top（一次 layout，无视觉变化）；
+  //     拖动中只写 transform（钳制后的位移量）；松手把最终位置写回 left/top、
+  //     transform 清 none（同帧同位，无跳变）。
   //   · 边界钳制在视口内（左右/上下留 6px），绝不拖出屏幕；
-  //   · 面板内部无可交互元素（候选/键帽纯视觉），整块拖拽不误触任何功能；
   //   · 松手记住位置（kv typecardFloatPanelPos），下次打开原地出现。
   // ======================================================================
   function _makeDraggable(panel) {
     if (!panel) return;
-    let drag = null; // { sx, sy, ox, oy, pid }
+    let drag = null; // { sx, sy, ox, oy, pid, maxDx, minDx, maxDy, minDy }
     let moved = false;
 
     try { panel.style.touchAction = 'none'; panel.style.cursor = 'grab'; } catch (e) {}
@@ -806,14 +844,23 @@
       // 只响应主键 / 单指
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       const rect = panel.getBoundingClientRect();
-      // 把「居中定位 / 记忆定位」切换成「显式坐标定位」
+      // 把「居中定位 / 记忆定位」切换成「显式坐标定位」（同帧同位，无视觉跳变）
       panel.style.left = rect.left + 'px';
       panel.style.top = rect.top + 'px';
       panel.style.bottom = 'auto';
       panel.style.right = 'auto';
       panel.style.transform = 'none';
-      panel.classList.add('tc-dragging');
-      drag = { sx: e.clientX, sy: e.clientY, ox: rect.left, oy: rect.top, pid: e.pointerId };
+      // 预计算位移钳制范围（拖动中直接用，不再读 offsetWidth 触发强制布局）
+      const vw = window.innerWidth || document.documentElement.clientWidth;
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      const w = panel.offsetWidth;
+      const h = panel.offsetHeight;
+      const MARGIN = 6;
+      drag = {
+        sx: e.clientX, sy: e.clientY, ox: rect.left, oy: rect.top, pid: e.pointerId,
+        minDx: MARGIN - rect.left,         maxDx: vw - w - MARGIN - rect.left,
+        minDy: MARGIN - rect.top,          maxDy: vh - h - MARGIN - rect.top
+      };
       moved = false;
       try { panel.setPointerCapture(e.pointerId); } catch (err) {}
       e.preventDefault();
@@ -823,36 +870,39 @@
       if (!drag) return;
       const dx = e.clientX - drag.sx;
       const dy = e.clientY - drag.sy;
-      if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return; // 防手抖：微移不算拖拽
+      if (!moved && Math.abs(dx) < 2 && Math.abs(dy) < 2) return; // 防手抖：微移不算拖拽
       moved = true;
-      const vw = window.innerWidth || document.documentElement.clientWidth;
-      const vh = window.innerHeight || document.documentElement.clientHeight;
-      const w = panel.offsetWidth;
-      const h = panel.offsetHeight;
-      const MARGIN = 6; // 左右/上下最小留边，避免贴死屏幕边缘
-      let nx = drag.ox + dx;
-      let ny = drag.oy + dy;
-      // 边界钳制：不越出视口
-      nx = Math.max(MARGIN, Math.min(nx, vw - w - MARGIN));
-      ny = Math.max(MARGIN, Math.min(ny, vh - h - MARGIN));
-      panel.style.left = nx + 'px';
-      panel.style.top = ny + 'px';
+      // 纯合成器位移：translate3d（不碰 left/top，零 layout/paint）
+      const tx = Math.max(drag.minDx, Math.min(dx, drag.maxDx));
+      const ty = Math.max(drag.minDy, Math.min(dy, drag.maxDy));
+      drag.lastTx = tx; drag.lastTy = ty;   // 记录最后钳制位移（pointercancel 时 event 坐标不可靠）
+      panel.style.transform = 'translate3d(' + tx.toFixed(1) + 'px,' + ty.toFixed(1) + 'px,0)';
       e.preventDefault();
     });
 
     function endDrag(e) {
       if (!drag) return;
       try { if (drag.pid != null) panel.releasePointerCapture(drag.pid); } catch (err) {}
+      const d = drag;
       drag = null;
-      panel.classList.remove('tc-dragging');
+      // 松手：把钳制后的最终位置写回 left/top，transform 清 none（与当前视觉同位，无跳变）
+      // 位移用 pointermove 记录的最后值（pointercancel 的 clientX/Y 不可靠）
+      const tx = (typeof d.lastTx === 'number') ? d.lastTx : 0;
+      const ty = (typeof d.lastTy === 'number') ? d.lastTy : 0;
+      panel.style.left = (d.ox + tx) + 'px';
+      panel.style.top = (d.oy + ty) + 'px';
+      panel.style.transform = 'none';
       // 松手记住位置：下次打开原地出现（20261008 用户要求）
       if (moved) {
+        const savedPos = {
+          left: parseFloat(panel.style.left) || 0,
+          top: parseFloat(panel.style.top) || 0
+        };
+        // 20261009：同步更新内存缓存，下次 buildFloatPanel 一步到位（消除打开闪跳）
+        _floatPanelPosCache = savedPos;
         try {
           if (typeof global.setSetting === 'function') {
-            global.setSetting('typecardFloatPanelPos', {
-              left: parseFloat(panel.style.left) || 0,
-              top: parseFloat(panel.style.top) || 0
-            });
+            global.setSetting('typecardFloatPanelPos', savedPos);
           }
         } catch (err) {}
       }
