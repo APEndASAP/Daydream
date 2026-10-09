@@ -654,9 +654,12 @@
         self._active.ghost = ghost;
         self._state = STATE.PLAYING;
 
-        // 20261009 晚终版：演出期间不再加 .tc-typing 关磨砂（实色切换=观感跳变，
-        // 用户要求恢复最初恒定磨砂）。稳定性已由 blur 14px + 底色 0.42 根治，
-        // 演出全程保持恒定毛玻璃观感。
+        // 20261009 深夜根治（「打字演出出现一条杠/渲染一半」）：
+        // 演出期间正文逐字撑高面板 → backdrop-filter 每帧重采样 → 真机 WebView 撕裂。
+        // 给 float 演出面板加 .tc-playing（CSS 切 backdrop-filter 为纯半透明底色），
+        // 演出全程面板随便变高都不会触发 backdrop 重采样；结束（_finish/abort）自动移除、
+        // 恢复毛玻璃。bubble 模式无 backdrop-filter，加不加无副作用。
+        try { if (isFloat) ghost.classList.add('tc-playing'); } catch (e) {}
 
         // 20261008 晚：演出全程显示「正在输入中」（聊天流三点气泡 + 顶部签名），
         // 结束（_finish）/打断（abort/回收）时由 tcHideTyping 移除。用户要求：

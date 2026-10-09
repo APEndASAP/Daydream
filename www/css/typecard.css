@@ -80,7 +80,7 @@
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   z-index: 2147482000;               /* 与开屏/引导同级，确保盖过普通聊天层、不盖系统级 */
   width: auto;
-  min-width: 240px;                  /* 20261008：与气泡内嵌下限对齐，面板三行不塌、候选行完整 */
+  min-width: 244px;                  /* 20261009 深夜：与气泡内嵌下限对齐(244px)，面板三行不塌、候选行完整、字卡不裁切 */
   max-width: min(88vw, 420px);       /* 窄屏不贴边，桌面端不无限拉宽 */
   box-sizing: border-box;
   padding: 10px 12px;
@@ -112,12 +112,37 @@
     inset 0 0 22px rgba(255, 255, 255, 0.05);
   /* 浮层可读性：正文预览文字用主文字色，深浅色均高对比 */
   color: var(--text, #f5f4f7);
-  /* 20261009 晚终版：拖动已改 transform 位移（纯合成器动画），
-     提示独立合成层服务 transform，left/top 仅在按下/松手各写一次 */
-  will-change: transform;
+  /* 20261009 深夜根治（用户反馈「点输入框出现一条杠/渲染一半的图」）：
+     ★真机 WebView 合成器 bug 实锤——backdrop-filter + will-change:transform 同时存在时，
+      面板几何一变（打字撑高）或视口一变（软键盘弹出 resize），backdrop 被迫重采样，
+      采样区与面板几何错位 → 渲染出「一条杠」（一半旧图一半未完成采样）。
+      will-change 原为拖动稳定性服务，但 translate3d 本身已足够触发独立合成层，
+      will-change 反而让面板长期占据合成层、backdrop 采样持续不稳定。彻底移除。
+      （拖动/静态悬浮窗之所以正常，正因它们内容静止、backdrop 只采样一次。） */
   /* 高度：内容自然撑开，绝不裁切（不设 height/max-height/overflow:hidden） */
   height: auto;
   overflow: visible;
+}
+/* 20261009 深夜根治（软键盘弹出临时去模糊）：
+   点输入框 → 软键盘弹出 → 视口高度骤降 → backdrop-filter 重采样撕裂。
+   ui.js 监听 visualViewport.resize 检测到高度骤降时给 body 加 .tc-kb-open，
+   临时切纯半透明底色（不模糊、零 backdrop 重采样），键盘收起自动恢复毛玻璃。
+   观感与静态悬浮窗几乎一致（磨砂主体本就靠底色+边缘高光，blur 只是锦上添花）。 */
+body.tc-kb-open .typecard-float-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+body.tc-kb-open.theme-light .typecard-float-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 20261009 深夜根治（演出期间去模糊）：打字逐字撑高面板 → backdrop-filter 每帧重采样撕裂。
+   engine.js 演出开始时给 float 面板加 .tc-playing，结束时移除。演出全程纯半透明底色
+   （磨砂主体=底色+边缘高光，去 blur 观感几乎不变），面板随便变高零重采样、零一条杠。
+   !important 确保覆盖 glass-ui/glass-mid/tcf-mid 等所有精度档的 blur 规则。 */
+.typecard-float-panel.tc-playing {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 /* 20261009 午后：噪点颗粒已整体移除（用户要求光滑玻璃，深色背景上颗粒读作砂纸）。
    ::after 噪点规则删除；tc-frost / tc-crinkle 不再由 ui.js 注入，display:none 兜底防残留。 */
@@ -230,9 +255,13 @@ body.theme-light .typecard-float-panel {
   border-radius: 999px;
   /* 玻璃拟态：半透面 + 白细边 + 内高光，与整块毛玻璃悬浮窗/花簇/银链同一质感 */
   border: 1px solid rgba(255, 255, 255, 0.30);
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.05) 40%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 0.12) 100%),
-    rgba(139, 116, 232, 0.22);
+  /* 20261009 深夜根治（召唤模式「一开始就渲染异常」）：
+     ★真机 WebView 合成器 bug——按钮多层渐变背景（linear-gradient×2 + radial）
+      叠在父面板 backdrop-filter 合成层内，初次合成即触发 backdrop 采样不稳定，
+      这是召唤待机面板「一打开就一条杠/渲染一半」而普通静态面板（无按钮）正常的根因。
+      改为单一半透明纯色背景：观感不变（磨砂由父面板整体提供），
+      彻底消除多层背景与 backdrop-filter 的组合合成 bug。 */
+  background: rgba(139, 116, 232, 0.26);
   /* 20261009 晚终定稿：去掉按钮自身的 backdrop-filter（blur10 嵌套在面板 blur14 内，
      真机 WebView 嵌套 backdrop-filter 触发合成层 bug → 召唤面板静止即渲染异常）。
      按钮面积小，磨砂感由面板整体提供，这里改纯半透明背景即可，观感不变。 */
@@ -251,9 +280,7 @@ body.theme-light .typecard-float-panel {
   transition: transform 0.1s ease, opacity 0.12s ease, background 0.15s ease;
 }
 .tc-summon-btn:hover {
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.08) 40%, rgba(255, 255, 255, 0) 60%, rgba(255, 255, 255, 0.16) 100%),
-    rgba(139, 116, 232, 0.30);
+  background: rgba(139, 116, 232, 0.34);
 }
 .tc-summon-btn:active { transform: scale(0.96); }
 .tc-summon-btn:disabled { opacity: 0.45; cursor: default; }
@@ -269,7 +296,9 @@ body.theme-light .tc-summon-btn {
    稳定性改由三项根治手段保证，不再用「磨砂↔实色」模式切换（切换本身即观感跳变）：
    ① 拖动位移改 transform: translate3d（ui.js）——纯合成器动画，不触发主线程重排重绘；
    ② blur 26→14px + 底色 0.26→0.42——每帧重采样成本减半，可读性不全依赖重模糊；
-   ③ will-change: transform 提示独立合成层。拖拽「正在拖动」反馈由 ui.js cursor:grabbing 承担。 */
+   ③（20261009 深夜已废弃）will-change:transform 已彻底移除——它与 backdrop-filter 组合
+     在真机 WebView 触发合成层 bug（面板几何/视口变化时 backdrop 重采样撕裂=一条杠）。
+     translate3d 本身已足够触发独立合成层，无需 will-change。 */
 
 /* 悬浮窗淡出（演出完成/abort 后移除）：只用 opacity，不碰 transform——
    面板可能已被拖拽成显式 left/top + transform:none，若这里再写 translateX(-50%) 会跳回居中再淡出 */

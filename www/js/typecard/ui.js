@@ -1914,5 +1914,56 @@
     }
   }
 
+  // ======================================================================
+  // 20261009 深夜根治：软键盘弹出检测（点输入框 → 键盘弹出 → 视口高度骤降）
+  // → 临时给 body 加 .tc-kb-open，CSS 切悬浮窗 backdrop-filter 为纯半透明底色，
+  //   避开真机 WebView「backdrop-filter 在视口 resize 时重采样撕裂=一条杠」的 bug；
+  //   键盘收起（视口高度恢复）自动移除 class、恢复毛玻璃。
+  // 判定基准：记录常态视口高度，若高度骤降超过 ~160px 即判定键盘弹出。
+  // 用 visualViewport（Android WebView/Capacitor 支持）优先，退化 window resize。
+  // 铁律：普通模式静态+拖动悬浮窗不动（它内容静止、backdrop 只采样一次，本就正常），
+  //      本监听只在「点输入框」这种视口变化场景介入，兜底所有模式的演出/待机面板。
+  // ======================================================================
+  (function () {
+    try {
+      var vv = (typeof window.visualViewport !== 'undefined') ? window.visualViewport : null;
+      var baseH = null;      // 常态视口高度基准（键盘未弹出时的高度）
+      var kbOpen = false;
+
+      function applyKb(open) {
+        if (open === kbOpen) return;
+        kbOpen = open;
+        if (open) document.body.classList.add('tc-kb-open');
+        else document.body.classList.remove('tc-kb-open');
+      }
+
+      function onViewportChange() {
+        try {
+          var h = vv ? vv.height : (window.innerHeight || 0);
+          if (!h) return;
+          // 首次/键盘收起后更新基准（高度回升则刷新基准）
+          if (baseH === null || h > baseH - 60) {
+            baseH = h;
+            applyKb(false);
+            return;
+          }
+          // 高度骤降（软键盘弹出，一般降 250~400px）：判定键盘弹出
+          if (baseH - h > 120) applyKb(true);
+          else applyKb(false);
+        } catch (e) {}
+      }
+
+      if (vv) {
+        vv.addEventListener('resize', onViewportChange);
+        // 滚动偏移变化也可能伴随键盘，一并兜底
+        try { vv.addEventListener('scroll', onViewportChange); } catch (e) {}
+      } else {
+        window.addEventListener('resize', onViewportChange);
+      }
+      // 初始化基准
+      setTimeout(onViewportChange, 0);
+    } catch (e) {}
+  })();
+
   global.bmTypecardUi = ui;
 })(typeof window !== 'undefined' ? window : this);
