@@ -964,11 +964,10 @@
       const isLight = document.body.classList.contains('theme-light');
       const frag = document.createDocumentFragment();
 
-      // ---- 0) 玻璃纹理（20261009 午后定稿：光滑为主 + 极淡细颗粒）：
-      //      只保留一层细腻磨砂颗粒（tc-frost），baseFrequency 0.8→0.12（低频=大而柔的
-      //      细颗粒，不再是高频砂纸），normal 混合 + 低透明度——光滑观感为主、带一点点
-      //      玻璃纹理质感。皱褶压纹（tc-crinkle，含斜向光带=「白杠」来源）仍不注入。
-      //      纹理为静态 SVG 平铺（100% + stitchTiles），不随尺寸/拖动重建，渲染稳定不跳。 ----
+      // ---- 0) 玻璃纹理（真机友好版）：一层极淡的雾面起伏（非沙粒）。
+      //      磨砂主体靠 backdrop-filter: blur(14px) 模糊背景，此层只补「一点点」空气雾化。
+      //      baseFrequency 0.04 + discrete 低对比压缩 → 真机呈现若有若无的柔和雾斑，
+      //      不再是黑白分明的颗粒。css opacity 0.03 控强度。 ----
       frag.appendChild(_frostSVG());
 
       // ---- 1) 碎玻璃碎片层（20261009 晚用户要求移除）：碎片填充透明度极低暗背景不可见，
@@ -1217,9 +1216,14 @@
     return svg;
   }
 
-  // ---- 玻璃纹理·磨砂颗粒（Spotify 参考图）：feTurbulence 灰度噪点。
-  //      20261009 午后：baseFrequency 0.8→0.12（低频=大而柔的细颗粒，去掉砂纸感），
-  //      numOctaves 2→3（更平滑），normal 混合 + 低透明度（css 控），静态平铺不重建。 ----
+  // ---- 玻璃纹理·磨砂颗粒（真机友好版，20261009 晚终定稿）：
+  //      真机 WebView 对 feTurbulence fractalNoise 会渲染得比桌面端更锐更密（DPR 缩放+
+  //      移动 GPU 光栅化差异），baseFrequency 0.12 在真机上读作「沙沙颗粒」。
+  //      改法：① baseFrequency 0.12→0.04（低频=大而柔的云状雾面，非沙粒）；
+  //      ② feComponentTransfer 用 discrete 曲线把噪点压成「低对比、近中灰」的极淡雾斑
+  //        （亮部压暗、暗部提亮→颗粒不再黑白分明，只剩一层若有若无的雾面起伏）；
+  //      ③ css 层 opacity 0.05→0.03（真机上「一点点」的临界值）。
+  //      效果：光滑磨砂为主，贴近玻璃表面一层极淡的空气雾化，不再有沙粒感。 ----
   function _frostSVG() {
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
@@ -1229,8 +1233,13 @@
     _decorUid++;
     const fid = 'tcfr' + _decorUid;
     svg.innerHTML = '<filter id="' + fid + '" x="0" y="0" width="100%" height="100%">'
-      + '<feTurbulence type="fractalNoise" baseFrequency="0.12" numOctaves="3" stitchTiles="stitch"/>'
+      + '<feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="7" stitchTiles="stitch"/>'
       + '<feColorMatrix type="saturate" values="0"/>'
+      + '<feComponentTransfer>'
+      + '  <feFuncR type="discrete" tableValues="0.42 0.46 0.50 0.54 0.58"/>'
+      + '  <feFuncG type="discrete" tableValues="0.42 0.46 0.50 0.54 0.58"/>'
+      + '  <feFuncB type="discrete" tableValues="0.42 0.46 0.50 0.54 0.58"/>'
+      + '</feComponentTransfer>'
       + '</filter>'
       + '<rect width="100%" height="100%" filter="url(#' + fid + ')"/>';
     return svg;

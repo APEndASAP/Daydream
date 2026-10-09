@@ -182,10 +182,10 @@ body.theme-light .typecard-float-panel {
    中灰中和、亮暗斑点浮现——可见的 dither 质感；圆角裁剪不越出玻璃面。
    20261009 晚终版：opacity 0.30→0.16——真机特写里 overlay 噪点过重（砂纸感），
    减淡后保留细腻 dither 质感、不再抢观感 */
-/* 玻璃纹理·磨砂颗粒（20261009 午后定稿：光滑为主 + 极淡细颗粒）。
-   baseFrequency 已在 ui.js 降到 0.12（低频=大而柔的细颗粒，非高频砂纸）；
-   这里用 normal 混合 + 低透明度 0.05（不用 overlay，避免逐帧混合重算导致渲染跳变），
-   静态平铺、不随拖动重建——颗粒淡到「有玻璃质感但不抢光滑」，且渲染稳定不闪。 */
+/* 玻璃纹理·磨砂颗粒（真机友好版，20261009 晚终定稿）：
+   baseFrequency 0.04 + discrete 低对比压缩（ui.js 控），真机呈现极淡雾面起伏；
+   这里 opacity 0.03（「一点点」颗粒的临界值，桌面端几乎不可见、真机刚好有一丝）。
+   静态平铺、不随拖动重建，渲染稳定不闪。 */
 .typecard-float-panel .tc-frost {
   position: absolute;
   inset: 0;
@@ -195,7 +195,7 @@ body.theme-light .typecard-float-panel {
   pointer-events: none;
   border-radius: inherit;
   overflow: hidden;
-  opacity: 0.05;
+  opacity: 0.03;
 }
 /* 玻璃纹理·皱褶压纹（PS 参考）：抖动晶格亮暗成对折痕 + 长波纹 + 斜向光带
    20261009 午后：皱褶层（含斜向光带=「白杠」来源之一）已整体移除，display:none 兜底 */
