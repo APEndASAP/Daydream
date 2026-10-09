@@ -964,9 +964,12 @@
       const isLight = document.body.classList.contains('theme-light');
       const frag = document.createDocumentFragment();
 
-      // ---- 0) 玻璃纹理：磨砂颗粒 + 皱褶压纹（透明度已在 css 向参考图调淡）----
+      // ---- 0) 玻璃纹理（20261009 午后定稿：光滑为主 + 极淡细颗粒）：
+      //      只保留一层细腻磨砂颗粒（tc-frost），baseFrequency 0.8→0.12（低频=大而柔的
+      //      细颗粒，不再是高频砂纸），normal 混合 + 低透明度——光滑观感为主、带一点点
+      //      玻璃纹理质感。皱褶压纹（tc-crinkle，含斜向光带=「白杠」来源）仍不注入。
+      //      纹理为静态 SVG 平铺（100% + stitchTiles），不随尺寸/拖动重建，渲染稳定不跳。 ----
       frag.appendChild(_frostSVG());
-      frag.appendChild(_crinkleSVG(w, h, isLight));
 
       // ---- 1) 碎玻璃碎片层（20261009 晚用户要求移除）：碎片填充透明度极低暗背景不可见，
       //      只剩 rim/glint 亮色描边，读作「三条平行斜杠」+「空心三角」，观感杂乱——
@@ -1214,8 +1217,9 @@
     return svg;
   }
 
-  // ---- 玻璃纹理·磨砂颗粒（Spotify 参考图）：feTurbulence 灰度噪点 +
-  //      mix-blend-mode:overlay——中灰中和、亮暗斑点浮现，形成可见的 dither 质感 ----
+  // ---- 玻璃纹理·磨砂颗粒（Spotify 参考图）：feTurbulence 灰度噪点。
+  //      20261009 午后：baseFrequency 0.8→0.12（低频=大而柔的细颗粒，去掉砂纸感），
+  //      numOctaves 2→3（更平滑），normal 混合 + 低透明度（css 控），静态平铺不重建。 ----
   function _frostSVG() {
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
@@ -1225,7 +1229,7 @@
     _decorUid++;
     const fid = 'tcfr' + _decorUid;
     svg.innerHTML = '<filter id="' + fid + '" x="0" y="0" width="100%" height="100%">'
-      + '<feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" stitchTiles="stitch"/>'
+      + '<feTurbulence type="fractalNoise" baseFrequency="0.12" numOctaves="3" stitchTiles="stitch"/>'
       + '<feColorMatrix type="saturate" values="0"/>'
       + '</filter>'
       + '<rect width="100%" height="100%" filter="url(#' + fid + ')"/>';
