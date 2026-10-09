@@ -310,6 +310,14 @@
       panel.className = 'typecard-float-panel';
       panel.setAttribute('data-typecard-float', '1');
 
+      // 20261010 直角遮罩/横线根治：backdrop-filter 必须挂在这个内层裁切层上，
+      // 绝不能回到面板本体——面板本体带 transform（拖拽/居中），Android WebView
+      // 会按矩形采样（不裁圆角=「遮罩有棱角」、尺寸不同步=「贯穿横线」）。
+      // 外层 border-radius:inherit + overflow:hidden 强制裁成圆角，内层 ::before 挂 blur。
+      const bdClip = document.createElement('div');
+      bdClip.className = 'tc-bd-clip';
+      panel.appendChild(bdClip);
+
       // 复用输入法面板（Shadow DOM）——与 bubble 完全同一套
       const host = document.createElement('div');
       host.className = 'tc-panel-host';
