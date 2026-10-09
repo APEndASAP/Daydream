@@ -3780,6 +3780,12 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
       if (lastMsg && !lastMsg.recalled) maybeCharPoke(curChar);
       // 20260929ah：回复后小概率追加表情包/emoji（AI 与字卡模式都生效）
       if (curChar) maybeAttachSticker(curChar);
+      // 20261010：正常回复成功后，若玩家已退出该聊天页（回复在延迟中生成、退出那一刻
+      // 列表已渲染过旧摘要），补刷一次聊天列表，让刚落库的新消息立即反映在列表摘要里。
+      // 复用现有「是否在当前聊天页」判断，不新增状态、不动落库/通知/数据库。
+      if (!(currentCharId === charId && document.body.dataset.view === 'chat')) {
+        renderChatList();
+      }
       resolve(lastMsg);
       };
       try {

@@ -965,10 +965,10 @@
       const isLight = document.body.classList.contains('theme-light');
       const frag = document.createDocumentFragment();
 
-      // ---- 0) 玻璃纹理（alpha 烘焙版）：透明度烘进位图 alpha（14/255≈5.5%），
-      //      免疫真机「backdrop-filter 父层丢弃子元素 CSS opacity」合成 bug；
-      //      frost 全内联样式，不依赖外部 css 选择器。磨砂主体仍靠 blur(14px)。 ----
-      frag.appendChild(_frostSVG());
+      // ---- 0) 玻璃纹理·磨砂噪点颗粒（20261010 已彻底移除）：用户要求光滑玻璃，
+      //      深色背景上噪点读作砂纸；且真机 DPR 非整数缩放下 64px 噪点平铺与 blur 采样
+      //      产生摩尔纹干涉=「波浪状遮皱」真凶（深浅色都有、仅真机出现）。
+      //      不再注入 tc-frost。磨砂雾感完全来自面板恒定 blur(14px)，无需噪点层。 ----
 
       // ---- 1) 碎玻璃碎片层（20261009 晚用户要求移除）：碎片填充透明度极低暗背景不可见，
       //      只剩 rim/glint 亮色描边，读作「三条平行斜杠」+「空心三角」，观感杂乱——
