@@ -75,7 +75,7 @@
   <div class="bgtext" style="top:70%;left:18%">晴天</div>
   <div class="bgtext" style="top:82%;left:55%">在输入中…</div>
 </div>
-<div class="hint">拖动面板看是否「叠层/闪烁」· A=hyalite 真折射 · B=静态雾面</div>
+<div class="hint" id="envHint">拖动面板看是否「叠层/闪烁」· A=hyalite 真折射 · B=静态雾面</div>
 
 <div class="panel hyalite" id="panelA">
   <div class="tag">A · hyalite <b id="supA"></b></div>
@@ -91,6 +91,22 @@
 
 <script src="hyalite.js"></script>
 <script>
+  // 环境探针：顶部 hint 实时显示运行环境
+  (function(){
+    var ua = navigator.userAgent;
+    var isChromium = /Chrom(e|ium)\//i.test(ua);
+    var isAndroid = /Android/i.test(ua);
+    var isWebView = isAndroid && /wv\)/i.test(ua);
+    var isIos = /iPhone|iPad|iPod/i.test(ua);
+    var mem = navigator.deviceMemory || '未知';
+    var sup = (typeof Hyalite !== 'undefined') ? Hyalite.supported() : 'Hyalite未加载';
+    var env = isWebView ? 'APP/WebView' : (isAndroid ? '安卓浏览器' : (isIos ? 'iOS浏览器' : '桌面浏览器'));
+    var cdp = isChromium ? 'Chromium' : '非Chromium';
+    document.getElementById('envHint').textContent =
+      '环境=' + env + ' · 内核=' + cdp + ' · 内存=' + mem + 'GB · Hyalite支持=' + (sup?'true':'false')
+      + ' · 拖动面板看是否「叠层/闪烁」· A=真折射 B=静态雾面';
+  })();
+
   // 支持性标记
   document.getElementById('supA').textContent = Hyalite.supported() ? '✓Chromium折射' : '✗仅回退blur';
 
