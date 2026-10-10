@@ -310,13 +310,11 @@
       panel.className = 'typecard-float-panel';
       panel.setAttribute('data-typecard-float', '1');
 
-      // 20261010 直角遮罩/横线根治：backdrop-filter 必须挂在这个内层裁切层上，
-      // 绝不能回到面板本体——面板本体带 transform（拖拽/居中），Android WebView
-      // 会按矩形采样（不裁圆角=「遮罩有棱角」、尺寸不同步=「贯穿横线」）。
-      // 外层 border-radius:inherit + overflow:hidden 强制裁成圆角，内层 ::before 挂 blur。
-      const bdClip = document.createElement('div');
-      bdClip.className = 'tc-bd-clip';
-      panel.appendChild(bdClip);
+      // 20261010 终极根治：不再用 .tc-bd-clip 内层裁切层。这个「圆角裁切层」的
+      //   overflow:hidden + backdrop-filter 组合在 App WebView 里采样错位、露出直角
+      //   玻璃边=「上面一层遮罩」。玻璃拟态元素(.modal/.chat-panel)无此层、backdrop
+      //   直接挂本体，实测无遮罩——悬浮窗改成同构：backdrop-filter 直接挂面板本体，
+      //   圆角靠 border-radius 自然生效。
 
       // 复用输入法面板（Shadow DOM）——与 bubble 完全同一套
       const host = document.createElement('div');
@@ -939,24 +937,8 @@
   function _decorateFloatPanel(panel) {
     if (!panel || panel._decorated) return;
     panel._decorated = true;
-    // 20261010 纯 CSS 确定性磨砂玻璃（放弃 SVG 真折射）：
-    //   磨砂由 .tc-bd-clip 内层裁切层 CSS 写死 backdrop-filter: blur(18px) saturate(1.35)
-    //   承担，任何 Chromium/厂商 WebView 都真实透出背景。不再在此挂 Hyalite——
-    //   之前 hyalite 在 App WebView 写了 --hyalite:url(#id) 但 SVG 折射滤镜厂商 WebView
-    //   不渲染，导致 var(--hyalite, blur(6px)) 的 fallback 因「变量已定义」永不生效，
-    //   磨砂层透明一片 = 用户报「一点没改」。液态玻璃观感由 CSS 多层渐变光斑+高光描边
-    //   承接，深浅色主题都走同一套 CSS，无需 JS 分叉。
-    // 20261010 终极定案（用户截图实锤）：APP WebView（Capacitor）里 backdrop-filter
-    //   的采样层不按圆角裁切、不跟随面板移动——真折射/纯CSS blur 全都露出「直角遮罩」，
-    //   这是合成器级缺陷，换任何玻璃实现都躲不开。唯一根治=APP 里零采样：
-    //   检测 Capacitor 环境给 body 挂 tc-appview，CSS 侧切「确定性静态玻璃」
-    //   （半透明渐变底透出背景，无 blur、无采样层，机制上根绝遮罩/错位/横线）；
-    //   PC 浏览器不受影响，保留真磨砂。
-    try {
-      if (window.Capacitor && !document.body.classList.contains('tc-appview')) {
-        document.body.classList.add('tc-appview');
-      }
-    } catch (e) {}
+    // 20261010 终极根治：backdrop-filter 直接挂面板本体（同玻璃拟态 .modal/.chat-panel，
+    //   真机证明无遮罩），不再用 .tc-bd-clip 裁切层。磨砂观感由 CSS 承担，此处只做装饰。
     _renderFloatDecor(panel);
     // 20261009 渲染稳定修复：装饰层只随「宽度」显著变化（旋屏/手动拉宽）重建，
     // 不再随正文高度增长（打字过程中正文逐行撑高）反复清空重建——

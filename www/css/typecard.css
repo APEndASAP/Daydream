@@ -85,35 +85,13 @@
   box-sizing: border-box;
   padding: 12px 14px;
   border-radius: 20px;                /* 大圆角矩形（iOS glass 风格） */
-  /* 20261010 直角遮罩/横线根治：backdrop-filter 不再挂在面板本体——
-   面板本体带 transform（拖拽定位/translateX(-50%) 居中），Android WebView 上
-   模糊采样区域按矩形计算：①不按圆角裁（四角露出直角玻璃=用户报「遮罩有棱角」）、
-   ②尺寸与面板不同步（错位直线边界=贯穿横线）。PC 端无此合成 bug 所以一直正常。
-   改由内层专用模糊层承担：外层 .tc-bd-clip 圆角+overflow:hidden 强制裁成圆角，
-   内层 ::before 无 transform 恒定挂 blur——玻璃观感不变，直角遮罩与错位线一起消失。
-   注意：模糊层值全档恒定（从建到销毁绝不改变，见下方「恒定 blur」注释）。 */
-.typecard-float-panel .tc-bd-clip {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
-  /* 20261010 纯 CSS 确定性磨砂玻璃（放弃 SVG 真折射）：
-     backdrop-filter 直接写死在内层裁切层上（本元素无 transform，transform 在父级
-     .typecard-float-panel 上），用固定 blur 值，任何 Chromium/WebView 都能真实
-     磨砂透出背景。不再用 var(--hyalite) —— 之前 hyalite 在 App WebView 里写了
-     --hyalite:url(#id) 但 SVG 折射滤镜厂商 WebView 不渲染，导致 var 的 blur(6px)
-     fallback 因「变量已定义」而永不生效，磨砂层变透明一片 = 用户报「一点没改」。
-     现在直接写死 blur，杜绝 fallback 失效。 */
+  /* 20261010 终极根治：backdrop-filter 直接挂面板本体（与玻璃拟态 .modal/.chat-panel
+     同构，已被真机证明无遮罩）。之前用 .tc-bd-clip 内层裁切层 + overflow:hidden
+     强制裁圆角，结果 overflow:hidden 让采样层与元素边界错位、露出直角玻璃边=遮罩。
+     现在去掉中间层，圆角由 border-radius 自然生效（backdrop-filter 跟随 border-radius
+     裁圆角），磨砂透出背景。 */
   backdrop-filter: blur(18px) saturate(1.35);
   -webkit-backdrop-filter: blur(18px) saturate(1.35);
-}
-.typecard-float-panel .tc-bd-clip::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
 }
 /* 内容层抬高到模糊层之上（装饰元素后挂载且自带定位，仍在最上层不受影响） */
 .typecard-float-panel > .tc-panel-host,
@@ -126,23 +104,23 @@
      半透明雾面底（蓝灰，高透 0.30 让背景透出=水感）+ 大半径柔和 blur(18px) + 细白高光
      描边 + 顶缘玻璃厚度内高光 + 斜向折射光斑（提亮水感）+ 左上柔光 + 轻阴影悬浮。
      非塑料、非灰遮罩。
-     ★横线真因（20261010 定案）：backdrop-filter 挂在带 transform 的面板本体上，
-     Android WebView 模糊区域按矩形采样且不裁圆角——直角边界=「有棱角的遮罩」，
-     边界与面板错位=「贯穿横线」。已改挂 .tc-bd-clip 内层圆角裁切层（见上方注释）。 */
+     ★遮罩真因（20261010 终极定案）：之前用 .tc-bd-clip 裁切层 overflow:hidden 裁圆角，
+     该 overflow:hidden + backdrop-filter 在 App WebView 采样错位、露出直角玻璃边=遮罩。
+     已移除裁切层，backdrop-filter 直接挂本体，圆角靠 border-radius 自然生效（同玻璃拟态
+     .modal/.chat-panel，真机无遮罩）。 */
   background:
     /* ① 斜向折射光斑（150deg，大范围低对比，有方向） */
     linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.10) 100%),
     /* ② 左上柔和反光/空气感（径向光晕，镜片反光） */
     radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 55%),
-    /* ③ 半透明底：20261010 纯 CSS 确定性玻璃——底色回到中透(0.32/0.24)，
-       配合内层 .tc-bd-clip 的 blur(18px) 磨砂透出背景（深色水感），
+    /* ③ 半透明底：中透(0.32/0.24)，backdrop-filter 挂本体磨砂透出背景（深色水感），
        文字可读性由下方 text-shadow 保障 */
     linear-gradient(180deg, rgba(80, 90, 128, 0.32), rgba(50, 58, 86, 0.24));
   background-size: auto, auto, auto;
   background-position: 0 0, 0 0, 0 0;
   border: 1px solid rgba(255, 255, 255, 0.32);   /* 细白高光描边（液态玻璃亮边） */
-  /* 20261010 纯 CSS 确定性玻璃：磨砂由 .tc-bd-clip 内层裁切层承担（blur 写死），
-     面板本体不再挂 blur；纯 CSS 折射光斑+中透底色透出背景，观感贴近液态玻璃。 */
+  /* 20261010 纯 CSS 确定性玻璃：backdrop-filter 直接挂本体（blur 写死），
+     折射光斑+中透底色透出背景，观感贴近液态玻璃。 */
   box-shadow:
     /* 轻阴影悬浮（浮起不压黑） */
     0 14px 40px rgba(0, 0, 0, 0.26),
@@ -191,32 +169,6 @@ body.theme-light .typecard-float-panel {
   /* 可读性：浅色预设深字 + 浅色微光晕 */
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
-}
-
-/* ======================================================================
-   20261010 终极降级：APP WebView（Capacitor）专用「确定性静态玻璃」。
-   用户真机截图实锤：APP WebView 里 backdrop-filter 采样层不按圆角裁切、
-   不跟随面板移动——直角玻璃边界露出圆角面板外=「上面一层遮罩」。
-   真折射(hyalite)与纯CSS blur 全踩同一个合成器缺陷。根治=APP 内零采样：
-   .tc-bd-clip 完全去掉 backdrop-filter（无采样→机制上根绝遮罩/错位/横线），
-   面板底色加浓补偿文字可读性，半透明底照样透出背景（只是不糊化）。
-   PC 浏览器（无 tc-appview 类）不受影响，保留真磨砂。 */
-body.tc-appview .typecard-float-panel .tc-bd-clip {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background: linear-gradient(150deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.03) 35%, rgba(255,255,255,0.08) 100%);
-}
-body.tc-appview .typecard-float-panel {
-  background:
-    linear-gradient(150deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 58%, rgba(255,255,255,0.10) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255,255,255,0.18), rgba(255,255,255,0) 55%),
-    linear-gradient(180deg, rgba(78,88,126,0.72), rgba(48,56,84,0.66)) !important;
-}
-body.theme-light.tc-appview .typecard-float-panel {
-  background:
-    linear-gradient(150deg, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.22) 34%, rgba(255,255,255,0.06) 60%, rgba(255,255,255,0.36) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255,255,255,0.66), rgba(255,255,255,0) 55%),
-    rgba(246, 248, 253, 0.86) !important;
 }
 
 /* 面板内容层级：压在裂纹层(z0)之上、花饰(z2)之下 */
@@ -547,26 +499,8 @@ body.theme-light.tcf-low .typecard-float-panel {
 }
 /* 召唤按钮：20261010 V1.1 确定性玻璃——按钮自身本无 backdrop-filter（历史已移除嵌套），
    无需单独降级规则。 */
-
-/* 20261010 V1.1 重构：backdrop-filter 已整体废弃（见 .tc-bd-clip::before 注释），
-   各档不再有 blur 半径差异。档位差异改由「底色透明度 + 纹理密度」承接（见下方 tcf/glass 档）。
-   此处 4 条 ::before 覆盖规则一并禁用，防止重新打开 blur。 */
-body.tcf-mid .typecard-float-panel .tc-bd-clip::before {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-body.tcf-low .typecard-float-panel .tc-bd-clip::before {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-body.glass-ui.glass-mid .typecard-float-panel .tc-bd-clip::before {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-body.glass-ui.glass-low .typecard-float-panel .tc-bd-clip::before {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
+/* 20261010 终极根治：.tc-bd-clip 裁切层已整体移除（见 .typecard-float-panel 注释），
+   backdrop-filter 直接挂面板本体。下方 4 条 .tc-bd-clip::before 死规则一并删除。 */
 
 
 /* ============================================================================
