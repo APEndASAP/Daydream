@@ -1,8 +1,8 @@
-﻿/* ============================================================
+/* ============================================================
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.0'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.1'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
 
 let characters = [];
 let cards = null;
@@ -43,6 +43,14 @@ let chatSettings = {
   lettersEnabled: true,          // 访客随机来信总开关（书信 13）
   lettersDailyLimit: 2,          // 访客随机来信每日上限（0~5，书信 13）
   skipOverclockAnim: false,      // 超频：跳过裂隙动画（20260929ao；低端机/卡顿时建议开启）
+  typecardOn: false,             // 20261008：打字卡总开关（默认关；总设置对所有访客生效，访客主页聊天设置可单独覆盖）
+  typecardMode: 'bubble',        // 20261008：打字卡展示模式 bubble=气泡内嵌 / float=悬浮窗（默认气泡内嵌）
+  typecardSpeed: 1.0,            // 20261008：打字卡速度连续倍率（0.6=最快 ~ 5.0=最慢，默认 1.0 中间值；20261009 上限延长到 5.0）
+  typecardCoherence: 0,          // 20261008：打字卡通顺度滑块（0=纯拼字 ~ 1=沿语料游走 ~ 2=完整句子，默认 0 纯拼字）
+  typecardCards: true,           // 20261008：打字卡「拼字卡/表情」开关（默认开；关闭后打字卡只纯打字，不抽字卡/表情，不影响主线）
+  typecardSummon: false,         // 20261008 晚（碎梦重拼召唤）：常驻悬浮窗+「生成一条消息」按钮，独立于 typecardOn 互不干涉；速度/通顺度跟随打字卡设置
+  typecardSummonIntervalMin: 40,   // 20261009：召唤自动发消息随机区间下限（分钟）；上限 240 与查岗区间惯例一致，玩家可在召唤开关旁自设
+  typecardSummonIntervalMax: 240,  // 20261009：召唤自动发消息随机区间上限（分钟）；每次触发后在 [min,max] 内随机取下一次间隔
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -215,6 +223,8 @@ async function init() {
   // Q9 绘制开销降级：低端机统一打标，CSS 侧关闭 backdrop-filter 毛玻璃（最大绘制开销源）
   if (isLowEndDevice()) document.body.classList.add('low-end');
   await initGlassLevel(); // 20260929bh：玻璃三档精度——读上次的自动降级档位（避免每次会话重走降级）
+  await initTypecardFloatGlass(); // 20261009：悬浮窗玻璃精度三档（独立于全局玻璃拟态，默认跟随系统）
+  await initGlassPresets(); // 20261011：液态玻璃美化预设（悬浮窗/气泡/通话 1号纯CSS/2号真折射，默认1号）
   await loadGlobalTheme(); // 20260929bo：全局色彩预设（先于 applyChatTheme，浅色主题 class 一次到位）
   applyChatTheme();
   try {
@@ -440,6 +450,13 @@ function isLowEndDevice() {
    降级结果持久化（kv glassAutoLevel），下次启动直接沿用；手动切换玻璃开关时清除重判。 */
 let _glassLevel = 'hi';    // hi | mid | low（当前生效档位）
 let _glassManual = '';      // 20260929bj：手动选择的档位 hi|mid|low；''=跟随系统自动
+let _tcFloatGlass = 'hi';   // 20261009：悬浮窗（召唤+非召唤）玻璃精度当前生效档位 hi|mid|low
+let _tcFloatGlassManual = ''; // 20261009：悬浮窗玻璃精度手动档位 hi|mid|low；''=跟随系统自动
+// 20261011：液态玻璃美化预设（1号=纯CSS磨砂 / 2号=hyalite真折射），三入口独立记忆、默认1号。
+// 纯外观层，与功能无关；网站与 App 一致（不区分 Capacitor）。
+let _floatPreset = '1';    // 悬浮窗（碎梦重拼/召唤）预设
+let _bubblePreset = '1';   // 气泡预设
+let _callPreset = '1';     // 模拟通话预设
 let _noticeGate = false;    // 20260929bk：软件声明弹窗显示期间=true，抑制来电/超频/书信等打断弹窗，保证声明始终在最前
 let _glassFpsState = null; // { raf, frames, winStart, lowSec }
 let _glassFpsDelay = null;
@@ -472,6 +489,137 @@ async function initGlassLevel() {
     const saved = await getSetting('glassAutoLevel');
     if (saved === 'mid' || saved === 'low') _glassLevel = saved;
   } catch (e) {}
+}
+
+/* ---------- 20261009：悬浮窗（召唤+非召唤）玻璃精度三档，独立于全局玻璃拟态模式 ----------
+   与主线玻璃精度同一套判定（glassBaseLevel 设备检测），但用独立的 body.tcf-hi/mid/low 类，
+   不依赖 body.glass-ui 总开关——玩家没开玻璃拟态时，悬浮窗也能按设备/手动选择独立控制模糊精度。
+   默认跟随系统（_tcFloatGlassManual='' → 用 glassBaseLevel 设备判定）；
+   手动选择 hi/mid/low 则锁定该档，帧率不足也不自动降级（尊重玩家选择）。 */
+async function initTypecardFloatGlass() {
+  _tcFloatGlass = glassBaseLevel();
+  try {
+    const manual = await getSetting('typecardFloatGlass');
+    if (manual === 'hi' || manual === 'mid' || manual === 'low') {
+      _tcFloatGlassManual = manual;
+      _tcFloatGlass = manual;
+    }
+  } catch (e) {}
+  applyTypecardFloatGlass();
+}
+
+/* 应用悬浮窗玻璃档位：挂 body.tcf-hi/mid/low（hi 为默认态，无需额外类） */
+function applyTypecardFloatGlass() {
+  document.body.classList.toggle('tcf-mid', _tcFloatGlass === 'mid');
+  document.body.classList.toggle('tcf-low', _tcFloatGlass === 'low');
+}
+
+/* ==================== 20261011：液态玻璃美化预设（1号纯CSS / 2号hyalite真折射） ====================
+   三入口（悬浮窗/气泡/模拟通话）各自独立的 1/2 预设，默认 1号纯CSS，网站与 App 一致。
+   纯外观层，不碰功能/消息/数据库/通知/备份。 */
+async function initGlassPresets() {
+  const load = async (k) => { try { return await getSetting(k); } catch (e) { return null; } };
+  _floatPreset = (await load('floatPreset')) === '2' ? '2' : '1';
+  _bubblePreset = (await load('bubblePreset')) === '2' ? '2' : '1';
+  _callPreset = (await load('callPreset')) === '2' ? '2' : '1';
+  // 桥接：让 typecard/ui.js 独立脚本能读到悬浮窗预设
+  window.__bmGlassPreset = (which) => {
+    if (which === 'float') return _floatPreset;
+    if (which === 'bubble') return _bubblePreset;
+    if (which === 'call') return _callPreset;
+    return '1';
+  };
+  _syncHyaliteForce();
+}
+
+/* hyalite 是否可用（hyalite.js 已加载即可；网站与 App 一致） */
+function _hyaliteAvailable() {
+  return !!(typeof window !== 'undefined' && window.Hyalite);
+}
+
+/* hyalite 真折射参数（V1.1 定案：深 shade0.46/rim1.76/edge0.32，浅 0.22/2.0/0.45） */
+function _hyaliteOpts() {
+  const isLight = document.body && document.body.classList.contains('theme-light');
+  return {
+    bevel: 37, thickness: 59, slope: 2.7, shape: 'squircle',
+    blur: 1, dispersion: 1.6,
+    shade: isLight ? 0.22 : 0.46,
+    rim: isLight ? 2.0 : 1.76,
+    edge: isLight ? 0.45 : 0.32,
+    edgeW: 8, sat: 0.86, light: -140, materialize: 0, self: false
+  };
+}
+
+/* hyalite 引擎强制状态统一管理（20261011 定案铁律）：
+   ① 只有任一入口处于 2号 时才 force(true)——App WebView 的 supported() 靠 navigator.vendor
+      嗅探会误判 false，必须强制才能挂真折射；② 全部切回 1号 时 force(null) 还原嗅探——
+      绝不残留强制（「不分时候强制」根因）。三处预设切换都调它，幂等。 */
+function _anyGlassPreset2() { return _floatPreset === '2' || _bubblePreset === '2' || _callPreset === '2'; }
+function _syncHyaliteForce() {
+  if (typeof window === 'undefined' || !window.Hyalite || typeof window.Hyalite.force !== 'function') return;
+  try { window.Hyalite.force(_anyGlassPreset2() ? true : null); } catch (e) {}
+}
+
+/* 气泡预设同步：2号 → watch #chat-scroll 的 .bubble（新增自动挂）；1号 → 全卸载 */
+let _bubbleHyaliteWatch = null;
+function syncBubbleHyalite() {
+  _syncHyaliteForce();
+  if (!_hyaliteAvailable()) { _bubbleHyaliteStop(); document.body.classList.remove('hm-bubble-hyalite'); return; }
+  if (_bubblePreset === '2') {
+    document.body.classList.add('hm-bubble-hyalite');
+    if (_bubbleHyaliteWatch) return;
+    try {
+      const host = $('#chat-scroll');
+      if (host) _bubbleHyaliteWatch = window.Hyalite.watch(host, '.msg-row .bubble', _hyaliteOpts());
+    } catch (e) {}
+  } else {
+    document.body.classList.remove('hm-bubble-hyalite');
+    _bubbleHyaliteStop();
+  }
+}
+function _bubbleHyaliteStop() {
+  if (_bubbleHyaliteWatch) { try { _bubbleHyaliteWatch.stop(); } catch (e) {} _bubbleHyaliteWatch = null; }
+  if (window.Hyalite) {
+    try {
+      document.querySelectorAll('#chat-scroll .msg-row .bubble').forEach(el => {
+        if (el.classList.contains('tc-hyalite')) { el.classList.remove('tc-hyalite'); try { window.Hyalite.detach(el); } catch (e) {} }
+      });
+    } catch (e) {}
+  }
+}
+
+/* 模拟通话预设同步：2号 → attach #call-box（先 detach 防叠层）；1号 → detach */
+function syncCallHyalite() {
+  _syncHyaliteForce();
+  // 20261011：通话 2号玻璃覆盖两个形态——完整通话框 #call-box + 缩小小窗 #call-float
+  const box = document.getElementById('call-box');
+  if (box) {
+    if (!_hyaliteAvailable()) { box.classList.remove('tc-hyalite'); try { window.Hyalite.detach(box); } catch (e) {} }
+    else if (_callPreset === '2') {
+      box.classList.add('tc-hyalite');
+      try { window.Hyalite.detach(box); window.Hyalite.attach(box, _hyaliteOpts()); } catch (e) {}
+    } else {
+      box.classList.remove('tc-hyalite');
+      try { window.Hyalite.detach(box); } catch (e) {}
+    }
+  }
+  const mini = document.getElementById('call-float');
+  if (mini) {
+    if (!_hyaliteAvailable() || _callPreset !== '2') {
+      mini.classList.remove('tc-hyalite');
+      try { window.Hyalite.detach(mini); } catch (e) {}
+    } else {
+      mini.classList.add('tc-hyalite');
+      try { window.Hyalite.detach(mini); window.Hyalite.attach(mini, _hyaliteOpts()); } catch (e) {}
+    }
+  }
+}
+
+/* 悬浮窗预设同步：由 ui.js 读 __bmGlassPreset('float') 决定 attach/detach；
+   这里只负责切预设后 force 同步 + 让 ui.js 重挂一遍已存在的面板。 */
+function syncFloatHyalite() {
+  _syncHyaliteForce();
+  try { if (window.bmTypecardUi && typeof window.bmTypecardUi.refreshFloatGlass === 'function') window.bmTypecardUi.refreshFloatGlass(); } catch (e) {}
 }
 
 /* 统一应用玻璃档位：glass-ui 总开关 + glass-mid/glass-low 档位类 + 帧率监测启停 */
@@ -2566,6 +2714,7 @@ async function renderMessages(charId) {
   for (let i = _chatWin.start; i < msgs.length; i++) appendMessage(msgs[i], false);
   _chatWin.suspend = false;
   scrollToBottom();
+  syncBubbleHyalite(); // 20261011：按气泡预设 2号挂 hyalite（watch 接管消息气泡）
 }
 
 /* 消息头像（5.2/22：气泡旁显示发送者头像） */
@@ -2594,6 +2743,192 @@ function jumpToQuotedMessage(msgId) {
   try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { try { row.scrollIntoView(); } catch (e2) {} }
   row.classList.remove('msg-jump-flash');
   void row.offsetWidth; // 强制 reflow：连续点击同一条也能重启动画
+  row.classList.add('msg-jump-flash');
+  setTimeout(() => { try { row.classList.remove('msg-jump-flash'); } catch (e) {} }, 1800);
+}
+
+/* ============================================================
+   聊天记录搜索（20261006，单聊+群聊共用）
+   · 数据源：当前会话已在内存的 _chatWin.all（不重查 IndexedDB）
+   · 文本提取：复用 msgBodyText(m)
+   · 定位：jumpToChatMessage(msgId) —— 复用现有虚拟滚动窗口，绝不 start→all.length 全量渲染
+   ============================================================ */
+
+let _searchOpen = false;      // 搜索浮层是否打开
+let _searchResults = [];      // 当前匹配结果（按 time 降序）
+let _searchShown = 0;         // 已渲染条数（UI 分批）
+const SEARCH_BATCH = 30;      // 每批显示 30 条
+const SEARCH_DEBOUNCE = 300;  // 输入防抖 ms
+
+/* 搜索文本提取（复用 msgBodyText，不重造）；sender 按单聊/群聊取 */
+function chatSearchSender(m) {
+  if (m.from === 'me') return '我';
+  if (_chatWin && _chatWin.mode === 'group') {
+    const g = chatGroups.find(x => x.id === currentGroupId);
+    return groupMemberName(g, m.charId);
+  }
+  const c = characters.find(x => x.id === m.charId);
+  return c ? c.name : 'TA';
+}
+
+/* 安全高亮：先找关键词位置，对三段分别 escapeHtml 后再拼 <mark>，杜绝 XSS 与 entity 长度错位 */
+function highlightSearchKw(text, kw) {
+  const s = String(text == null ? '' : text);
+  const q = (kw || '').trim();
+  if (!q) return escapeHtml(s);
+  const idx = s.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return escapeHtml(s);
+  const before = s.slice(0, idx);
+  const hit = s.slice(idx, idx + q.length);
+  const after = s.slice(idx + q.length);
+  return escapeHtml(before) + '<mark>' + escapeHtml(hit) + '</mark>' + escapeHtml(after);
+}
+
+/* 执行搜索：遍历 _chatWin.all，msgBodyText 匹配，按 time 降序 */
+function chatSearchRun(kw) {
+  _searchResults = [];
+  _searchShown = 0;
+  const q = (kw || '').trim();
+  const box = $('#chat-search-results');
+  const empty = $('#chat-search-empty');
+  if (!_chatWin || !_chatWin.all || !_chatWin.all.length) {
+    if (box) box.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (!q) {
+    if (box) box.innerHTML = '';
+    if (empty) empty.style.display = 'none';
+    return;
+  }
+  const ql = q.toLowerCase();
+  const hits = [];
+  for (const m of _chatWin.all) {
+    const text = msgBodyText(m);
+    if (!text) continue;
+    if (String(text).toLowerCase().indexOf(ql) >= 0) {
+      hits.push({ id: m.id, time: m.time, text, sender: chatSearchSender(m) });
+    }
+  }
+  // all 为 time 升序 → 倒序（由近到远）
+  _searchResults = hits.reverse();
+  if (!_searchResults.length) {
+    if (box) box.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+  } else {
+    if (empty) empty.style.display = 'none';
+    chatSearchRenderBatch();
+  }
+}
+
+/* UI 分批渲染：每次追加 SEARCH_BATCH 条，滚动到底再追加 */
+function chatSearchRenderBatch() {
+  const box = $('#chat-search-results');
+  if (!box) return;
+  const end = Math.min(_searchResults.length, _searchShown + SEARCH_BATCH);
+  const frag = document.createDocumentFragment();
+  const kw = ($('#chat-search-input').value || '').trim();
+  for (let i = _searchShown; i < end; i++) {
+    const r = _searchResults[i];
+    const item = document.createElement('div');
+    item.className = 'chat-search-item';
+    item.dataset.msgid = r.id;
+    item.innerHTML = `
+      <div class="csi-head"><span class="csi-sender">${escapeHtml(r.sender)}</span><span class="csi-time">${escapeHtml(msgTimeLabel(r.time))}</span></div>
+      <div class="csi-text">${highlightSearchKw(r.text, kw)}</div>`;
+    item.addEventListener('click', () => { closeChatSearch(); jumpToChatMessage(r.id); });
+    frag.appendChild(item);
+  }
+  box.appendChild(frag);
+  _searchShown = end;
+}
+
+/* 打开搜索浮层 */
+function openChatSearch() {
+  if (_searchOpen) return;
+  _searchOpen = true;
+  let overlay = $('#chat-search-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'chat-search-overlay';
+    overlay.className = 'chat-search-overlay';
+    overlay.innerHTML = `
+      <div class="chat-search-panel">
+        <div class="chat-search-bar">
+          <input id="chat-search-input" type="text" placeholder="搜索当前聊天记录" autocomplete="off" />
+          <button class="icon-btn" id="chat-search-close" aria-label="关闭搜索">${icon('close', 18)}</button>
+        </div>
+        <div class="chat-search-results" id="chat-search-results"></div>
+        <div class="chat-search-empty" id="chat-search-empty" style="display:none;">未找到对应的梦境碎片。</div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeChatSearch(); });
+    overlay.querySelector('#chat-search-close').addEventListener('click', closeChatSearch);
+    const input = overlay.querySelector('#chat-search-input');
+    let debounceTimer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => chatSearchRun(input.value), SEARCH_DEBOUNCE);
+    });
+    // 结果区滚动到底 → 追加下一批
+    const resBox = overlay.querySelector('#chat-search-results');
+    resBox.addEventListener('scroll', () => {
+      if (resBox.scrollTop + resBox.clientHeight >= resBox.scrollHeight - 40
+          && _searchShown < _searchResults.length) {
+        chatSearchRenderBatch();
+      }
+    });
+  }
+  overlay.style.display = 'flex';
+  const input = overlay.querySelector('#chat-search-input');
+  input.value = '';
+  _searchResults = [];
+  _searchShown = 0;
+  overlay.querySelector('#chat-search-results').innerHTML = '';
+  overlay.querySelector('#chat-search-empty').style.display = 'none';
+  setTimeout(() => { try { input.focus(); } catch (e) {} }, 50);
+}
+
+/* 关闭搜索浮层 */
+function closeChatSearch() {
+  _searchOpen = false;
+  const overlay = $('#chat-search-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+/* 精准定位：复用现有虚拟滚动窗口，绝不 start→all.length 全量渲染。
+   只重渲染目标附近 CHAT_WINDOW 大小的窗口，再 scrollIntoView + 高亮。 */
+function jumpToChatMessage(msgId) {
+  if (!_chatWin || !_chatWin.all || !_chatWin.all.length) {
+    miniToast('原消息已不在当前记录中');
+    return;
+  }
+  const idx = _chatWin.all.findIndex(m => m.id === msgId);
+  if (idx < 0) {
+    miniToast('原消息已不在当前记录中');
+    return;
+  }
+  const scroll = $('#chat-scroll');
+  if (!scroll) return;
+  // 目标消息放在窗口偏前位置，四周留出上下文
+  _chatWin.start = Math.max(0, idx - 20);
+  const end = Math.min(_chatWin.all.length, _chatWin.start + CHAT_WINDOW);
+  // 复用现有窗口渲染语义：suspend 挂起避免 appendX 重复 push 进 all
+  scroll.innerHTML = '';
+  _chatWin.suspend = true;
+  for (let i = _chatWin.start; i < end; i++) {
+    if (_chatWin.mode === 'group') appendGroupMessage(_chatWin.all[i], false);
+    else appendMessage(_chatWin.all[i], false);
+  }
+  _chatWin.suspend = false;
+  // 若窗口未盖到末尾，补「加载更早」哨兵（保持向上滚动加载旧消息能力）
+  chatRenderSentinel(scroll);
+  // 定位 + 高亮（复用 jumpToQuotedMessage 尾段逻辑）
+  const row = scroll.querySelector(`.msg-row[data-msgid="${CSS.escape(msgId)}"]`);
+  if (!row) return;
+  try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { try { row.scrollIntoView(); } catch (e2) {} }
+  row.classList.remove('msg-jump-flash');
+  void row.offsetWidth;
   row.classList.add('msg-jump-flash');
   setTimeout(() => { try { row.classList.remove('msg-jump-flash'); } catch (e) {} }, 1800);
 }
@@ -3030,8 +3365,9 @@ function showMsgMenu(m, x, y) {
   // 记忆宫殿（20260929w 全量落地：以这条消息为基准点，前后各截 50 条存入访客文件夹）
   items.push({ icon: 'memory', label: '存入记忆宫殿', act: () => palCaptureMenu(m) });
   items.push({ icon: 'checklist', label: '多选', act: () => enterMultiSelect(m.id) });
-  if (m.from === 'me' && (m.type === 'text' || m.type === 'emoji') && chatSettings.allowRecall) {
-    // 5.3：只有单纯的字卡消息和表情包可以撤回
+  if (m.from === 'me' && chatSettings.allowRecall) {
+    // 20261008 用户要求：玩家的每条消息都可以撤回（不再限定字卡/表情包；
+    // 戳一戳等系统消息走独立分支不进本菜单，不受影响）。撤回行/查看原文渲染本就全类型通用。
     items.push({ icon: 'back', label: '撤回', act: () => recallMessage(m) });
   }
   items.push({ icon: 'trash', label: '删除该条消息', danger: true, act: () => {
@@ -3067,7 +3403,8 @@ function showGroupMsgMenu(g, m, x, y) {
   const items = [];
   items.push({ icon: 'quote', label: '引用该条消息', act: () => startQuote(m) });
   items.push({ icon: 'forward', label: '转发该条消息', act: () => showForwardModal(m) });
-  if (m.from === 'me' && (m.type === 'text' || m.type === 'emoji') && chatSettings.allowRecall) {
+  if (m.from === 'me' && chatSettings.allowRecall) {
+    // 20261008 与单聊同步：玩家的每条消息都可以撤回（不限字卡/表情包）
     items.push({ icon: 'back', label: '撤回', act: async () => {
       m.recalled = true;
       m.recallTime = Date.now();
@@ -3482,7 +3819,29 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
       const bannedGroups = curChar ? (curChar.bannedGroups || []) : []; // 角色勾选禁用的字卡分组
       // 20260929ae：AI 模式分流（AI 生成 / 失败自动回退字卡；字卡模式走原逻辑）
       // 20260929bf：AI 模式也随机 1~3 条——先抽条数，再让 AI 按条数分行输出
-      const gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
+      // 20261008 打字卡拦截：角色开启打字卡时，跳过主线 generateCharReply，
+      // 改由 typecard 自己从字库随机拼句生成回复（typing_card），字卡/表情穿插其中。
+      // 这是唯一允许修改主线核心逻辑的地方，最小侵入：只在生成入口分流，不重写后续落库/渲染。
+      const tcSettings = curChar ? getCharChatSettings(curChar) : chatSettings;
+      let gen;
+      let typecardBlocks = null;
+      if (tcSettings.typecardOn && window.bmTypecard && window.bmTypecard.generate) {
+        try {
+          const tc = await window.bmTypecard.generate(charId, {
+            banWords: banWords, relation: relation, bannedGroups: bannedGroups,
+            coherence: (typeof tcSettings.typecardCoherence === 'number') ? tcSettings.typecardCoherence : 0,
+            allowCards: tcSettings.typecardCards !== false
+          });
+          gen = { type: 'typing_card', text: tc.text };
+          typecardBlocks = tc.blocks;
+        } catch (e) {
+          // 打字卡生成失败：回退主线字卡生成，绝不静默不回复
+          gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
+          typecardBlocks = null;
+        }
+      } else {
+        gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
+      }
       // 20260929ah：随机 1~3 条回复——字卡模式按概率连发（此前只有单条，规则缺失），
       // AI 模式按 AI 输出分段拆条（最多 3 条），像真人连续发消息
       const parts = splitReplyParts(gen, curChar);
@@ -3495,9 +3854,26 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
         }
         const replyMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: parts[i], time: Date.now() };
         if (i === 0 && finalQuote) replyMsg.quote = finalQuote;
+        // 20261008：typing_card 消息附带 blocks（普通文字/字卡/表情的区分结构），
+        // 供打字卡演出时按块驱动（text 逐字打、card/emoji 整块飞入）。不破坏消息结构。
+        if (typecardBlocks && i === 0) {
+          replyMsg.meta = Object.assign({}, replyMsg.meta || {}, { typecardBlocks: typecardBlocks });
+        }
         await idbPut('messages', replyMsg);
         if (currentCharId === charId && document.body.dataset.view === 'chat') {
-          appendMessage(replyMsg);
+          // V1.1 打字卡 renderer 旁路：真实消息已落库，若该消息该演出则交给 typecard 接管展示。
+          // 不阻塞 deliverReply（fire-and-forget），render 内部失败兜底走 appendMessage。
+          if (window.bmTypecard && window.bmTypecard.shouldRender(replyMsg)) {
+            // 20261008 修复：shouldRender 不含开关判断（开关在 render 内部），打字卡关闭时
+            // render 仍被调用并 resolve(false)=「未接管」。原 .catch 只兜异常，正常模式下
+            // 消息被拦截后永不上屏（角色"没反应"根因）。上屏约定：
+            //   resolve(true)      = 演出接管（_finish 会上屏，主链不再插）
+            //   resolve(false)     = 未接管 → 主链 appendMessage
+            //   resolve(undefined) = render 内部异常已兜底上屏 → 主链不重复插
+            Promise.resolve(window.bmTypecard.render(replyMsg)).then(ok => { if (ok === false) appendMessage(replyMsg); }).catch(() => { appendMessage(replyMsg); });
+          } else {
+            appendMessage(replyMsg);
+          }
         }
         lastMsg = replyMsg;
         // 后续条目间隔 1.2~3.5 秒连续发出；引用只带在第一条上
@@ -3519,6 +3895,12 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
       if (lastMsg && !lastMsg.recalled) maybeCharPoke(curChar);
       // 20260929ah：回复后小概率追加表情包/emoji（AI 与字卡模式都生效）
       if (curChar) maybeAttachSticker(curChar);
+      // 20261010：正常回复成功后，若玩家已退出该聊天页（回复在延迟中生成、退出那一刻
+      // 列表已渲染过旧摘要），补刷一次聊天列表，让刚落库的新消息立即反映在列表摘要里。
+      // 复用现有「是否在当前聊天页」判断，不新增状态、不动落库/通知/数据库。
+      if (!(currentCharId === charId && document.body.dataset.view === 'chat')) {
+        renderChatList();
+      }
       resolve(lastMsg);
       };
       try {
@@ -3568,6 +3950,11 @@ function splitReplyParts(gen, c) {
     if (segs.length <= 1) return [gen.text];
     if (segs.length <= 3) return segs;
     return [segs[0], segs[1], segs.slice(2).join('\n')];
+  }
+  // 20261008：typing_card 是打字卡自己生成的单条消息（content 已含字卡/表情块拼接），
+  // 不再走主线字卡连发/组合逻辑，直接作为单条返回。
+  if (gen.type === 'typing_card') {
+    return [gen.text];
   }
   const r = Math.random();
   const n = r < 0.55 ? 1 : (r < 0.85 ? 2 : 3);
@@ -3704,6 +4091,35 @@ function restoreChatHeaderStatus() {
   setChatHeaderStatus(getCharPeriodStatus(c));
   setChatHeaderSign(c);
 }
+/* 20261008：打字卡演出专用「正在输入中」指示——演出全程显示（聊天流三点气泡 + 顶部签名），
+   演出结束/打断时移除。主线 deliverReply 在生成完就撤掉了指示，而打字卡演出还要打 8~15 秒，
+   用户要求演出期间必须一直显示。id 用 tc-typing-<charId> 与主线 typing-indicator-<charId>
+   区分开，并发时互不误删；签名/状态复用 setChatHeaderStatus / restoreChatHeaderStatus。 */
+function tcShowTyping(charId) {
+  try {
+    const c = characters.find(x => x.id === charId);
+    if (!c || currentCharId !== charId || document.body.dataset.view !== 'chat') return;
+    if (document.getElementById('tc-typing-' + charId)) return; // 幂等
+    const sc = $('#chat-scroll');
+    if (!sc) return;
+    const typing = document.createElement('div');
+    typing.className = 'msg-row them';
+    typing.id = 'tc-typing-' + charId;
+    typing.innerHTML = `${avatarHtml(c && c.avatar, c && c.name)}<div class="msg-body"><div class="bubble typing"><span></span><span></span><span></span></div></div>`;
+    sc.appendChild(typing);
+    scrollToBottom();
+    setChatHeaderStatus('', true);
+  } catch (e) {}
+}
+function tcHideTyping(charId) {
+  try {
+    const t = document.getElementById('tc-typing-' + charId);
+    if (t) t.remove();
+    if (document.body.dataset.view === 'chat') restoreChatHeaderStatus();
+  } catch (e) {}
+}
+window.tcShowTyping = tcShowTyping;
+window.tcHideTyping = tcHideTyping;
 /* 每分钟校准一次状态（跨时段自动换） */
 function startStatusTimer() {
   if (_statusTimer) clearInterval(_statusTimer);
@@ -3888,8 +4304,62 @@ function blobToDataURL(b) {
   });
 }
 async function dataURLToBlob(s) {
-  const res = await fetch(s);
-  return await res.blob();
+  // 20261011：根治「APK 端导入失败」——旧写法 fetch(data:URL) 在 Android WebView 里
+  // 对 data:/blob: URL 支持不可靠（常直接失败或返回空）。改为 atob 手动解码 base64，
+  // 完全不依赖 fetch，任何环境都稳定。同时兼容非 base64 的 data URL（URL 编码）。
+  if (typeof s !== 'string' || !s) return Promise.reject(new Error('图片数据为空'));
+  const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(s);
+  if (!m) return Promise.reject(new Error('非法的图片数据格式'));
+  const mime = m[1] || 'image/png';
+  const isB64 = m[2] === ';base64';
+  let body;
+  try {
+    body = isB64 ? atob(m[3]) : decodeURIComponent(m[3]);
+  } catch (e) {
+    return Promise.reject(new Error('图片数据解码失败'));
+  }
+  const u8 = new Uint8Array(body.length);
+  for (let i = 0; i < body.length; i++) u8[i] = body.charCodeAt(i);
+  return Promise.resolve(new Blob([u8], { type: mime }));
+}
+
+/* 20261009：单文件分块写盘——把一份 base64 内容分块 appendFile 写成「单个文件」，
+   规避「一次性 writeFile 传 ~167MB base64 字符串过 Capacitor Bridge → Java Heap OOM」。
+   每块 ~3MB 原始字节（base64 后 ~4MB），单次 Bridge payload 小、原生端流式追加，
+   既不 OOM、又保持 .ocdata 是用户能直接选中的单文件（导入端 file.text() 完全兼容）。 */
+async function writeSingleFileChunked(path, base64, directory) {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!FS || typeof FS.writeFile !== 'function') {
+    throw new Error('文件系统不可用');
+  }
+  const CHUNK = 4 * 1024 * 1024; // 4MB base64 字符 ≈ 3MB 原始字节
+  const total = base64.length;
+
+  // 20261011：小数据（单块内）或插件无 appendFile 能力 → 一次性 writeFile，最稳，不碰分块边界
+  if (total <= CHUNK || typeof FS.appendFile !== 'function') {
+    await FS.writeFile({ path, data: base64, directory, recursive: true });
+    return;
+  }
+
+  // 20261011：base64 尾部补 '=' 到 4 的倍数——否则最后一块 appendFile 按 base64 解码残缺片段会抛错
+  const pad = (4 - (total % 4)) % 4;
+  const padded = base64 + '='.repeat(pad);
+
+  // 切块必须按 4 的倍数对齐，保证每一块都是合法的独立 base64 片段（CHUNK 本身是 4 的倍数）
+  let first = true;
+  for (let off = 0; off < padded.length; off += CHUNK) {
+    const seg = padded.slice(off, off + CHUNK);
+    if (first) {
+      await FS.writeFile({ path, data: seg, directory, recursive: true });
+      first = false;
+    } else {
+      // 20261011：appendFile 补 recursive（与首块对齐），防父目录在两次调用间被清理导致追加失败
+      await FS.appendFile({ path, data: seg, directory, recursive: true });
+    }
+    if (CHUNK > 3 * 1024 * 1024 && off + CHUNK < padded.length) {
+      exportProgress(true, `💾 正在写入 ${Math.min(off + CHUNK, total)}/${total}…`);
+    }
+  }
 }
 
 /* 消息提示音（5.3：WebAudio 合成，无需外部资源，兼容 App 打包）
@@ -3948,12 +4418,77 @@ function shouldDingFor(c) {
    即使玩家没打开聊天页也会触发（模拟后台消息）
    修复：首次启动即初始化计时起点，到间隔后稳定触发（不再被额外概率挡住） */
 let _lastProactive = {}; // 按角色 id 记录上次主动发消息时间
-let _proactiveRandUntil = {}; // 随机模式下，按角色记录「下次触发时间点」
+let _proactiveRandUntil = {}; // 随机模式下，按角色记录「下次触发时间点」（内存态；见下 nextProactiveAt 持久化）
+/* 20261008 随机调度持久化：把「下次随机触发时间点」从易失内存态提升为可恢复状态。
+   nextProactiveAt = _proactiveRandUntil 的持久化镜像（kv key 'proactiveNextAt'，复用现有 kv store，
+   不新建第二套库）。语义：
+     · 开启随机模式/首次播种/发送成功后 → 生成新的 nextProactiveAt 并落库；
+     · 应用重启 → 从 kv 恢复 _proactiveRandUntil（绝不重新随机，保留原调度时间）；
+     · 恢复后若 nextProactiveAt 已到期 → 保留过期值，由 __proactiveScan 的 now>=triggerAt 分支
+       识别为「已到期」，直接补发一条再生成下一次（不额外随机漂移）；
+     · 关闭随机模式（proactiveRandom=false）或关闭主动消息（proactive=false）→ 清除该角色持久化。 */
+const PROACTIVE_NEXT_KEY = 'proactiveNextAt';
+let _proactiveNextLoaded = false;   // 是否已从 kv 恢复过（一次性懒加载哨兵）
+let _proactiveNextPromise = null;   // 懒加载互斥锁：并发只读一次 kv
+function _proactiveNextSave() {
+  try { setSetting(PROACTIVE_NEXT_KEY, _proactiveRandUntil).catch(() => {}); } catch (e) {}
+}
+function _proactiveNextLoad() {
+  if (_proactiveNextPromise) return _proactiveNextPromise;
+  _proactiveNextPromise = (async () => {
+    try {
+      const saved = await getSetting(PROACTIVE_NEXT_KEY, null);
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        for (const k in saved) {
+          const v = saved[k];
+          // 只接受正数时间戳；跳过脏值（NaN/0/字符串）
+          if (typeof v === 'number' && isFinite(v) && v > 0) _proactiveRandUntil[k] = v;
+        }
+      }
+    } catch (e) {}
+    _proactiveNextLoaded = true;
+  })();
+  return _proactiveNextPromise;
+}
+
+/* 20261009 召唤自动发消息持久化：把「下次召唤触发时间点」持久化到 kv（key 'summonAutoNextAt'），
+   复用主线 nextProactiveAt 同一套语义与懒加载互斥模式。召唤开关（typecardSummon）独立于主动消息，
+   区间随机间隔（typecardSummonIntervalMin~Max，默认 40~240 分钟）到点自动拼发一条碎梦重拼消息。 */
+const SUMMON_AUTO_NEXT_KEY = 'summonAutoNextAt';
+let _summonAutoUntil = {};          // 内存态：charId -> 下次召唤触发时间点
+let _summonAutoLoaded = false;      // 懒加载哨兵
+let _summonAutoPromise = null;      // 懒加载互斥锁
+function _summonAutoSave() {
+  try { setSetting(SUMMON_AUTO_NEXT_KEY, _summonAutoUntil).catch(() => {}); } catch (e) {}
+}
+function _summonAutoLoad() {
+  if (_summonAutoPromise) return _summonAutoPromise;
+  _summonAutoPromise = (async () => {
+    try {
+      const saved = await getSetting(SUMMON_AUTO_NEXT_KEY, null);
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        for (const k in saved) {
+          const v = saved[k];
+          if (typeof v === 'number' && isFinite(v) && v > 0) _summonAutoUntil[k] = v;
+        }
+      }
+    } catch (e) {}
+    _summonAutoLoaded = true;
+  })();
+  return _summonAutoPromise;
+}
+// 让 engine 的 resetSummonAuto 能清空 app.js 的 _summonAutoUntil（间隔变更即时重排）
+function _summonAutoReset() {
+  try { for (const k in _summonAutoUntil) delete _summonAutoUntil[k]; } catch (e) {}
+  _summonAutoSave();
+}
+
 let _checkinUntil = {}; // 随机查岗：按角色记录「下次查岗时间点」
 let _checkinCount = {};  // 随机查岗：按角色+日期记录当天已查岗次数
 let _callUntil = {};     // 随机通话：按角色记录「下次来电时间点」
 let _callCount = {};     // 随机通话：按角色+日期记录当天来电次数
 let _packetUntil = {};   // 20260929ba 随机红包：按角色记录「下次发红包时间点」
+let _emojiUntil = {};    // 20261005dy 表情包主动发：按角色记录「下次发表情包时间点」（随机区间，比主动消息更长）
 let _ocNextAt = {};      // 超频：按访客记录下一次独立随机触发时刻（20260929at 起持久化到 kv，跨会话累计）
 let _ocPending = new Set(); // 超频：避免同一访客的交互动画期间重复触发
 function _ocSaveNextAt() { try { _ocSet('nextAt', _ocNextAt).catch(() => {}); } catch (e) {} }
@@ -4000,16 +4535,48 @@ function charCardPools(c) {
     mottos: applyWordBan(rawMottos.filter(t => !junk(t))),
   };
 }
+/* 20261009：主动扫描统一入口（带并发锁）——前台 15s 与后台 60s fallback 都经由它进入 __proactiveScan。
+   修复「双停摆」：原前台 15s 用 bmIsBg() return、后台 60s 用 !bmIsBg() return，状态错乱时两个互补 return
+   同时成立 → 扫描完全停摆。现统一入口只做「并发去重」，不再用 bmIsBg 互斥；到点落库+通知由
+   __proactiveScan 内部既有守卫负责，前台 60s 多扫几次只做轻量判断、不碰 DOM，省电影响可忽略。 */
+let _proactiveScanBusy = false;   // 扫描并发锁：两个定时器同时触发时只放行一个，避免重入
+let _proactiveScanPending = false; // 扫描期间有新的触发请求排队（本轮结束后再补扫一次，防止漏判到点）
+async function requestProactiveScan() {
+  if (_proactiveScanBusy) { _proactiveScanPending = true; return; }
+  _proactiveScanBusy = true;
+  try {
+    await __proactiveScan();
+  } catch (e) {}
+  finally {
+    _proactiveScanBusy = false;
+    if (_proactiveScanPending) {
+      _proactiveScanPending = false;
+      requestProactiveScan();
+    }
+  }
+}
+
 function startProactiveTimer() {
   // 初始化计时起点：避免首次 last=0 导致 Date.now()-0 恒判定「已到时间」
   for (const c of characters) {
     if (!_lastProactive[c.id]) _lastProactive[c.id] = Date.now();
   }
-  // 20261002ca：挂后台时 15s 高频扫描全停（省电红线），交给 60s 低频调度 tick bmBgTick 调用同一扫描体
-  setInterval(async () => {
+  // 20261008：恢复随机调度「下次触发时间点」——从 kv 懒加载到内存态 _proactiveRandUntil，
+  // 绝不重新随机（否则每次刷新都重新 1~5 分钟，短会话永远等不到，破坏随机调度语义）。
+  // 已过期的值会原样保留，由 __proactiveScan 的 now>=triggerAt 分支识别为「已到期」补发。
+  _proactiveNextLoad();
+  // 20261009：恢复召唤自动发消息调度（懒加载幂等；与主线 nextProactiveAt 同语义）
+  _summonAutoLoad();
+  // 前台 15s 高频扫描（经统一入口，bmIsBg 只作省电软开关：后台时跳过省电）
+  setInterval(() => {
     if (bmIsBg()) return;
-    __proactiveScan().catch(() => {});
+    requestProactiveScan();
   }, 15000);
+  // 20261009 后台 60s fallback：改为「启动即常驻」，不再依赖 bmSetBgState(true) 才创建。
+  // 这是根治双停摆的关键：即使 __bmBgOn/document.hidden 状态错乱，60s 兜底也永远活着。
+  setInterval(() => {
+    requestProactiveScan();
+  }, 60000);
 }
 
 /* 20261002ca：主动行为扫描体（前台 15s / 后台 60s 共用）——
@@ -4017,12 +4584,23 @@ function startProactiveTimer() {
    挂后台时由 bmBgTick 每 60 秒调用一次：只做静默时间计算 + 消息落库 + 系统通知，
    绝不唤醒任何 DOM 渲染与动画（deliverCharMessage/charSendLetter 内部已有非聊天页不渲染守卫）。 */
 async function __proactiveScan() {
+  // 20261008：先确保随机调度「下次触发时间点」已从 kv 恢复（幂等懒加载，只读一次）。
+  // 否则首次扫描会因 _proactiveRandUntil 还是空而重新随机，覆盖掉持久化的原调度时间。
+  await _proactiveNextLoad();
   {
     const day = todayKey();
     for (const c of characters) {
       const s = getCharChatSettings(c);
       const now = Date.now();
       if (!_lastProactive[c.id]) _lastProactive[c.id] = now;
+
+      // 20261008：关闭随机模式（proactiveRandom=false）或关闭主动消息（proactive=false）时，
+      // 清除该角色残留的随机调度时间点并同步落库——关闭即清除，重开后从新随机（语义干净，
+      // 避免残留的过期 nextProactiveAt 在重开瞬间触发一次「补发」）。只在有残留时才删+写，幂等。
+      if (!(s.proactive && s.proactiveRandom) && _proactiveRandUntil[c.id]) {
+        delete _proactiveRandUntil[c.id];
+        _proactiveNextSave();
+      }
 
       // —— 主动发消息（双模式互斥：随机模式优先） ——
       if (s.proactive) {
@@ -4031,8 +4609,16 @@ async function __proactiveScan() {
           // 随机模式：在设置的 最小～最大 分钟区间内随机取下一次触发时刻（每次只发一条；20260929bf 区间可设置）
           const lo = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
           const hi = Math.max(lo, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
-          if (!_proactiveRandUntil[c.id] || _proactiveRandUntil[c.id] <= now) {
+          // 20261006 修复：进入条件收紧为「仅首次为空」。原 `|| <= now` 会把「到期」也当作「需初始化」，
+          //   导致到点后先重排到未来 → triggerAt 永远取未来值 → 发送分支(now>=triggerAt)恒 false → 随机消息永不触发。
+          //   现在：首次为空才初始化+预排 alarm；已到期则跳过初始化、让 triggerAt 保留为过期值，落入下方发送分支。
+          // 20261009 自愈：除「空」外，再兜住「非法值」（undefined/NaN/≤0）与「明显过期残留」（早于 now-24h，
+          //   说明是卡死的远古时间戳）——这些坏值会让 now>=triggerAt 恒 false 造成永久停发，一律强制重新播种。
+          //   正常随机区间逻辑不受影响：合法且未过期的值原样保留，绝不重新随机。
+          const _pv = _proactiveRandUntil[c.id];
+          if (!_pv || !isFinite(_pv) || _pv <= 0 || _pv < now - 24 * 3600 * 1000) {
             _proactiveRandUntil[c.id] = now + randInt(lo, hi) * 60000;
+            _proactiveNextSave(); // 20261008：首次播种的 nextProactiveAt 落库（跨会话恢复）
             bmRegisterAlarm(c, 'msg', _proactiveRandUntil[c.id]); // 20261002ca：预排原生精确闹钟（进程冻结也能到点提醒）
           }
           triggerAt = _proactiveRandUntil[c.id];
@@ -4045,6 +4631,7 @@ async function __proactiveScan() {
             const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
             const hi2 = Math.max(lo2, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
             _proactiveRandUntil[c.id] = now + randInt(lo2, hi2) * 60000;
+            _proactiveNextSave(); // 20261008：发送成功后重新生成下一次 nextProactiveAt 并落库
           }
           // 20260929ba：转账/红包不再搭载在主动消息里——独立「随机红包」模式（下方 s.randomPacket 块）
           // 20260929ah：AI 模式下主动消息由 AI 生成（节奏不变）；失败软回退字卡（不回滚模式开关）
@@ -4066,6 +4653,60 @@ async function __proactiveScan() {
           bmRegisterAlarm(c, 'msg', s.proactiveRandom ? _proactiveRandUntil[c.id] : (now + (s.proactiveMin || 10) * 60000));
           // 超频已从主动消息分离，固定在 15 秒 tick 每访客独立计时；此处不再触发
         }
+      }
+
+      // —— 表情包主动发（20261005dy：改为「独立消息 + 随机区间」，替代原先「回复后 12% 追加」的过低保率）。
+      //     跟随「主动发消息」开关（proactive），只对开了主动消息的角色生效；
+      //     随机区间 20~180 分钟（主动消息随机区间 10~120，表情包整体拉得更长、更不打扰）；
+      //     不预排原生闹钟（轻量内容，靠本 tick 前台 15s / 后台 60s 检查即可，守住省电红线）；
+      //     到点用 pickCharSticker 抽一张（TA 专属库优先→玩家库(需开关)→兜底字符 emoji），
+      //     落成一条独立 emoji/text 消息。 ——
+      if (s.proactive) {
+        const ELO = 20, EHI = 180; // 表情包随机区间（分钟）
+        if (!_emojiUntil[c.id] || _emojiUntil[c.id] <= now) {
+          _emojiUntil[c.id] = now + randInt(ELO, EHI) * 60000;
+          try {
+            const st = await pickCharSticker(c);
+            if (st) {
+              const m = (st && st.img)
+                ? { id: uid('msg'), charId: c.id, from: 'them', type: 'emoji', content: st.img, time: Date.now() }
+                : { id: uid('msg'), charId: c.id, from: 'them', type: 'text', content: (st && st.sticker) || '🌙', time: Date.now() };
+              await idbPut('messages', m);
+              if (currentCharId === c.id && document.body.dataset.view === 'chat') appendMessage(m);
+              else renderChatList();
+            }
+          } catch (e) {}
+        }
+      }
+
+      // —— 碎梦重拼召唤自动发消息（20261009：独立于主动消息，到点自动拼发一条碎梦重拼消息）——
+      // 20261009晚：间隔改为区间随机（typecardSummonIntervalMin~Max），每次播种/重排独立随机取值
+      if (s.typecardSummon) {
+        await _summonAutoLoad();
+        const ivLo = Math.max(1, Math.min(720, parseInt(s.typecardSummonIntervalMin, 10) || 40));
+        const ivHi = Math.max(1, Math.min(720, parseInt(s.typecardSummonIntervalMax, 10) || 240));
+        const ivMin2 = Math.min(ivLo, ivHi), ivMax2 = Math.max(ivLo, ivHi); // 存量数据可能 min>max，取有序对
+        const nextIv = () => ivMin2 + Math.floor(Math.random() * (ivMax2 - ivMin2 + 1)); // [lo,hi] 闭区间随机分钟
+        if (!_summonAutoUntil[c.id]) {
+          _summonAutoUntil[c.id] = now + nextIv() * 60000; // 首次播种：区间随机后触发
+          _summonAutoSave();
+          // 预排原生闹钟（挂后台/进程冻结也能到点提醒）
+          try { bmRegisterAlarm(c, 'msg', _summonAutoUntil[c.id]); } catch (e) {}
+        } else if (now >= _summonAutoUntil[c.id]) {
+          // 到点：自动触发一次召唤拼字消息（engine.summonAuto 内部自检开关/防重入）
+          _summonAutoUntil[c.id] = now + nextIv() * 60000; // 重排下一次：再次区间随机
+          _summonAutoSave();
+          try { bmRegisterAlarm(c, 'msg', _summonAutoUntil[c.id]); } catch (e) {}
+          try {
+            if (window.bmTypecard && typeof window.bmTypecard.summonAuto === 'function') {
+              await window.bmTypecard.summonAuto(c.id);
+            }
+          } catch (e) {}
+        }
+      } else if (_summonAutoUntil[c.id]) {
+        // 召唤关闭：清除残留调度并落库（重开后从新播种，避免过期值瞬间补发）
+        delete _summonAutoUntil[c.id];
+        _summonAutoSave();
       }
 
       // —— 访客随机查岗（15.1：默认不限次数；角色聊天设置里可设每日上限，0=不限） ——
@@ -4741,7 +5382,7 @@ function bmSetBgState(hidden) {
 /* 后台 60s 低频事件调度 tick：只做「静默时间计算 + 到期事件投递」，不碰 DOM/动画 */
 async function bmBgTick() {
   if (!bmIsBg()) return;
-  try { await __proactiveScan(); } catch (e) {}   // 超频/主动消息/查岗/通话/红包 到期检查
+  try { await requestProactiveScan(); } catch (e) {}   // 超频/主动消息/查岗/通话/红包 到期检查（经统一入口，并发锁保护）
   try { await deliverDueLetterReplies(); } catch (e) {} // 到期回信投递
   try { await groupAutoChatTick(); } catch (e) {}  // 20261005ds：后台群聊自主聊天（60s 级，复用本低频调度，不新增高频 timer）
 }
@@ -4844,11 +5485,12 @@ function restoreAppState(isActive) {
       bmSetBgState(false);
       return;
     }
-    /* 普通回前台：只做省电态恢复 + 通话恢复（白名单，绝不碰 view/bindEvents/splash） */
+    /* 普通回前台：只做省电态恢复（白名单，绝不碰 view/bindEvents/splash）。
+       20261006 修复：移除「回前台自动 backToFullCall」——原逻辑会在用户切回 App 时把系统
+       悬浮窗（BmOverlay）强制展开成完整通话大界面（backToFullCall → removeCallFloat →
+       bmOverlayHide 隐藏原生窗）。现在回前台仅恢复省电态，原生悬浮窗保持原状，
+       只有用户主动点击悬浮窗上的「切回完整通话」按钮才进入完整通话页。 */
     bmSetBgState(false);
-    if (_bmOverlayShown && _callActive && _callActive.c) {
-      backToFullCall(_callActive.c, _callActive.kind);
-    }
   } catch (e) {}
 }
 function markAppBackground() {                  // 挂后台：复位去重标记，供下次回前台判定
@@ -5571,6 +6213,9 @@ function switchView(viewName) {
   if (viewName === 'moments') enterMoments();
   // 进入主页时重算统计（访客数量 / 聊天天数），保证添加/删除访客后数字即时刷新
   if (viewName === 'home') renderPlayerHome();
+  // 20261008：打字卡悬浮窗常驻圆点显隐同步（仅单聊聊天页+打字卡开+悬浮窗模式才显示；
+  // 离开聊天页/进群聊时自动收起待机面板并隐藏圆点）
+  try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
 }
 
 /* ---------- 多指触摸守卫（20261001ci）----------
@@ -5699,6 +6344,9 @@ function openModal(html, opts) {
   $('#modal-mask').classList.toggle('mask-oc-clear', !!o.noBackdrop);
   $('#modal-mask').classList.add('show');
   box.innerHTML = html;
+  // 20261008 晚九轮：打字卡悬浮球/悬浮窗只在单聊聊天页出现——弹窗（个人主页/朋友圈封面/
+  // 设置等）打开时同步藏起（面板 z 远高于弹窗，不藏会浮在弹窗上），关弹窗自动恢复
+  try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
 }
 function closeModal() {
   const wasOpen = $('#modal-mask').classList.contains('show');
@@ -5725,6 +6373,9 @@ function closeModal() {
       return;
     }
   }
+  // 20261008 晚九轮：真关闭（未重开子弹窗）→ 打字卡悬浮球/悬浮窗按条件恢复。
+  // 子功能 return 路径由 showCharProfile/showSettingsModal 内部的 openModal 挂点同步。
+  try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
 }
 
 /* 访客主页子功能上下文标记（关闭后回到访客主页） */
@@ -5739,6 +6390,8 @@ function forceCloseModal() {
   $('#modal-mask').classList.remove('show');
   setCallGlass(false);
   resetModalSizing(); // 20260929bg：同 closeModal，清理缩放残留
+  // 20261008 晚九轮：强制关弹窗后同步打字卡悬浮球/悬浮窗显隐
+  try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
 }
 
 // 点击遮罩空白处关闭弹窗
@@ -7487,11 +8140,16 @@ function openCallLayer(html) {
   box.innerHTML = html;
   layer.classList.remove('call-float2');
   layer.classList.add('show');
+  syncCallHyalite(); // 20261011：按模拟通话预设 2号挂 hyalite（1号纯CSS磨砂）
+  // 20261009 晚：通话全屏层打开=离开聊天页观感——打字卡圆点/召唤悬浮窗立即收起
+  try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
 }
 function closeCallLayer() {
   const layer = document.getElementById('call-layer');
   if (!layer) return;
   layer.classList.remove('show', 'call-float2');
+  // 20261009 晚：通话层关闭——回聊天页，恢复打字卡圆点/召唤悬浮窗（内部自检开关，幂等）
+  try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
   const box = document.getElementById('call-box');
   if (box) {
     box.classList.remove('call-scale-host');
@@ -7753,6 +8411,8 @@ function buildCallFloatDomOnly(c, kind, sec) {
   makeDraggable(f, (x, y) => { _callFloatPos = { x, y }; });
 
   document.body.appendChild(f);   // 最后一步：全部构建成功才插入
+  // 20261011：DOM-only 路径同样挂 2号液态玻璃
+  try { syncCallHyalite(); } catch (e) {}
   return f;
 }
 
@@ -7814,6 +8474,8 @@ function buildCallFloat(c, kind, sec) {
   });
   // 拖拽（拖动开始/结束回调控制 _callFloatDragging）
   makeDraggable(f, (x, y) => { _callFloatPos = { x, y }; });
+  // 20261011：通话缩小小窗也走 2号液态玻璃（与完整通话框同一预设）
+  try { syncCallHyalite(); } catch (e) {}
 }
 
 /* 展开为圆角长条：仅切换 class，不重建 DOM */
@@ -8113,7 +8775,7 @@ function formatDurShort(sec) {
 
 function removeCallFloat() {
   const f = $('#call-float');
-  if (f) f.remove();
+  if (f) { try { if (window.Hyalite) window.Hyalite.detach(f); } catch (e) {} f.remove(); }
   // 20261002cc：移除 DOM 浮窗时，原生悬浮窗（若显示中）一并隐藏——通话结束或切回完整界面都不该再浮系统层
   if (_bmOverlayShown) { _bmOverlayShown = false; bmOverlayHide(); }
 }
@@ -8668,50 +9330,26 @@ async function deliverCharMessage(c, content, type = 'text', extra = null) {
   else notifyIncoming(c, typeof content === 'string' ? content : '（卡片消息）'); // 20260929bi：收敛到统一通知出口（含挂后台）
 }
 
-/* ---------- 通用文件导出（20260929p：根治"假导出"）
+/* ---------- 通用文件导出（20260929p：根治"假导出"；20261011 统一单路径）
    旧写法 a.click() 后同步 revokeObjectURL——下载还没启动就被撤销，且 <a> 没挂 DOM，
    所有导出只弹提示、不出文件。
    现在分两段用：
-   ① beginExport(文件名)：在点击的用户激活期内立刻取保存句柄——
-      PC Chrome/Edge 会弹真实"另存为"对话框（可自选文件夹）；
-      用户取消 → 返回 {cancelled:true}；环境不支持/激活过期 → 静默降级为下载。
-   ② finishExport(save, blob, 提示)：有句柄写入所选位置；否则 <a download> 触发
-      浏览器下载（安卓手机浏览器进"下载"目录，通知栏可见），<a> 挂 body、
-      延迟 4s 再撤销 ObjectURL，给下载留足启动时间。 ---------- */
+   ① beginExport(文件名)：网页端不再弹"另存为"，只返回 {filename}（APK 端同样）。
+   ② finishExport(save, blob, 提示)：
+      · APK（Capacitor Filesystem）→ 分块写进「文档/白日梦备份」单文件；
+      · 网页端 → <a download> 触发浏览器下载（安卓手机浏览器进"下载"目录，
+        通知栏可见），<a> 挂 body、延迟 4s 再撤销 ObjectURL，给下载留足启动时间。
+      全程只弹一次（或不弹），杜绝"一次导出弹两个窗"。 ---------- */
 async function beginExport(filename) {
-  if (typeof window.showSaveFilePicker === 'function') {
-    try {
-      const handle = await window.showSaveFilePicker({ suggestedName: filename });
-      return { filename, handle };
-    } catch (e) {
-      if (e && e.name === 'AbortError') { miniToast('已取消导出'); return { filename, cancelled: true }; }
-      // 其他异常（激活过期/预览面板 iframe 安全策略拦截"另存为"）：提示降级，不再静默——
-      // 20260929z：此前静默降级+iframe 内下载被宿主拦截时用户侧零反馈，看起来像"点了没反应"
-      const inIframe = (() => { try { return window.self !== window.top; } catch (err) { return true; } })();
-      miniToast(inIframe
-        ? '当前面板弹不出保存窗口，已改为直接下载；若无反应请复制 8902 地址到浏览器打开后重试'
-        : '当前环境不支持"另存为"，已改为直接下载');
-    }
-  }
+  // 20261011：网页端彻底放弃 showSaveFilePicker「另存为」路径——
+  // 它在 WorkBuddy 预览面板/iframe/受限 webview 里「弹了窗但写入被平台拒绝」，
+  // 失败后又降级 <a download> 触发第二次保存窗，造成「一次导出弹两个窗」。
+  // 统一走 <a download> 单一路径：真实浏览器里只弹一次（或静默进下载目录），
+  // 用户要的是「点一下导出一个文件」，不是「选文件夹保存」。
   return { filename };
 }
 async function finishExport(save, blob, okMsg) {
   if (!save || save.cancelled) return false;
-  if (save.handle) {
-    // 已经弹过"另存为"（用户选好了位置）：写入失败时绝不能再降级 <a download>——
-    // 那会触发第二次保存弹窗（"导出弹两次窗"的根源）。先重试一次，仍失败就明确报错。
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const w = await save.handle.createWritable();
-        await w.write(blob);
-        await w.close();
-        miniToast(okMsg + '（已保存到你选择的文件夹）');
-        return true;
-      } catch (e) { /* 重试一次；两次都失败则报错终止 */ }
-    }
-    miniToast('写入所选文件夹失败，请重试导出');
-    return false;
-  }
   // 20261001ck：APK（Capacitor 环境）里 <a download> 是 no-op（WebView 无 DownloadListener，
   //   点了静默无反应、文件永远下不来）。改用 @capacitor/filesystem 写进公共「文档」目录
   //   （Directory.Documents = /storage/emulated/0/Documents/，属公共区域，
@@ -8762,6 +9400,8 @@ function bindEvents() {
   // 聊天页返回
   $('#btn-chat-back').onclick = () => { closeModalPanels(); cancelQuote(); switchView('chatlist'); };
   $('#btn-char-profile').onclick = () => showCharProfile();
+  // 20261006：聊天记录搜索（单聊+群聊共用，搜索当前 _chatWin.all）
+  $('#btn-chat-search').onclick = () => openChatSearch();
   // 20260929af：顶栏 AI/字卡模式开关（三个点左侧），切换带「滴」声；be 起逻辑抽为共用函数
   $('#btn-chat-aimode').onclick = () => toggleAImodeFromUI();
   // 20260929be：朋友圈顶栏同款 AI/字卡开关
@@ -9867,6 +10507,47 @@ async function showChatThemeModal() {
     </div>
 
     <div class="field">
+      <label>悬浮窗玻璃精度</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">独立控制「碎梦重拼悬浮窗 / 召唤悬浮窗」的毛玻璃模糊精度，与上方玻璃拟态模式无关（没开玻璃拟态也能单独调）。默认跟随系统自动检测设备性能</div>
+      <div style="margin-top:10px;">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;" id="tc-float-glass-pick">
+          <button class="btn tc-float-glass-btn" data-tier="" style="padding:7px 13px;font-size:12px;">跟随系统</button>
+          <button class="btn tc-float-glass-btn" data-tier="hi" style="padding:7px 13px;font-size:12px;">高精度</button>
+          <button class="btn tc-float-glass-btn" data-tier="mid" style="padding:7px 13px;font-size:12px;">中精度</button>
+          <button class="btn tc-float-glass-btn" data-tier="low" style="padding:7px 13px;font-size:12px;">低精度</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;" id="tc-float-glass-now">当前：跟随系统自动</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>悬浮窗预设</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">碎梦重拼 / 召唤悬浮窗的玻璃质感：1号=纯 CSS 磨砂；2号=真折射液态玻璃。切到 2号时上方「悬浮窗玻璃精度」不参与（真折射由源码驱动）</div>
+      <div style="display:flex;gap:8px;margin-top:8px;" id="float-preset-pick">
+        <button class="btn float-preset-btn" data-p="1" style="padding:7px 13px;font-size:12px;">1号 · 纯CSS磨砂</button>
+        <button class="btn float-preset-btn" data-p="2" style="padding:7px 13px;font-size:12px;">2号 · 液态玻璃</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>气泡预设</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">聊天气泡的玻璃质感：1号=纯 CSS 气泡；2号=真折射液态玻璃气泡</div>
+      <div style="display:flex;gap:8px;margin-top:8px;" id="bubble-preset-pick">
+        <button class="btn bubble-preset-btn" data-p="1" style="padding:7px 13px;font-size:12px;">1号 · 纯CSS气泡</button>
+        <button class="btn bubble-preset-btn" data-p="2" style="padding:7px 13px;font-size:12px;">2号 · 液态玻璃气泡</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>模拟通话预设</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">模拟通话界面的玻璃质感：1号=纯 CSS 磨砂；2号=真折射液态玻璃</div>
+      <div style="display:flex;gap:8px;margin-top:8px;" id="call-preset-pick">
+        <button class="btn call-preset-btn" data-p="1" style="padding:7px 13px;font-size:12px;">1号 · 纯CSS磨砂</button>
+        <button class="btn call-preset-btn" data-p="2" style="padding:7px 13px;font-size:12px;">2号 · 液态玻璃</button>
+      </div>
+    </div>
+
+    <div class="field">
       <label>我的气泡颜色</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;" id="theme-me-colors">
         ${BUBBLE_ME_COLORS.map(col => `
@@ -10021,6 +10702,91 @@ async function showChatThemeModal() {
     };
   });
 
+  // 20261009：悬浮窗玻璃精度手动三档选择（跟随系统 / 高 / 中 / 低），独立于玻璃拟态总开关
+  const _tcFloatTierName = (lv) => lv === 'hi' ? '高精度' : lv === 'mid' ? '中精度' : '低精度';
+  const refreshTcFloatGlassUI = () => {
+    const float2 = _floatPreset === '2'; // 2号真折射由源码驱动，精度三档不参与 → 按钮置灰+提示
+    $$('#tc-float-glass-pick .tc-float-glass-btn').forEach(b => {
+      const active = (b.dataset.tier || '') === _tcFloatGlassManual;
+      b.style.outline = active ? '2px solid var(--purple-soft)' : 'none';
+      b.style.background = active ? 'var(--purple-soft)' : '';
+      b.style.color = active ? '#fff' : '';
+      b.style.fontWeight = active ? '600' : '400';
+      b.style.opacity = float2 ? '0.45' : '1';
+      b.style.pointerEvents = float2 ? 'none' : '';
+    });
+    const nowEl = $('#tc-float-glass-now');
+    if (nowEl) nowEl.textContent = float2 ? '当前：2号液态玻璃（真折射，精度设置不参与）' : `当前：${_tcFloatGlassManual ? _tcFloatTierName(_tcFloatGlass) + '（手动锁定）' : _tcFloatTierName(_tcFloatGlass) + '（跟随系统）'}`;
+  };
+  refreshTcFloatGlassUI();
+  $$('#tc-float-glass-pick .tc-float-glass-btn').forEach(b => {
+    b.onclick = async () => {
+      const tier = b.dataset.tier || ''; // '' = 跟随系统
+      if (!tier) {
+        _tcFloatGlassManual = '';
+        _tcFloatGlass = glassBaseLevel();
+        try { await setSetting('typecardFloatGlass', ''); } catch (e) {}
+        miniToast('悬浮窗玻璃精度已切换为跟随系统自动');
+      } else {
+        _tcFloatGlassManual = tier;
+        _tcFloatGlass = tier;
+        try { await setSetting('typecardFloatGlass', tier); } catch (e) {}
+        miniToast('悬浮窗玻璃精度已锁定为' + _tcFloatTierName(tier));
+      }
+      applyTypecardFloatGlass();
+      refreshTcFloatGlassUI();
+    };
+  });
+
+  // 20261011：液态玻璃美化预设（1号纯CSS / 2号hyalite真折射），三入口独立记忆、默认1号
+  const _setPreset = async (key, val) => { try { await setSetting(key, val); } catch (e) {} };
+  const _refreshPresetBtn = (sel, preset) => {
+    $$(sel).forEach(b => {
+      const on = (b.dataset.p || '1') === preset;
+      b.style.outline = on ? '2px solid var(--purple-soft)' : 'none';
+      b.style.background = on ? 'var(--purple-soft)' : '';
+      b.style.color = on ? '#fff' : '';
+      b.style.fontWeight = on ? '600' : '400';
+    });
+  };
+  const _refreshAllPresets = () => {
+    _refreshPresetBtn('#float-preset-pick .float-preset-btn', _floatPreset);
+    _refreshPresetBtn('#bubble-preset-pick .bubble-preset-btn', _bubblePreset);
+    _refreshPresetBtn('#call-preset-pick .call-preset-btn', _callPreset);
+  };
+  // 悬浮窗预设
+  $$('#float-preset-pick .float-preset-btn').forEach(b => {
+    b.onclick = async () => {
+      _floatPreset = b.dataset.p === '2' ? '2' : '1';
+      await _setPreset('floatPreset', _floatPreset);
+      syncFloatHyalite();
+      _refreshAllPresets();
+      refreshTcFloatGlassUI();
+      miniToast('悬浮窗预设已切换：' + (_floatPreset === '2' ? '2号液态玻璃' : '1号纯CSS'));
+    };
+  });
+  // 气泡预设
+  $$('#bubble-preset-pick .bubble-preset-btn').forEach(b => {
+    b.onclick = async () => {
+      _bubblePreset = b.dataset.p === '2' ? '2' : '1';
+      await _setPreset('bubblePreset', _bubblePreset);
+      syncBubbleHyalite();
+      _refreshAllPresets();
+      miniToast('气泡预设已切换：' + (_bubblePreset === '2' ? '2号液态玻璃' : '1号纯CSS'));
+    };
+  });
+  // 模拟通话预设
+  $$('#call-preset-pick .call-preset-btn').forEach(b => {
+    b.onclick = async () => {
+      _callPreset = b.dataset.p === '2' ? '2' : '1';
+      await _setPreset('callPreset', _callPreset);
+      syncCallHyalite();
+      _refreshAllPresets();
+      miniToast('模拟通话预设已切换：' + (_callPreset === '2' ? '2号液态玻璃' : '1号纯CSS'));
+    };
+  });
+  _refreshAllPresets();
+
   // 聊天字体（20260929af）：打开更换字体窗口
   $('#theme-font-btn').onclick = () => showChatFontModal('chat');
   $('#theme-uifont-btn').onclick = () => showChatFontModal('global');
@@ -10092,6 +10858,7 @@ async function showChatThemeModal() {
   $('#theme-css').oninput = () => {
     chatTheme.customCss = $('#theme-css').value;
     applyChatTheme(); // 实时预览：当前输入立即注入 <style>，聊天页同步变化
+    try { syncBubbleFallback(); } catch (e) {} // 20261005dx：输入涉及气泡选择器时同步浅底兜底开关
     clearTimeout(_cssVdTimer);
     _cssVdTimer = setTimeout(() => renderCssStatus(bmValidateCustomCss($('#theme-css').value)), 350);
   };
@@ -10132,7 +10899,17 @@ async function showChatThemeModal() {
       // 浅底时给预览气泡一个临时 class，让玩家自定义 CSS 之外也能看清默认气泡色；
       // 深底维持原样。真实聊天页不受影响。
       cssStage.classList.toggle('pv-light', light);
+      syncBubbleFallback();
     }
+  };
+  // 20261005dx：浅底兜底的生效开关——玩家自定义 CSS 里写了气泡选择器（.bubble /
+  // .message-sent / .message-received）时，浅底不再套默认气泡兜底。否则兜底规则带
+  // ID 特异性（1,2,2）恒高于玩家选择器，切浅底会整体盖住玩家自定义，
+  // 表现为「浅色底预览不跟实时输入」。无自定义时兜底照常（浅底上看清默认气泡）。
+  const syncBubbleFallback = () => {
+    if (!cssStage) return;
+    const hasBubbleCss = /\.bubble|\.message-sent|\.message-received/i.test(chatTheme.customCss || '');
+    cssStage.classList.toggle('pv-bubble-fallback', !hasBubbleCss);
   };
   // 默认跟随主题
   setPreviewBg(isLightTheme() ? 'light' : 'dark');
@@ -10707,8 +11484,16 @@ function showCharEmojiModal(c) {
     let ok = 0, fail = 0;
     for (const f of list) {
       try {
-        const data = await compressImage(f, 240, 0.85, true);
-        c.emojis.push({ id: uid('emoji'), img: data });
+        let img;
+        if (f.type === 'image/gif' || /\.gif$/i.test(f.name)) {
+          // 20261006：GIF 原样入库（参照玩家库 addEmojiFiles）——canvas 重绘会丢动画帧，
+          //   故 GIF 不压缩（8MB 上限），用 gifBlobDesc 存 Blob 描述符保留动画
+          if (f.size > 8 * 1024 * 1024) { fail++; continue; }
+          img = await gifBlobDesc(f);
+        } else {
+          img = await compressImage(f, 240, 0.85, true);
+        }
+        c.emojis.push({ id: uid('emoji'), img });
         ok++;
       } catch (err) { fail++; }
     }
@@ -11135,7 +11920,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span>允许撤回消息</span>
         <input type="checkbox" id="cs-recall" ${s.allowRecall ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">长按自己发送的字卡/表情包可撤回；撤回后仍可点击查看，永久保留</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">长按自己发送的消息可撤回；撤回后仍可点击查看，永久保留</div>
     </div>
 
     <div class="field">
@@ -11144,6 +11929,54 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <input type="checkbox" id="cs-char-emoji-lib" ${s.charUsePlayerEmojis ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">20261002cb：默认关闭——TA 发表情包只用 TA 自己的专属表情包库（TA 主页里上传的那套）；开启后，TA 也会随机使用你（玩家）上传的表情包库（TA 自己的库优先）。总设置对所有访客生效，访客主页的聊天设置可单独覆盖</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>碎梦重拼（复古打字机输入法演出）</span>
+        <input type="checkbox" id="cs-typecard-on" ${s.typecardOn ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，访客回复会以「复古打字机逐字拼字」的方式演出（拼音→候选字→上屏），模拟 TA 跨越维度、信号受损、努力拼凑语言的过程。关闭则直接显示回复。总设置对所有访客生效，访客主页的聊天设置可单独覆盖。与下方「碎梦重拼召唤」互斥：开启其一会自动关闭另一个</div>
+      <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">展示模式</label>
+      <div style="display:flex;gap:8px;margin-top:6px;" id="cs-typecard-mode">
+        <button class="btn typecard-mode-btn" data-mode="bubble" style="padding:7px 13px;font-size:12px;flex:1;">气泡内嵌</button>
+        <button class="btn typecard-mode-btn" data-mode="float" style="padding:7px 13px;font-size:12px;flex:1;">悬浮窗</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">气泡内嵌：打字过程嵌在聊天气泡内部；悬浮窗：打字过程显示在独立浮动面板中。面板文字已做深浅色 + 高对比可读性兜底，任何背景/主题下都清晰可见</div>
+      <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">打字速度</label>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">快</span>
+        <input type="range" id="cs-typecard-speed" min="0.6" max="5.0" step="0.1" value="${typeof s.typecardSpeed === 'number' ? s.typecardSpeed : 1.0}" style="flex:1;accent-color:var(--purple);">
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">慢</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+        <span style="font-size:12px;color:var(--text-tertiary);">连续速度滑条：越靠右越慢、越能看清每个字</span>
+        <span id="cs-typecard-speed-val" style="font-size:13px;font-weight:700;color:var(--purple-soft);white-space:nowrap;">${typeof s.typecardSpeed === 'number' ? s.typecardSpeed.toFixed(1) : '1.0'}×</span>
+      </div>
+      <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;">
+        <span>拼字卡与表情</span>
+        <input type="checkbox" id="cs-typecard-cards" ${s.typecardCards !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，碎梦重拼演出过程中会随机穿插字卡与表情（每打一个字都可能抽到，整体随机排列组合）；关闭后碎梦重拼只纯拼字，不出现字卡和表情。此开关只影响碎梦重拼，不影响主线正常聊天</div>
+      <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">句子通顺度</label>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">纯拼字</span>
+        <input type="range" id="cs-typecard-coherence" min="0" max="2" step="0.05" value="${typeof s.typecardCoherence === 'number' ? s.typecardCoherence : 0}" style="flex:1;accent-color:var(--purple);">
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">完整句子</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">句子通顺度：越靠右越像真人说话——左半段从纯随机拼字逐步过渡到沿真实口语句子走；右半段进一步过渡到直接说完整通顺的句子。默认纯拼字</div>
+      <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;">
+        <span>碎梦重拼召唤（常驻悬浮窗 · 手动生成）</span>
+        <input type="checkbox" id="cs-typecard-summon" ${s.typecardSummon ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后聊天中常驻碎梦重拼悬浮窗（毛玻璃+水晶花饰+藤蔓+碎镜纹理），点上面的「✦ 生成一条消息」按钮，TA 就会主动拼出一条碎梦重拼消息并发送。与上方碎梦重拼开关互斥：同一时间只能开启一个，开启其一会自动关闭另一个。打字速度与句子通顺度跟随碎梦重拼设置。只多发这一条消息，绝不影响正常聊天与抽字卡回复</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">自动发消息区间（分钟）</span>
+        <input type="number" id="cs-typecard-summon-interval-min" min="1" max="720" step="1" value="${typeof s.typecardSummonIntervalMin === 'number' ? s.typecardSummonIntervalMin : 40}" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-typecard-summon-interval-max" min="1" max="720" step="1" value="${typeof s.typecardSummonIntervalMax === 'number' ? s.typecardSummonIntervalMax : 240}" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔">
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">召唤开启后，TA 会在最小～最大分钟之间的随机时刻自动拼发一条碎梦重拼消息（无需你点按钮）；挂后台/锁屏时同样会通过系统通知提醒你。可设 1~720 分钟，最小大于最大时自动对调，默认 40～240 分钟</div>
     </div>
 
     ${!isPerChar && s.overclockUnlocked ? `
@@ -11197,7 +12030,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
   `;
 }
 
-function bindChatSettings(s, onSave) {
+function bindChatSettings(s, onSave, tcChar) {
   $('#cs-close').onclick = closeModal;
   // 20260929bi：悬浮窗2号浮游开关（仅总聊天设置；立即生效）
   const f2cb = $('#cs-float2');
@@ -11228,6 +12061,150 @@ function bindChatSettings(s, onSave) {
       if (s.float2Mode === 'system') requestOverlayPermission();
     };
   });
+  // 20261008b：打字卡设置即时落库——修复「刷新后打字卡设置恢复默认」。
+  // 旧实现有两个洞：①只写内存（s/chatSettings），不点底部「保存」就关弹窗 → 全丢；
+  // ②访客弹窗里错误地同步写全局 chatSettings，导致保存时 s[k]===chatSettings[k]
+  //   被当成「继承全局」把访客覆盖值删掉，而全局又没落库 → 保存了仍丢。
+  // 现在：只写 s；每项变更即时持久化——全局弹窗 setSetting('chatSettings')，
+  // 访客弹窗按差异写 c.chatSettings 后 saveChar；滑条用 change（松手才落库，防连写）。
+  async function tcPersist(key, val) {
+    s[key] = val;
+    try {
+      if (!tcChar || s === chatSettings) {
+        await setSetting('chatSettings', chatSettings);
+      } else {
+        tcChar.chatSettings = tcChar.chatSettings || {};
+        if (val !== chatSettings[key]) tcChar.chatSettings[key] = val;
+        else delete tcChar.chatSettings[key]; // 与全局相同=继承，删覆盖
+        await saveChar(tcChar);
+      }
+    } catch (e) {}
+    // 展示模式/开关变化会影响悬浮窗常驻圆点的显隐，立即同步
+    try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
+  }
+  // 20261008 晚三轮（用户反馈「设置里关了悬浮窗，悬浮窗还悬浮在上面」）：
+  // 总设置=总闸。全局关闭 typecardOn/typecardSummon 时，必须级联清除所有访客的
+  // 独立覆盖——否则「全局关了、访客覆盖还开着」，tcSettingsFor 合并结果仍是开，
+  // 悬浮窗关不掉（用户在总设置关开关无效果的根因）。仅在总设置弹窗（!tcChar）级联，
+  // 访客弹窗关开关只影响该访客，不动别人。
+  function tcCascadeClear(key) {
+    try {
+      characters.forEach(c => {
+        if (c && c.chatSettings && c.chatSettings[key] !== undefined) {
+          delete c.chatSettings[key];
+          saveChar(c); // 异步落库，不阻塞 UI
+        }
+      });
+    } catch (e) {}
+  }
+  // 20261008：打字卡总开关 + 展示模式切换（总设置与访客级都渲染；立即生效）
+  const tcOnCb = $('#cs-typecard-on');
+  const tcModeBtns = $$('#cs-typecard-mode .typecard-mode-btn');
+  const refreshTcModeUI = () => {
+    tcModeBtns.forEach(b => {
+      const active = (b.dataset.mode || 'bubble') === (s.typecardMode || 'bubble');
+      b.style.outline = active ? '2px solid var(--purple-soft)' : 'none';
+      b.style.background = active ? 'var(--purple-soft)' : '';
+      b.style.color = active ? '#141019' : '';
+      b.style.fontWeight = active ? '600' : '400';
+    });
+  };
+  refreshTcModeUI();
+  if (tcOnCb) tcOnCb.onchange = () => {
+    const on = tcOnCb.checked;
+    // 20261008 晚二轮：碎梦重拼与召唤互斥——开启总开关时自动关闭召唤
+    const summonWasOn = !!s.typecardSummon;
+    if (on && summonWasOn) {
+      if (tcSummonEl) tcSummonEl.checked = false;
+      if (!tcChar) tcCascadeClear('typecardSummon'); // 总设置互斥关闭也级联（访客覆盖会让召唤悬浮窗残留）
+      tcPersist('typecardSummon', false);
+    }
+    // 20261008 晚三轮：总设置关闭=总闸，级联清所有访客覆盖（否则访客 true 顶回全局 false）
+    if (!on && !tcChar) tcCascadeClear('typecardOn');
+    tcPersist('typecardOn', on);
+    miniToast(on ? (summonWasOn ? '碎梦重拼已开启（召唤已自动关闭）' : '碎梦重拼已开启') : '碎梦重拼已关闭');
+  };
+  tcModeBtns.forEach(b => {
+    b.onclick = () => {
+      const mode = b.dataset.mode || 'bubble';
+      tcPersist('typecardMode', mode);
+      refreshTcModeUI();
+      miniToast(mode === 'float' ? '碎梦重拼展示模式：悬浮窗' : '碎梦重拼展示模式：气泡内嵌');
+    };
+  });
+  // 20261008：打字卡速度连续滑条（0.6~3.0，默认 1.0）——总设置与访客级都渲染，实时显示倍率数字
+  const tcSpeedEl = $('#cs-typecard-speed');
+  const tcSpeedVal = $('#cs-typecard-speed-val');
+  const refreshTcSpeed = () => {
+    const v = tcSpeedEl ? (parseFloat(tcSpeedEl.value) || 1.0) : 1.0;
+    if (tcSpeedVal) tcSpeedVal.textContent = v.toFixed(1) + '×';
+  };
+  refreshTcSpeed();
+  if (tcSpeedEl) {
+    tcSpeedEl.oninput = () => {
+      // 拖动中只更新内存与数字显示，不落库（change 事件松手时才写）
+      s.typecardSpeed = parseFloat(tcSpeedEl.value) || 1.0;
+      refreshTcSpeed();
+    };
+    tcSpeedEl.onchange = () => {
+      tcPersist('typecardSpeed', parseFloat(tcSpeedEl.value) || 1.0);
+    };
+  }
+  // 20261008：打字卡通顺度滑条（0=纯拼字 ~ 1=沿语料游走 ~ 2=完整句子，默认 0）——总设置与访客级都渲染
+  const tcCoherenceEl = $('#cs-typecard-coherence');
+  if (tcCoherenceEl) {
+    tcCoherenceEl.oninput = () => {
+      const v = parseFloat(tcCoherenceEl.value);
+      s.typecardCoherence = (typeof v === 'number' && !isNaN(v)) ? v : 0;
+    };
+    tcCoherenceEl.onchange = () => {
+      const v = parseFloat(tcCoherenceEl.value);
+      tcPersist('typecardCoherence', (typeof v === 'number' && !isNaN(v)) ? v : 0);
+    };
+  }
+  // 20261008：打字卡「拼字卡/表情」开关——只影响打字卡演出，不影响主线；默认开
+  const tcCardsEl = $('#cs-typecard-cards');
+  if (tcCardsEl) tcCardsEl.onchange = () => {
+    const on = tcCardsEl.checked;
+    tcPersist('typecardCards', on);
+    miniToast(on ? '碎梦重拼：拼字卡与表情已开启' : '碎梦重拼：拼字卡与表情已关闭');
+  };
+  // 20261008 晚（碎梦重拼召唤）：常驻悬浮窗+手动生成按钮，独立于碎梦重拼总开关。
+  // tcPersist 自动处理全局/访客差异落库，并同步悬浮窗显隐（updateFloatDot）。
+  const tcSummonEl = $('#cs-typecard-summon');
+  if (tcSummonEl) tcSummonEl.onchange = () => {
+    const on = tcSummonEl.checked;
+    // 20261008 晚二轮：召唤与碎梦重拼互斥——开启召唤时自动关闭碎梦重拼
+    const tcWasOn = !!s.typecardOn;
+    if (on && tcWasOn) {
+      if (tcOnCb) tcOnCb.checked = false;
+      if (!tcChar) tcCascadeClear('typecardOn'); // 总设置互斥关闭也级联
+      tcPersist('typecardOn', false);
+    }
+    // 20261008 晚三轮：总设置关闭=总闸，级联清所有访客覆盖（访客覆盖开着会让悬浮窗残留）
+    if (!on && !tcChar) tcCascadeClear('typecardSummon');
+    tcPersist('typecardSummon', on);
+    miniToast(on ? (tcWasOn ? '碎梦重拼召唤已开启：悬浮窗已唤出（碎梦重拼已自动关闭）' : '碎梦重拼召唤已开启：悬浮窗已唤出') : '碎梦重拼召唤已关闭');
+  };
+  // 20261009晚：召唤自动发消息随机区间（分钟）——双输入框，最小>最大时自动对调（同主线随机区间惯例）
+  const tcSummonIvMinEl = $('#cs-typecard-summon-interval-min');
+  const tcSummonIvMaxEl = $('#cs-typecard-summon-interval-max');
+  if (tcSummonIvMinEl && tcSummonIvMaxEl) {
+    const tcSummonIvApply = () => {
+      let lo = Math.min(720, Math.max(1, parseInt(tcSummonIvMinEl.value, 10) || 40));
+      let hi = Math.min(720, Math.max(1, parseInt(tcSummonIvMaxEl.value, 10) || 240));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }   // 最小>最大 → 自动对调
+      tcSummonIvMinEl.value = String(lo);
+      tcSummonIvMaxEl.value = String(hi);
+      tcPersist('typecardSummonIntervalMin', lo);
+      tcPersist('typecardSummonIntervalMax', hi);
+      // 区间变更即时重置所有访客的召唤自动调度计时，让新区间立即生效（不清除，只重排下一次）
+      try { window.bmTypecard && bmTypecard.resetSummonAuto && bmTypecard.resetSummonAuto(); } catch (e) {}
+      miniToast('召唤自动发消息区间已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    tcSummonIvMinEl.onchange = tcSummonIvApply;
+    tcSummonIvMaxEl.onchange = tcSummonIvApply;
+  }
   // 20260929bi：系统通知开关 + 权限状态 + 申请按钮（用户手势内申请，浏览器才会弹授权框）
   const nsEl = $('#cs-notify-sys');
   if (nsEl) nsEl.onchange = async () => {
@@ -11379,6 +12356,7 @@ function bindChatSettings(s, onSave) {
     // 重新锚定主动消息计时：从现在开始算，避免保存后因旧计时点已过期而立刻弹出一堆消息
     _lastProactive = {};
     _proactiveRandUntil = {};
+    _proactiveNextSave(); // 20261008：清空随机调度持久化（重新锚定后由扫描体重新播种并落库）
     // 悬浮窗模式：全局设置
     floatSettings.floatMode = $('#cs-float-mode').value;
     await setSetting('floatSettings', floatSettings);
@@ -11442,14 +12420,14 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
     await saveChar(c);
     miniToast('已保存该访客的聊天设置');
     closeModal();
-  });
+  }, c); // 20261008b：传角色引用，打字卡设置即时按差异落库（tcPersist）
 }
 
 /* ---------- 总设置（18.1：清缓存/清所有聊天记录/重置） ---------- */
@@ -12268,13 +13246,24 @@ async function clearStaleCache() {
       for (const r of regs) { await r.unregister(); cleaned.push('Service Worker 注册'); }
     }
   } catch (e) {}
-  // ③ localStorage / sessionStorage（本应用不使用，存在即旧版遗留）
+  // ③ localStorage / sessionStorage（20261010 修复：只清真正的旧版遗留键。
+  //   bm_notify_asked / bm_guide_done / bm_srcwarn / __justAutocleared 是应用运行时活键，
+  //   清掉会导致「每次清完下次清除还有一项」+ 通知授权反复询问——它们不是冗余）
   try {
-    const ls = localStorage.length || 0, ss = sessionStorage.length || 0;
-    localStorage.clear();
-    sessionStorage.clear();
-    if (ls) cleaned.push('localStorage 旧数据 ' + ls + ' 项');
-    if (ss) cleaned.push('sessionStorage 旧数据 ' + ss + ' 项');
+    const keepLS = new Set(['bm_notify_asked', 'bm_guide_done', 'bm_srcwarn']);
+    let lsStale = 0;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && !keepLS.has(k)) { localStorage.removeItem(k); lsStale++; }
+    }
+    const keepSS = new Set(['bm_srcwarn', '__justAutocleared']);
+    let ssStale = 0;
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && !keepSS.has(k)) { sessionStorage.removeItem(k); ssStale++; }
+    }
+    if (lsStale) cleaned.push('localStorage 旧数据 ' + lsStale + ' 项');
+    if (ssStale) cleaned.push('sessionStorage 旧数据 ' + ssStale + ' 项');
   } catch (e) {}
   // ④ 旧版本遗留的 IndexedDB 数据库（正式库名固定为 bairimeng）
   try {
@@ -12282,7 +13271,15 @@ async function clearStaleCache() {
       const dbs = await indexedDB.databases();
       for (const d of (dbs || [])) {
         if (d && d.name && d.name !== DB_NAME) {
-          indexedDB.deleteDatabase(d.name);
+          // 20261010 修复：deleteDatabase 是异步的，之前没等待就报「已清理」——
+          // 实际可能没删完（库被占用时还会静默失败），导致「清完还有」
+          await new Promise(res => {
+            try {
+              const rq = indexedDB.deleteDatabase(d.name);
+              rq.onsuccess = res; rq.onerror = res; rq.onblocked = res;
+              setTimeout(res, 3000); // 兜底：极慢设备不卡住清理流程
+            } catch (e2) { res(); }
+          });
           cleaned.push('旧数据库「' + d.name + '」');
         }
       }
@@ -12375,6 +13372,16 @@ function showImportModal(back = null) {
    旧备份里的纯 base64 字符串按原样保留（显示层 imgSrc 兼容，不做迁移） */
 async function imgDescFromExport(v) {
   try {
+    // 20261011：兼容旧备份——若整个字段本身就是 dataURL/base64 字符串，原样保留为字符串
+    // （imgSrc 已兼容字符串，渲染不会崩；无需强行转 Blob 徒增 WebView 风险）
+    if (typeof v === 'string') return v;
+    // 旧备份形态 { blob:"dataURL字符串", thumb? }（无 __img 标记）：blob 字段是字符串，迁移成 Blob
+    if (typeof v.blob === 'string' && v.blob) {
+      const mainBlob = await dataURLToBlob(v.blob);
+      const tBlob = (typeof v.thumb === 'string' && v.thumb) ? await dataURLToBlob(v.thumb) : null;
+      return { blob: mainBlob, thumb: tBlob, w: v.w || 0, h: v.h || 0 };
+    }
+    // 新格式 { __img:1, data:"dataURL", thumb? }
     const blob = v.data ? await dataURLToBlob(v.data) : null;
     if (!blob) return '';
     const thumb = v.thumb ? await dataURLToBlob(v.thumb) : null;
@@ -12388,7 +13395,11 @@ async function deepImagesFromExport(node) {
   (function collect(n, parent, key) {
     if (!n || typeof n !== 'object') return;
     if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    // 新格式：{ __img:1, data: string } 载荷
     if (n.__img && typeof n.data === 'string') { found.push({ parent, key, n }); return; }
+    // 20261011：旧备份兼容——图片字段可能是 { blob:"dataURL字符串", thumb? }（无 __img 标记），
+    // 这类字段要迁移成 { blob:Blob, thumb, w, h }，否则导出时会因 blob 不是 Blob 被抹空
+    if (typeof n.blob === 'string' && n.blob && /^data:/.test(n.blob)) { found.push({ parent, key, n }); return; }
     for (const k of Object.keys(n)) collect(n[k], n, k);
   })(node, null, null);
   if (!found.length) return node;
@@ -12411,8 +13422,23 @@ async function deepImagesFromExport(node) {
 
 async function doImport(data, mode = 'overwrite') {
   try {
-    // 20260929g：新格式图片载荷转回 Blob；旧备份 base64 字符串原样保留（玩家选择：不迁移）
-    data = await deepImagesFromExport(data);
+    // 20261005ea：3.0 自动备份（图片独立文件）——图片是 {__img:3, ref} 引用，需 FS.readFile 读回；
+    // 2.2 及旧备份（图片 base64 内嵌）走原 deepImagesFromExport 逻辑不变。
+    if (data && data.version === '3.0' && data.imagesDir) {
+      const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+      if (FS && typeof FS.readFile === 'function') {
+        const imagesDir = String(data.imagesDir);
+        const readImage = async (ref, mime) => {
+          const r = await FS.readFile({ path: imagesDir + '/' + ref, directory: 'DOCUMENTS' });
+          return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + r.data);
+        };
+        data = await restoreImagesV3(data, readImage);
+      }
+      // 若 FS.readFile 不可用（如网页端误导入 3.0），保留 {__img:3} 原样，图片按缺失处理，不崩溃
+    } else {
+      // 20260929g：新格式图片载荷转回 Blob；旧备份 base64 字符串原样保留（玩家选择：不迁移）
+      data = await deepImagesFromExport(data);
+    }
     if (mode === 'overwrite') {
       // 清空现有数据
       await idbClear('characters');
@@ -12486,12 +13512,19 @@ async function doImport(data, mode = 'overwrite') {
 async function imgDescToExport(v) {
   // 已是 base64 载荷（重复导出防御）：原样返回，禁止二次转换（会把 data 抹成空串）
   if (v.__img && typeof v.data === 'string' && !(v.blob instanceof Blob)) return v;
+  // 20261011：兼容旧备份——图片字段的 blob/thumb 可能是「字符串」（纯 dataURL 或 base64），
+  // 旧逻辑里 `v.blob instanceof Blob` 为 false 会把 data 抹成空串 → 旧备份再导出图片全丢。
+  // 现在：blob/thumb 是字符串就原样当作 data 用（保留），是 Blob 才转 base64。
   return {
     __img: 1,
     w: v.w || 0,
     h: v.h || 0,
-    data: v.blob instanceof Blob ? await blobToDataURL(v.blob) : '',
-    thumb: v.thumb instanceof Blob ? await blobToDataURL(v.thumb) : '',
+    data: v.blob instanceof Blob
+      ? await blobToDataURL(v.blob)
+      : (typeof v.blob === 'string' && v.blob ? v.blob : ''),
+    thumb: v.thumb instanceof Blob
+      ? await blobToDataURL(v.thumb)
+      : (typeof v.thumb === 'string' && v.thumb ? v.thumb : ''),
   };
 }
 
@@ -12541,13 +13574,96 @@ async function deepImagesToExport(node, label = '正在打包图片') {
   return topConv !== null ? topConv : node;
 }
 
+/* 20261005ea：自动备份 3.0 图片收集——把 {blob,thumb} 描述符替换成 {__img:3, ref, mime} 引用，
+   并把每张图（主图+缩略图）的 dataURL 收集到 images 列表，供 autoBackup 逐张独立 writeFile，
+   不再把所有图片 base64 内嵌进一个巨型 JSON（消除 ~98MB 单次 Capacitor Bridge payload 的 OOM）。
+   ref 设计：文件名 img-N / thumb-N（N=本次备份集合内全局递增序号）——稳定唯一、不含
+   / \ : * ? " < > | 等危险字符、不依赖数组下标、非随机；manifest 顶层另存 imagesDir 定位目录，
+   恢复时用 imagesDir + '/' + ref 读回，无需额外映射。返回 { data, images:[{ref, dataUrl}] }。 */
+async function collectImagesV3(node) {
+  const found = []; // { parent, key, n, ref, thumbRef, mime, thumbMime }
+  let seq = 0;
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.blob instanceof Blob) {
+      const ref = 'img-' + String(++seq).padStart(4, '0');
+      const item = { parent, key, n, ref, mime: (n.blob.type || 'image/png') };
+      if (n.thumb instanceof Blob) {
+        item.thumbRef = 'thumb-' + String(++seq).padStart(4, '0');
+        item.thumbMime = (n.thumb.type || 'image/jpeg');
+      }
+      found.push(item);
+      return;
+    }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+
+  const images = [];
+  const total = found.length;
+  let idx = 0, done = 0;
+  const worker = async () => {
+    while (idx < total) {
+      const i = idx++;
+      const it = found[i];
+      const dataUrl = await blobToDataURL(it.n.blob);
+      images.push({ ref: it.ref, dataUrl });
+      const out = { __img: 3, w: (it.n.w || 0), h: (it.n.h || 0), mime: it.mime, ref: it.ref };
+      if (it.thumbRef) {
+        const thumbUrl = await blobToDataURL(it.n.thumb);
+        images.push({ ref: it.thumbRef, dataUrl: thumbUrl });
+        out.thumbRef = it.thumbRef;
+        out.thumbMime = it.thumbMime;
+      }
+      it.parent[it.key] = out;
+      done++;
+      // 20261009：打包阶段实时进度（旧版零反馈，图一多就像"点了没反应"）
+      if (total > 6 && (done % 6 === 0 || done === total)) exportProgress(true, `📦 正在打包图片 ${done}/${total}…`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  if (total > 6) exportProgress(false);
+  return { data: node, images };
+}
+
+/* 20261005ea：自动备份 3.0 图片还原——把 {__img:3, ref, mime} 引用读回 {blob, thumb, w, h}。
+   readImage(ref, mime) 由调用方提供（恢复端用 FS.readFile 读文件转 Blob）；8 路并发还原。
+   还原后 IndexedDB 数据结构保持 {blob, thumb, w, h} 不变，不改数据库 schema。 */
+async function restoreImagesV3(node, readImage) {
+  if (!node || typeof node !== 'object') return node;
+  const found = [];
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.__img === 3 && typeof n.ref === 'string') { found.push({ parent, key, n }); return; }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+  if (!found.length) return node;
+  const total = found.length;
+  let idx = 0;
+  const worker = async () => {
+    while (idx < total) {
+      const i = idx++;
+      const it = found[i];
+      const n = it.n;
+      const blob = await readImage(n.ref, n.mime || 'image/png');
+      let thumb = null;
+      if (n.thumbRef) thumb = await readImage(n.thumbRef, n.thumbMime || 'image/jpeg');
+      const out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
+      if (it.parent) it.parent[it.key] = out;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  return node;
+}
+
 /* 20261002ce：把"打包全量备份数据"抽成公共函数，手动导出 exportAll 与自动备份 autoBackup 共用，
    保证两处导出的内容一字不差（灰度殿堂/书信/世界树/朋友圈/记事簿/字体等 kv 数据都完整包含）。 */
-async function buildBackupPayload() {
+async function buildBackupPayload(mode = '2.2') {
   const data = {
     app: 'bairimeng',
     format: 'ocdata',
-    version: '2.2',
+    version: mode === '3.0' ? '3.0' : '2.2',
     exportDate: new Date().toISOString(),
     characters: await idbGetAll('characters'),
     messages: await idbGetAll('messages'),
@@ -12588,6 +13704,10 @@ async function buildBackupPayload() {
       // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
     },
   };
+  // 20261005ea：mode '3.0' 用于自动备份——图片独立文件，不内嵌 base64；
+  // 返回含 {blob,thumb} 的原始 data，由 autoBackup 调 collectImagesV3 处理。
+  // 默认 2.2（手动备份 exportAll）走原逻辑不变。
+  if (mode === '3.0') return data;
   // .ocdata：单文件备份（JSON 结构 + 图片 base64 内嵌，无需手动解压，可直接导入导出）
   return await deepImagesToExport(data, '正在打包全量备份'); // Blob → base64 内嵌（JSON 可序列化）
 }
@@ -12597,12 +13717,44 @@ async function exportAll() {
   try {
     save = await beginExport('白日梦数据备份.ocdata'); // 先取保存句柄（点击激活期内），再慢慢打包图片
     if (save.cancelled) return;
+    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    if (FS && FS.writeFile) {
+      // 20261009：APK（Capacitor）环境——改回「单文件」+ 分块写盘。旧 3.0 文件夹模式
+      // 导出成一整个文件夹（manifest + images 散落），用户无法用文件选择器选单文件导入，
+      // 违背手动导出「单个 .ocdata 文件」的初衷。现在用 writeSingleFileChunked 把单文件
+      // 逐块 appendFile 写盘，既保持单文件（导入端 file.text() 完全兼容）、又规避
+      // 「一次性 writeFile 传 ~167MB base64 过 Bridge → OOM 闪退」。
+      miniToast('正在导出全量数据（图片较多，请稍候）…');
+      exportProgress(true, '📦 正在打包全量备份…');
+      const safeData = await buildBackupPayload(); // 2.2：图片 base64 内嵌成单文件
+      exportProgress(false);
+      const json = JSON.stringify(safeData);
+      // JSON 字符串 → base64（分块写盘用纯 base64，避免 UTF8 编码歧义）
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
+        r.onerror = () => rej(new Error('读取失败'));
+        r.readAsDataURL(new Blob([json], { type: 'application/json' }));
+      });
+      // 单文件落点：文档/白日梦备份/白日梦数据备份.ocdata（固定文件名，覆盖上次手动导出）
+      await writeSingleFileChunked('白日梦备份/白日梦数据备份.ocdata', b64, 'DOCUMENTS');
+      exportProgress(false);
+      miniToast('已导出单文件「白日梦数据备份.ocdata」到「文档/白日梦备份」，导入时选该文件即可');
+      return;
+    }
+    // 网页端（无 Capacitor）：仍走 2.2 单文件 <a download> 下载
     miniToast('正在打包全量数据，图库大时需要几秒…');
     const safeData = await buildBackupPayload();
     const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
     await finishExport(save, blob, '全量备份已导出');
   } catch (e) {
     exportProgress(false);
+    // 20261011：导出失败时清理可能残留的半截文件（分块写盘中途失败会留下半个 .ocdata，
+    // 之后导入这个半截文件必然失败，形成"导出失败→导入失败"的连锁）。清理失败静默忽略。
+    try {
+      const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+      if (FS && FS.deleteFile) await FS.deleteFile({ path: '白日梦备份/白日梦数据备份.ocdata', directory: 'DOCUMENTS' });
+    } catch (cleanErr) {}
     miniToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
   }
 }
@@ -12614,25 +13766,70 @@ async function exportAll() {
    · 网页端：Filesystem 不可用 → 静默跳过（网页版数据在浏览器，用户仍可手动导出）。
    触发：应用启动后延迟 40s 首备（避开启动加载高峰）；之后每次切后台（appStateChange）补备一次。
    全程静默、不弹窗、不打断；失败静默忽略（不打扰用户）。 */
+let _autoBackupRunning = false; // 20261006：防重入锁——写 518 图约 20s，期间切后台补备+40s首备可能并发触发，防重复写/重复清理
 async function autoBackup() {
+  if (_autoBackupRunning) return; // 已有备份在执行，直接跳过（不创建第二个 backup-set）
+  _autoBackupRunning = true;
   try {
     const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
     if (!FS || !FS.writeFile) return; // 非 APK 环境（网页版）静默跳过
     // 有访客数据才备份，避免全新空库也写一份空备份覆盖掉已有的有效备份
     const chars = await idbGetAll('characters');
     if (!chars || !chars.length) return;
-    const safeData = await buildBackupPayload();
-    const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
-    const b64 = await new Promise((res, rej) => {
+    // 20261005dz：自动备份限频止血——同一天内最多备份一次，防「每次切后台都打包全量图片
+    // base64（~98MB）→ Java Heap OOM」。判断依据复用既有 lastAutoBackupAt 时间戳（只在下方
+    // writeFile 真正成功后才写入），当天已成功备份过则直接跳过；跨自然日自动放行再次备份。
+    const lastAt = await getSetting('lastAutoBackupAt', 0);
+    if (lastAt) {
+      const d = new Date(lastAt), nowD = new Date();
+      if (d.getFullYear() === nowD.getFullYear() && d.getMonth() === nowD.getMonth() && d.getDate() === nowD.getDate()) {
+        return; // 今天已成功自动备份过，跳过
+      }
+    }
+    const safeData = await buildBackupPayload('3.0'); // 20261005ea：3.0 图片独立文件，返回含 {blob,thumb} 的原始 data
+    const { data, images } = await collectImagesV3(safeData); // 图片替换为 {__img:3, ref}，收集 dataUrl
+
+    // 独立 backup-set 目录（每次自动备份一个完整集合，互不污染；不覆盖旧备份）
+    const setDir = '白日梦备份/auto-' + Date.now();
+    const imagesRelDir = setDir + '/images';
+
+    // 逐张写图片（每张独立 writeFile，单次 bridge payload = 单张图大小，不再全量 98MB）
+    // 20261009：6 路并发提速（保持静默不弹进度——自动备份是后台兜底，不打扰用户）
+    const totalImg = images.length;
+    let wi = 0;
+    const writeWorker = async () => {
+      while (wi < totalImg) {
+        const img = images[wi++];
+        const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
+        await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, totalImg) }, writeWorker));
+
+    // 写 manifest（全部图片写成功后才写——manifest 是「本次备份完成」的提交标记）
+    data.imagesDir = imagesRelDir; // 恢复端据此 FS.readFile 定位图片
+    const manifestJson = JSON.stringify(data);
+    const manifestB64 = await new Promise((res, rej) => {
       const r = new FileReader();
       r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
       r.onerror = () => rej(new Error('读取失败'));
-      r.readAsDataURL(blob);
+      r.readAsDataURL(new Blob([manifestJson], { type: 'application/json' }));
     });
-    await FS.writeFile({ path: '白日梦备份/白日梦自动备份.ocdata', data: b64, directory: 'DOCUMENTS', recursive: true });
-    // 静默记账：本次自动备份时间（下次可据此判断是否过期）
+    await FS.writeFile({ path: setDir + '/manifest.json', data: manifestB64, directory: 'DOCUMENTS', recursive: true });
+
+    // 全部成功 → 才更新 lastAutoBackupAt（失败走 catch，不标记，下次可重试）
     try { await setSetting('lastAutoBackupAt', Date.now()); } catch (e) {}
+
+    // 清理旧 backup-set（新备份完整成功后才清理；失败静默忽略，不影响本次成功）
+    try {
+      const oldSet = await getSetting('lastAutoBackupSet', '');
+      if (oldSet && oldSet !== setDir && FS.rmdir) {
+        try { await FS.rmdir({ path: oldSet, directory: 'DOCUMENTS', recursive: true }); } catch (e) {}
+      }
+    } catch (e) {}
+    try { await setSetting('lastAutoBackupSet', setDir); } catch (e) {}
   } catch (e) { /* 静默失败，不打扰 */ }
+  finally { _autoBackupRunning = false; } // 无论成功/异常都释放锁，避免一次失败永久锁死
 }
 
 /* 自动备份调度：启动后延迟首备 + 每次切后台补备（省电：切后台时顺带一次即可） */
@@ -15479,10 +16676,11 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
       ${e.kind === 'chat' ? `<div class="pal-dc-sum">摘要：${escapeHtml(palWithPlayerName(e.summary || e.title || ''))}</div>` : ''}
       <div class="pal-dc-body">${entryBody(e)}</div>
       <div class="pal-dc-foot">
-        ${e.folderId === PAL_H ? '' : `<button class="pal-card-chip star${palIsWeighted(e, folders) ? ' on' : ''}" data-cact="star" title="${palIsWeighted(e, folders) ? '已设为权重记忆，点击取消' : '设为权重记忆'}">${icon('star', 14)} 权重</button>`}
         ${e.folderId === PAL_H ? '' : `<button class="pal-card-chip" data-cact="perm" title="点击设置 AI 读取权限">${icon('shield', 13)} ${palPermTagText(e, folders)}</button>`}
         <button class="pal-card-chip" data-cact="move">移动到…</button>
+        ${e.folderId === PAL_H ? '' : '<i style="flex-basis:100%;height:0;"></i>'}
         <button class="pal-card-chip danger" data-cact="del">删除</button>
+        ${e.folderId === PAL_H ? '' : `<button class="pal-card-chip wstar${palIsWeighted(e, folders) ? ' on' : ''}" data-cact="star" title="${palIsWeighted(e, folders) ? '已设为权重记忆，点击取消' : '设为权重记忆'}">${icon('star', 14)} 权重</button>`}
       </div>`;
   }
 
@@ -15984,7 +17182,6 @@ async function exportPalaceData(folderIds = null) {
     const selFolders = folders.filter(f => !scoped || folderIds.includes(f.id) || f.id === PAL_P || f.id === PAL_H);
     save = await beginExport('白日梦记忆宫殿备份.palacedata');
     if (save.cancelled) return;
-    exportProgress(true, '⬇️ 正在打包宫殿图片…');
     const data = {
       app: 'bairimeng',
       format: 'palacedata',
@@ -15995,6 +17192,29 @@ async function exportPalaceData(folderIds = null) {
       entries: selEntries,
       settings: await palSettings(),
     };
+    // 20261009：APK 环境宫殿导出也改回「单文件」+ 分块写盘——旧 3.0 文件夹模式
+    // 导出成一整个文件夹，用户无法用文件选择器选单文件导入，违背手动导出初衷。
+    // 用 writeSingleFileChunked 把单文件 .palacedata 逐块 appendFile 写盘，规避 OOM。
+    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    if (FS && FS.writeFile) {
+      miniToast('正在导出记忆宫殿（图片较多，请稍候）…');
+      exportProgress(true, '📦 正在打包宫殿图片…');
+      await deepImagesToExport(data, '正在打包宫殿图片'); // 图片 base64 内嵌成单文件
+      exportProgress(false);
+      const json = JSON.stringify(data);
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
+        r.onerror = () => rej(new Error('读取失败'));
+        r.readAsDataURL(new Blob([json], { type: 'application/json' }));
+      });
+      await writeSingleFileChunked('白日梦备份/白日梦记忆宫殿备份.palacedata', b64, 'DOCUMENTS');
+      exportProgress(false);
+      miniToast('已导出单文件「白日梦记忆宫殿备份.palacedata」到「文档/白日梦备份」，导入时选该文件即可');
+      return;
+    }
+    // 网页端：2.2 单文件内嵌（通用格式，网页/App 导入端都认）
+    exportProgress(true, '⬇️ 正在打包宫殿图片…');
     await deepImagesToExport(data, '正在打包宫殿图片');
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     await finishExport(save, blob, `已导出记忆宫殿（${selEntries.length} 段记忆）`);
@@ -16037,7 +17257,23 @@ function showImportPalaceModal(back = null) {
         return;
       }
       exportProgress(true, '⬇️ 正在还原宫殿图片…');
-      const data = await deepImagesFromExport(raw); // {__img} base64 → Blob 描述符（返回新树，需重新取 entries）
+      // 20261009：兼容 3.0 独立文件格式（APK 导出），其余走 2.2 内嵌还原
+      let data;
+      if (raw && raw.version === '3.0' && raw.imagesDir) {
+        const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+        if (FS && typeof FS.readFile === 'function') {
+          const imagesDir = String(raw.imagesDir);
+          const readImage = async (ref, mime) => {
+            const r = await FS.readFile({ path: imagesDir + '/' + ref, directory: 'DOCUMENTS' });
+            return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + r.data);
+          };
+          data = await restoreImagesV3(raw, readImage);
+        } else {
+          data = raw; // 网页端误导入 3.0：保留原样，图片按缺失处理不崩溃
+        }
+      } else {
+        data = await deepImagesFromExport(raw); // {__img} base64 → Blob 描述符（返回新树，需重新取 entries）
+      }
       exportProgress(false);
       const entries = Array.isArray(data.entries) ? data.entries : rawEntries;
       await palEnsureFolders();
@@ -16946,7 +18182,8 @@ async function charSendLetter(c, opts = {}) {
       appendMessage(msg); scrollToBottom();
       // 20261001cp：超频全屏动画（礼物跳出/开箱/惊喜大字）进行中 → 等它退场再开信封，
       // 避免信封垫底被礼物动画盖住、礼物流程走完后「直接变成书信页面」
-      (async () => { try { await _waitOcAnimDone(); } catch (e) {} openLetterOverlay(msg, c); })();
+      // 20261007：maxMs 提到 180s——首触发动画含多段说明弹窗，时长取决于玩家阅读速度
+      (async () => { try { await _waitOcAnimDone(180000); } catch (e) {} openLetterOverlay(msg, c); })();
       // 20260929aw：正在看的信件直接标记已读——防退出聊天后导航页仍提示未读
       setSetting('lastRead_' + c.id, Date.now());
     } else {
@@ -17012,8 +18249,12 @@ async function deliverDueLetterReplies() {
 
 function startLetterReplyWatcher() {
   deliverDueLetterReplies().catch(() => {}); // 启动即补投到期的（含上次关页面错过的）
-  // 20261002ca：挂后台时 10s 高频轮询全停（省电），回信补投交给 60s 低频调度 tick + 原生精确闹钟
-  setInterval(() => { if (bmIsBg()) return; deliverDueLetterReplies().catch(() => {}); }, 10 * 1000);
+  // 20261009：去掉 if(bmIsBg()) return 拦截——与主线随机消息同款「bmIsBg 状态盲区」：
+  //   挂原生悬浮窗时 document.hidden 卡 true 而 __bmBgOn 未置位 → 前台 10s 扫描被 return、后台 60s tick
+  //   又因 bmSetBgState(true) 未触发而不存在 → 回信扫描双停摆。现无条件轮询，deliverDueLetterReplies
+  //   内部自带 _deliveringLetterReplies 并发锁 + 轻量 kv 时间戳比较，后台多扫几次省电影响可忽略；
+  //   charSendLetter 内部已有非聊天页不渲染守卫，绝不唤醒 DOM/动画，不触碰任何通知逻辑。
+  setInterval(() => { deliverDueLetterReplies().catch(() => {}); }, 10 * 1000);
 }
 
 /* 火漆印开信全屏动画：点击信封 → 火漆印上移消失 + 盖片翻开 + 信纸弹出。
@@ -20884,12 +22125,12 @@ async function maybeTriggerOverclockIntro(force = false) {
   await _ocSet('unlocked', true);
 
   // 动画性能降级：低端机 或 跳过动画开关 → 直接弹简短提示
+  // 20261007：skip 路径的 _ocIntroRunning 保持到确认弹窗点掉为止——书信照样排队，不得盖住提示弹窗
   const skip = chatSettings.skipOverclockAnim || isLowEndDevice();
   if (skip) {
-    _ocIntroRunning = false;
     await _ocGrantInitialGift();
     await buildPlusPanel();
-    showConfirm('系统好像发生了一点异变，聊天页面的加号菜单里多了一个「超频」功能，去看看吧。', () => {});
+    showConfirm('系统好像发生了一点异变，聊天页面的加号菜单里多了一个「超频」功能，去看看吧。', () => { _ocIntroRunning = false; });
     return;
   }
 
@@ -21372,18 +22613,21 @@ async function _ocGiftPanelHtml() {
   const customs = await _ocCustomGifts();
   const allGifts = OVERCLOCK_GIFTS.map(g => ({ ...g, custom: false }))
     .concat(customs.map(g => ({ ...g, custom: true })));
+  // 20261007：标题与三个操作按钮同行在窄屏（~360px）会把「（点礼物查看说明）」挤到折行错版——
+  // 标题只留「礼物库」并允许收缩省略，说明下沉为独立小字行，任何宽度都不再换行错版
   return `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-        <div style="font-size:13px;font-weight:600;">🎁 礼物库（点礼物查看说明）</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
+        <div style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🎁 礼物库</div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="oc-side-action" id="oc-gift-batch" title="批量管理">${icon('trash',19)}</button>
           <button class="oc-side-action" id="oc-gift-cabinet" title="礼物柜">${icon('archive',19)}</button>
           <button class="oc-side-action" id="oc-add-menu" title="添加">${icon('plus',19)}</button>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px;">
+      <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px;">点礼物查看说明</div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px;">
       ${allGifts.map(g => `
-        <div class="oc-gift-card" data-gift-id="${g.id}" data-gift-price="${g.price}" style="background:var(--bg-elevated-2);border-radius:12px;padding:10px;cursor:pointer;">
+        <div class="oc-gift-card" data-gift-id="${g.id}" data-gift-price="${g.price}" style="min-width:0;background:var(--bg-elevated-2);border-radius:12px;padding:10px;cursor:pointer;">
           <div style="width:100%;aspect-ratio:1/1;border-radius:9px;overflow:hidden;background:var(--bg);">${g.img ? `<img src="${imgSrc(g.img)}" style="width:100%;height:100%;object-fit:cover;display:block;">` : `<div style="font-size:34px;text-align:center;line-height:60px;">${g.emoji || '🎁'}</div>`}</div>
           <div style="font-size:12.5px;font-weight:600;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.name)}</div>
           <div style="font-size:11px;color:var(--text-tertiary);">¥${g.price}</div>
@@ -21395,13 +22639,14 @@ async function _ocGiftPanelHtml() {
 /* 惊喜面板：预设惊喜（友情/爱人 tab），自定义惊喜通过礼物栏加号入口 */
 async function _ocSurprisePanelHtml() {
   return `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:13px;font-weight:600;">✨ 惊喜（免费，不做记录）</div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button class="oc-side-action" id="oc-surprise-batch" title="批量管理">${icon('trash',19)}</button>
-        <button class="oc-side-action" id="oc-add-menu-surprise" title="添加">${icon('plus',19)}</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
+        <div style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">✨ 惊喜</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="oc-side-action" id="oc-surprise-batch" title="批量管理">${icon('trash',19)}</button>
+          <button class="oc-side-action" id="oc-add-menu-surprise" title="添加">${icon('plus',19)}</button>
+        </div>
       </div>
-    </div>
+      <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:12px;">免费 · 不做记录</div>
     <div style="display:flex;gap:8px;margin-bottom:10px;">
       <button class="btn oc-stab" data-oc-stab="friend" style="flex:1;background:var(--purple);color:#141019;">友情版</button>
       <button class="btn oc-stab" data-oc-stab="lover" style="flex:1;">爱人版</button>
@@ -21663,7 +22908,10 @@ function _gcBindDeck(startIdx = 0) {
     let drag = null;
     function onDown(ev) {
       const el = ev.currentTarget;
-      if (busy || n < 2 || el !== cards[0]) return;
+      // 20261007：n<2 一刀切导致「只有 1 件礼物时轻点看详情完全无响应」——
+      // 单卡放行轻点详情（开关关闭时单卡才无任何交互）；翻页仍由 advance 内部的 n<2 拦截
+      if (busy || el !== cards[0]) return;
+      if (n < 2 && !_gcTapDetail) return;
       drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, dx: 0, dy: 0, t: Date.now(), moved: false, el };
       try { el.setPointerCapture(ev.pointerId); } catch (e) {}
       el.addEventListener('pointermove', onMove);
@@ -22363,16 +23611,31 @@ async function _ocClearUnreadFor(charId) {
 }
 
 /* 播放「进入聊天页时」的待播动画：只取最后一条（惊喜优先），并播细窗提醒剩余未读
-   20260929av：改走收到方向（跳出动画+弹窗/大字），不再是掉落吸入 */
+   20260929av：改走收到方向（跳出动画+弹窗/大字），不再是掉落吸入
+   20261009：惊喜素材缺失/类型不匹配时，不再用 content:{} 空素材播「空大字弹窗」
+   （旧表现：红色感叹号+「，决定跨越维度，」残缺文案，且聊天页无记录）——
+   改为现场补抽一条真惊喜：完整落库+上屏，再用它播动画与弹窗，
+   保证「未读计数承诺过的惊喜」最终一定是一条真实存在的消息。 */
 async function _ocPlayPendingAnim(c, lastMsg) {
   const e = _unreadEvents[c.id] || { gifts: 0, surprises: 0 };
   const hasSurprise = (e.surprises || 0) > 0;
   const total = (e.gifts || 0) + (e.surprises || 0);
   const kind = hasSurprise ? 'surprise' : 'gift';
-  // 素材消息：库里的最后一条；类型不符/缺失时兜底空内容（动画与弹窗仍可播）
-  const msg = (lastMsg && lastMsg.type === kind)
-    ? lastMsg
-    : { id: 'pending', charId: c.id, from: 'them', type: kind, time: Date.now(), content: {} };
+  // 素材消息：库里的最后一条；类型不符/缺失时惊喜现场补真消息，礼物维持旧兜底
+  let msg = (lastMsg && lastMsg.type === kind) ? lastMsg : null;
+  if (!msg && kind === 'surprise') {
+    try {
+      const mode = await _ocCharSurpriseMode(c.id);
+      const presets = OVERCLOCK_SURPRISES[mode] || OVERCLOCK_SURPRISES.lover;
+      const s = presets[randInt(0, presets.length - 1)];
+      if (s) {
+        msg = { id: uid('msg'), charId: c.id, from: 'them', type: 'surprise', time: Date.now(), content: { act: s.act, move: s.move, big: s.big, direction: 'char_to_me' } };
+        await idbPut('messages', msg);
+        if (_inChatWith(c.id)) appendMessage(msg, true); // 进聊天页时 renderMessages 已跑过，补上屏
+      }
+    } catch (err) {}
+  }
+  if (!msg) msg = { id: 'pending', charId: c.id, from: 'them', type: kind, time: Date.now(), content: {} };
   // 20260929ax：进聊天页看到动画即算「看过」——先清未读再播动画。
   // 此前等「打开礼物」交互完成才清，玩家不点开 ⇒ 未读红点一直挂着（列表/加号都不灭）。
   await _ocClearUnreadFor(c.id);
@@ -22401,15 +23664,24 @@ function _ocAnimQueue(run) {
    信封先垫底、礼物动画盖上来，玩家走完礼物流程后面对的下一层就是信封——
    观感「礼物/惊喜弹窗没弹，直接变成书信页面」。
    现在信封到达前先等全部超频全屏层退场（自然结束/跳过/开箱完成均会移除层），
-   保证礼物/惊喜的弹窗优先呈现，信封排队随后。maxMs 兜底防死等。 */
+   保证礼物/惊喜的弹窗优先呈现，信封排队随后。maxMs 兜底防死等。
+   20261007：首触发动画（glitch→裂隙→项链）中段有多段 z100 普通弹窗（前往查看 /
+   礼物星际详情 / 收尾确认），这些阶段全屏层已移除、此前被误判「空闲」→ 信封直接
+   插队盖住弹窗（z320>z100），观感「触发动画被书信打断」。现在 _ocIntroRunning 期间
+   一律视为忙碌，信封排队到整段触发动画走完；另要求连续两拍空闲才放行，堵住
+   「轮询时动画层尚未挂载」的挂载竞态。 */
 function _ocAnimBusy() {
-  return !!document.querySelector('#oc-glitch, #oc-rift, #oc-drop, #oc-open, .oc-unbox-scene, #oc-surprise-big');
+  return _ocIntroRunning || !!document.querySelector('#oc-glitch, #oc-rift, #oc-drop, #oc-open, .oc-unbox-scene, #oc-surprise-big');
 }
 function _waitOcAnimDone(maxMs = 60000) {
   return new Promise(resolve => {
     const t0 = Date.now();
+    let idleStreak = 0;
     const tick = () => {
-      if (!_ocAnimBusy() || Date.now() - t0 > maxMs) return resolve();
+      if (Date.now() - t0 > maxMs) return resolve();
+      if (_ocAnimBusy()) { idleStreak = 0; setTimeout(tick, 300); return; }
+      idleStreak++;
+      if (idleStreak >= 2) return resolve(); // 连续两拍（约600ms）都空闲才算真的空闲
       setTimeout(tick, 300);
     };
     tick();
@@ -22465,7 +23737,8 @@ async function _letterOnEnterChat(c) {
     if (latest) {
       // 20261001cp：与 _ocOnEnterChat 并发——先等超频全屏动画退场再播开信动画，
       // 保证礼物/惊喜弹窗优先，信封不垫底（详见 _waitOcAnimDone 注释）
-      try { await _waitOcAnimDone(); } catch (err2) {}
+      // 20261007：maxMs 180s 覆盖首触发动画全程（含说明弹窗阶段），信封必须排队
+      try { await _waitOcAnimDone(180000); } catch (err2) {}
       openLetterOverlay(latest, c);
     }
     // 有多封时细窗提示
