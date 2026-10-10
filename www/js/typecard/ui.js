@@ -408,6 +408,15 @@
       return true;
     },
 
+    // 20261011：切换悬浮窗预设后，重挂所有已存在的悬浮窗面板（app.js syncFloatHyalite 调用）
+    refreshFloatGlass: function () {
+      try {
+        document.querySelectorAll('.typecard-float-panel').forEach(function (p) {
+          _applyHyaliteGlass(p);
+        });
+      } catch (e) {}
+    },
+
     // 20261009：预取悬浮窗记忆位置填内存缓存（冷启动首次打开也同步定位、零闪跳）。
     // engine 在初始化时调一次，之后 buildFloatPanel 直接走同步缓存，不再等异步 getSetting。
     preloadFloatPos: function () {
@@ -954,27 +963,42 @@
     } catch (e) {}
   }
 
-  // V1.1：悬浮窗玻璃面板改用 hyalite 开源项目的 SVG 真折射液态玻璃。
-  // 铁律：只在 App（Capacitor）环境启用——网站保持 V1.0.9 的纯 CSS 磨砂玻璃不变。
-  //  · window.Capacitor 存在 = App WebView → 挂 hyalite；网站无 Capacitor → 走原 CSS。
-  //  · Hyalite.force(true)：App WebView 的 navigator.vendor 为空，supported() 会误判 false，
-  //    force 强制开启（用户已亲手在 App 里拖拽验证过真折射效果稳定）。
-  //  · 深浅色参数沿用定案：深=默认(shade0.46/rim1.76/edge0.32)，浅=shade0.22/rim2.0/edge0.45。
+  // 20261011：悬浮窗玻璃预设（1号纯CSS磨砂 / 2号hyalite真折射），网站与 App 一致。
+  // 铁律：①读 app.js 桥接 __bmGlassPreset('float') 决定 attach/detach；②attach 前一律先 detach（防叠两层）；
+  // ③切回 1号必须 detach 清 --hyalite/--hyalite-edge（残留变量会压过 CSS fallback = 多出一个框）；
+  // ④force 由 app.js _syncHyaliteForce 统一管理（任一入口 2号→force(true)，全 1号→force(null)），这里幂等兜底。
   function _applyHyaliteGlass(panel) {
-    if (typeof window === 'undefined' || !window.Capacitor) return;   // 仅 App
     if (!window.Hyalite) return;                                      // hyalite.js 未加载则静默跳过
-    try { window.Hyalite.force(true); } catch (e) {}
-    panel.classList.add('tc-hyalite');                                // 让 CSS 无条件走 --hyalite
-    const isLight = document.body && document.body.classList.contains('theme-light');
-    const opts = {
-      bevel: 37, thickness: 59, slope: 2.7, shape: 'squircle',
-      blur: 1, dispersion: 1.6,
-      shade: isLight ? 0.22 : 0.46,
-      rim: isLight ? 2.0 : 1.76,
-      edge: isLight ? 0.45 : 0.32,
-      edgeW: 8, sat: 0.86, light: -140, materialize: 0, self: false
-    };
-    try { window.Hyalite.attach(panel, opts); } catch (e) {}
+    let preset = '1';
+    try { preset = (window.__bmGlassPreset && window.__bmGlassPreset('float')) || '1'; } catch (e) {}
+    if (preset === '2') {
+      try { window.Hyalite.force(true); } catch (e) {}
+      // 20261011 根治「玻璃只渲染一条带」：backdrop-filter 的 SVG 引用滤镜在元素带
+      // 非恒等 transform（CSS 的 translateX(-50%) 居中）时会区域错位（通话框恒等
+      // translateY(0) 就正常）。2号模式下改用 left/right+margin 自动居中，transform 清零。
+      // 拖拽时 pointerdown 本就会转显式坐标（transform:none），不冲突。
+      if (panel.style.transform !== 'none') {
+        panel.style.transform = 'none';
+        panel.style.left = '0';
+        panel.style.right = '0';
+        panel.style.top = 'auto';
+        panel.style.margin = '0 auto';
+      }
+      panel.classList.add('tc-hyalite');                              // 让 CSS 无条件走 --hyalite
+      const isLight = document.body && document.body.classList.contains('theme-light');
+      const opts = {
+        bevel: 37, thickness: 59, slope: 2.7, shape: 'squircle',
+        blur: 1, dispersion: 1.6,
+        shade: isLight ? 0.22 : 0.46,
+        rim: isLight ? 2.0 : 1.76,
+        edge: isLight ? 0.45 : 0.32,
+        edgeW: 8, sat: 0.86, light: -140, materialize: 0, self: false
+      };
+      try { window.Hyalite.detach(panel); window.Hyalite.attach(panel, opts); } catch (e) {}
+    } else {
+      panel.classList.remove('tc-hyalite');                           // 1号：清残留，走纯CSS磨砂
+      try { window.Hyalite.detach(panel); } catch (e) {}
+    }
   }
 
   // 生成装饰（一次）。以面板当前 offsetWidth/Height 为基准算一次坐标，之后不再重算。

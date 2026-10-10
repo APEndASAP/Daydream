@@ -224,6 +224,7 @@ async function init() {
   if (isLowEndDevice()) document.body.classList.add('low-end');
   await initGlassLevel(); // 20260929bh：玻璃三档精度——读上次的自动降级档位（避免每次会话重走降级）
   await initTypecardFloatGlass(); // 20261009：悬浮窗玻璃精度三档（独立于全局玻璃拟态，默认跟随系统）
+  await initGlassPresets(); // 20261011：液态玻璃美化预设（悬浮窗/气泡/通话 1号纯CSS/2号真折射，默认1号）
   await loadGlobalTheme(); // 20260929bo：全局色彩预设（先于 applyChatTheme，浅色主题 class 一次到位）
   applyChatTheme();
   try {
@@ -451,6 +452,11 @@ let _glassLevel = 'hi';    // hi | mid | low（当前生效档位）
 let _glassManual = '';      // 20260929bj：手动选择的档位 hi|mid|low；''=跟随系统自动
 let _tcFloatGlass = 'hi';   // 20261009：悬浮窗（召唤+非召唤）玻璃精度当前生效档位 hi|mid|low
 let _tcFloatGlassManual = ''; // 20261009：悬浮窗玻璃精度手动档位 hi|mid|low；''=跟随系统自动
+// 20261011：液态玻璃美化预设（1号=纯CSS磨砂 / 2号=hyalite真折射），三入口独立记忆、默认1号。
+// 纯外观层，与功能无关；网站与 App 一致（不区分 Capacitor）。
+let _floatPreset = '1';    // 悬浮窗（碎梦重拼/召唤）预设
+let _bubblePreset = '1';   // 气泡预设
+let _callPreset = '1';     // 模拟通话预设
 let _noticeGate = false;    // 20260929bk：软件声明弹窗显示期间=true，抑制来电/超频/书信等打断弹窗，保证声明始终在最前
 let _glassFpsState = null; // { raf, frames, winStart, lowSec }
 let _glassFpsDelay = null;
@@ -506,6 +512,114 @@ async function initTypecardFloatGlass() {
 function applyTypecardFloatGlass() {
   document.body.classList.toggle('tcf-mid', _tcFloatGlass === 'mid');
   document.body.classList.toggle('tcf-low', _tcFloatGlass === 'low');
+}
+
+/* ==================== 20261011：液态玻璃美化预设（1号纯CSS / 2号hyalite真折射） ====================
+   三入口（悬浮窗/气泡/模拟通话）各自独立的 1/2 预设，默认 1号纯CSS，网站与 App 一致。
+   纯外观层，不碰功能/消息/数据库/通知/备份。 */
+async function initGlassPresets() {
+  const load = async (k) => { try { return await getSetting(k); } catch (e) { return null; } };
+  _floatPreset = (await load('floatPreset')) === '2' ? '2' : '1';
+  _bubblePreset = (await load('bubblePreset')) === '2' ? '2' : '1';
+  _callPreset = (await load('callPreset')) === '2' ? '2' : '1';
+  // 桥接：让 typecard/ui.js 独立脚本能读到悬浮窗预设
+  window.__bmGlassPreset = (which) => {
+    if (which === 'float') return _floatPreset;
+    if (which === 'bubble') return _bubblePreset;
+    if (which === 'call') return _callPreset;
+    return '1';
+  };
+  _syncHyaliteForce();
+}
+
+/* hyalite 是否可用（hyalite.js 已加载即可；网站与 App 一致） */
+function _hyaliteAvailable() {
+  return !!(typeof window !== 'undefined' && window.Hyalite);
+}
+
+/* hyalite 真折射参数（V1.1 定案：深 shade0.46/rim1.76/edge0.32，浅 0.22/2.0/0.45） */
+function _hyaliteOpts() {
+  const isLight = document.body && document.body.classList.contains('theme-light');
+  return {
+    bevel: 37, thickness: 59, slope: 2.7, shape: 'squircle',
+    blur: 1, dispersion: 1.6,
+    shade: isLight ? 0.22 : 0.46,
+    rim: isLight ? 2.0 : 1.76,
+    edge: isLight ? 0.45 : 0.32,
+    edgeW: 8, sat: 0.86, light: -140, materialize: 0, self: false
+  };
+}
+
+/* hyalite 引擎强制状态统一管理（20261011 定案铁律）：
+   ① 只有任一入口处于 2号 时才 force(true)——App WebView 的 supported() 靠 navigator.vendor
+      嗅探会误判 false，必须强制才能挂真折射；② 全部切回 1号 时 force(null) 还原嗅探——
+      绝不残留强制（「不分时候强制」根因）。三处预设切换都调它，幂等。 */
+function _anyGlassPreset2() { return _floatPreset === '2' || _bubblePreset === '2' || _callPreset === '2'; }
+function _syncHyaliteForce() {
+  if (typeof window === 'undefined' || !window.Hyalite || typeof window.Hyalite.force !== 'function') return;
+  try { window.Hyalite.force(_anyGlassPreset2() ? true : null); } catch (e) {}
+}
+
+/* 气泡预设同步：2号 → watch #chat-scroll 的 .bubble（新增自动挂）；1号 → 全卸载 */
+let _bubbleHyaliteWatch = null;
+function syncBubbleHyalite() {
+  _syncHyaliteForce();
+  if (!_hyaliteAvailable()) { _bubbleHyaliteStop(); document.body.classList.remove('hm-bubble-hyalite'); return; }
+  if (_bubblePreset === '2') {
+    document.body.classList.add('hm-bubble-hyalite');
+    if (_bubbleHyaliteWatch) return;
+    try {
+      const host = $('#chat-scroll');
+      if (host) _bubbleHyaliteWatch = window.Hyalite.watch(host, '.msg-row .bubble', _hyaliteOpts());
+    } catch (e) {}
+  } else {
+    document.body.classList.remove('hm-bubble-hyalite');
+    _bubbleHyaliteStop();
+  }
+}
+function _bubbleHyaliteStop() {
+  if (_bubbleHyaliteWatch) { try { _bubbleHyaliteWatch.stop(); } catch (e) {} _bubbleHyaliteWatch = null; }
+  if (window.Hyalite) {
+    try {
+      document.querySelectorAll('#chat-scroll .msg-row .bubble').forEach(el => {
+        if (el.classList.contains('tc-hyalite')) { el.classList.remove('tc-hyalite'); try { window.Hyalite.detach(el); } catch (e) {} }
+      });
+    } catch (e) {}
+  }
+}
+
+/* 模拟通话预设同步：2号 → attach #call-box（先 detach 防叠层）；1号 → detach */
+function syncCallHyalite() {
+  _syncHyaliteForce();
+  // 20261011：通话 2号玻璃覆盖两个形态——完整通话框 #call-box + 缩小小窗 #call-float
+  const box = document.getElementById('call-box');
+  if (box) {
+    if (!_hyaliteAvailable()) { box.classList.remove('tc-hyalite'); try { window.Hyalite.detach(box); } catch (e) {} }
+    else if (_callPreset === '2') {
+      box.classList.add('tc-hyalite');
+      try { window.Hyalite.detach(box); window.Hyalite.attach(box, _hyaliteOpts()); } catch (e) {}
+    } else {
+      box.classList.remove('tc-hyalite');
+      try { window.Hyalite.detach(box); } catch (e) {}
+    }
+  }
+  const mini = document.getElementById('call-float');
+  if (mini) {
+    if (!_hyaliteAvailable() || _callPreset !== '2') {
+      mini.classList.remove('tc-hyalite');
+      try { window.Hyalite.detach(mini); } catch (e) {}
+    } else {
+      mini.classList.add('tc-hyalite');
+      try { window.Hyalite.detach(mini); window.Hyalite.attach(mini, _hyaliteOpts()); } catch (e) {}
+    }
+  }
+}
+
+/* 悬浮窗预设同步：由 ui.js 读 __bmGlassPreset('float') 决定 attach/detach；
+   这里只负责切预设后 force 同步 + 让 ui.js 重挂一遍已存在的面板。 */
+function syncFloatHyalite() {
+  _syncHyaliteForce();
+  try { if (window.bmTypecardUi && typeof window.bmTypecardUi.refreshFloatGlass === 'function') window.bmTypecardUi.refreshFloatGlass(); } catch (e) {}
 }
 
 /* 统一应用玻璃档位：glass-ui 总开关 + glass-mid/glass-low 档位类 + 帧率监测启停 */
@@ -2600,6 +2714,7 @@ async function renderMessages(charId) {
   for (let i = _chatWin.start; i < msgs.length; i++) appendMessage(msgs[i], false);
   _chatWin.suspend = false;
   scrollToBottom();
+  syncBubbleHyalite(); // 20261011：按气泡预设 2号挂 hyalite（watch 接管消息气泡）
 }
 
 /* 消息头像（5.2/22：气泡旁显示发送者头像） */
@@ -8002,6 +8117,7 @@ function openCallLayer(html) {
   box.innerHTML = html;
   layer.classList.remove('call-float2');
   layer.classList.add('show');
+  syncCallHyalite(); // 20261011：按模拟通话预设 2号挂 hyalite（1号纯CSS磨砂）
   // 20261009 晚：通话全屏层打开=离开聊天页观感——打字卡圆点/召唤悬浮窗立即收起
   try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
 }
@@ -8272,6 +8388,8 @@ function buildCallFloatDomOnly(c, kind, sec) {
   makeDraggable(f, (x, y) => { _callFloatPos = { x, y }; });
 
   document.body.appendChild(f);   // 最后一步：全部构建成功才插入
+  // 20261011：DOM-only 路径同样挂 2号液态玻璃
+  try { syncCallHyalite(); } catch (e) {}
   return f;
 }
 
@@ -8333,6 +8451,8 @@ function buildCallFloat(c, kind, sec) {
   });
   // 拖拽（拖动开始/结束回调控制 _callFloatDragging）
   makeDraggable(f, (x, y) => { _callFloatPos = { x, y }; });
+  // 20261011：通话缩小小窗也走 2号液态玻璃（与完整通话框同一预设）
+  try { syncCallHyalite(); } catch (e) {}
 }
 
 /* 展开为圆角长条：仅切换 class，不重建 DOM */
@@ -8632,7 +8752,7 @@ function formatDurShort(sec) {
 
 function removeCallFloat() {
   const f = $('#call-float');
-  if (f) f.remove();
+  if (f) { try { if (window.Hyalite) window.Hyalite.detach(f); } catch (e) {} f.remove(); }
   // 20261002cc：移除 DOM 浮窗时，原生悬浮窗（若显示中）一并隐藏——通话结束或切回完整界面都不该再浮系统层
   if (_bmOverlayShown) { _bmOverlayShown = false; bmOverlayHide(); }
 }
@@ -10402,6 +10522,33 @@ async function showChatThemeModal() {
     </div>
 
     <div class="field">
+      <label>悬浮窗预设</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">碎梦重拼 / 召唤悬浮窗的玻璃质感：1号=纯 CSS 磨砂；2号=真折射液态玻璃。切到 2号时上方「悬浮窗玻璃精度」不参与（真折射由源码驱动）</div>
+      <div style="display:flex;gap:8px;margin-top:8px;" id="float-preset-pick">
+        <button class="btn float-preset-btn" data-p="1" style="padding:7px 13px;font-size:12px;">1号 · 纯CSS磨砂</button>
+        <button class="btn float-preset-btn" data-p="2" style="padding:7px 13px;font-size:12px;">2号 · 液态玻璃</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>气泡预设</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">聊天气泡的玻璃质感：1号=纯 CSS 气泡；2号=真折射液态玻璃气泡</div>
+      <div style="display:flex;gap:8px;margin-top:8px;" id="bubble-preset-pick">
+        <button class="btn bubble-preset-btn" data-p="1" style="padding:7px 13px;font-size:12px;">1号 · 纯CSS气泡</button>
+        <button class="btn bubble-preset-btn" data-p="2" style="padding:7px 13px;font-size:12px;">2号 · 液态玻璃气泡</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>模拟通话预设</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">模拟通话界面的玻璃质感：1号=纯 CSS 磨砂；2号=真折射液态玻璃</div>
+      <div style="display:flex;gap:8px;margin-top:8px;" id="call-preset-pick">
+        <button class="btn call-preset-btn" data-p="1" style="padding:7px 13px;font-size:12px;">1号 · 纯CSS磨砂</button>
+        <button class="btn call-preset-btn" data-p="2" style="padding:7px 13px;font-size:12px;">2号 · 液态玻璃</button>
+      </div>
+    </div>
+
+    <div class="field">
       <label>我的气泡颜色</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;" id="theme-me-colors">
         ${BUBBLE_ME_COLORS.map(col => `
@@ -10559,15 +10706,18 @@ async function showChatThemeModal() {
   // 20261009：悬浮窗玻璃精度手动三档选择（跟随系统 / 高 / 中 / 低），独立于玻璃拟态总开关
   const _tcFloatTierName = (lv) => lv === 'hi' ? '高精度' : lv === 'mid' ? '中精度' : '低精度';
   const refreshTcFloatGlassUI = () => {
+    const float2 = _floatPreset === '2'; // 2号真折射由源码驱动，精度三档不参与 → 按钮置灰+提示
     $$('#tc-float-glass-pick .tc-float-glass-btn').forEach(b => {
       const active = (b.dataset.tier || '') === _tcFloatGlassManual;
       b.style.outline = active ? '2px solid var(--purple-soft)' : 'none';
       b.style.background = active ? 'var(--purple-soft)' : '';
       b.style.color = active ? '#fff' : '';
       b.style.fontWeight = active ? '600' : '400';
+      b.style.opacity = float2 ? '0.45' : '1';
+      b.style.pointerEvents = float2 ? 'none' : '';
     });
     const nowEl = $('#tc-float-glass-now');
-    if (nowEl) nowEl.textContent = `当前：${_tcFloatGlassManual ? _tcFloatTierName(_tcFloatGlass) + '（手动锁定）' : _tcFloatTierName(_tcFloatGlass) + '（跟随系统）'}`;
+    if (nowEl) nowEl.textContent = float2 ? '当前：2号液态玻璃（真折射，精度设置不参与）' : `当前：${_tcFloatGlassManual ? _tcFloatTierName(_tcFloatGlass) + '（手动锁定）' : _tcFloatTierName(_tcFloatGlass) + '（跟随系统）'}`;
   };
   refreshTcFloatGlassUI();
   $$('#tc-float-glass-pick .tc-float-glass-btn').forEach(b => {
@@ -10588,6 +10738,55 @@ async function showChatThemeModal() {
       refreshTcFloatGlassUI();
     };
   });
+
+  // 20261011：液态玻璃美化预设（1号纯CSS / 2号hyalite真折射），三入口独立记忆、默认1号
+  const _setPreset = async (key, val) => { try { await setSetting(key, val); } catch (e) {} };
+  const _refreshPresetBtn = (sel, preset) => {
+    $$(sel).forEach(b => {
+      const on = (b.dataset.p || '1') === preset;
+      b.style.outline = on ? '2px solid var(--purple-soft)' : 'none';
+      b.style.background = on ? 'var(--purple-soft)' : '';
+      b.style.color = on ? '#fff' : '';
+      b.style.fontWeight = on ? '600' : '400';
+    });
+  };
+  const _refreshAllPresets = () => {
+    _refreshPresetBtn('#float-preset-pick .float-preset-btn', _floatPreset);
+    _refreshPresetBtn('#bubble-preset-pick .bubble-preset-btn', _bubblePreset);
+    _refreshPresetBtn('#call-preset-pick .call-preset-btn', _callPreset);
+  };
+  // 悬浮窗预设
+  $$('#float-preset-pick .float-preset-btn').forEach(b => {
+    b.onclick = async () => {
+      _floatPreset = b.dataset.p === '2' ? '2' : '1';
+      await _setPreset('floatPreset', _floatPreset);
+      syncFloatHyalite();
+      _refreshAllPresets();
+      refreshTcFloatGlassUI();
+      miniToast('悬浮窗预设已切换：' + (_floatPreset === '2' ? '2号液态玻璃' : '1号纯CSS'));
+    };
+  });
+  // 气泡预设
+  $$('#bubble-preset-pick .bubble-preset-btn').forEach(b => {
+    b.onclick = async () => {
+      _bubblePreset = b.dataset.p === '2' ? '2' : '1';
+      await _setPreset('bubblePreset', _bubblePreset);
+      syncBubbleHyalite();
+      _refreshAllPresets();
+      miniToast('气泡预设已切换：' + (_bubblePreset === '2' ? '2号液态玻璃' : '1号纯CSS'));
+    };
+  });
+  // 模拟通话预设
+  $$('#call-preset-pick .call-preset-btn').forEach(b => {
+    b.onclick = async () => {
+      _callPreset = b.dataset.p === '2' ? '2' : '1';
+      await _setPreset('callPreset', _callPreset);
+      syncCallHyalite();
+      _refreshAllPresets();
+      miniToast('模拟通话预设已切换：' + (_callPreset === '2' ? '2号液态玻璃' : '1号纯CSS'));
+    };
+  });
+  _refreshAllPresets();
 
   // 聊天字体（20260929af）：打开更换字体窗口
   $('#theme-font-btn').onclick = () => showChatFontModal('chat');

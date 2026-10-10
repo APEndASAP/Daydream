@@ -5305,3 +5305,35 @@ body.theme-light .csi-time { color: rgba(42, 35, 64, 0.46); }
 body.theme-light .chat-search-item mark { background: rgba(124, 92, 240, 0.22); }
 body.theme-light .chat-search-empty { color: rgba(42, 35, 64, 0.46); }
 
+/* ============================================================
+   20261011：液态玻璃美化预设（1号纯CSS / 2号hyalite真折射）——气泡/通话 2号消费块。
+   仅气泡/通话预设切 2号时（app.js syncBubbleHyalite 给 body 加 .hm-bubble-hyalite、
+   syncCallHyalite 给 #call-box 加 .tc-hyalite）才命中；1号无此标记 → 走原纯CSS规则不变。
+   悬浮窗 2号消费块在 typecard.css（V1.1 已内置 .tc-hyalite + var(--hyalite)）。 */
+/* —— 气泡 2号：挂真折射 + 底色降半透明（否则不透明底挡住折射） —— */
+body.hm-bubble-hyalite #chat-scroll .msg-row .bubble {
+  backdrop-filter: var(--hyalite, none);
+  -webkit-backdrop-filter: var(--hyalite, none);
+  box-shadow: var(--hyalite-edge, none);
+}
+body.hm-bubble-hyalite #chat-scroll .msg-row.them .bubble {
+  background: color-mix(in srgb, var(--bubble-them, var(--bg-elevated)) 70%, transparent);
+}
+body.hm-bubble-hyalite #chat-scroll .msg-row.me .bubble {
+  background: color-mix(in srgb, var(--bubble-me, var(--purple)) 62%, transparent);
+}
+/* —— 模拟通话 2号：挂真折射（fallback=原 blur(28px) saturate(160%)） —— */
+#call-box.tc-hyalite {
+  backdrop-filter: var(--hyalite, blur(28px) saturate(160%));
+  -webkit-backdrop-filter: var(--hyalite, blur(28px) saturate(160%));
+  box-shadow: var(--hyalite-edge, 0 24px 80px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1));
+}
+/* —— 20261011：通话缩小小窗（#call-float 方块/长条两形态）也走 2号真折射 —— */
+.call-float.tc-hyalite {
+  backdrop-filter: var(--hyalite, blur(18px) saturate(140%));
+  -webkit-backdrop-filter: var(--hyalite, blur(18px) saturate(140%));
+  background: color-mix(in srgb, rgba(28, 24, 36, 0.55) 60%, transparent);
+  box-shadow: var(--hyalite-edge, 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(167, 139, 250, 0.1));
+}
+
+
