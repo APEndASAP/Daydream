@@ -99,13 +99,15 @@
   overflow: hidden;
   pointer-events: none;
   z-index: 0;
-  /* 20261010 真折射玻璃（hyalite 官方用法）：backdrop-filter 与 box-shadow 直接写在
-     .tc-bd-clip 元素本身，引用 hyalite.attach 写入的 --hyalite（SVG 折射滤镜 URL）与
-     --hyalite-edge（锐利玻璃边缘）。Chromium 支持时走真折射；不支持时 var() 回退到
-     blur(6px)，任何内核都有磨砂观感。 */
-  backdrop-filter: var(--hyalite, blur(6px));
-  -webkit-backdrop-filter: var(--hyalite, blur(6px));
-  box-shadow: var(--hyalite-edge, none);
+  /* 20261010 纯 CSS 确定性磨砂玻璃（放弃 SVG 真折射）：
+     backdrop-filter 直接写死在内层裁切层上（本元素无 transform，transform 在父级
+     .typecard-float-panel 上），用固定 blur 值，任何 Chromium/WebView 都能真实
+     磨砂透出背景。不再用 var(--hyalite) —— 之前 hyalite 在 App WebView 里写了
+     --hyalite:url(#id) 但 SVG 折射滤镜厂商 WebView 不渲染，导致 var 的 blur(6px)
+     fallback 因「变量已定义」而永不生效，磨砂层变透明一片 = 用户报「一点没改」。
+     现在直接写死 blur，杜绝 fallback 失效。 */
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
 }
 .typecard-float-panel .tc-bd-clip::before {
   content: '';
@@ -129,17 +131,18 @@
      边界与面板错位=「贯穿横线」。已改挂 .tc-bd-clip 内层圆角裁切层（见上方注释）。 */
   background:
     /* ① 斜向折射光斑（150deg，大范围低对比，有方向） */
-    linear-gradient(150deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.08) 100%),
+    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.10) 100%),
     /* ② 左上柔和反光/空气感（径向光晕，镜片反光） */
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 55%),
-    /* ③ 半透明底：20261010 真折射玻璃——底色降到极低(0.16/0.13)，
-       让 hyalite 折射透出背后内容（深色水感），文字可读性由下方 text-shadow 保障 */
-    linear-gradient(180deg, rgba(72, 82, 120, 0.16), rgba(44, 52, 78, 0.13));
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 55%),
+    /* ③ 半透明底：20261010 纯 CSS 确定性玻璃——底色回到中透(0.32/0.24)，
+       配合内层 .tc-bd-clip 的 blur(18px) 磨砂透出背景（深色水感），
+       文字可读性由下方 text-shadow 保障 */
+    linear-gradient(180deg, rgba(80, 90, 128, 0.32), rgba(50, 58, 86, 0.24));
   background-size: auto, auto, auto;
   background-position: 0 0, 0 0, 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.30);   /* 细白高光描边（液态玻璃亮边） */
-  /* 20261010 真折射：backdrop-filter 由 .tc-bd-clip 内层裁切层承担（见上方注释），
-     面板本体不再挂 blur；纯 CSS 折射光斑+极低底色透出背景，hyalite 真折射在 clip 层生效。 */
+  border: 1px solid rgba(255, 255, 255, 0.32);   /* 细白高光描边（液态玻璃亮边） */
+  /* 20261010 纯 CSS 确定性玻璃：磨砂由 .tc-bd-clip 内层裁切层承担（blur 写死），
+     面板本体不再挂 blur；纯 CSS 折射光斑+中透底色透出背景，观感贴近液态玻璃。 */
   box-shadow:
     /* 轻阴影悬浮（浮起不压黑） */
     0 14px 40px rgba(0, 0, 0, 0.26),
