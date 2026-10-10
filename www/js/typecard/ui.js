@@ -1186,18 +1186,31 @@
     const topA = (anchors && anchors.top && anchors.top.length) ? anchors.top.slice().sort(function (a, b) { return a - b; }) : [w * 0.1, w * 0.6];
     const botA = (anchors && anchors.bottom && anchors.bottom.length) ? anchors.bottom.slice().sort(function (a, b) { return b - a; }) : [w * 0.9, w * 0.4];
 
-    // 顶藤：从左到右一段，宽约 42% 面板宽、高约 24px，贴在顶部
+    // 顶藤：从左到右一段，宽约 42% 面板宽、高约 24px，贴在顶部（top 锚，面板撑高不受影响）
     const topLen = w * (0.34 + rnd() * 0.08);
     frags.push(vineEl(true, topLen, topLen, 24, w * 0.06, -3));
-    // 底藤：一段，贴底部
+    // 底藤：一段。★用 bottom 锚定（不是 top:h-21）——演出中正文打字撑高面板时，
+    // top 锚会让藤停在旧位置跑到面板里，bottom 锚则永远贴住底边框。
     const botLen = w * (0.30 + rnd() * 0.08);
-    frags.push(vineEl(true, botLen, botLen, 24, w * (0.60 - rnd() * 0.10), h - 21));
-    // 左藤：竖直一段，宽约 24px、高约 32% 面板高，贴左缘
+    const botLeft = w * (0.60 - rnd() * 0.10);
+    const bEl = vineEl(true, botLen, botLen, 24, 0, 0);
+    bEl.style.left = 'auto';
+    bEl.style.top = 'auto';
+    bEl.style.right = (w - botLeft - botLen).toFixed(1) + 'px';
+    bEl.style.bottom = '-3px';
+    frags.push(bEl);
+    // 左藤：竖直一段，宽约 24px、高约 32% 面板高，贴左缘（top 锚偏上，撑高不受影响）
     const lLen = h * (0.30 + rnd() * 0.10);
     frags.push(vineEl(false, lLen, 24, lLen, -3, h * 0.18));
-    // 右藤：竖直一段，贴右缘
+    // 右藤：竖直一段。★用 right + bottom 锚定——演出中面板撑高时永远贴住右缘下部，
+    // 与底藤右端衔接（原 top:h*0.52 在面板撑高后会跑到面板中部）。
     const rLen = h * (0.26 + rnd() * 0.10);
-    frags.push(vineEl(false, rLen, 24, rLen, w - 21, h * 0.52));
+    const rEl = vineEl(false, rLen, 24, rLen, 0, 0);
+    rEl.style.left = 'auto';
+    rEl.style.top = 'auto';
+    rEl.style.right = '-3px';
+    rEl.style.bottom = (h * 0.15).toFixed(1) + 'px';
+    frags.push(rEl);
     return frags;
   }
 
