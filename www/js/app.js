@@ -4304,8 +4304,23 @@ function blobToDataURL(b) {
   });
 }
 async function dataURLToBlob(s) {
-  const res = await fetch(s);
-  return await res.blob();
+  // 20261011：根治「APK 端导入失败」——旧写法 fetch(data:URL) 在 Android WebView 里
+  // 对 data:/blob: URL 支持不可靠（常直接失败或返回空）。改为 atob 手动解码 base64，
+  // 完全不依赖 fetch，任何环境都稳定。同时兼容非 base64 的 data URL（URL 编码）。
+  if (typeof s !== 'string' || !s) return Promise.reject(new Error('图片数据为空'));
+  const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(s);
+  if (!m) return Promise.reject(new Error('非法的图片数据格式'));
+  const mime = m[1] || 'image/png';
+  const isB64 = m[2] === ';base64';
+  let body;
+  try {
+    body = isB64 ? atob(m[3]) : decodeURIComponent(m[3]);
+  } catch (e) {
+    return Promise.reject(new Error('图片数据解码失败'));
+  }
+  const u8 = new Uint8Array(body.length);
+  for (let i = 0; i < body.length; i++) u8[i] = body.charCodeAt(i);
+  return Promise.resolve(new Blob([u8], { type: mime }));
 }
 
 /* 20261009：单文件分块写盘——把一份 base64 内容分块 appendFile 写成「单个文件」，
@@ -4314,28 +4329,36 @@ async function dataURLToBlob(s) {
    既不 OOM、又保持 .ocdata 是用户能直接选中的单文件（导入端 file.text() 完全兼容）。 */
 async function writeSingleFileChunked(path, base64, directory) {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
-  if (!FS || typeof FS.appendFile !== 'function') {
-    // 无 appendFile 能力（极老插件）：退回一次性 writeFile
-    await FS.writeFile({ path, data: base64, directory, recursive: true });
-    return;
+  if (!FS || typeof FS.writeFile !== 'function') {
+    throw new Error('文件系统不可用');
   }
   const CHUNK = 4 * 1024 * 1024; // 4MB base64 字符 ≈ 3MB 原始字节
   const total = base64.length;
-  if (total <= CHUNK) {
+
+  // 20261011：小数据（单块内）或插件无 appendFile 能力 → 一次性 writeFile，最稳，不碰分块边界
+  if (total <= CHUNK || typeof FS.appendFile !== 'function') {
     await FS.writeFile({ path, data: base64, directory, recursive: true });
     return;
   }
-  const chunks = Math.ceil(total / CHUNK);
-  let written = 0;
-  for (let i = 0; i < chunks; i++) {
-    const seg = base64.slice(i * CHUNK, (i + 1) * CHUNK);
-    if (i === 0) {
+
+  // 20261011：base64 尾部补 '=' 到 4 的倍数——否则最后一块 appendFile 按 base64 解码残缺片段会抛错
+  const pad = (4 - (total % 4)) % 4;
+  const padded = base64 + '='.repeat(pad);
+
+  // 切块必须按 4 的倍数对齐，保证每一块都是合法的独立 base64 片段（CHUNK 本身是 4 的倍数）
+  let first = true;
+  for (let off = 0; off < padded.length; off += CHUNK) {
+    const seg = padded.slice(off, off + CHUNK);
+    if (first) {
       await FS.writeFile({ path, data: seg, directory, recursive: true });
+      first = false;
     } else {
-      await FS.appendFile({ path, data: seg, directory });
+      // 20261011：appendFile 补 recursive（与首块对齐），防父目录在两次调用间被清理导致追加失败
+      await FS.appendFile({ path, data: seg, directory, recursive: true });
     }
-    written += seg.length;
-    if (chunks > 3 && (i === chunks - 1 || (i + 1) % 3 === 0)) exportProgress(true, `💾 正在写入 ${written}/${total}…`);
+    if (CHUNK > 3 * 1024 * 1024 && off + CHUNK < padded.length) {
+      exportProgress(true, `💾 正在写入 ${Math.min(off + CHUNK, total)}/${total}…`);
+    }
   }
 }
 
@@ -9307,50 +9330,26 @@ async function deliverCharMessage(c, content, type = 'text', extra = null) {
   else notifyIncoming(c, typeof content === 'string' ? content : '（卡片消息）'); // 20260929bi：收敛到统一通知出口（含挂后台）
 }
 
-/* ---------- 通用文件导出（20260929p：根治"假导出"）
+/* ---------- 通用文件导出（20260929p：根治"假导出"；20261011 统一单路径）
    旧写法 a.click() 后同步 revokeObjectURL——下载还没启动就被撤销，且 <a> 没挂 DOM，
    所有导出只弹提示、不出文件。
    现在分两段用：
-   ① beginExport(文件名)：在点击的用户激活期内立刻取保存句柄——
-      PC Chrome/Edge 会弹真实"另存为"对话框（可自选文件夹）；
-      用户取消 → 返回 {cancelled:true}；环境不支持/激活过期 → 静默降级为下载。
-   ② finishExport(save, blob, 提示)：有句柄写入所选位置；否则 <a download> 触发
-      浏览器下载（安卓手机浏览器进"下载"目录，通知栏可见），<a> 挂 body、
-      延迟 4s 再撤销 ObjectURL，给下载留足启动时间。 ---------- */
+   ① beginExport(文件名)：网页端不再弹"另存为"，只返回 {filename}（APK 端同样）。
+   ② finishExport(save, blob, 提示)：
+      · APK（Capacitor Filesystem）→ 分块写进「文档/白日梦备份」单文件；
+      · 网页端 → <a download> 触发浏览器下载（安卓手机浏览器进"下载"目录，
+        通知栏可见），<a> 挂 body、延迟 4s 再撤销 ObjectURL，给下载留足启动时间。
+      全程只弹一次（或不弹），杜绝"一次导出弹两个窗"。 ---------- */
 async function beginExport(filename) {
-  if (typeof window.showSaveFilePicker === 'function') {
-    try {
-      const handle = await window.showSaveFilePicker({ suggestedName: filename });
-      return { filename, handle };
-    } catch (e) {
-      if (e && e.name === 'AbortError') { miniToast('已取消导出'); return { filename, cancelled: true }; }
-      // 其他异常（激活过期/预览面板 iframe 安全策略拦截"另存为"）：提示降级，不再静默——
-      // 20260929z：此前静默降级+iframe 内下载被宿主拦截时用户侧零反馈，看起来像"点了没反应"
-      const inIframe = (() => { try { return window.self !== window.top; } catch (err) { return true; } })();
-      miniToast(inIframe
-        ? '当前面板弹不出保存窗口，已改为直接下载；若无反应请复制 8902 地址到浏览器打开后重试'
-        : '当前环境不支持"另存为"，已改为直接下载');
-    }
-  }
+  // 20261011：网页端彻底放弃 showSaveFilePicker「另存为」路径——
+  // 它在 WorkBuddy 预览面板/iframe/受限 webview 里「弹了窗但写入被平台拒绝」，
+  // 失败后又降级 <a download> 触发第二次保存窗，造成「一次导出弹两个窗」。
+  // 统一走 <a download> 单一路径：真实浏览器里只弹一次（或静默进下载目录），
+  // 用户要的是「点一下导出一个文件」，不是「选文件夹保存」。
   return { filename };
 }
 async function finishExport(save, blob, okMsg) {
   if (!save || save.cancelled) return false;
-  if (save.handle) {
-    // 已经弹过"另存为"（用户选好了位置）：写入失败时绝不能再降级 <a download>——
-    // 那会触发第二次保存弹窗（"导出弹两次窗"的根源）。先重试一次，仍失败就明确报错。
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const w = await save.handle.createWritable();
-        await w.write(blob);
-        await w.close();
-        miniToast(okMsg + '（已保存到你选择的文件夹）');
-        return true;
-      } catch (e) { /* 重试一次；两次都失败则报错终止 */ }
-    }
-    miniToast('写入所选文件夹失败，请重试导出');
-    return false;
-  }
   // 20261001ck：APK（Capacitor 环境）里 <a download> 是 no-op（WebView 无 DownloadListener，
   //   点了静默无反应、文件永远下不来）。改用 @capacitor/filesystem 写进公共「文档」目录
   //   （Directory.Documents = /storage/emulated/0/Documents/，属公共区域，
@@ -13373,6 +13372,16 @@ function showImportModal(back = null) {
    旧备份里的纯 base64 字符串按原样保留（显示层 imgSrc 兼容，不做迁移） */
 async function imgDescFromExport(v) {
   try {
+    // 20261011：兼容旧备份——若整个字段本身就是 dataURL/base64 字符串，原样保留为字符串
+    // （imgSrc 已兼容字符串，渲染不会崩；无需强行转 Blob 徒增 WebView 风险）
+    if (typeof v === 'string') return v;
+    // 旧备份形态 { blob:"dataURL字符串", thumb? }（无 __img 标记）：blob 字段是字符串，迁移成 Blob
+    if (typeof v.blob === 'string' && v.blob) {
+      const mainBlob = await dataURLToBlob(v.blob);
+      const tBlob = (typeof v.thumb === 'string' && v.thumb) ? await dataURLToBlob(v.thumb) : null;
+      return { blob: mainBlob, thumb: tBlob, w: v.w || 0, h: v.h || 0 };
+    }
+    // 新格式 { __img:1, data:"dataURL", thumb? }
     const blob = v.data ? await dataURLToBlob(v.data) : null;
     if (!blob) return '';
     const thumb = v.thumb ? await dataURLToBlob(v.thumb) : null;
@@ -13386,7 +13395,11 @@ async function deepImagesFromExport(node) {
   (function collect(n, parent, key) {
     if (!n || typeof n !== 'object') return;
     if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    // 新格式：{ __img:1, data: string } 载荷
     if (n.__img && typeof n.data === 'string') { found.push({ parent, key, n }); return; }
+    // 20261011：旧备份兼容——图片字段可能是 { blob:"dataURL字符串", thumb? }（无 __img 标记），
+    // 这类字段要迁移成 { blob:Blob, thumb, w, h }，否则导出时会因 blob 不是 Blob 被抹空
+    if (typeof n.blob === 'string' && n.blob && /^data:/.test(n.blob)) { found.push({ parent, key, n }); return; }
     for (const k of Object.keys(n)) collect(n[k], n, k);
   })(node, null, null);
   if (!found.length) return node;
@@ -13499,12 +13512,19 @@ async function doImport(data, mode = 'overwrite') {
 async function imgDescToExport(v) {
   // 已是 base64 载荷（重复导出防御）：原样返回，禁止二次转换（会把 data 抹成空串）
   if (v.__img && typeof v.data === 'string' && !(v.blob instanceof Blob)) return v;
+  // 20261011：兼容旧备份——图片字段的 blob/thumb 可能是「字符串」（纯 dataURL 或 base64），
+  // 旧逻辑里 `v.blob instanceof Blob` 为 false 会把 data 抹成空串 → 旧备份再导出图片全丢。
+  // 现在：blob/thumb 是字符串就原样当作 data 用（保留），是 Blob 才转 base64。
   return {
     __img: 1,
     w: v.w || 0,
     h: v.h || 0,
-    data: v.blob instanceof Blob ? await blobToDataURL(v.blob) : '',
-    thumb: v.thumb instanceof Blob ? await blobToDataURL(v.thumb) : '',
+    data: v.blob instanceof Blob
+      ? await blobToDataURL(v.blob)
+      : (typeof v.blob === 'string' && v.blob ? v.blob : ''),
+    thumb: v.thumb instanceof Blob
+      ? await blobToDataURL(v.thumb)
+      : (typeof v.thumb === 'string' && v.thumb ? v.thumb : ''),
   };
 }
 
@@ -13729,6 +13749,12 @@ async function exportAll() {
     await finishExport(save, blob, '全量备份已导出');
   } catch (e) {
     exportProgress(false);
+    // 20261011：导出失败时清理可能残留的半截文件（分块写盘中途失败会留下半个 .ocdata，
+    // 之后导入这个半截文件必然失败，形成"导出失败→导入失败"的连锁）。清理失败静默忽略。
+    try {
+      const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+      if (FS && FS.deleteFile) await FS.deleteFile({ path: '白日梦备份/白日梦数据备份.ocdata', directory: 'DOCUMENTS' });
+    } catch (cleanErr) {}
     miniToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
   }
 }
