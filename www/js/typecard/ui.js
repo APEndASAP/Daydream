@@ -946,6 +946,17 @@
     //   不渲染，导致 var(--hyalite, blur(6px)) 的 fallback 因「变量已定义」永不生效，
     //   磨砂层透明一片 = 用户报「一点没改」。液态玻璃观感由 CSS 多层渐变光斑+高光描边
     //   承接，深浅色主题都走同一套 CSS，无需 JS 分叉。
+    // 20261010 终极定案（用户截图实锤）：APP WebView（Capacitor）里 backdrop-filter
+    //   的采样层不按圆角裁切、不跟随面板移动——真折射/纯CSS blur 全都露出「直角遮罩」，
+    //   这是合成器级缺陷，换任何玻璃实现都躲不开。唯一根治=APP 里零采样：
+    //   检测 Capacitor 环境给 body 挂 tc-appview，CSS 侧切「确定性静态玻璃」
+    //   （半透明渐变底透出背景，无 blur、无采样层，机制上根绝遮罩/错位/横线）；
+    //   PC 浏览器不受影响，保留真磨砂。
+    try {
+      if (window.Capacitor && !document.body.classList.contains('tc-appview')) {
+        document.body.classList.add('tc-appview');
+      }
+    } catch (e) {}
     _renderFloatDecor(panel);
     // 20261009 渲染稳定修复：装饰层只随「宽度」显著变化（旋屏/手动拉宽）重建，
     // 不再随正文高度增长（打字过程中正文逐行撑高）反复清空重建——

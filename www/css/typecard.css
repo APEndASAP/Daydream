@@ -193,6 +193,32 @@ body.theme-light .typecard-float-panel {
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
 }
 
+/* ======================================================================
+   20261010 终极降级：APP WebView（Capacitor）专用「确定性静态玻璃」。
+   用户真机截图实锤：APP WebView 里 backdrop-filter 采样层不按圆角裁切、
+   不跟随面板移动——直角玻璃边界露出圆角面板外=「上面一层遮罩」。
+   真折射(hyalite)与纯CSS blur 全踩同一个合成器缺陷。根治=APP 内零采样：
+   .tc-bd-clip 完全去掉 backdrop-filter（无采样→机制上根绝遮罩/错位/横线），
+   面板底色加浓补偿文字可读性，半透明底照样透出背景（只是不糊化）。
+   PC 浏览器（无 tc-appview 类）不受影响，保留真磨砂。 */
+body.tc-appview .typecard-float-panel .tc-bd-clip {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: linear-gradient(150deg, rgba(255,255,255,0.09) 0%, rgba(255,255,255,0.03) 35%, rgba(255,255,255,0.08) 100%);
+}
+body.tc-appview .typecard-float-panel {
+  background:
+    linear-gradient(150deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 58%, rgba(255,255,255,0.10) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255,255,255,0.18), rgba(255,255,255,0) 55%),
+    linear-gradient(180deg, rgba(78,88,126,0.72), rgba(48,56,84,0.66)) !important;
+}
+body.theme-light.tc-appview .typecard-float-panel {
+  background:
+    linear-gradient(150deg, rgba(255,255,255,0.62) 0%, rgba(255,255,255,0.22) 34%, rgba(255,255,255,0.06) 60%, rgba(255,255,255,0.36) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255,255,255,0.66), rgba(255,255,255,0) 55%),
+    rgba(246, 248, 253, 0.86) !important;
+}
+
 /* 面板内容层级：压在裂纹层(z0)之上、花饰(z2)之下 */
 .typecard-float-panel .tc-panel-host,
 .typecard-float-panel .tc-body-preview,
