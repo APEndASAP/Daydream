@@ -118,16 +118,18 @@
     linear-gradient(180deg, rgba(80, 90, 128, 0.32), rgba(50, 58, 86, 0.24));
   background-size: auto, auto, auto;
   background-position: 0 0, 0 0, 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.72);   /* 细白高光描边（液态玻璃亮边，用户要求清晰可见） */
-  /* 20261010 纯 CSS 确定性玻璃：backdrop-filter 直接挂本体（blur 写死），
-     折射光斑+中透底色透出背景，观感贴近液态玻璃。 */
+  /* 20261010 白边改画法：border 会被 backdrop-filter 采样糊掉（删 .tc-bd-clip 后
+     blur 挂本体，1px border 边缘被模糊吞掉=用户报「边框不见了」）。改用 box-shadow 的
+     inset 0 0 0 1px 画整圈白描边——box-shadow 是元素自绘、不受 backdrop 采样影响，
+     且与玻璃拟态 .modal 的顶缘高光同机制，WebView 里清晰可见。 */
+  border: 1px solid rgba(255, 255, 255, 0.30);   /* 兜底：PC 端 border 仍在（blur 不吞） */
   box-shadow:
     /* 轻阴影悬浮（浮起不压黑） */
     0 14px 40px rgba(0, 0, 0, 0.26),
     0 3px 8px rgba(0, 0, 0, 0.12),
-    /* 边缘发亮玻璃厚度：顶缘内高光 + 整圈内描边 + 内泛光 */
+    /* 边缘发亮玻璃厚度：顶缘内高光 + 整圈白描边（加亮，box-shadow 不被 backdrop 吞） + 内泛光 */
     inset 0 1px 0 rgba(255, 255, 255, 0.30),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
     inset 0 0 30px rgba(255, 255, 255, 0.06);
   /* 可读性：深色预设浅字 + 深色微光晕 */
   color: #f7f6fa;
@@ -157,14 +159,14 @@ body.theme-light .typecard-float-panel {
     rgba(244, 246, 252, 0.55);
   background-size: auto, auto, auto;
   background-position: 0 0, 0 0, 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.98);   /* 细白高光描边（浅色更亮更白，清晰可见） */
+  border: 1px solid rgba(255, 255, 255, 0.60);   /* 兜底：PC 端 border 仍在（blur 不吞） */
   box-shadow:
     /* 轻阴影悬浮 */
     0 14px 38px rgba(45, 40, 90, 0.18),
     0 3px 8px rgba(45, 40, 90, 0.08),
-    /* 边缘发亮玻璃厚度（浅色：更亮的顶缘内高光） */
+    /* 边缘发亮玻璃厚度（浅色：更亮的顶缘内高光 + 整圈白描边 box-shadow 不被 backdrop 吞） */
     inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92),
     inset 0 -1px 0 rgba(180, 185, 210, 0.22);
   /* 可读性：浅色预设深字 + 浅色微光晕 */
   color: #26262f;
