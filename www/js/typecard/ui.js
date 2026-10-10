@@ -400,9 +400,11 @@
     },
 
     // 插入 document.body（脱离聊天列表 DOM：不受滚动/overflow/max-height 影响）。
+    // 插入后立即挂装饰层（水晶花簇/藤蔓/银链/叶子）——只生成一次，静态固定，之后不重建。
     insertFloatPanel: function (panel) {
       if (!panel) return false;
       document.body.appendChild(panel);
+      _decorateFloatPanel(panel);
       return true;
     },
 
@@ -916,6 +918,432 @@
     panel.addEventListener('pointercancel', endDrag);
   }
 
+  // ======================================================================
+  // 悬浮窗玻璃装饰层（20261010 静态重写）：
+  //   水晶花簇 + 藤蔓(成对互生叶+卷须+尾端花苞) + 银链星坠 + 叶子，钉在面板四边。
+  //   ★核心原则（用户铁律）：装饰层「静态、只生成一次、绝不来回跳动」——
+  //     · 面板创建时生成一次，之后永远不再重建（无 ResizeObserver、无重随机）；
+  //     · 用 seeded PRNG（固定种子）替代 Math.random()，同尺寸下结果完全确定；
+  //     · 装饰用 position:absolute 锚定四边，SVG 用固定 viewBox/坐标（不随面板
+  //       高度 preserveAspectRatio:none 拉伸），打字演出/输入内容撑高面板时装饰不动；
+  //     · 拖拽时装饰作为面板子元素自然跟随（translate3d 移动），无需任何重算。
+  //   ★可读性红线：装饰全部 z-index:0，压在文字/按键/按钮（z1）之下，绝不盖字。
+  // ======================================================================
+  let _decorUid = 0; // SVG defs 渐变 id 计数器（同页多面板不撞 id）
+
+  // 确定性伪随机（mulberry32）：同一种子同序列，保证装饰稳定不跳
+  function _seededRandom(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // 面板装饰入口：只生成一次（panel._decorated 幂等），静态固定，不监听尺寸变化
+  function _decorateFloatPanel(panel) {
+    if (!panel || panel._decorated) return;
+    panel._decorated = true;
+    try {
+      _renderFloatDecor(panel);
+    } catch (e) {}
+  }
+
+  // 生成装饰（一次）。以面板当前 offsetWidth/Height 为基准算一次坐标，之后不再重算。
+  function _renderFloatDecor(panel) {
+    const w = Math.max(panel.offsetWidth || 260, 180);
+    const h = Math.max(panel.offsetHeight || 130, 90);
+    // 固定种子：面板宽高取整参与种子，同一尺寸外观稳定；不同尺寸也稳定不重排
+    const rnd = _seededRandom((Math.round(w) * 7919 + Math.round(h) * 104729 + 17) >>> 0);
+
+    // 先藤蔓（底层），再花簇（盖藤上），再银链，再闪光点
+    const frag = document.createDocumentFragment();
+    const anchors = { top: [], bottom: [] };
+    const clusterEls = [];
+
+    // ---- 主花对角：左上大 + 右下大，微微越出边框（offset 收里）----
+    const mains = [
+      { ax: 'left', ay: 'top', tier: 0, base: 70, out: 0.20 },
+      { ax: 'right', ay: 'bottom', tier: 2, base: 64, out: 0.20 }
+    ];
+    mains.forEach(function (c) {
+      const size = c.base + rnd() * 10;
+      const f = document.createElement('span');
+      f.className = 'tc-cluster';
+      f.appendChild(_bouquetSVG(c.tier, rnd));
+      f.style.width = size.toFixed(1) + 'px';
+      f.style.height = size.toFixed(1) + 'px';
+      f.style.transform = 'rotate(' + Math.floor(rnd() * 30 - 15) + 'deg)';
+      const out = -(size * (c.out + rnd() * 0.04));
+      f.style[c.ax] = out.toFixed(1) + 'px';
+      f.style[c.ay] = out.toFixed(1) + 'px';
+      const cx = (c.ax === 'left' ? 0 : w) + (c.ax === 'left' ? size * 0.62 : -size * 0.62);
+      (c.ay === 'top' ? anchors.top : anchors.bottom).push(cx);
+      clusterEls.push(f);
+    });
+
+    // ---- 边框散簇（坐边、不堆角、大小不一）----
+    const sides = [
+      { edge: 'top', tier: 1, base: 46, px: 0.58 },
+      { edge: 'top', tier: 3, base: 38, px: 0.30 },
+      { edge: 'bottom', tier: 1, base: 44, px: 0.26 },
+      { edge: 'bottom', tier: 3, base: 38, px: 0.74 }
+    ].filter(function (c, i) { return i % 2 === 0 || rnd() < 0.75; });
+    sides.forEach(function (c) {
+      const size = c.base + rnd() * 8;
+      const f = document.createElement('span');
+      f.className = 'tc-cluster';
+      f.appendChild(_bouquetSVG(c.tier, rnd));
+      f.style.width = size.toFixed(1) + 'px';
+      f.style.height = size.toFixed(1) + 'px';
+      f.style.transform = 'rotate(' + Math.floor(rnd() * 40 - 20) + 'deg)';
+      const off = -(size * (0.16 + rnd() * 0.05));
+      f.style[c.edge] = off.toFixed(1) + 'px';
+      const cx = w * c.px;
+      f.style.left = (cx - size / 2).toFixed(1) + 'px';
+      (c.edge === 'top' ? anchors.top : anchors.bottom).push(cx);
+      clusterEls.push(f);
+    });
+
+    // ---- 藤蔓（先挂，花簇后挂盖在藤上，茎不穿花瓣）----
+    frag.appendChild(_borderVinesSVG(w, h, anchors, rnd));
+    clusterEls.forEach(function (f) { frag.appendChild(f); });
+
+    // ---- 银链星坠（两个顶角花簇之间）----
+    frag.appendChild(_chainSVG(w, h, rnd));
+
+    // ---- 闪光点（贴边、不进正文区）----
+    const spN = 2 + Math.floor(rnd() * 2);
+    for (let i = 0; i < spN; i++) {
+      const s = 7 + rnd() * 6;
+      const sp = document.createElement('span');
+      sp.className = 'tc-sparkle';
+      sp.innerHTML = _sparkleSVG();
+      sp.style.width = s.toFixed(1) + 'px';
+      sp.style.height = s.toFixed(1) + 'px';
+      sp.style.opacity = (0.45 + rnd() * 0.4).toFixed(2);
+      sp.style[rnd() < 0.5 ? 'left' : 'right'] = (12 + rnd() * 34) + 'px';
+      sp.style[rnd() < 0.5 ? 'top' : 'bottom'] = (6 + rnd() * 16) + 'px';
+      frag.appendChild(sp);
+    }
+
+    panel.appendChild(frag);
+  }
+
+  // ---- 藤蔓：从花簇起笔、沿边爬行、串起沿途花簇；成对互生叶+卷须+尾端花苞 ----
+  function _borderVinesSVG(w, h, anchors, rnd) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'tc-vines');
+    const PAD = 6;
+    svg.setAttribute('viewBox', (-PAD) + ' ' + (-PAD) + ' ' + (w + PAD * 2) + ' ' + (h + PAD * 2));
+    svg.setAttribute('preserveAspectRatio', 'none');
+    _decorUid++;
+    const gid = 'tcbv' + _decorUid;
+    const INS = 4.5, AMP = 4;
+
+    function miniCluster(cx, cy) {
+      const cols = ['#b7c8f5', '#e3b8e8', '#c9a4ee', '#9db9f2'];
+      const col = cols[Math.floor(rnd() * cols.length)];
+      const n = 4 + Math.floor(rnd() * 2);
+      let s = '<ellipse cx="' + (cx + 6.5).toFixed(1) + '" cy="' + (cy + 4.5).toFixed(1)
+        + '" rx="6.5" ry="2.6" fill="url(#' + gid + ')" opacity="0.85"'
+        + ' transform="rotate(-32 ' + (cx + 6.5).toFixed(1) + ' ' + (cy + 4.5).toFixed(1) + ')"/>';
+      for (let i = 0; i < n; i++) {
+        const ang = (Math.PI * 2 * i) / n - Math.PI / 2 + (rnd() - 0.5) * 0.5;
+        const rr = 4.6 + rnd() * 1.6;
+        s += '<circle cx="' + (cx + Math.cos(ang) * rr).toFixed(1) + '" cy="' + (cy + Math.sin(ang) * rr * 0.9).toFixed(1)
+          + '" r="' + (3 + rnd() * 1.1).toFixed(1) + '" fill="' + col
+          + '" stroke="rgba(255,255,255,0.65)" stroke-width="0.5" opacity="0.92"/>';
+      }
+      s += '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="1.6" fill="#f2d270" stroke="rgba(255,255,255,0.7)" stroke-width="0.4"/>';
+      return s;
+    }
+
+    function trail(yBase, x0, x1, dense, nodeFlower) {
+      const dir = x1 >= x0 ? 1 : -1;
+      const total = Math.abs(x1 - x0);
+      let d = 'M' + x0.toFixed(1) + ',' + yBase.toFixed(1);
+      const joints = [];
+      let x = x0, up = rnd() < 0.5 ? 1 : -1;
+      while (Math.abs(x - x1) > 6) {
+        const step = 10 + rnd() * 6;
+        const nx = x + dir * Math.min(step, Math.abs(x1 - x));
+        const ny = yBase + up * (1.0 + rnd() * 1.6);
+        d += ' Q' + ((x + nx) / 2).toFixed(1) + ',' + (yBase + up * AMP).toFixed(1)
+           + ' ' + nx.toFixed(1) + ',' + ny.toFixed(1);
+        joints.push([nx, ny, up]);
+        x = nx; up = -up;
+      }
+      let leaves = '';
+      joints.forEach(function (j, idx) {
+        const t = total > 0 ? idx / Math.max(joints.length - 1, 1) : 0;
+        const p = dense * (1 - 0.55 * t);
+        const side = j[2];
+        [-1, 1].forEach(function (s) {
+          if (rnd() < p) {
+            const ly = j[1] - side * 3.0 * s * 0.4 + (s === 1 ? -0.5 : 0.5);
+            const rot = s > 0 ? (-34 + rnd() * 14) : (34 + rnd() * 14);
+            const rx = 5.6 - 1.6 * t;
+            leaves += '<ellipse cx="' + j[0].toFixed(1) + '" cy="' + ly.toFixed(1)
+              + '" rx="' + rx.toFixed(1) + '" ry="' + (rx * 0.44).toFixed(1)
+              + '" fill="url(#' + gid + ')" transform="rotate(' + rot.toFixed(0) + ' ' + j[0].toFixed(1) + ' ' + ly.toFixed(1) + ')"/>';
+          }
+        });
+        if (t < 0.6 && rnd() < 0.4) {
+          leaves += '<path d="M' + j[0].toFixed(1) + ',' + (j[1] + side * 1.5).toFixed(1)
+            + ' q' + (dir * 3).toFixed(1) + ',' + (side * 4).toFixed(1)
+            + ' ' + (dir * 5).toFixed(1) + ',' + (side * 2).toFixed(1)
+            + '" fill="none" stroke="rgba(150,190,130,0.5)" stroke-width="0.7" stroke-linecap="round"/>';
+        }
+      });
+      let flowers = '';
+      if (nodeFlower && joints.length > 4) {
+        const picks = [0.28 + rnd() * 0.14];
+        if (rnd() < 0.7) picks.push(0.58 + rnd() * 0.18);
+        picks.forEach(function (t) {
+          const j = joints[Math.min(Math.floor(joints.length * t), joints.length - 1)];
+          flowers += miniCluster(j[0], j[1] - 5.5);
+        });
+      }
+      let tail = '';
+      if (rnd() < 0.55) {
+        const bx = x1, by = yBase - 3.5;
+        tail = '<path d="M' + bx.toFixed(1) + ',' + (by - 4.5).toFixed(1)
+          + ' C' + (bx + 2.4).toFixed(1) + ',' + (by - 3.2).toFixed(1)
+          + ' ' + (bx + 3).toFixed(1) + ',' + (by - 0.8).toFixed(1)
+          + ' ' + (bx + 2).toFixed(1) + ',' + (by + 1).toFixed(1)
+          + ' C' + (bx + 1.2).toFixed(1) + ',' + (by + 2.4).toFixed(1)
+          + ' ' + (bx - 1.2).toFixed(1) + ',' + (by + 2.4).toFixed(1)
+          + ' ' + (bx - 2).toFixed(1) + ',' + (by + 1).toFixed(1)
+          + ' C' + (bx - 3).toFixed(1) + ',' + (by - 0.8).toFixed(1)
+          + ' ' + (bx - 2.4).toFixed(1) + ',' + (by - 3.2).toFixed(1)
+          + ' ' + bx.toFixed(1) + ',' + (by - 4.5).toFixed(1)
+          + ' Z" fill="rgba(214,196,246,0.85)" stroke="rgba(255,255,255,0.5)" stroke-width="0.5"/>';
+      }
+      return '<path d="' + d + '" fill="none" stroke="rgba(120,160,112,0.6)" stroke-width="1.4" stroke-linecap="round"/>'
+        + leaves + flowers + tail;
+    }
+
+    const topA = (anchors && anchors.top && anchors.top.length) ? anchors.top.slice().sort(function (a, b) { return a - b; }) : [w * 0.1, w * 0.6];
+    const botA = (anchors && anchors.bottom && anchors.bottom.length) ? anchors.bottom.slice().sort(function (a, b) { return b - a; }) : [w * 0.9, w * 0.4];
+    const topX0 = Math.max(topA[0] - 2, 8);
+    const topX1 = Math.min(topA[topA.length - 1] + 34, w * 0.92);
+    const botX0 = Math.min(botA[0] + 2, w - 8);
+    const botX1 = Math.max(botA[botA.length - 1] - 34, w * 0.08);
+    let inner = trail(INS, topX0, topX1, 0.85, true)
+      + trail(h - INS, botX0, botX1, 0.85, true);
+    const lLen = h * (0.34 + rnd() * 0.12);
+    const lseg = trail(INS, 46, 46 + lLen, 0.78, true);
+    inner += '<g transform="translate(0,' + h + ') rotate(-90)">' + lseg + '</g>';
+    const rLen = h * (0.30 + rnd() * 0.12);
+    const rseg = trail(INS, 40, 40 + rLen, 0.78, true);
+    inner += '<g transform="translate(' + w + ',0) rotate(90)">' + rseg + '</g>';
+    svg.innerHTML = '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">'
+      + '<stop offset="0" stop-color="#a7d496" stop-opacity="0.9"/>'
+      + '<stop offset="1" stop-color="#679570" stop-opacity="0.78"/>'
+      + '</linearGradient></defs>'
+      + '<g opacity="0.7">' + inner + '</g>';
+    return svg;
+  }
+
+  // ---- 银链星坠：银链 + 星形坠饰，挂两个顶角花簇之间，垂弧自然 ----
+  function _chainSVG(w, h, rnd) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'tc-chain');
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    const x0 = w * (0.14 + rnd() * 0.06);
+    const x1 = w * (0.80 + rnd() * 0.06);
+    const yTop = 3.5;
+    const sag = 11 + rnd() * 8;
+    const mx = (x0 + x1) / 2, my = yTop + sag * 2;
+    let inner = '<path d="M' + x0.toFixed(1) + ',' + yTop + ' Q' + mx.toFixed(1) + ',' + my.toFixed(1)
+      + ' ' + x1.toFixed(1) + ',' + yTop + '" fill="none" stroke="rgba(228,233,255,0.55)" stroke-width="0.8"/>';
+    for (let i = 1; i <= 7; i++) {
+      const t = i / 8;
+      const qx = (1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * mx + t * t * x1;
+      const qy = (1 - t) * (1 - t) * yTop + 2 * (1 - t) * t * my + t * t * yTop;
+      inner += '<circle cx="' + qx.toFixed(1) + '" cy="' + qy.toFixed(1) + '" r="0.9" fill="rgba(240,244,255,0.7)"/>';
+    }
+    const nch = 3 + Math.floor(rnd() * 3);
+    for (let i = 0; i < nch; i++) {
+      const t = 0.18 + 0.64 * (nch === 1 ? 0.5 : i / (nch - 1)) + (rnd() - 0.5) * 0.06;
+      const qx = (1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * mx + t * t * x1;
+      const qy = (1 - t) * (1 - t) * yTop + 2 * (1 - t) * t * my + t * t * yTop;
+      const s = 2.2 + rnd() * 1.8;
+      const cy = qy + 2.5 + rnd() * 2;
+      inner += '<path d="M' + qx.toFixed(1) + ' ' + (cy - s).toFixed(1)
+        + ' L' + (qx + s * 0.27).toFixed(1) + ' ' + (cy - s * 0.27).toFixed(1)
+        + ' L' + (qx + s).toFixed(1) + ' ' + cy.toFixed(1)
+        + ' L' + (qx + s * 0.27).toFixed(1) + ' ' + (cy + s * 0.27).toFixed(1)
+        + ' L' + qx.toFixed(1) + ' ' + (cy + s).toFixed(1)
+        + ' L' + (qx - s * 0.27).toFixed(1) + ' ' + (cy + s * 0.27).toFixed(1)
+        + ' L' + (qx - s).toFixed(1) + ' ' + cy.toFixed(1)
+        + ' L' + (qx - s * 0.27).toFixed(1) + ' ' + (cy - s * 0.27).toFixed(1)
+        + ' Z" fill="rgba(250,250,255,0.88)"/>';
+    }
+    svg.innerHTML = '<g opacity="0.8">' + inner + '</g>';
+    return svg;
+  }
+
+  // ---- 水晶花簇（完整建模）：六瓣水晶大花 + 四瓣绣球 + 五瓣小花 + 泪滴花苞 + 梭形叶 ----
+  function _bouquetSVG(tier, rnd) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'tc-cluster-svg');
+    svg.setAttribute('viewBox', '0 0 120 120');
+    _decorUid++;
+    const u = _decorUid;
+    const defs = '<defs>'
+      + '<linearGradient id="gP0' + u + '" x1="0" y1="1" x2="0" y2="0">'
+      + '<stop offset="0" stop-color="#5b6ee0" stop-opacity="0.85"/>'
+      + '<stop offset="0.55" stop-color="#8fa8f0" stop-opacity="0.9"/>'
+      + '<stop offset="1" stop-color="#ffffff" stop-opacity="0.95"/></linearGradient>'
+      + '<linearGradient id="gP1' + u + '" x1="0" y1="1" x2="0" y2="0">'
+      + '<stop offset="0" stop-color="#b48ae8" stop-opacity="0.85"/>'
+      + '<stop offset="0.55" stop-color="#e9c2ee" stop-opacity="0.9"/>'
+      + '<stop offset="1" stop-color="#ffffff" stop-opacity="0.95"/></linearGradient>'
+      + '<linearGradient id="gP2' + u + '" x1="0" y1="1" x2="0" y2="0">'
+      + '<stop offset="0" stop-color="#7fa3ea" stop-opacity="0.85"/>'
+      + '<stop offset="0.55" stop-color="#c3d8fa" stop-opacity="0.9"/>'
+      + '<stop offset="1" stop-color="#ffffff" stop-opacity="0.95"/></linearGradient>'
+      + '<linearGradient id="gP3' + u + '" x1="0" y1="1" x2="0" y2="0">'
+      + '<stop offset="0" stop-color="#3a55b8" stop-opacity="0.85"/>'
+      + '<stop offset="0.55" stop-color="#6f92ea" stop-opacity="0.9"/>'
+      + '<stop offset="1" stop-color="#eaf2ff" stop-opacity="0.95"/></linearGradient>'
+      + '<radialGradient id="gC' + u + '" cx="0.5" cy="0.42" r="0.7">'
+      + '<stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>'
+      + '<stop offset="0.55" stop-color="#f2d270" stop-opacity="0.9"/>'
+      + '<stop offset="1" stop-color="#dd9f45" stop-opacity="0.85"/></radialGradient>'
+      + '<linearGradient id="gL' + u + '" x1="0" y1="1" x2="0" y2="0">'
+      + '<stop offset="0" stop-color="#a8d89a" stop-opacity="0.85"/>'
+      + '<stop offset="1" stop-color="#4f7f58" stop-opacity="0.8"/></linearGradient>'
+      + '<linearGradient id="gLD' + u + '" x1="0" y1="1" x2="0" y2="0">'
+      + '<stop offset="0" stop-color="#46558c" stop-opacity="0.9"/>'
+      + '<stop offset="1" stop-color="#1e2a52" stop-opacity="0.85"/></linearGradient>'
+      + '<linearGradient id="gB' + u + '" x1="0" y1="1" x2="0" y2="0">'
+      + '<stop offset="0" stop-color="#9db9f2" stop-opacity="0.9"/>'
+      + '<stop offset="1" stop-color="#f0d3f6" stop-opacity="0.95"/></linearGradient>'
+      + '</defs>';
+
+    function heroFlower(pg) {
+      const petal = 'M0,3 C-7.5,-1 -11.5,-9 -10,-17 C-8.8,-24 -3.2,-27 0,-30 C3.2,-27 8.8,-24 10,-17 C11.5,-9 7.5,-1 0,3 Z';
+      let s = '';
+      for (let r = 0; r < 6; r++) {
+        s += '<g transform="rotate(' + (r * 60) + ')">'
+          + '<path d="' + petal + '" fill="url(#' + pg + u + ')" stroke="rgba(255,255,255,0.6)" stroke-width="0.9"/>'
+          + '<path d="M0,-5 C-1.4,-11 -1.4,-18 0,-24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="0.8" stroke-linecap="round"/>'
+          + '</g>';
+      }
+      let st = '';
+      for (let r = 0; r < 6; r++) {
+        const ang = (Math.PI * 2 * r) / 6 + 0.5;
+        const sx = (Math.cos(ang) * 4.6).toFixed(1), sy = (Math.sin(ang) * 4.6).toFixed(1);
+        st += '<line x1="0" y1="0" x2="' + sx + '" y2="' + sy + '" stroke="rgba(255,255,255,0.55)" stroke-width="0.7"/>'
+          + '<circle cx="' + sx + '" cy="' + sy + '" r="1.25" fill="rgba(255,255,255,0.92)"/>';
+      }
+      return s + st + '<circle r="3" fill="url(#gC' + u + ')" stroke="rgba(255,255,255,0.85)" stroke-width="0.7"/>';
+    }
+    function hydrangea(pg) {
+      const petal = 'M0,2 C-6.5,-1 -10,-7 -9.5,-13 C-9.2,-17.5 -5.5,-20 -3,-18.8 C-1.6,-18.1 -0.7,-16.6 0,-15.4 C0.7,-16.6 1.6,-18.1 3,-18.8 C5.5,-20 9.2,-17.5 9.5,-13 C10,-7 6.5,-1 0,2 Z';
+      let s = '';
+      for (let r = 0; r < 4; r++) {
+        s += '<path d="' + petal + '" fill="url(#' + pg + u + ')" stroke="rgba(255,255,255,0.55)" stroke-width="0.8" transform="rotate(' + (r * 90 + 22) + ')"/>';
+      }
+      return s + '<circle r="2.6" fill="url(#gC' + u + ')" stroke="rgba(255,255,255,0.8)" stroke-width="0.6"/>';
+    }
+    function smallFlower(pg) {
+      const petal = 'M0,1.5 C-3.6,-0.5 -5.6,-4 -5,-7.2 C-4.5,-9.6 -2.2,-11 0,-11 C2.2,-11 4.5,-9.6 5,-7.2 C5.6,-4 3.6,-0.5 0,1.5 Z';
+      let s = '';
+      for (let r = 0; r < 5; r++) {
+        s += '<path d="' + petal + '" fill="url(#' + pg + u + ')" stroke="rgba(255,255,255,0.5)" stroke-width="0.6" transform="rotate(' + (r * 72) + ')"/>';
+      }
+      return s + '<circle r="1.8" fill="url(#gC' + u + ')" stroke="rgba(255,255,255,0.75)" stroke-width="0.5"/>';
+    }
+    function bud() {
+      return '<path d="M0,-7 C3.4,-5.2 4.4,-1.4 3.1,1.5 C2,3.9 -2,3.9 -3.1,1.5 C-4.4,-1.4 -3.4,-5.2 0,-7 Z" fill="url(#gB' + u + ')" stroke="rgba(255,255,255,0.6)" stroke-width="0.6"/>'
+        + '<path d="M0,4.4 C-2.1,3.1 -2.7,1 -2,-0.5 L0,1 L2,-0.5 C2.7,1 2.1,3.1 0,4.4 Z" fill="url(#gL' + u + ')"/>'
+        + '<path d="M-1.1,-3.6 C-2,-2.3 -2.2,-0.8 -1.7,0.6" fill="none" stroke="rgba(255,255,255,0.65)" stroke-width="0.7" stroke-linecap="round"/>';
+    }
+    function leaf(s, navy) {
+      return '<g transform="scale(' + s + ')">'
+        + '<path d="M0,0 C-5.5,-2.5 -8.5,-8 -7,-13.5 C-6.3,-15.5 -3,-16.5 0,-16 C3,-16.5 6.3,-15.5 7,-13.5 C8.5,-8 5.5,-2.5 0,0 Z" fill="url(#' + (navy ? 'gLD' : 'gL') + u + ')" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/>'
+        + '<path d="M0,-1.5 L0,-13" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="0.6" stroke-linecap="round"/>'
+        + '</g>';
+    }
+    function twinklePath() {
+      return '<path d="M0,-5 L1.2,-1.2 L5,0 L1.2,1.2 L0,5 L-1.2,1.2 L-5,0 L-1.2,-1.2 Z" fill="rgba(255,255,255,0.92)"/>';
+    }
+    function jit(v, a) { return v + (rnd() - 0.5) * a; }
+    const parts = [];
+    function put(inner, x, y, sc, rot) {
+      parts.push('<g transform="translate(' + jit(x, 7).toFixed(1) + ' ' + jit(y, 7).toFixed(1) + ')'
+        + ' rotate(' + jit(rot || 0, 24).toFixed(0) + ')'
+        + (sc && sc !== 1 ? ' scale(' + (sc * (0.94 + rnd() * 0.12)).toFixed(3) + ')' : '')
+        + '">' + inner + '</g>');
+    }
+
+    if (tier === 0) {
+      put(leaf(1.15, false), 22, 15, 1, -35);
+      put(leaf(0.95, true), 46, 17, 1, 20);
+      put(leaf(1.05, false), 13, 42, 1, -75);
+      put(leaf(0.85, false), 28, 60, 1, -125);
+      put(heroFlower('gP0'), 34, 31, 1.0, 8);
+      put(hydrangea('gP1'), 56, 44, 0.92, 35);
+      put(hydrangea('gP2'), 21, 56, 0.78, -20);
+      put(smallFlower('gP2'), 46, 62, 0.6, 0);
+      put(smallFlower('gP0'), 64, 29, 0.55, 0);
+      put(smallFlower('gP1'), 59, 13, 0.5, 0);
+      put(bud(), 69, 42, 1.05, 25);
+      put(bud(), 33, 73, 0.9, -15);
+      put(twinklePath(), 50, 24, 0.5, 0);
+      put(twinklePath(), 17, 30, 0.4, 0);
+    } else if (tier === 1) {
+      put(leaf(0.95, false), 22, 17, 1, -40);
+      put(leaf(0.85, true), 44, 15, 1, 15);
+      put(heroFlower('gP1'), 34, 33, 0.78, -10);
+      put(hydrangea('gP0'), 54, 42, 0.85, 30);
+      put(smallFlower('gP2'), 43, 57, 0.55, 0);
+      put(smallFlower('gP1'), 59, 26, 0.5, 0);
+      put(bud(), 64, 36, 0.9, 30);
+      put(twinklePath(), 48, 22, 0.45, 0);
+    } else if (tier === 2) {
+      put(leaf(1.1, true), 20, 18, 1, -30);
+      put(leaf(0.95, false), 47, 16, 1, 25);
+      put(leaf(1.0, false), 12, 44, 1, -80);
+      put(heroFlower('gP3'), 35, 33, 0.92, 15);
+      put(hydrangea('gP1'), 56, 48, 0.88, -30);
+      put(hydrangea('gP2'), 19, 57, 0.7, 50);
+      put(smallFlower('gP0'), 45, 64, 0.55, 0);
+      put(smallFlower('gP2'), 63, 27, 0.5, 0);
+      put(bud(), 67, 40, 1.0, 20);
+      put(bud(), 30, 70, 0.85, -25);
+      put(twinklePath(), 52, 28, 0.5, 0);
+    } else {
+      put(leaf(0.9, false), 23, 19, 1, -35);
+      put(leaf(0.8, true), 43, 17, 1, 10);
+      put(hydrangea('gP0'), 34, 34, 0.95, 20);
+      put(smallFlower('gP2'), 51, 41, 0.6, 0);
+      put(smallFlower('gP1'), 35, 52, 0.55, 0);
+      put(bud(), 55, 29, 0.85, 25);
+      put(twinklePath(), 44, 25, 0.4, 0);
+    }
+
+    const mirror = ['', 'translate(120,0) scale(-1,1)', 'translate(120,120) scale(-1,-1)', 'translate(0,120) scale(1,-1)'][tier] || '';
+    svg.innerHTML = defs + '<g opacity="0.95"' + (mirror ? ' transform="' + mirror + '"' : '') + '>' + parts.join('') + '</g>';
+    return svg;
+  }
+
+  // ---- 四角星闪光点（水晶点缀）----
+  function _sparkleSVG() {
+    return '<svg viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg">'
+      + '<path d="M6 0 L7.3 4.7 L12 6 L7.3 7.3 L6 12 L4.7 7.3 L0 6 L4.7 4.7 Z" fill="rgba(255,255,255,0.9)"/>'
+      + '</svg>';
+  }
 
   // ======================================================================
   // 悬浮窗常驻圆点（20261008）：双圈靶心形态（规格 D：悬浮窗模式=常驻双圈）。

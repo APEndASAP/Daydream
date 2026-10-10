@@ -172,6 +172,45 @@ body.theme-light.tcf-low .typecard-float-panel {
   z-index: 1;
 }
 
+/* ---- 毛玻璃装饰层（ui.js _renderFloatDecor 注入，pointer-events:none）---- */
+/* 20261010 静态重写：装饰只生成一次、固定锚定四边、绝不随面板高度/打字演出重排。
+   z0 全部压在文字层 z1 之下（用户红线：任何美化绝不影响可读性），尺寸位置由 ui.js 内联 */
+/* 花簇（水晶花束，沿边错落分布，不堆四角） */
+.typecard-float-panel .tc-cluster {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.16)) drop-shadow(0 0 6px rgba(255, 255, 255, 0.22));
+}
+.typecard-float-panel .tc-cluster svg { display: block; width: 100%; height: 100%; }
+/* 水晶链：银链+星形坠饰，z0 在文字之下 */
+.typecard-float-panel .tc-chain {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+/* 藤蔓：四边攀爬、成对互生叶+卷须+尾端花苞，z0 在文字之下（叶尖绝不盖字） */
+.typecard-float-panel .tc-vines {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  z-index: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.14));
+}
+.typecard-float-panel .tc-vines svg { display: block; width: 100%; height: 100%; }
+/* 闪光点：四角星，z0 在文字之下 */
+.typecard-float-panel .tc-sparkle {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+}
+.typecard-float-panel .tc-sparkle svg { display: block; width: 100%; height: 100%; }
+
 /* ---- 碎梦重拼召唤按钮（summon 形态悬浮窗专属） ---- */
 .tc-summon-row {
   display: flex;
