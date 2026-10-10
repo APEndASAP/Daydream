@@ -1197,7 +1197,9 @@
     bEl.style.left = 'auto';
     bEl.style.top = 'auto';
     bEl.style.right = (w - botLeft - botLen).toFixed(1) + 'px';
-    bEl.style.bottom = '-3px';
+    // 藤茎画在 SVG 顶部 y≈4.5 处 → bottom 需 -18px 才能让茎压在底边框线上
+    // （与顶藤 top:-3 对称：茎在边框内侧 1.5px；-3px 会让茎悬进面板 16px）
+    bEl.style.bottom = '-18px';
     frags.push(bEl);
     // 左藤：竖直一段，宽约 24px、高约 32% 面板高，贴左缘（top 锚偏上，撑高不受影响）
     const lLen = h * (0.30 + rnd() * 0.10);
@@ -1208,7 +1210,9 @@
     const rEl = vineEl(false, rLen, 24, rLen, 0, 0);
     rEl.style.left = 'auto';
     rEl.style.top = 'auto';
-    rEl.style.right = '-3px';
+    // 藤茎画在 SVG 左侧 x≈4.5 处 → right 需 -18px 才能让茎压在右边框线上
+    // （与左藤 left:-3 对称：茎在边框内侧 1.5px）
+    rEl.style.right = '-18px';
     rEl.style.bottom = (h * 0.15).toFixed(1) + 'px';
     frags.push(rEl);
     return frags;
