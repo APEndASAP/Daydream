@@ -365,7 +365,7 @@ body.glass-ui .typecard-float-panel {
     0 14px 44px rgba(0, 0, 0, 0.26),
     0 3px 8px rgba(0, 0, 0, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
     inset 0 0 30px rgba(255, 255, 255, 0.06);
   color: #f7f6fa;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
@@ -385,7 +385,7 @@ body.theme-light.glass-ui .typecard-float-panel {
     0 14px 40px rgba(45, 40, 90, 0.20),
     0 3px 8px rgba(45, 40, 90, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
 }
@@ -400,7 +400,7 @@ body.glass-ui.glass-mid .typecard-float-panel {
   box-shadow:
     0 8px 24px rgba(0, 0, 0, 0.20),
     inset 0 1px 0 rgba(255, 255, 255, 0.26),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
 }
 body.theme-light.glass-ui.glass-mid .typecard-float-panel {
   background:
@@ -410,6 +410,10 @@ body.theme-light.glass-ui.glass-mid .typecard-float-panel {
     rgba(240, 242, 248, 0.66);
   background-size: 17px 19px, auto, auto, auto;
   border-color: rgba(255, 255, 255, 0.66);
+  box-shadow:
+    0 8px 24px rgba(45, 40, 90, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
@@ -422,7 +426,7 @@ body.glass-ui.glass-low .typecard-float-panel {
   box-shadow:
     0 8px 22px rgba(0, 0, 0, 0.26),
     inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
 }
 body.theme-light.glass-ui.glass-low .typecard-float-panel {
   background:
@@ -430,6 +434,10 @@ body.theme-light.glass-ui.glass-low .typecard-float-panel {
     radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
     rgba(240, 242, 248, 0.82);
   border-color: rgba(255, 255, 255, 0.68);
+  box-shadow:
+    0 8px 22px rgba(45, 40, 90, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
@@ -453,7 +461,7 @@ body.tcf-mid .typecard-float-panel {
   box-shadow:
     0 8px 24px rgba(0, 0, 0, 0.20),
     inset 0 1px 0 rgba(255, 255, 255, 0.26),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
 }
 body.theme-light.tcf-mid .typecard-float-panel {
   background:
@@ -467,7 +475,7 @@ body.theme-light.tcf-mid .typecard-float-panel {
   box-shadow:
     0 8px 24px rgba(45, 40, 90, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
@@ -483,7 +491,7 @@ body.tcf-low .typecard-float-panel {
   box-shadow:
     0 8px 22px rgba(0, 0, 0, 0.26),
     inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
 }
 body.theme-light.tcf-low .typecard-float-panel {
   background:
@@ -495,7 +503,7 @@ body.theme-light.tcf-low .typecard-float-panel {
   box-shadow:
     0 8px 22px rgba(45, 40, 90, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.36);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
 }
