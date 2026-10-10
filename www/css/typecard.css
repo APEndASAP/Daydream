@@ -101,7 +101,7 @@
   box-shadow:
     0 14px 40px rgba(0, 0, 0, 0.26),
     0 3px 8px rgba(0, 0, 0, 0.12),
-    var(--hyalite-edge, inset 0 1px 0 rgba(255, 255, 255, 0.30) inset 0 0 0 1px rgba(255, 255, 255, 0.55) inset 0 0 30px rgba(255, 255, 255, 0.06));
+    var(--hyalite-edge, inset 0 1px 0 rgba(255, 255, 255, 0.30), inset 0 0 0 1px rgba(255, 255, 255, 0.55), inset 0 0 30px rgba(255, 255, 255, 0.06));
   color: #f7f6fa;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
   height: auto;
@@ -116,7 +116,7 @@ body.theme-light .typecard-float-panel {
   box-shadow:
     0 14px 38px rgba(45, 40, 90, 0.18),
     0 3px 8px rgba(45, 40, 90, 0.08),
-    var(--hyalite-edge, inset 0 1px 0 rgba(255, 255, 255, 0.98) inset 0 0 0 1px rgba(255, 255, 255, 0.92) inset 0 -1px 0 rgba(180, 185, 210, 0.22));
+    var(--hyalite-edge, inset 0 1px 0 rgba(255, 255, 255, 0.98), inset 0 0 0 1px rgba(255, 255, 255, 0.92), inset 0 -1px 0 rgba(180, 185, 210, 0.22));
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
 }
