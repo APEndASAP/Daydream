@@ -1125,12 +1125,48 @@
         + leaves + flowers + tail;
     }
 
+    // 竖直方向藤蔓（与 htrail 对称：沿 y 轴向下蜿蜒），避免 preserveAspectRatio:none 非等比缩放扭曲
+    function vtrail(L, dense) {
+      const INS = 4.5, AMP = 4;
+      const xBase = INS;
+      let d = 'M' + xBase.toFixed(1) + ',0';
+      const joints = [];
+      let y = 0, up = rnd() < 0.5 ? 1 : -1;
+      while (y < L - 6) {
+        const step = 10 + rnd() * 6;
+        const ny = Math.min(y + step, L);
+        const nx = xBase + up * (1.0 + rnd() * 1.6);
+        d += ' Q' + (xBase + up * AMP).toFixed(1) + ',' + ((y + ny) / 2).toFixed(1)
+           + ' ' + nx.toFixed(1) + ',' + ny.toFixed(1);
+        joints.push([nx, ny, up]);
+        y = ny; up = -up;
+      }
+      let leaves = '';
+      joints.forEach(function (j, idx) {
+        const t = L > 0 ? idx / Math.max(joints.length - 1, 1) : 0;
+        const p = dense * (1 - 0.55 * t);
+        const side = j[2];
+        [-1, 1].forEach(function (s) {
+          if (rnd() < p) {
+            const lx = j[0] - side * 3.0 * s * 0.4 + (s === 1 ? -0.5 : 0.5);
+            const rot = s > 0 ? (-34 + rnd() * 14) : (34 + rnd() * 14);
+            const rx = 5.6 - 1.6 * t;
+            leaves += '<ellipse cx="' + lx.toFixed(1) + '" cy="' + j[1].toFixed(1)
+              + '" rx="' + (rx * 0.44).toFixed(1) + '" ry="' + rx.toFixed(1)
+              + '" fill="url(#' + gid + ')" transform="rotate(' + rot.toFixed(0) + ' ' + lx.toFixed(1) + ' ' + j[1].toFixed(1) + ')"/>';
+          }
+        });
+      });
+      return '<path d="' + d + '" fill="none" stroke="rgba(120,160,112,0.6)" stroke-width="1.4" stroke-linecap="round"/>'
+        + leaves;
+    }
+
     const defs = '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">'
       + '<stop offset="0" stop-color="#a7d496" stop-opacity="0.9"/>'
       + '<stop offset="1" stop-color="#679570" stop-opacity="0.78"/>'
       + '</linearGradient></defs>';
 
-    // 生成一条藤蔓元素：水平方向（horiz=true）或竖直方向（horiz=false），局部定位
+    // 生成一条藤蔓元素：水平（horiz=true）或竖直（horiz=false），局部定位，viewBox 与内容 1:1 无拉伸
     function vineEl(horiz, len, boxW, boxH, left, top) {
       const svg = document.createElementNS(ns, 'svg');
       svg.setAttribute('class', 'tc-vines');
@@ -1141,7 +1177,7 @@
       svg.style.width = boxW + 'px';
       svg.style.height = boxH + 'px';
       svg.innerHTML = defs + '<g opacity="0.7">'
-        + (horiz ? htrail(len, 0.85, true) : htrail(len, 0.78, true))
+        + (horiz ? htrail(len, 0.85, true) : vtrail(len, 0.78))
         + '</g>';
       return svg;
     }
@@ -1150,18 +1186,18 @@
     const topA = (anchors && anchors.top && anchors.top.length) ? anchors.top.slice().sort(function (a, b) { return a - b; }) : [w * 0.1, w * 0.6];
     const botA = (anchors && anchors.bottom && anchors.bottom.length) ? anchors.bottom.slice().sort(function (a, b) { return b - a; }) : [w * 0.9, w * 0.4];
 
-    // 顶藤：从左到右一段，占顶边约 55%~92% 宽度，高约 26px，贴在顶部
+    // 顶藤：从左到右一段，宽约 42% 面板宽、高约 24px，贴在顶部
     const topLen = w * (0.34 + rnd() * 0.08);
-    frags.push(vineEl(true, topLen, topLen, 26, w * 0.06, -4));
-    // 底藤：从右到左一段，占底边，高约 26px，贴在底部（视觉上沿底部）
+    frags.push(vineEl(true, topLen, topLen, 24, w * 0.06, -3));
+    // 底藤：一段，贴底部
     const botLen = w * (0.30 + rnd() * 0.08);
-    frags.push(vineEl(true, botLen, botLen, 26, w * (0.60 - rnd() * 0.10), h - 22));
-    // 左藤：竖直一段，宽约 26px，高约 34% 面板高，贴左缘
+    frags.push(vineEl(true, botLen, botLen, 24, w * (0.60 - rnd() * 0.10), h - 21));
+    // 左藤：竖直一段，宽约 24px、高约 32% 面板高，贴左缘
     const lLen = h * (0.30 + rnd() * 0.10);
-    frags.push(vineEl(false, lLen, 26, lLen, -4, h * 0.18));
-    // 右藤：竖直一段，宽约 26px，贴右缘
+    frags.push(vineEl(false, lLen, 24, lLen, -3, h * 0.18));
+    // 右藤：竖直一段，贴右缘
     const rLen = h * (0.26 + rnd() * 0.10);
-    frags.push(vineEl(false, rLen, 26, rLen, w - 22, h * 0.52));
+    frags.push(vineEl(false, rLen, 24, rLen, w - 21, h * 0.52));
     return frags;
   }
 
