@@ -939,50 +939,13 @@
   function _decorateFloatPanel(panel) {
     if (!panel || panel._decorated) return;
     panel._decorated = true;
-    // 20261010 真折射玻璃（hyalite）：深浅色主题都挂 hyalite 液态玻璃真折射到
-    //   .tc-bd-clip 裁切层上。Chromium 支持（桌面浏览器/OPPO 等独立内核）→ 真折射；
-    //   不支持（老 WebView）→ CSS fallback（var(--hyalite, blur(...))）接管，观感平滑降级。
-    //   深色用官方默认观感（深色水感折射），浅色 shade 更低=更白更透、rim 更高=白玻璃亮边更强。
-    //   两个模式（召唤/普通）都走 buildFloatPanel → _decorateFloatPanel 这一个统一入口，
-    //   折射/装饰/边框天然全形态一致，不存在「只做一边」。
-    try {
-      if (typeof Hyalite !== 'undefined') {
-        // 20261010 关键修复：hyalite 的 supported() 嗅探在 Android WebView（Capacitor）
-        //   里会误判为 false——它用 navigator.vendor==='Google Inc' 判 Chromium，而
-        //   Android WebView 的 vendor 为空/其它值，导致 attach 直接 return、折射根本没挂，
-        //   回退到 blur(6px)，表现为「和之前没区别」。真机已实测 WebView 里折射静态可用，
-        //   故此处对 Chromium 内核（无论 vendor）强制 force(true) 开启真折射。
-        const ua = navigator.userAgent || '';
-        const uad = navigator.userAgentData;
-        const isChromium = (uad && uad.brands && uad.brands.some(b => /Chromium/i.test(b.brand)))
-          || /Chrome\/\d+/.test(ua)
-          || /EdgA?\/\d+/.test(ua)
-          || /OPR\/\d+/.test(ua)
-          || /Android/i.test(ua);
-        if (isChromium && !Hyalite.supported()) {
-          try { Hyalite.force(true); } catch (e) {}
-        }
-        if (Hyalite.supported()) {
-          const clip = panel.querySelector('.tc-bd-clip');
-          if (clip) {
-            const isLight = document.body.classList.contains('theme-light');
-            // 官方默认参数（bevel37/thickness59/shade0.46/rim1.76/edge0.32/blur1/sat0.86）。
-            //   深色保持默认；浅色 shade 更低=玻璃更白更透、rim/edge 更高=白玻璃亮边更强。
-            Hyalite.attach(clip, {
-              bevel: 37, thickness: 59, slope: 2.7, shape: 'squircle',
-              blur: 1, dispersion: 1.6,
-              shade: isLight ? 0.22 : 0.46,
-              rim: isLight ? 2.0 : 1.76,
-              edgeW: 8, sat: 0.86,
-              edge: isLight ? 0.45 : 0.32,
-              light: -140, smooth: 1,
-              materialize: 0, settle: 0, self: false
-            });
-            panel._hyaliteClip = clip;
-          }
-        }
-      }
-    } catch (e) {}
+    // 20261010 纯 CSS 确定性磨砂玻璃（放弃 SVG 真折射）：
+    //   磨砂由 .tc-bd-clip 内层裁切层 CSS 写死 backdrop-filter: blur(18px) saturate(1.35)
+    //   承担，任何 Chromium/厂商 WebView 都真实透出背景。不再在此挂 Hyalite——
+    //   之前 hyalite 在 App WebView 写了 --hyalite:url(#id) 但 SVG 折射滤镜厂商 WebView
+    //   不渲染，导致 var(--hyalite, blur(6px)) 的 fallback 因「变量已定义」永不生效，
+    //   磨砂层透明一片 = 用户报「一点没改」。液态玻璃观感由 CSS 多层渐变光斑+高光描边
+    //   承接，深浅色主题都走同一套 CSS，无需 JS 分叉。
     _renderFloatDecor(panel);
     // 20261009 渲染稳定修复：装饰层只随「宽度」显著变化（旋屏/手动拉宽）重建，
     // 不再随正文高度增长（打字过程中正文逐行撑高）反复清空重建——
