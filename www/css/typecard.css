@@ -69,9 +69,13 @@
    ----------------------------------------------------------------------------
    · 脱离聊天列表 DOM：不受滚动 / 气泡 overflow / max-height 影响，绝不裁切；
    · 固定屏幕底部居中，桌面端与手机端都不贴边（safe-area 兜底）；
-   · 主题可读性：背景用 --bg-elevated-2（深浅色 surface 均正确）、
-     文字用 --text（深浅色对比度足够），切换主题自动跟随；
+   · 主题可读性：背景半透明雾面、文字随主题深浅自动正确；
    · height:auto 内容自然撑开，不设 overflow:hidden，正文完整显示。
+   ----------------------------------------------------------------------------
+   20261010 终极重写：iOS 液态玻璃（纯 CSS，确定性、单层、零装饰层）。
+   · backdrop-filter 直接挂面板本体，圆角靠 border-radius 自然生效（无中间裁切层→无遮罩）；
+   · 只由「悬浮窗玻璃精度」一个设置决定三档（高/中/低），不跟随「玻璃拟态模式」开关；
+   · 高=全磨砂 blur(18px)+折射光泽+细白描边；中=blur(8px)去复杂高光；低=纯色卡片不磨砂。
    ============================================================================ */
 .typecard-float-panel {
   position: fixed;
@@ -80,173 +84,93 @@
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   z-index: 2147482000;               /* 与开屏/引导同级，确保盖过普通聊天层、不盖系统级 */
   width: auto;
-  min-width: 244px;                  /* 20261009 深夜：与气泡内嵌下限对齐(244px)，面板三行不塌、候选行完整、字卡不裁切 */
+  min-width: 244px;                  /* 与气泡内嵌下限对齐，面板三行不塌、候选行完整 */
   max-width: min(88vw, 420px);       /* 窄屏不贴边，桌面端不无限拉宽 */
   box-sizing: border-box;
   padding: 12px 14px;
   border-radius: 20px;                /* 大圆角矩形（iOS glass 风格） */
-  /* 20261010 终极根治：backdrop-filter 直接挂面板本体（与玻璃拟态 .modal/.chat-panel
-     同构，已被真机证明无遮罩）。之前用 .tc-bd-clip 内层裁切层 + overflow:hidden
-     强制裁圆角，结果 overflow:hidden 让采样层与元素边界错位、露出直角玻璃边=遮罩。
-     现在去掉中间层，圆角由 border-radius 自然生效（backdrop-filter 跟随 border-radius
-     裁圆角），磨砂透出背景。 */
+  /* 磨砂：恒定 blur，面板创建到销毁绝不改变（永不采样重建 → 永无撕裂） */
   backdrop-filter: blur(18px) saturate(1.35);
   -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  /* 液态玻璃：半透明雾面底（蓝灰，透出背景=水感）+ 斜向折射光斑 + 左上柔光 */
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.10) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, rgba(80, 90, 128, 0.32), rgba(50, 58, 86, 0.24));
+  /* 白描边用 box-shadow inset 画（border 会被 backdrop 采样糊掉） */
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.26),
+    0 3px 8px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.30),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 0 0 30px rgba(255, 255, 255, 0.06);
+  color: #f7f6fa;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
+  height: auto;
+  overflow: visible;
 }
-/* 内容层抬高到模糊层之上（装饰元素后挂载且自带定位，仍在最上层不受影响） */
+/* 浅色主题：iOS 液态白玻璃（更白更透，深字浅光晕） */
+body.theme-light .typecard-float-panel {
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.22) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.36) 100%),
+    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0) 55%),
+    rgba(244, 246, 252, 0.55);
+  box-shadow:
+    0 14px 38px rgba(45, 40, 90, 0.18),
+    0 3px 8px rgba(45, 40, 90, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92),
+    inset 0 -1px 0 rgba(180, 185, 210, 0.22);
+  color: #26262f;
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
+}
+
+/* ---- 中精度：磨砂降到 8px、去复杂高光，保留细白描边（只由「悬浮窗玻璃精度」控制） ---- */
+body.tcf-mid .typecard-float-panel {
+  backdrop-filter: blur(8px) saturate(1.15);
+  -webkit-backdrop-filter: blur(8px) saturate(1.15);
+  background:
+    linear-gradient(180deg, rgba(80, 90, 128, 0.40), rgba(50, 58, 86, 0.32));
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    0 2px 6px rgba(0, 0, 0, 0.10),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+body.theme-light.tcf-mid .typecard-float-panel {
+  backdrop-filter: blur(8px) saturate(1.15);
+  -webkit-backdrop-filter: blur(8px) saturate(1.15);
+  background: rgba(244, 246, 252, 0.62);
+  box-shadow:
+    0 10px 28px rgba(45, 40, 90, 0.16),
+    0 2px 6px rgba(45, 40, 90, 0.06),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
+}
+
+/* ---- 低精度：不用磨砂，改半透明纯色卡片（最省 GPU，低端机最稳） ---- */
+body.tcf-low .typecard-float-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: linear-gradient(180deg, rgba(84, 94, 132, 0.92), rgba(60, 68, 100, 0.90));
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.24),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+body.theme-light.tcf-low .typecard-float-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: linear-gradient(180deg, rgba(246, 247, 252, 0.96), rgba(236, 238, 246, 0.94));
+  box-shadow:
+    0 10px 26px rgba(45, 40, 90, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
+}
+
+/* 内容层抬高到模糊层之上 */
 .typecard-float-panel > .tc-panel-host,
 .typecard-float-panel > .tc-body-preview,
 .typecard-float-panel > .tc-summon-row {
   position: relative;
   z-index: 1;
 }
-/* 20261010 液态玻璃重写（用户参考图2 + iOS 液态玻璃提示词，逐条落实）：
-     半透明雾面底（蓝灰，高透 0.30 让背景透出=水感）+ 大半径柔和 blur(18px) + 细白高光
-     描边 + 顶缘玻璃厚度内高光 + 斜向折射光斑（提亮水感）+ 左上柔光 + 轻阴影悬浮。
-     非塑料、非灰遮罩。
-     ★遮罩真因（20261010 终极定案）：之前用 .tc-bd-clip 裁切层 overflow:hidden 裁圆角，
-     该 overflow:hidden + backdrop-filter 在 App WebView 采样错位、露出直角玻璃边=遮罩。
-     已移除裁切层，backdrop-filter 直接挂本体，圆角靠 border-radius 自然生效（同玻璃拟态
-     .modal/.chat-panel，真机无遮罩）。 */
-  background:
-    /* ① 斜向折射光斑（150deg，大范围低对比，有方向） */
-    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.10) 100%),
-    /* ② 左上柔和反光/空气感（径向光晕，镜片反光） */
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 55%),
-    /* ③ 半透明底：中透(0.32/0.24)，backdrop-filter 挂本体磨砂透出背景（深色水感），
-       文字可读性由下方 text-shadow 保障 */
-    linear-gradient(180deg, rgba(80, 90, 128, 0.32), rgba(50, 58, 86, 0.24));
-  background-size: auto, auto, auto;
-  background-position: 0 0, 0 0, 0 0;
-  /* 20261010 白边改画法：border 会被 backdrop-filter 采样糊掉（删 .tc-bd-clip 后
-     blur 挂本体，1px border 边缘被模糊吞掉=用户报「边框不见了」）。改用 box-shadow 的
-     inset 0 0 0 1px 画整圈白描边——box-shadow 是元素自绘、不受 backdrop 采样影响，
-     且与玻璃拟态 .modal 的顶缘高光同机制，WebView 里清晰可见。 */
-  border: 1px solid rgba(255, 255, 255, 0.30);   /* 兜底：PC 端 border 仍在（blur 不吞） */
-  box-shadow:
-    /* 轻阴影悬浮（浮起不压黑） */
-    0 14px 40px rgba(0, 0, 0, 0.26),
-    0 3px 8px rgba(0, 0, 0, 0.12),
-    /* 边缘发亮玻璃厚度：顶缘内高光 + 整圈白描边（加亮，box-shadow 不被 backdrop 吞） + 内泛光 */
-    inset 0 1px 0 rgba(255, 255, 255, 0.30),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
-    inset 0 0 30px rgba(255, 255, 255, 0.06);
-  /* 可读性：深色预设浅字 + 深色微光晕 */
-  color: #f7f6fa;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
-  /* 高度：内容自然撑开，绝不裁切 */
-  height: auto;
-  overflow: visible;
-}
-/* 20261009 深夜终版：已彻底删除「状态切换去模糊」设计（body.tc-kb-open / .tc-playing）。
-   切换 backdrop-filter 数值这个动作本身，在真机 WebView 上就会触发整个采样区重建，
-   正是「点输入框/演出时出现一条杠、渲染一半」的真正来源——想用切换避开撕裂，
-   反而制造了撕裂。正确做法：所有状态（静态/拖动/演出/点输入框/召唤）共用同一套
-   恒定 blur 值，从面板创建到销毁绝不改变，也就永远不存在采样重建 → 永无一条杠。
-   背景透出 + 模糊效果全程都在（这就是「恒定 blur」而非「去掉 blur」）。 */
-/* 20261009 午后：噪点颗粒已整体移除（用户要求光滑玻璃，深色背景上颗粒读作砂纸）。
-   ::after 噪点规则删除；tc-frost / tc-crinkle 不再由 ui.js 注入，display:none 兜底防残留。 */
-/* 浅色主题默认毛玻璃：iOS 液态白玻璃（不依赖玻璃拟态开关，自动跟随主题）。
-   20261010 液态玻璃重写：可读性兼容——浅色预设深字 + 浅色微光晕，
-   底色高透(0.44)让背景透出=白玻璃水感，blur 18px 恒定。 */
-body.theme-light .typecard-float-panel {
-  background:
-    /* 折射感：极淡斜向折射光斑（更白更透） */
-    linear-gradient(150deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.22) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.36) 100%),
-    /* 柔和反光/空气感：左上角柔和光晕 */
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0) 55%),
-    /* 液态白玻璃半透明底：20261010 更白（0.44→0.55），折射透出背后、白玻璃更亮 */
-    rgba(244, 246, 252, 0.55);
-  background-size: auto, auto, auto;
-  background-position: 0 0, 0 0, 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.60);   /* 兜底：PC 端 border 仍在（blur 不吞） */
-  box-shadow:
-    /* 轻阴影悬浮 */
-    0 14px 38px rgba(45, 40, 90, 0.18),
-    0 3px 8px rgba(45, 40, 90, 0.08),
-    /* 边缘发亮玻璃厚度（浅色：更亮的顶缘内高光 + 整圈白描边 box-shadow 不被 backdrop 吞） */
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.92),
-    inset 0 -1px 0 rgba(180, 185, 210, 0.22);
-  /* 可读性：浅色预设深字 + 浅色微光晕 */
-  color: #26262f;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
-}
-
-/* 面板内容层级：压在裂纹层(z0)之上、花饰(z2)之下 */
-.typecard-float-panel .tc-panel-host,
-.typecard-float-panel .tc-body-preview,
-.typecard-float-panel .tc-summon-row {
-  position: relative;
-  z-index: 1;
-}
-
-/* ---- 毛玻璃装饰层（ui.js _renderFloatDecor 注入，pointer-events:none） ---- */
-/* 20261009 晚：碎玻璃碎片层已按用户要求整体移除（ui.js 不再生成节点），CSS 规则同步删除。
-   「三条杠」=碎片亮描边在暗背景上的观感。tc-shards 仍保留在 ui.js 幂等清理列表。 */
-/* 花簇（20261008 晚七轮）：完整建模水晶花束，沿边错落分布（不堆四角），
-   z0=压在文字层之下（用户红线：任何美化绝不影响可读性），尺寸位置由 ui.js 内联 */
-.typecard-float-panel .tc-cluster {
-  position: absolute;
-  z-index: 0;
-  pointer-events: none;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.16)) drop-shadow(0 0 6px rgba(255, 255, 255, 0.22));
-}
-.typecard-float-panel .tc-cluster svg { display: block; width: 100%; height: 100%; }
-/* 水晶链：银链+星形坠饰（用户认可保留），z0 在文字之下 */
-.typecard-float-panel .tc-chain {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
-  pointer-events: none;
-}
-/* 藤蔓（20261008 晚七轮定稿）：真缠绕观感——四边攀爬、节间短、成对互生叶+卷须，
-   z0 在文字层之下（叶尖绝不盖字） */
-.typecard-float-panel .tc-vines {
-  position: absolute;
-  inset: -6px;
-  width: calc(100% + 12px);
-  height: calc(100% + 12px);
-  z-index: 0;
-  pointer-events: none;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.14));
-}
-.typecard-float-panel .tc-vines svg { display: block; width: 100%; height: 100%; }
-/* 玻璃纹理·磨砂颗粒（Spotify 参考）：feTurbulence 灰度噪点 + overlay 混合，
-   中灰中和、亮暗斑点浮现——可见的 dither 质感；圆角裁剪不越出玻璃面。
-   20261009 晚终版：opacity 0.30→0.16——真机特写里 overlay 噪点过重（砂纸感），
-   减淡后保留细腻 dither 质感、不再抢观感 */
-/* 玻璃纹理·磨砂颗粒（alpha 烘焙版）：
-   ★真机根因：面板 backdrop-filter + will-change:transform 时，Android WebView
-   合成器会丢弃子元素的 CSS opacity（桌面正常）——此前 0.12/0.05/0.03 全部无效、
-   颗粒始终以 100% 强度渲染（=「灰色噪点实面」真凶）。
-   修法：透明度直接烘进位图 alpha（14/255≈5.5%，ui.js 控），元素 opacity 恒 1；
-   布局样式也已全部内联（此规则仅作兜底）。 */
-.typecard-float-panel .tc-frost {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  overflow: hidden;
-  opacity: 1;
-  background-repeat: repeat;
-  background-size: 64px 64px;
-}
-/* 玻璃纹理·皱褶压纹（PS 参考）：抖动晶格亮暗成对折痕 + 长波纹 + 斜向光带
-   20261009 午后：皱褶层（含斜向光带=「白杠」来源之一）已整体移除，display:none 兜底 */
-.typecard-float-panel .tc-crinkle { display: none; }
-/* 闪光点：四角星，透明度随机，z0 在文字之下 */
-.typecard-float-panel .tc-sparkle {
-  position: absolute;
-  z-index: 0;
-  pointer-events: none;
-}
-.typecard-float-panel .tc-sparkle svg { display: block; width: 100%; height: 100%; }
 
 /* ---- 碎梦重拼召唤按钮（summon 形态悬浮窗专属） ---- */
 .tc-summon-row {
@@ -343,175 +267,9 @@ body.theme-light .typecard-float-panel .tc-body-preview {
   padding-top: 10px;
 }
 
-/* ============================================================================
-   玻璃拟态跟随（20261008 用户要求：玻璃模式下悬浮窗也要是玻璃质感）
-   与主线 body.glass-ui .modal / .chat-panel 同一配方：
-   半透面 + 白细边 + backdrop 模糊；浅色主题走白玻璃特化；中/低精度档随主线降级。
-   ============================================================================ */
-body.glass-ui .typecard-float-panel {
-  /* 20261010 V1.1 确定性玻璃（glass-ui 档，同默认档配方 + 微粒纹理） */
-  background:
-    /* 0) 玻璃微粒纹理 */
-    radial-gradient(rgba(255, 255, 255, 0.10) 0.6px, transparent 0.7px),
-    radial-gradient(rgba(255, 255, 255, 0.06) 0.5px, transparent 0.6px),
-    radial-gradient(rgba(255, 255, 255, 0.05) 0.5px, transparent 0.6px),
-    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.09) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0) 55%),
-    linear-gradient(180deg, rgba(96, 110, 146, 0.30), rgba(64, 76, 104, 0.24));
-  background-size: 23px 29px, 31px 37px, 43px 53px, auto, auto, auto;
-  background-position: 0 0, 3px 5px, 7px 9px, 0 0, 0 0, 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  box-shadow:
-    0 14px 44px rgba(0, 0, 0, 0.26),
-    0 3px 8px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
-    inset 0 0 30px rgba(255, 255, 255, 0.06);
-  color: #f7f6fa;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
-}
-body.theme-light.glass-ui .typecard-float-panel {
-  background:
-    radial-gradient(rgba(255, 255, 255, 0.14) 0.6px, transparent 0.7px),
-    radial-gradient(rgba(255, 255, 255, 0.08) 0.5px, transparent 0.6px),
-    radial-gradient(rgba(120, 130, 160, 0.05) 0.5px, transparent 0.6px),
-    linear-gradient(150deg, rgba(255, 255, 255, 0.70) 0%, rgba(255, 255, 255, 0.24) 34%, rgba(255, 255, 255, 0.08) 60%, rgba(255, 255, 255, 0.40) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.70), rgba(255, 255, 255, 0) 55%),
-    rgba(240, 242, 248, 0.44);
-  background-size: 23px 29px, 31px 37px, 43px 53px, auto, auto, auto;
-  background-position: 0 0, 3px 5px, 7px 9px, 0 0, 0 0, 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.75);
-  box-shadow:
-    0 14px 40px rgba(45, 40, 90, 0.20),
-    0 3px 8px rgba(45, 40, 90, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
-  color: #26262f;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
-}
-/* 中精度：20261010 V1.1 重构——mid=略实底色+弱纹理（与 tcf-mid 同策略）。 */
-body.glass-ui.glass-mid .typecard-float-panel {
-  background:
-    radial-gradient(rgba(255, 255, 255, 0.20) 0.5px, transparent 0.6px),
-    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.09) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0) 55%),
-    linear-gradient(180deg, rgba(96, 110, 146, 0.42), rgba(64, 76, 104, 0.36));
-  background-size: 17px 19px, auto, auto, auto;
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.20),
-    inset 0 1px 0 rgba(255, 255, 255, 0.26),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
-}
-body.theme-light.glass-ui.glass-mid .typecard-float-panel {
-  background:
-    radial-gradient(rgba(255, 255, 255, 0.32) 0.5px, transparent 0.6px),
-    linear-gradient(150deg, rgba(255, 255, 255, 0.60) 0%, rgba(255, 255, 255, 0.22) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.32) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
-    rgba(240, 242, 248, 0.66);
-  background-size: 17px 19px, auto, auto, auto;
-  border-color: rgba(255, 255, 255, 0.66);
-  box-shadow:
-    0 8px 24px rgba(45, 40, 90, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
-  color: #26262f;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
-}
-/* 低精度：20261010 V1.1 重构——low=纯色雾面、无纹理、底色最实（最省 GPU）。 */
-body.glass-ui.glass-low .typecard-float-panel {
-  background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.08) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 55%),
-    linear-gradient(180deg, rgba(96, 110, 146, 0.52), rgba(64, 76, 104, 0.46));
-  box-shadow:
-    0 8px 22px rgba(0, 0, 0, 0.26),
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
-}
-body.theme-light.glass-ui.glass-low .typecard-float-panel {
-  background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.60) 0%, rgba(255, 255, 255, 0.24) 34%, rgba(255, 255, 255, 0.08) 60%, rgba(255, 255, 255, 0.36) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
-    rgba(240, 242, 248, 0.82);
-  border-color: rgba(255, 255, 255, 0.68);
-  box-shadow:
-    0 8px 22px rgba(45, 40, 90, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
-  color: #26262f;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
-}
-
-/* ============================================================================
-   20261009：悬浮窗玻璃精度三档（独立于玻璃拟态总开关）
-   与上方 body.glass-ui 系列解耦——用独立的 body.tcf-mid / body.tcf-low 类，
-   无论玩家是否开启「玻璃拟态模式」，悬浮窗（召唤+非召唤）都能按设备/手动选择控制模糊精度。
-   高精度（默认）不设类，直接用 .typecard-float-panel 默认 blur(26px)。
-   ============================================================================ */
-/* 中精度：20261010 V1.1 重构——mid=略实底色+弱纹理（比 hi 更省采样、比 low 保留质感）。
-   不再有 blur；磨砂感由加深底色+更淡纹理承担。 */
-body.tcf-mid .typecard-float-panel {
-  background:
-    /* 弱纹理（单层微点，比 hi 三层更省） */
-    radial-gradient(rgba(255, 255, 255, 0.20) 0.5px, transparent 0.6px),
-    linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.09) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0) 55%),
-    linear-gradient(180deg, rgba(96, 110, 146, 0.42), rgba(64, 76, 104, 0.36));
-  background-size: 17px 19px, auto, auto, auto;
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.20),
-    inset 0 1px 0 rgba(255, 255, 255, 0.26),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
-}
-body.theme-light.tcf-mid .typecard-float-panel {
-  background:
-    /* 弱纹理 */
-    radial-gradient(rgba(255, 255, 255, 0.32) 0.5px, transparent 0.6px),
-    linear-gradient(150deg, rgba(255, 255, 255, 0.60) 0%, rgba(255, 255, 255, 0.22) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.32) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
-    rgba(240, 242, 248, 0.66);
-  background-size: 17px 19px, auto, auto, auto;
-  border-color: rgba(255, 255, 255, 0.66);
-  box-shadow:
-    0 8px 24px rgba(45, 40, 90, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.94),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
-  color: #26262f;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
-}
-/* 低精度：20261010 V1.1 重构——低档=最省 GPU，纯色雾面、去纹理、底色最实。
-   不再有 blur；磨砂感由更实底色承担（确定性玻璃，无采样开销）。 */
-body.tcf-low .typecard-float-panel {
-  background:
-    /* 保留光泽层（折射光斑+左上柔光，纯静态渐变，零开销） */
-    linear-gradient(150deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.08) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 55%),
-    /* 实色雾面底（无纹理，低端机最省） */
-    linear-gradient(180deg, rgba(96, 110, 146, 0.52), rgba(64, 76, 104, 0.46));
-  box-shadow:
-    0 8px 22px rgba(0, 0, 0, 0.26),
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
-}
-body.theme-light.tcf-low .typecard-float-panel {
-  background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.60) 0%, rgba(255, 255, 255, 0.24) 34%, rgba(255, 255, 255, 0.08) 60%, rgba(255, 255, 255, 0.36) 100%),
-    radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0) 55%),
-    /* 实色雾白（无纹理） */
-    rgba(240, 242, 248, 0.82);
-  border-color: rgba(255, 255, 255, 0.68);
-  box-shadow:
-    0 8px 22px rgba(45, 40, 90, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.96),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.92);
-  color: #26262f;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.66);
-}
-/* 召唤按钮：20261010 V1.1 确定性玻璃——按钮自身本无 backdrop-filter（历史已移除嵌套），
-   无需单独降级规则。 */
-/* 20261010 终极根治：.tc-bd-clip 裁切层已整体移除（见 .typecard-float-panel 注释），
-   backdrop-filter 直接挂面板本体。下方 4 条 .tc-bd-clip::before 死规则一并删除。 */
-
+/* 20261010 终极重写：悬浮窗玻璃彻底解耦——不再有 body.glass-ui / body.tcf-mid/low
+   任何档位分支。悬浮窗只用上方 .typecard-float-panel 本体一套液态玻璃（深浅色各一），
+   与「玻璃拟态模式」开关、精度档位完全无关，独立自洽。 */
 
 /* ============================================================================
    字卡 / 表情 演出层 overlay（非输入事件，浮在气泡上方，绝不写入正文预览）
