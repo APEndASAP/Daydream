@@ -118,7 +118,7 @@
     linear-gradient(180deg, rgba(80, 90, 128, 0.32), rgba(50, 58, 86, 0.24));
   background-size: auto, auto, auto;
   background-position: 0 0, 0 0, 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.32);   /* 细白高光描边（液态玻璃亮边） */
+  border: 1px solid rgba(255, 255, 255, 0.72);   /* 细白高光描边（液态玻璃亮边，用户要求清晰可见） */
   /* 20261010 纯 CSS 确定性玻璃：backdrop-filter 直接挂本体（blur 写死），
      折射光斑+中透底色透出背景，观感贴近液态玻璃。 */
   box-shadow:
@@ -157,7 +157,7 @@ body.theme-light .typecard-float-panel {
     rgba(244, 246, 252, 0.55);
   background-size: auto, auto, auto;
   background-position: 0 0, 0 0, 0 0;
-  border: 1px solid rgba(255, 255, 255, 0.85);   /* 细白高光描边（浅色更亮更白） */
+  border: 1px solid rgba(255, 255, 255, 0.98);   /* 细白高光描边（浅色更亮更白，清晰可见） */
   box-shadow:
     /* 轻阴影悬浮 */
     0 14px 38px rgba(45, 40, 90, 0.18),
