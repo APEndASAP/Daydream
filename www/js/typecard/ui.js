@@ -1007,11 +1007,11 @@
       clusterEls.push(f);
     });
 
-    // ---- 藤蔓（先挂，花簇后挂盖在藤上，茎不穿花瓣）----
-    frag.appendChild(_borderVinesSVG(w, h, anchors, rnd));
+    // ---- 藤蔓：4 条独立短藤段（顶/底/左/右各一段，各自局部定位，不铺满整层）----
+    _borderVinesFrags(w, h, anchors, rnd).forEach(function (v) { frag.appendChild(v); });
     clusterEls.forEach(function (f) { frag.appendChild(f); });
 
-    // ---- 银链星坠（两个顶角花簇之间）----
+    // ---- 银链星坠（顶部局部垂弧，独立元素局部定位）----
     frag.appendChild(_chainSVG(w, h, rnd));
 
     // ---- 闪光点（贴边、不进正文区）----
@@ -1032,17 +1032,14 @@
     panel.appendChild(frag);
   }
 
-  // ---- 藤蔓：从花簇起笔、沿边爬行、串起沿途花簇；成对互生叶+卷须+尾端花苞 ----
-  function _borderVinesSVG(w, h, anchors, rnd) {
+  // ---- 藤蔓：改为 4 条独立短藤段（顶/底/左/右各一段），每条各自局部定位。
+  //     原版是「一条 SVG 铺满整层面板 + inset:-6px + drop-shadow」，在 Android WebView
+  //     与面板 backdrop-filter 组合合成时必出横杠/遮罩；现拆为离散小元素，各自局部定位，
+  //     SVG 用固定 viewBox 不拉伸，绝不铺满整层。 ----
+  function _borderVinesFrags(w, h, anchors, rnd) {
     const ns = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('class', 'tc-vines');
-    const PAD = 6;
-    svg.setAttribute('viewBox', (-PAD) + ' ' + (-PAD) + ' ' + (w + PAD * 2) + ' ' + (h + PAD * 2));
-    svg.setAttribute('preserveAspectRatio', 'none');
     _decorUid++;
     const gid = 'tcbv' + _decorUid;
-    const INS = 4.5, AMP = 4;
 
     function miniCluster(cx, cy) {
       const cols = ['#b7c8f5', '#e3b8e8', '#c9a4ee', '#9db9f2'];
@@ -1062,15 +1059,16 @@
       return s;
     }
 
-    function trail(yBase, x0, x1, dense, nodeFlower) {
-      const dir = x1 >= x0 ? 1 : -1;
-      const total = Math.abs(x1 - x0);
-      let d = 'M' + x0.toFixed(1) + ',' + yBase.toFixed(1);
+    // 在本地坐标系（viewBox 内）生成一段水平藤蔓，长度 L，从 (0, 基线) 向右
+    function htrail(L, dense, nodeFlower) {
+      const INS = 4.5, AMP = 4;
+      const yBase = INS;
+      let d = 'M0,' + yBase.toFixed(1);
       const joints = [];
-      let x = x0, up = rnd() < 0.5 ? 1 : -1;
-      while (Math.abs(x - x1) > 6) {
+      let x = 0, up = rnd() < 0.5 ? 1 : -1;
+      while (x < L - 6) {
         const step = 10 + rnd() * 6;
-        const nx = x + dir * Math.min(step, Math.abs(x1 - x));
+        const nx = Math.min(x + step, L);
         const ny = yBase + up * (1.0 + rnd() * 1.6);
         d += ' Q' + ((x + nx) / 2).toFixed(1) + ',' + (yBase + up * AMP).toFixed(1)
            + ' ' + nx.toFixed(1) + ',' + ny.toFixed(1);
@@ -1079,7 +1077,7 @@
       }
       let leaves = '';
       joints.forEach(function (j, idx) {
-        const t = total > 0 ? idx / Math.max(joints.length - 1, 1) : 0;
+        const t = L > 0 ? idx / Math.max(joints.length - 1, 1) : 0;
         const p = dense * (1 - 0.55 * t);
         const side = j[2];
         [-1, 1].forEach(function (s) {
@@ -1094,8 +1092,8 @@
         });
         if (t < 0.6 && rnd() < 0.4) {
           leaves += '<path d="M' + j[0].toFixed(1) + ',' + (j[1] + side * 1.5).toFixed(1)
-            + ' q' + (dir * 3).toFixed(1) + ',' + (side * 4).toFixed(1)
-            + ' ' + (dir * 5).toFixed(1) + ',' + (side * 2).toFixed(1)
+            + ' q3,' + (side * 4).toFixed(1)
+            + ' 5,' + (side * 2).toFixed(1)
             + '" fill="none" stroke="rgba(150,190,130,0.5)" stroke-width="0.7" stroke-linecap="round"/>';
         }
       });
@@ -1110,7 +1108,7 @@
       }
       let tail = '';
       if (rnd() < 0.55) {
-        const bx = x1, by = yBase - 3.5;
+        const bx = L, by = yBase - 3.5;
         tail = '<path d="M' + bx.toFixed(1) + ',' + (by - 4.5).toFixed(1)
           + ' C' + (bx + 2.4).toFixed(1) + ',' + (by - 3.2).toFixed(1)
           + ' ' + (bx + 3).toFixed(1) + ',' + (by - 0.8).toFixed(1)
@@ -1127,39 +1125,62 @@
         + leaves + flowers + tail;
     }
 
-    const topA = (anchors && anchors.top && anchors.top.length) ? anchors.top.slice().sort(function (a, b) { return a - b; }) : [w * 0.1, w * 0.6];
-    const botA = (anchors && anchors.bottom && anchors.bottom.length) ? anchors.bottom.slice().sort(function (a, b) { return b - a; }) : [w * 0.9, w * 0.4];
-    const topX0 = Math.max(topA[0] - 2, 8);
-    const topX1 = Math.min(topA[topA.length - 1] + 34, w * 0.92);
-    const botX0 = Math.min(botA[0] + 2, w - 8);
-    const botX1 = Math.max(botA[botA.length - 1] - 34, w * 0.08);
-    let inner = trail(INS, topX0, topX1, 0.85, true)
-      + trail(h - INS, botX0, botX1, 0.85, true);
-    const lLen = h * (0.34 + rnd() * 0.12);
-    const lseg = trail(INS, 46, 46 + lLen, 0.78, true);
-    inner += '<g transform="translate(0,' + h + ') rotate(-90)">' + lseg + '</g>';
-    const rLen = h * (0.30 + rnd() * 0.12);
-    const rseg = trail(INS, 40, 40 + rLen, 0.78, true);
-    inner += '<g transform="translate(' + w + ',0) rotate(90)">' + rseg + '</g>';
-    svg.innerHTML = '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">'
+    const defs = '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">'
       + '<stop offset="0" stop-color="#a7d496" stop-opacity="0.9"/>'
       + '<stop offset="1" stop-color="#679570" stop-opacity="0.78"/>'
-      + '</linearGradient></defs>'
-      + '<g opacity="0.7">' + inner + '</g>';
-    return svg;
+      + '</linearGradient></defs>';
+
+    // 生成一条藤蔓元素：水平方向（horiz=true）或竖直方向（horiz=false），局部定位
+    function vineEl(horiz, len, boxW, boxH, left, top) {
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('class', 'tc-vines');
+      svg.setAttribute('viewBox', '0 0 ' + boxW + ' ' + boxH);
+      svg.setAttribute('preserveAspectRatio', 'none');
+      svg.style.left = left + 'px';
+      svg.style.top = top + 'px';
+      svg.style.width = boxW + 'px';
+      svg.style.height = boxH + 'px';
+      svg.innerHTML = defs + '<g opacity="0.7">'
+        + (horiz ? htrail(len, 0.85, true) : htrail(len, 0.78, true))
+        + '</g>';
+      return svg;
+    }
+
+    const frags = [];
+    const topA = (anchors && anchors.top && anchors.top.length) ? anchors.top.slice().sort(function (a, b) { return a - b; }) : [w * 0.1, w * 0.6];
+    const botA = (anchors && anchors.bottom && anchors.bottom.length) ? anchors.bottom.slice().sort(function (a, b) { return b - a; }) : [w * 0.9, w * 0.4];
+
+    // 顶藤：从左到右一段，占顶边约 55%~92% 宽度，高约 26px，贴在顶部
+    const topLen = w * (0.34 + rnd() * 0.08);
+    frags.push(vineEl(true, topLen, topLen, 26, w * 0.06, -4));
+    // 底藤：从右到左一段，占底边，高约 26px，贴在底部（视觉上沿底部）
+    const botLen = w * (0.30 + rnd() * 0.08);
+    frags.push(vineEl(true, botLen, botLen, 26, w * (0.60 - rnd() * 0.10), h - 22));
+    // 左藤：竖直一段，宽约 26px，高约 34% 面板高，贴左缘
+    const lLen = h * (0.30 + rnd() * 0.10);
+    frags.push(vineEl(false, lLen, 26, lLen, -4, h * 0.18));
+    // 右藤：竖直一段，宽约 26px，贴右缘
+    const rLen = h * (0.26 + rnd() * 0.10);
+    frags.push(vineEl(false, rLen, 26, rLen, w - 22, h * 0.52));
+    return frags;
   }
 
-  // ---- 银链星坠：银链 + 星形坠饰，挂两个顶角花簇之间，垂弧自然 ----
+  // ---- 银链星坠：银链 + 星形坠饰，改为顶部局部垂弧（局部定位，不再 inset:0 铺满整层）----
   function _chainSVG(w, h, rnd) {
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('class', 'tc-chain');
-    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    const CH = 34;                       // 链的高度（含垂弧），只占顶部一小段
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + CH);
     svg.setAttribute('preserveAspectRatio', 'none');
+    svg.style.left = '0';
+    svg.style.top = '-6px';
+    svg.style.width = '100%';
+    svg.style.height = CH + 'px';
     const x0 = w * (0.14 + rnd() * 0.06);
     const x1 = w * (0.80 + rnd() * 0.06);
-    const yTop = 3.5;
-    const sag = 11 + rnd() * 8;
+    const yTop = 6;
+    const sag = 9 + rnd() * 6;
     const mx = (x0 + x1) / 2, my = yTop + sag * 2;
     let inner = '<path d="M' + x0.toFixed(1) + ',' + yTop + ' Q' + mx.toFixed(1) + ',' + my.toFixed(1)
       + ' ' + x1.toFixed(1) + ',' + yTop + '" fill="none" stroke="rgba(228,233,255,0.55)" stroke-width="0.8"/>';
