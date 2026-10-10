@@ -89,21 +89,19 @@
   box-sizing: border-box;
   padding: 12px 14px;
   border-radius: 20px;                /* 大圆角矩形（iOS glass 风格） */
-  /* 磨砂：恒定 blur，面板创建到销毁绝不改变（永不采样重建 → 永无撕裂） */
-  backdrop-filter: blur(18px) saturate(1.35);
-  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  /* 磨砂：V1.1 起用 var(--hyalite) 让 hyalite 接管（App 内真折射），fallback=原纯 CSS 磨砂（网站） */
+  backdrop-filter: var(--hyalite, blur(18px) saturate(1.35));
+  -webkit-backdrop-filter: var(--hyalite, blur(18px) saturate(1.35));
   /* 液态玻璃：半透明雾面底（蓝灰，透出背景=水感）+ 斜向折射光斑 + 左上柔光 */
   background:
     linear-gradient(150deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.10) 100%),
     radial-gradient(130% 90% at 20% -6%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 55%),
     linear-gradient(180deg, rgba(80, 90, 128, 0.32), rgba(50, 58, 86, 0.24));
-  /* 白描边用 box-shadow inset 画（border 会被 backdrop 采样糊掉） */
+  /* 白描边用 box-shadow inset 画（border 会被 backdrop 采样糊掉）；var(--hyalite-edge)=hyalite 锐利边 */
   box-shadow:
     0 14px 40px rgba(0, 0, 0, 0.26),
     0 3px 8px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.30),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
-    inset 0 0 30px rgba(255, 255, 255, 0.06);
+    var(--hyalite-edge, inset 0 1px 0 rgba(255, 255, 255, 0.30) inset 0 0 0 1px rgba(255, 255, 255, 0.55) inset 0 0 30px rgba(255, 255, 255, 0.06));
   color: #f7f6fa;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
   height: auto;
@@ -118,9 +116,7 @@ body.theme-light .typecard-float-panel {
   box-shadow:
     0 14px 38px rgba(45, 40, 90, 0.18),
     0 3px 8px rgba(45, 40, 90, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.98),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.92),
-    inset 0 -1px 0 rgba(180, 185, 210, 0.22);
+    var(--hyalite-edge, inset 0 1px 0 rgba(255, 255, 255, 0.98) inset 0 0 0 1px rgba(255, 255, 255, 0.92) inset 0 -1px 0 rgba(180, 185, 210, 0.22));
   color: #26262f;
   text-shadow: 0 1px 1px rgba(255, 255, 255, 0.70);
 }
@@ -170,6 +166,14 @@ body.theme-light.tcf-low .typecard-float-panel {
 .typecard-float-panel > .tc-summon-row {
   position: relative;
   z-index: 1;
+}
+
+/* ---- V1.1：App 内 hyalite 液态玻璃（ui.js _applyHyaliteGlass 给面板加 .tc-hyalite）。
+   只用最高优先级把 backdrop-filter 交给 hyalite 的 --hyalite 变量（真折射），
+   覆盖 tcf-mid/low 档位的固定 backdrop-filter；网站端无此 class，走原档位规则不变。 ---- */
+.typecard-float-panel.tc-hyalite {
+  backdrop-filter: var(--hyalite, blur(18px) saturate(1.35)) !important;
+  -webkit-backdrop-filter: var(--hyalite, blur(18px) saturate(1.35)) !important;
 }
 
 /* ---- 毛玻璃装饰层（ui.js _renderFloatDecor 注入，pointer-events:none）---- */

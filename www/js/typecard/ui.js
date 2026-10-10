@@ -947,8 +947,34 @@
     if (!panel || panel._decorated) return;
     panel._decorated = true;
     try {
+      _applyHyaliteGlass(panel);   // V1.1：仅 App 内启用 hyalite 液态玻璃真折射
+    } catch (e) {}
+    try {
       _renderFloatDecor(panel);
     } catch (e) {}
+  }
+
+  // V1.1：悬浮窗玻璃面板改用 hyalite 开源项目的 SVG 真折射液态玻璃。
+  // 铁律：只在 App（Capacitor）环境启用——网站保持 V1.0.9 的纯 CSS 磨砂玻璃不变。
+  //  · window.Capacitor 存在 = App WebView → 挂 hyalite；网站无 Capacitor → 走原 CSS。
+  //  · Hyalite.force(true)：App WebView 的 navigator.vendor 为空，supported() 会误判 false，
+  //    force 强制开启（用户已亲手在 App 里拖拽验证过真折射效果稳定）。
+  //  · 深浅色参数沿用定案：深=默认(shade0.46/rim1.76/edge0.32)，浅=shade0.22/rim2.0/edge0.45。
+  function _applyHyaliteGlass(panel) {
+    if (typeof window === 'undefined' || !window.Capacitor) return;   // 仅 App
+    if (!window.Hyalite) return;                                      // hyalite.js 未加载则静默跳过
+    try { window.Hyalite.force(true); } catch (e) {}
+    panel.classList.add('tc-hyalite');                                // 让 CSS 无条件走 --hyalite
+    const isLight = document.body && document.body.classList.contains('theme-light');
+    const opts = {
+      bevel: 37, thickness: 59, slope: 2.7, shape: 'squircle',
+      blur: 1, dispersion: 1.6,
+      shade: isLight ? 0.22 : 0.46,
+      rim: isLight ? 2.0 : 1.76,
+      edge: isLight ? 0.45 : 0.32,
+      edgeW: 8, sat: 0.86, light: -140, materialize: 0, self: false
+    };
+    try { window.Hyalite.attach(panel, opts); } catch (e) {}
   }
 
   // 生成装饰（一次）。以面板当前 offsetWidth/Height 为基准算一次坐标，之后不再重算。
