@@ -43,6 +43,7 @@ let chatSettings = {
   lettersEnabled: true,          // 访客随机来信总开关（书信 13）
   lettersDailyLimit: 2,          // 访客随机来信每日上限（0~5，书信 13）
   skipOverclockAnim: false,      // 超频：跳过裂隙动画（20260929ao；低端机/卡顿时建议开启）
+  importReplayOcAnim: false,     // 20261011 晚：导入数据时若带「已触发」标记，是否再重复触发超频/惊喜首次动画（默认关=不重复触发）
   typecardOn: false,             // 20261008：打字卡总开关（默认关；总设置对所有访客生效，访客主页聊天设置可单独覆盖）
   typecardMode: 'bubble',        // 20261008：打字卡展示模式 bubble=气泡内嵌 / float=悬浮窗（默认气泡内嵌）
   typecardSpeed: 1.0,            // 20261008：打字卡速度连续倍率（0.6=最快 ~ 5.0=最慢，默认 1.0 中间值；20261009 上限延长到 5.0）
@@ -239,6 +240,8 @@ async function init() {
     startProactiveTimer(); // 5.3 主动发消息
     startStatusTimer();    // 7 聊天页顶部状态按时段自动换
     startDayRolloverTimer(); // 8 聊天天数过零点自动 +1
+    // 20261011：启动时补齐所有 AI 角色的当天日常时间表（规则4，含遗忘曲线清理）
+    try { ensureAllCharSchedules().catch(() => {}); } catch (e) {}
     startMomentsTick();    // 9 朋友圈：访客随机发帖 + 互动补算（每 45 秒）
     startNotebookTimer();  // 记事簿：到点提醒（30 秒一查）
     startLetterTimer();    // 书信：梦角随机来信（30 分钟一查，频率完全随机）
@@ -328,6 +331,7 @@ async function showSoftwareNotice(opts = {}) {
         <div class="nt-sub">本网站/软件由小红书用户：@蓝色鸽子窝（1139353519）原创制作</div>
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所制作的传讯字卡网站中字卡部分的代码，兼容其字卡导入</div>
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所设计的每日弹卡功能，本软件「入梦签 · 每日弹卡」即参考该创意制作</div>
+        <div class="nt-sub" style="margin-top:4px;">参考使用了小红书 @VII（Septem6439_cccg）老师所开源的真拟态玻璃（hyalite 液态玻璃）源码，本软件「玻璃美化预设 · 2号液态玻璃」即基于该开源库制作</div>
         ${isReview ? '<button class="icon-btn" id="notice-close" style="position:absolute;top:0;right:0;color:rgba(230,222,255,0.9);">✕</button>' : ''}
         <div class="nt-line"></div>
         <p class="nt-lead">感谢你来到《白日梦》。为了维护良好的创作与交流环境，请在下载、使用或分享本软件前，仔细阅读以下声明。</p>
@@ -821,7 +825,7 @@ function buildDailyCardHtml(d, btnId) {
     <div class="daily-card fade-in" style="position:relative;">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
         <div class="avatar lg" style="width:56px;height:56px;border:2px solid var(--purple-soft);box-shadow:0 0 18px rgba(167,139,250,.35);flex-shrink:0;">
-          ${d.charAvatar ? `<img src="${imgSrc(d.charAvatar)}">` : escapeHtml(fallbackLetter)}
+          ${d.charAvatar ? `<img src="${imgSrcAttr(d.charAvatar)}">` : escapeHtml(fallbackLetter)}
         </div>
         <div style="min-width:0;flex:1;">
           <div style="font-size:19px;font-weight:600;">${escapeHtml(displayName)}的入梦签</div>
@@ -1131,7 +1135,7 @@ function renderPlayerHome() {
   const tb0 = $('#home-topbar');
   if (tb0) document.documentElement.style.setProperty('--home-topbar-h', tb0.offsetHeight + 'px');
   const av = $('#player-avatar');
-  av.innerHTML = playerProfile.avatar ? `<img src="${imgSrc(playerProfile.avatar)}">` : escapeHtml((playerProfile.name || '梦')[0]);
+  av.innerHTML = playerProfile.avatar ? `<img src="${imgSrcAttr(playerProfile.avatar)}">` : escapeHtml((playerProfile.name || '梦')[0]);
   $('#player-name').textContent = playerProfile.name || '白日梦主人';
   $('#player-status-chip').textContent = '🌙 ' + (playerProfile.status || '入梦中');
   $('#player-sign-chip').textContent = playerProfile.sign || '做个好梦';
@@ -1142,7 +1146,7 @@ function renderPlayerHome() {
   // 顶栏头像+昵称（下滑遮住昵称时从顶栏滑出）
   const tbAv = $('#topbar-avatar');
   const tbName = $('#topbar-name');
-  if (tbAv) tbAv.innerHTML = playerProfile.avatar ? `<img src="${imgSrc(playerProfile.avatar)}">` : escapeHtml((playerProfile.name || '梦')[0]);
+  if (tbAv) tbAv.innerHTML = playerProfile.avatar ? `<img src="${imgSrcAttr(playerProfile.avatar)}">` : escapeHtml((playerProfile.name || '梦')[0]);
   if (tbName) tbName.textContent = playerProfile.name || '白日梦主人';
 
   // 背景图：铺在 hero 圆角面板内（#hero-bg），20260926a 版式
@@ -1269,7 +1273,7 @@ function showEditProfileModal() {
     <div class="field">
       <label>头像</label>
       <div style="display:flex;align-items:center;gap:12px;">
-        <div class="avatar lg" id="editp-avatar-preview">${playerProfile.avatar ? `<img src="${imgSrc(playerProfile.avatar)}">` : '梦'}</div>
+        <div class="avatar lg" id="editp-avatar-preview">${playerProfile.avatar ? `<img src="${imgSrcAttr(playerProfile.avatar)}">` : '梦'}</div>
         <input class="input" type="file" id="editp-avatar-input" accept="image/*" style="flex:1;">
       </div>
     </div>
@@ -1295,7 +1299,7 @@ function showEditProfileModal() {
       const cropped = await openImageCropper(file, { aspect: 1, maxEdge: 360, quality: 0.8 });
       if (!cropped) return;
       playerProfile.avatar = cropped;
-      $('#editp-avatar-preview').innerHTML = `<img src="${imgSrc(playerProfile.avatar)}">`;
+      $('#editp-avatar-preview').innerHTML = `<img src="${imgSrcAttr(playerProfile.avatar)}">`;
     }
   };
   $('#editp-save').onclick = async () => {
@@ -1440,7 +1444,7 @@ async function renderChatList() {
     const item = document.createElement('div');
     item.className = 'list-item chat-item';
     item.innerHTML = `
-      <div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrc(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</div>
+      <div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:16px;font-weight:600;">${escapeHtml(g.name)} <span style="font-size:11px;color:var(--text-tertiary);font-weight:400;">(${g.memberIds.length})</span></div>
         <div class="chat-item-brief" style="font-size:13px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(brief)}</div>
@@ -1492,7 +1496,7 @@ async function renderChatList() {
     const item = document.createElement('div');
     item.className = 'list-item chat-item';
     item.innerHTML = `
-      <div class="avatar">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c.name[0] || '?')}</div>
+      <div class="avatar">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c.name[0] || '?')}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:16px;font-weight:600;">${escapeHtml(c.name)}</div>
         <div class="chat-item-brief" style="font-size:13px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(brief)}</div>
@@ -1609,7 +1613,7 @@ function showGroupSettingsModal(g) {
     <div class="field">
       <label>群头像</label>
       <div style="display:flex;align-items:center;gap:12px;">
-        <div class="avatar lg" id="gset-avatar-preview" style="display:flex;align-items:center;justify-content:center;font-size:24px;">${g.avatar ? `<img src="${imgSrc(g.avatar)}">` : '👥'}</div>
+        <div class="avatar lg" id="gset-avatar-preview" style="display:flex;align-items:center;justify-content:center;font-size:24px;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}">` : '👥'}</div>
         <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
           <label class="btn" for="gset-avatar-input" style="cursor:pointer;justify-content:center;padding:9px 0;">上传群头像</label>
           ${g.avatar ? `<button class="btn" style="padding:9px 0;color:var(--danger);" id="gset-avatar-del">删除群头像</button>` : ''}
@@ -1634,7 +1638,7 @@ function showGroupSettingsModal(g) {
           if (!m) return '';
           const nick = (g.memberNick || {})[id];
           return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-elevated-2);border-radius:10px;cursor:pointer;" data-gm="${id}">
-            <div class="avatar sm">${m.avatar ? `<img src="${imgSrc(m.avatar)}">` : escapeHtml(m.name[0] || '?')}</div>
+            <div class="avatar sm">${m.avatar ? `<img src="${imgSrcAttr(m.avatar)}">` : escapeHtml(m.name[0] || '?')}</div>
             <div style="flex:1;min-width:0;">
               <div style="font-size:14px;font-weight:600;">${admins.has(id) ? '👑 ' : ''}${escapeHtml(m.name)}${muted.has(id) ? ' <span style="font-size:11px;color:var(--danger);">🔇已禁言</span>' : ''}</div>
               ${nick ? `<div style="font-size:11.5px;color:var(--text-tertiary);">群名片：${escapeHtml(nick)}</div>` : ''}
@@ -1691,7 +1695,7 @@ function showGroupSettingsModal(g) {
     const cropped = await openImageCropper(file, { aspect: 1, maxEdge: 360, quality: 0.8 });
     if (!cropped) return;
     newAvatar = cropped;
-    $('#gset-avatar-preview').innerHTML = `<img src="${imgSrc(newAvatar)}">`;
+    $('#gset-avatar-preview').innerHTML = `<img src="${imgSrcAttr(newAvatar)}">`;
   };
   const delBtn = $('#gset-avatar-del');
   if (delBtn) delBtn.onclick = () => { newAvatar = ''; $('#gset-avatar-preview').innerHTML = '👥'; delBtn.remove(); };
@@ -1743,7 +1747,7 @@ function showGroupSettingsModal(g) {
     if (currentGroupId === g.id) {
       $('#chat-name').textContent = g.name;
       $('#chat-status').textContent = g.memberIds.length + ' 人';
-      $('#chat-avatar').innerHTML = g.avatar ? `<img src="${imgSrc(g.avatar)}">` : '👥';
+      $('#chat-avatar').innerHTML = g.avatar ? `<img src="${imgSrcAttr(g.avatar)}">` : '👥';
       renderGroupNotice(g);
     }
     miniToast('群聊设置已保存');
@@ -1839,7 +1843,7 @@ function showGroupAddMemberModal(g, opts = {}) {
     <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
       ${cands.map(c => `
         <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-gadd="${c.id}">
-          <div class="avatar sm">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+          <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
           <div style="flex:1;font-size:14px;font-weight:600;">${escapeHtml(c.name)}</div>
           <div class="gadd-check" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:13px;color:#141019;flex-shrink:0;"></div>
         </div>`).join('')}
@@ -1883,7 +1887,7 @@ async function openGroupChat(groupId) {
   $('#chat-name').textContent = g.name;
   $('#chat-status').textContent = g.memberIds.length + ' 人';
   $('#chat-sign').textContent = '';
-  $('#chat-avatar').innerHTML = g.avatar ? `<img src="${imgSrc(g.avatar)}">` : '👥';
+  $('#chat-avatar').innerHTML = g.avatar ? `<img src="${imgSrcAttr(g.avatar)}">` : '👥';
   // 群聊：点顶部头像区进群聊设置；三点按钮也进群聊设置（16）
   $('#chat-header').onclick = () => showGroupSettingsModal(g);
   $('#btn-char-profile').onclick = () => showGroupSettingsModal(g);
@@ -2021,7 +2025,7 @@ function updateAtPopover() {
   }
   pop.innerHTML = members.map(m => `
     <div class="at-item" data-at="${m.id}">
-      <div class="avatar sm">${m.avatar ? `<img src="${imgSrc(m.avatar)}">` : escapeHtml(m.name[0] || '?')}</div>
+      <div class="avatar sm">${m.avatar ? `<img src="${imgSrcAttr(m.avatar)}">` : escapeHtml(m.name[0] || '?')}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:13.5px;font-weight:600;">${escapeHtml((g.memberNick || {})[m.id] || m.name)}</div>
         ${(g.memberNick || {})[m.id] ? `<div style="font-size:11px;color:var(--text-tertiary);">本名 ${escapeHtml(m.name)}</div>` : ''}
@@ -2374,10 +2378,10 @@ function renderBatchList() {
     return item;
   };
   const mkCharRow = (c) => mkRow(c.id,
-    `<div class="avatar">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c.name[0] || '?')}</div>`,
+    `<div class="avatar">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c.name[0] || '?')}</div>`,
     `<div style="font-size:16px;font-weight:600;">${escapeHtml(c.name)}</div>`);
   const mkGroupRow = (g) => mkRow(g.id,
-    `<div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrc(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</div>`,
+    `<div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</div>`,
     `<div style="font-size:16px;font-weight:600;">${escapeHtml(g.name)} <span style="font-size:11px;color:var(--text-tertiary);font-weight:400;">(${(g.memberIds || []).length})</span></div>`,
     '群聊');
   const mkHeadRow = (label, memberIds) => {
@@ -2588,7 +2592,7 @@ async function openChat(charId) {
   if (regenBtn) regenBtn.style.display = 'none'; // 20260929be：单聊不显示群生成按钮
   $('#chat-name').textContent = c.name;
   restoreChatHeaderStatus(); // 顶部状态：按时段抽状态（7）
-  $('#chat-avatar').innerHTML = c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c.name[0] || '?');
+  $('#chat-avatar').innerHTML = c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c.name[0] || '?');
   // 单聊：点顶部头像区进访客主页；三点按钮也进访客主页（群聊时会被改为群聊设置）
   // 注意：必须用箭头函数包装——直接传函数引用会把 Event 对象当成 charId 参数导致主页打不开
   $('#chat-header').onclick = () => showCharProfile();
@@ -2719,7 +2723,7 @@ async function renderMessages(charId) {
 
 /* 消息头像（5.2/22：气泡旁显示发送者头像） */
 function avatarHtml(avatar, name) {
-  return `<div class="msg-avatar">${avatar ? `<img src="${imgSrc(avatar, true)}">` : escapeHtml(name ? name[0] || '?' : '?')}</div>`;
+  return `<div class="msg-avatar">${avatar ? `<img src="${imgSrcAttr(avatar, true)}">` : escapeHtml(name ? name[0] || '?' : '?')}</div>`;
 }
 
 /* 引用块渲染（右键菜单 → 引用该条消息）。
@@ -2979,9 +2983,9 @@ function msgBodyHtml(m, oneLine = false) {
   const bubbleCls = `bubble${oneLine ? ' oneline' : ''} message message-${m.from === 'me' ? 'sent' : 'received'}`;
   switch (m.type) {
     case 'image':
-      return `${quoteHtml(m.quote)}<img class="msg-img" src="${imgSrc(m.content, true)}" data-full="${imgSrc(m.content)}" data-msgid="${m.id}">`;
+      return `${quoteHtml(m.quote)}<img class="msg-img" src="${imgSrcAttr(m.content, true)}" data-full="${imgSrcAttr(m.content)}" data-msgid="${m.id}">`;
     case 'emoji':
-      return `${quoteHtml(m.quote)}<img class="msg-img msg-emoji" src="${imgSrc(m.content)}" data-msgid="${m.id}">`;
+      return `${quoteHtml(m.quote)}<img class="msg-img msg-emoji" src="${imgSrcAttr(m.content)}" data-msgid="${m.id}">`;
     case 'coin':
       return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">🪙 决策币</span><div>${escapeHtml(m.content.question)}</div><div style="margin-top:6px;font-size:20px;font-weight:700;color:var(--purple-soft);">${escapeHtml(m.content.result)}</div></div>`;
     case 'checkin': {
@@ -3033,7 +3037,7 @@ function msgBodyHtml(m, oneLine = false) {
         <div style="margin-top:6px;font-size:13px;font-weight:600;">${escapeHtml(sc.authorName || '朋友圈')}</div>
         ${sc.text ? `<div style="margin-top:4px;font-size:13.5px;line-height:1.55;word-break:break-word;">${escapeHtml(sc.text)}</div>` : ''}
         ${sc.sticker ? `<div style="margin-top:4px;font-size:30px;line-height:1.2;">${escapeHtml(sc.sticker)}</div>` : ''}
-        ${sc.img ? `<img src="${imgSrc(sc.img, true)}" style="margin-top:6px;max-width:180px;max-height:130px;object-fit:cover;border-radius:10px;border:1px solid var(--border);">` : ''}
+        ${sc.img ? `<img src="${imgSrcAttr(sc.img, true)}" style="margin-top:6px;max-width:180px;max-height:130px;object-fit:cover;border-radius:10px;border:1px solid var(--border);">` : ''}
         <div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);">${(sc.images || []).length > 1 ? `共 ${sc.images.length} 张图 · ` : ''}${escapeHtml(timeAgoStr(sc.time || m.time))}</div>
       </div>`;
     }
@@ -3063,7 +3067,7 @@ function msgBodyHtml(m, oneLine = false) {
       const gc = m.content || {};
       const fromChar = m.from === 'them' || gc.direction === 'char_to_me';
       const isOpened = gc.opened !== false; // 旧消息无 opened 字段 → 视为已打开（兼容 ao 旧卡）
-      const imgHtml = _ocGiftImgOf(gc) ? `<img src="${imgSrc(_ocGiftImgOf(gc), true)}" style="width:100%;height:110px;object-fit:cover;display:block;">` : `<div style="font-size:44px;text-align:center;padding:20px 0;">🎁</div>`;
+      const imgHtml = _ocGiftImgOf(gc) ? `<img src="${imgSrcAttr(_ocGiftImgOf(gc), true)}" style="width:100%;height:110px;object-fit:cover;display:block;">` : `<div style="font-size:44px;text-align:center;padding:20px 0;">🎁</div>`;
       return `<div class="msg-card" data-gift-card="${m.id}" style="cursor:pointer;overflow:hidden;padding:0;">
         <div style="position:relative;">
           ${imgHtml}
@@ -3230,7 +3234,7 @@ function appendMessage(m, scroll = true) {
     recalledEl.onclick = () => {
       openModal(`
         <div style="font-size:16px;font-weight:600;margin-bottom:12px;">被撤回的消息</div>
-        <div style="background:var(--bg-elevated-2);border-radius:14px;padding:14px;font-size:15px;line-height:1.6;word-break:break-word;">${m.type === 'image' || m.type === 'emoji' ? `<img src="${imgSrc(m.content)}" style="max-width:100%;border-radius:10px;">` : escapeHtml(typeof m.content === 'string' ? m.content : JSON.stringify(m.content))}</div>
+        <div style="background:var(--bg-elevated-2);border-radius:14px;padding:14px;font-size:15px;line-height:1.6;word-break:break-word;">${m.type === 'image' || m.type === 'emoji' ? `<img src="${imgSrcAttr(m.content)}" style="max-width:100%;border-radius:10px;">` : escapeHtml(typeof m.content === 'string' ? m.content : JSON.stringify(m.content))}</div>
         <button class="btn primary block" style="margin-top:14px;" id="recalled-close">关闭</button>
       `);
       $('#recalled-close').onclick = closeModal;
@@ -3240,7 +3244,7 @@ function appendMessage(m, scroll = true) {
   if (imgEl) {
     imgEl.onclick = () => {
       if (multiSelectMode) { toggleMultiSelect(m.id); return; }
-      openModal(`<img src="${imgSrc(m.content)}" style="width:100%;border-radius:16px;"><button class="btn primary block" style="margin-top:12px;" id="imgview-close">关闭</button>`);
+      openModal(`<img src="${imgSrcAttr(m.content)}" style="width:100%;border-radius:16px;"><button class="btn primary block" style="margin-top:12px;" id="imgview-close">关闭</button>`);
       $('#imgview-close').onclick = closeModal;
     };
   }
@@ -3476,7 +3480,7 @@ function showForwardModal(m) {
     </div>
     ${characters.map(c => `
       <div class="fw-item" data-cid="${c.id}" style="display:flex;align-items:center;gap:12px;padding:10px 6px;border-bottom:1px solid var(--border);cursor:pointer;border-radius:10px;">
-        <div class="avatar sm">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+        <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
         <div style="flex:1;font-size:15px;font-weight:600;">${escapeHtml(c.name)}</div>
         <span style="color:var(--text-tertiary);">›</span>
       </div>
@@ -4145,6 +4149,8 @@ function startDayRolloverTimer() {
       renderChatList();
       // 页面开着跨过 0 点：当天入梦签在此刻补弹（无需玩家重新打开应用）
       try { showDailyCard().catch(() => {}); } catch (e) {}
+      // 20261011：跨天为所有 AI 角色生成新的日常时间表（规则4）
+      try { ensureAllCharSchedules().catch(() => {}); } catch (e) {}
     }
   }, 30000);
 }
@@ -4291,6 +4297,14 @@ function imgSrc(v, useThumb = false) {
     if (!u) { u = URL.createObjectURL(b); _imgURLCache.set(b, u); }
     return u;
   } catch (e) { return ''; }
+}
+/* 20261011：HTML 属性输出防护——imgSrcAttr 仅用于 HTML 属性上下文（<img src=...>、
+   data-full=... 等）。内部先走 imgSrc 取 URL，再经 escapeHtml 转义 & < > " '，
+   防外部导入的 .ocdata 图片字段夹带引号/尖括号逃逸属性造成注入。
+   CSS 字符串上下文（url("...") / backgroundImage / setProperty）一律继续用原 imgSrc，
+   不得替换——CSS 转义规则与 HTML 属性转义不同，混用会破坏聊天背景图等。 */
+function imgSrcAttr(v, useThumb = false) {
+  return escapeHtml(imgSrc(v, useThumb));
 }
 
 /* Blob ↔ base64（仅导出/导入边界使用：.ocdata 是 JSON 单文件，Blob 不能直接序列化，
@@ -6362,6 +6376,10 @@ function openModal(html, opts) {
   if (o.gray) box.classList.add('modal-gray-hall');
   $('#modal-mask').classList.toggle('mask-oc-clear', !!o.noBackdrop);
   $('#modal-mask').classList.add('show');
+  // 20261011 晚：openModal 会清空 #modal-content 的 innerHTML——若后台进度面板当前挂在弹窗内
+  // （显示中），先隐藏（从 DOM 移除），避免被 innerHTML 覆盖丢失；之后由对应弹窗的
+  // showImportModal/showExport 挂点再按需 setProgressPanelMode(true) 恢复显示。
+  if (isProgressActive() && _progState.el.parentNode === box) setProgressPanelMode(false);
   box.innerHTML = html;
   // 20261008 晚九轮：打字卡悬浮球/悬浮窗只在单聊聊天页出现——弹窗（个人主页/朋友圈封面/
   // 设置等）打开时同步藏起（面板 z 远高于弹窗，不藏会浮在弹窗上），关弹窗自动恢复
@@ -6395,6 +6413,8 @@ function closeModal() {
   // 20261008 晚九轮：真关闭（未重开子弹窗）→ 打字卡悬浮球/悬浮窗按条件恢复。
   // 子功能 return 路径由 showCharProfile/showSettingsModal 内部的 openModal 挂点同步。
   try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
+  // 20261011 晚：弹窗真关闭时，若有后台进行中的导入/导出，隐藏进度面板（进程后台继续，重进恢复）
+  if (isProgressActive()) setProgressPanelMode(false);
 }
 
 /* 访客主页子功能上下文标记（关闭后回到访客主页） */
@@ -6411,6 +6431,8 @@ function forceCloseModal() {
   resetModalSizing(); // 20260929bg：同 closeModal，清理缩放残留
   // 20261008 晚九轮：强制关弹窗后同步打字卡悬浮球/悬浮窗显隐
   try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
+  // 20261011 晚：强制关弹窗后，隐藏后台进度面板（进程后台继续，重进恢复）
+  if (isProgressActive()) setProgressPanelMode(false);
 }
 
 // 点击遮罩空白处关闭弹窗
@@ -6626,7 +6648,7 @@ function showCreateGroupModal() {
     <div style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:14px;" id="cg-create-list">
       ${characters.map(c => `
         <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-gsel="${c.id}">
-          <div class="avatar sm">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+          <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
           <div style="flex:1;font-size:14px;font-weight:600;">${escapeHtml(c.name)}</div>
           <div class="gs-check" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:13px;color:#141019;flex-shrink:0;"></div>
         </div>`).join('')}
@@ -6722,7 +6744,7 @@ function showEditCharModal(c) {
     <div class="field">
       <label>头像</label>
       <div style="display:flex;align-items:center;gap:12px;">
-        <div class="avatar lg" id="editchar-avatar-preview">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c.name[0] || '?')}</div>
+        <div class="avatar lg" id="editchar-avatar-preview">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c.name[0] || '?')}</div>
         <input class="input" type="file" id="editchar-avatar-input" accept="image/*" style="flex:1;">
       </div>
     </div>
@@ -6782,7 +6804,7 @@ function showEditCharModal(c) {
       const cropped = await openImageCropper(file, { aspect: 1, maxEdge: 360, quality: 0.8 });
       if (!cropped) return;
       newAvatar = cropped;
-      $('#editchar-avatar-preview').innerHTML = `<img src="${imgSrc(newAvatar)}">`;
+      $('#editchar-avatar-preview').innerHTML = `<img src="${imgSrcAttr(newAvatar)}">`;
     }
   };
   $('#editchar-save').onclick = async () => {
@@ -6802,7 +6824,7 @@ function showEditCharModal(c) {
     await saveChar(c);
     if (currentCharId === c.id) {
       $('#chat-name').textContent = c.name;
-      $('#chat-avatar').innerHTML = c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c.name[0] || '?');
+      $('#chat-avatar').innerHTML = c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c.name[0] || '?');
     }
     renderChatList();
     miniToast('访客资料已保存');
@@ -6825,7 +6847,7 @@ function showEmojiManagerModal() {
   const renderList = async () => {
     const emojis = await getEmojis();
     $('#emo-list').innerHTML = emojis.length
-      ? emojis.map(e => `<div class="emoji-cell"><img src="${imgSrc(e.img || e.data)}"><button class="emoji-del" style="display:block;" data-del="${e.id}">✕</button></div>`).join('')
+      ? emojis.map(e => `<div class="emoji-cell"><img src="${imgSrcAttr(e.img || e.data)}"><button class="emoji-del" style="display:block;" data-del="${e.id}">✕</button></div>`).join('')
       : '<div class="emoji-empty" style="grid-column:1/-1;">还没有表情包</div>';
     $('#emo-list').querySelectorAll('[data-del]').forEach(el => {
       el.onclick = async (ev) => {
@@ -6879,7 +6901,7 @@ async function showCharProfile(charId = null) {
         <div class="cp-hero-bg" style="${c.profileBg ? `background:url(&quot;${imgSrc(c.profileBg)}&quot;) center/cover;` : ''}"></div>
         <label class="cp-bg-change" for="cp-bg-input" title="更换访客主页背景">${icon('camera', 14)} 背景</label>
         <input type="file" id="cp-bg-input" accept="image/*" style="display:none;">
-        <div class="cp-avatar">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+        <div class="cp-avatar">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
       </div>
       <div class="cp-info">
         <div class="cp-name">${escapeHtml(c.name)}</div>
@@ -7096,7 +7118,7 @@ function showRelationModal(c) {
         ? '<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0;">还没有其他访客，先添加更多访客吧</div>'
         : peers.map(p => `
           <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);">
-            <div class="avatar sm">${p.avatar ? `<img src="${imgSrc(p.avatar)}">` : (p.name[0] || '?')}</div>
+            <div class="avatar sm">${p.avatar ? `<img src="${imgSrcAttr(p.avatar)}">` : (p.name[0] || '?')}</div>
             <div style="flex:1;min-width:0;font-size:14px;font-weight:600;">${escapeHtml(p.name)}</div>
             <select class="input rel-peer-sel" data-peer="${p.id}" style="width:auto;padding:6px 10px;font-size:13px;">
               ${RELATION_TYPES.map(r => `<option value="${r}" ${r === (peerRels[p.id] || '无') ? 'selected' : ''}>${r}</option>`).join('')}
@@ -7297,7 +7319,7 @@ async function showRelationsModal(selectedId = null) {
     const rowHtml = (c, extra = '') => `
       <div class="rel-pick" data-cid="${c.id}" style="display:flex;align-items:center;gap:12px;padding:11px 8px;border-bottom:1px solid var(--border);cursor:pointer;border-radius:10px;">
         ${relBatch ? `<div class="rel-check" data-chk="${c.id}" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:13px;color:#141019;flex-shrink:0;"></div>` : ''}
-        <div class="avatar sm">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+        <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
         <div style="flex:1;min-width:0;font-size:15px;font-weight:600;">${escapeHtml(c.name)}</div>
         <span class="badge">与我：${escapeHtml(c.relation || '无')}</span>
         ${relBatch ? '' : '<span style="color:var(--text-tertiary);font-size:16px;">›</span>'}
@@ -7445,7 +7467,7 @@ async function showRelationsModal(selectedId = null) {
     </div>
 
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
-      <div class="avatar">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c.name[0] || '?')}</div>
+      <div class="avatar">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c.name[0] || '?')}</div>
       <div style="flex:1;min-width:0;font-size:13px;color:var(--text-secondary);">${c.bio ? escapeHtml(c.bio) : ''}</div>
     </div>
 
@@ -7461,7 +7483,7 @@ async function showRelationsModal(selectedId = null) {
       ? '<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0;">还没有其他访客，先添加更多访客吧</div>'
       : peers.map(p => `
         <div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);">
-          <div class="avatar sm">${p.avatar ? `<img src="${imgSrc(p.avatar)}">` : (p.name[0] || '?')}</div>
+          <div class="avatar sm">${p.avatar ? `<img src="${imgSrcAttr(p.avatar)}">` : (p.name[0] || '?')}</div>
           <div style="flex:1;min-width:0;font-size:14px;font-weight:600;">${escapeHtml(p.name)}</div>
           <select class="input rel-peer-sel" data-peer="${p.id}" style="width:auto;padding:6px 10px;font-size:13px;">
             ${RELATION_TYPES.map(r => `<option value="${r}" ${r === (peerRels[p.id] || '无') ? 'selected' : ''}>${r}</option>`).join('')}
@@ -7519,7 +7541,7 @@ async function renderEmojiGrid() {
   grid.innerHTML = emojis.length
     ? emojis.map(e => `
       <div class="emoji-cell" data-eid="${e.id}">
-        <img src="${imgSrc(e.img || e.data)}">
+        <img src="${imgSrcAttr(e.img || e.data)}">
         <button class="emoji-del" data-del="${e.id}">✕</button>
       </div>`).join('')
     : `<div class="emoji-empty">还没有表情包<br><span style="font-size:12px;">点右上角「＋ 添加」上传（上限 300 张）</span></div>`;
@@ -8216,7 +8238,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
       <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${escapeHtml(c ? c.name : 'TA')}</div>
       <div style="font-size:13px;color:var(--purple-soft);margin-bottom:24px;">${incoming && !answered ? '邀请你进行' : (kind === 'video' ? '视频通话中…' : '语音通话中…')}</div>
       <div class="avatar xl" style="width:150px;height:150px;border-radius:50%;border:3px solid var(--purple);overflow:hidden;background:var(--bg-elevated-2);display:flex;align-items:center;justify-content:center;font-size:56px;color:var(--purple-soft);margin-bottom:28px;">
-        ${c && c.avatar ? `<img src="${imgSrc(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : (c ? c.name[0] : '?')}
+        ${c && c.avatar ? `<img src="${imgSrcAttr(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : (c ? c.name[0] : '?')}
       </div>
       ${incoming && !answered
         ? `<div style="display:flex;gap:26px;">
@@ -8389,7 +8411,7 @@ function buildCallFloatDomOnly(c, kind, sec) {
   f.id = 'call-float';
   f.className = 'call-float square';
   f.innerHTML = `
-    <div class="cf-avatar">${c && c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c ? c.name[0] : '?')}</div>
+    <div class="cf-avatar">${c && c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c ? c.name[0] : '?')}</div>
     <div class="cf-mid">
       <div class="cf-name">${escapeHtml(c ? c.name : 'TA')}</div>
       <div class="cf-time">${formatDurShort(sec)}</div>
@@ -8443,7 +8465,7 @@ function buildCallFloat(c, kind, sec) {
   f.id = 'call-float';
   f.className = 'call-float square';
   f.innerHTML = `
-    <div class="cf-avatar">${c && c.avatar ? `<img src="${imgSrc(c.avatar)}">` : (c ? c.name[0] : '?')}</div>
+    <div class="cf-avatar">${c && c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c ? c.name[0] : '?')}</div>
     <div class="cf-mid">
       <div class="cf-name">${escapeHtml(c ? c.name : 'TA')}</div>
       <div class="cf-time">${formatDurShort(sec)}</div>
@@ -8572,7 +8594,7 @@ function renderFullCallBody(c, kind, sec) {
         <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${escapeHtml(c ? c.name : 'TA')}</div>
         <div style="font-size:13px;color:var(--purple-soft);margin-bottom:24px;" id="call-kind-label">${kind === 'video' ? '视频通话中…' : '语音通话中…'}</div>
         <div class="avatar xl" style="width:150px;height:150px;border-radius:50%;border:3px solid var(--purple);overflow:hidden;background:var(--bg-elevated-2);display:flex;align-items:center;justify-content:center;font-size:56px;color:var(--purple-soft);margin-bottom:28px;">
-          ${c && c.avatar ? `<img src="${imgSrc(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : (c ? c.name[0] : '?')}
+          ${c && c.avatar ? `<img src="${imgSrcAttr(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : (c ? c.name[0] : '?')}
         </div>
         ${kind === 'video' ? `
         <label for="call-bg-input" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:18px;background:rgba(20,16,25,0.72);color:rgba(255,255,255,0.82);font-size:12px;cursor:pointer;margin-bottom:20px;">${icon('camera', 14)} 更换通话背景</label>
@@ -8890,7 +8912,7 @@ function showGroupCallModal(g) {
     <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
       ${members.map(c => `
         <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-gcall="${c.id}">
-          <div class="avatar sm">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+          <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
           <div style="flex:1;font-size:14px;font-weight:600;">${escapeHtml((g.memberNick || {})[c.id] || c.name)}</div>
           <div class="gcall-check" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:13px;color:#141019;flex-shrink:0;"></div>
         </div>`).join('')}
@@ -8938,7 +8960,7 @@ function openGroupCallScreen(g, members, kind, msg) {
   if (_callActive) closeCall(true);
   let sec = 0;
   const startTs = Date.now(); // 20261004dj：墙钟基准——后台冻结 setInterval 停走、sec++ 丢秒，改差值后解冻自动追平
-  const avatars = members.slice(0, 4).map(c => `<div class="avatar" style="width:72px;height:72px;font-size:26px;">${c.avatar ? `<img src="${imgSrc(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml(c.name[0] || '?')}</div>`).join('');
+  const avatars = members.slice(0, 4).map(c => `<div class="avatar" style="width:72px;height:72px;font-size:26px;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml(c.name[0] || '?')}</div>`).join('');
   const more = members.length > 4 ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">等 ${members.length} 人</div>` : '';
   openCallLayer(`
     <div style="display:flex;flex-direction:column;align-items:center;padding:20px 0;min-height:360px;">
@@ -10990,7 +11012,7 @@ async function showCharDiaryModal(c) {
       <button class="icon-btn" id="diary-close">✕</button>
     </div>
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
-      <div class="avatar lg">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+      <div class="avatar lg">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
       <div>
         <div style="font-size:18px;font-weight:700;">${escapeHtml(c.name)}</div>
         <div style="font-size:13px;color:var(--text-tertiary);margin-top:2px;">记录你们的点点滴滴</div>
@@ -11034,7 +11056,7 @@ function showAnniversaryModal() {
       ? '<div style="color:var(--text-tertiary);text-align:center;padding:24px;">还没有访客，先添加一个访客吧</div>'
       : characters.map(c => `
         <div style="display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--border);cursor:pointer;border-radius:10px;" data-anniv-char="${c.id}">
-          <div class="avatar sm">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+          <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
           <div style="flex:1;min-width:0;font-size:15px;font-weight:600;">${escapeHtml(c.name)}</div>
           <span class="badge">${anniversaries.filter(a => a.charId === c.id).length} 个纪念日</span>
           <span style="color:var(--text-tertiary);">›</span>
@@ -11233,7 +11255,7 @@ async function showAnnivCardSettingModal() {
       ? '<div style="color:var(--text-tertiary);text-align:center;padding:24px;">还没有访客</div>'
       : characters.map(c => `
         <div style="display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--border);cursor:pointer;border-radius:10px;${cur === c.id ? 'background:var(--purple-dim);' : ''}" data-annivcard="${c.id}">
-          <div class="avatar sm">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+          <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
           <div style="flex:1;min-width:0;font-size:15px;font-weight:600;">${escapeHtml(c.name)}</div>
           <span class="badge">${anniversaries.filter(a => a.charId === c.id).length} 个纪念日</span>
           ${cur === c.id ? '<span style="color:var(--purple-soft);">✓</span>' : '<span style="color:var(--text-tertiary);">›</span>'}
@@ -11286,8 +11308,8 @@ function pickMembersModal({ title, tip, exclude = [], initial = [], onDone, onCl
     </div>
     ${tip ? `<div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">${tip}</div>` : ''}
     <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
-      ${groups.map(g => rowHtml(g.id, g.name, g.avatar ? `<img src="${imgSrc(g.avatar)}">` : '👥', true)).join('')}
-      ${chars.map(c => rowHtml(c.id, c.name, c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?'), false)).join('')}
+      ${groups.map(g => rowHtml(g.id, g.name, g.avatar ? `<img src="${imgSrcAttr(g.avatar)}">` : '👥', true)).join('')}
+      ${chars.map(c => rowHtml(c.id, c.name, c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?'), false)).join('')}
       ${(groups.length + chars.length) ? '' : '<div style="color:var(--text-tertiary);font-size:13px;padding:12px 0;text-align:center;">没有可选成员</div>'}
     </div>
     <button class="btn primary block" id="pm-ok" style="padding:13px;">完成（已选 0）</button>
@@ -11451,7 +11473,7 @@ function showCharEmojiModal(c) {
           const isSel = batchMode && sel.has(e.id);
           return `
         <div class="emoji-cell" data-eid="${e.id}" style="${isSel ? 'box-shadow:inset 0 0 0 2px var(--purple-soft);border-radius:10px;' : ''}">
-          <img src="${imgSrc(e.img || e.data)}">
+          <img src="${imgSrcAttr(e.img || e.data)}">
           ${batchMode
             ? `<button class="emoji-del" style="display:${isSel ? 'block' : 'none'};background:var(--purple-soft);border:none;color:#fff;">✓</button>`
             : `<button class="emoji-del" data-del="${e.id}">✕</button>`}
@@ -12517,6 +12539,13 @@ async function showSettingsModal() {
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，你在聊天里对访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统会自动识别并弹窗确认，把行程写入系统日历/闹钟提醒。字卡模式与 AI 模式通用，关闭后不再自动检测。</div>
     </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>✨ 导入时重复触发超频/惊喜动画</span>
+        <input type="checkbox" id="gs-import-replay-oc" ${chatSettings.importReplayOcAnim ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">默认关闭——从备份导入数据时，若备份里已记录「超频/惊喜的首次动画触发过」，则不再重复触发。开启后，导入带触发标记的数据也会重新播放超频/惊喜首次动画。</div>
+    </div>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-anniv-card-setting">
       入梦签纪念日设置 <span>🎉</span>
     </button>
@@ -12559,6 +12588,15 @@ async function showSettingsModal() {
       chatSettings.bmSchedDetect = schedBox.checked;
       await setSetting('chatSettings', chatSettings);
       miniToast(schedBox.checked ? '日程自动检测已开启' : '日程自动检测已关闭');
+    };
+  }
+  // 20261011 晚：导入时重复触发超频/惊喜动画开关（默认关=不重复触发）
+  {
+    const replayOc = $('#gs-import-replay-oc');
+    if (replayOc) replayOc.onchange = async () => {
+      chatSettings.importReplayOcAnim = replayOc.checked;
+      await setSetting('chatSettings', chatSettings);
+      miniToast(replayOc.checked ? '导入时将重复触发超频/惊喜首次动画' : '导入时将跳过已触发过的超频/惊喜动画');
     };
   }
   $('#btn-splash-audio-guide').onclick = () => showSplashAudioGuideModal(); // 20260930bx：浏览器自动播放白名单引导
@@ -12979,6 +13017,8 @@ function showDataCatModal(id) {
     $('#btn-export').onclick = exportAll;
     $('#btn-import').onclick = () => showImportModal(showDataModal);
     $('#btn-clear-stale').onclick = clearStaleCache;
+    // 20261011 晚：重进数据迁移页时，若有进行中的导入/导出任务，恢复完整进度面板继续显示
+    if (isProgressActive()) setProgressPanelMode(true);
   } else if (id === 'chat') {
     body.innerHTML = `
       ${btn('btn-export-chat', '导出聊天记录', '⬇')}
@@ -13389,6 +13429,8 @@ function showImportModal(back = null) {
       <button class="btn primary" style="flex:1;" id="import-go">导入</button>
     </div>
   `);
+  // 20261011 晚：重进导入弹窗时，若有进行中的导入任务，恢复完整进度面板继续显示实时进度
+  if (isProgressActive()) setProgressPanelMode(true);
   $('#import-close').onclick = () => back ? back() : closeModal();
   $('#import-cancel').onclick = () => back ? back() : closeModal();
   $('#import-go').onclick = async () => {
@@ -13397,6 +13439,7 @@ function showImportModal(back = null) {
     const mode = (document.querySelector('input[name="import-mode"]:checked') || {}).value || 'overwrite';
     // 20261011：四阶段进度面板（读取文件 → 解析数据 → 还原图片 → 写入数据库），
     // 分块读取文件并实时刷新进度，根治「导入全局点确定就卡死/像假死」的观感。
+    // 20261011 晚：进度状态全局持久——关闭弹窗后台继续，重进恢复完整面板。
     let prog = null;
     try {
       prog = startProgressPanel([
@@ -13404,7 +13447,8 @@ function showImportModal(back = null) {
         { label: '解析数据' },
         { label: '还原图片' },
         { label: '写入数据库' },
-      ]);
+      ], 0, 'import');
+      setProgressPanelMode(true);
       // 阶段0：分块读取文件（大文件整读会让 WebView 主线程长时间无响应，分块 + yield 让出）
       const CHUNK = 4 * 1024 * 1024; // 4MB/块
       const size = file.size || 0;
@@ -13577,7 +13621,14 @@ async function doImport(data, mode = 'overwrite', onStage = null) {
     if (data.chatSettings) await setSetting('chatSettings', data.chatSettings);
     if (data.chatTheme) await setSetting('chatTheme', data.chatTheme);
     if (data.settings) {
+      // 20261011 晚：超频/惊喜首次触发动画标记——默认「不重复触发」= 导入时保留备份里的
+      //   「已触发」标记（oc_seen/oc_unlocked/oc_surpriseUnlocked 照常写入，动画不再重播）；
+      //   玩家在总设置开启「导入时重复触发动画」后，这三个标记跳过写入（保持 false），
+      //   下次进入聊天会重新触发首次动画。
+      const replayOc = !!chatSettings.importReplayOcAnim;
+      const ocAnimKeys = new Set(['oc_seen', 'oc_unlocked', 'oc_surpriseUnlocked']);
       for (const [k, v] of Object.entries(data.settings)) {
+        if (replayOc && ocAnimKeys.has(k)) continue; // 重复触发模式：跳过写入触发标记
         if (v !== null && v !== undefined) await setSetting(k, v);
       }
     }
@@ -13630,91 +13681,156 @@ function exportProgress(show, text) {
 }
 
 /* ---------- 20261011：完整进度面板（总进度条 + 分阶段滑块）----------
-   挂在当前弹窗（#modal-content）内、弹窗内容下方；关闭弹窗自动移除。
+   20261011 晚：升级为「后台持久进度」——进度状态存全局 _progState（阶段定义+各阶段进度），
+   面板只在导入/导出弹窗内显示，不依赖弹窗生命周期：
+     · 导入/导出 async 进程在后台继续跑，关闭弹窗不会中断；
+     · 玩家离开导入导出页面后，进度面板随之隐藏（不显示悬浮条，不影响玩家做别的功能）；
+     · 玩家重进导入导出弹窗时，面板恢复显示，继续呈现实时进度；
+     · 进程完成（closeProgressPanel）才清空状态。
    API：
-     startProgressPanel(stages, total)  stages=[{label}]  开启面板
+     startProgressPanel(stages, total, kind)  stages=[{label}] kind='import'|'export'  开启/重建面板
      setStageProgress(idx, val, total)   更新某阶段滑块（val 可为 0~1 或绝对计数+total）
+     setProgressPanelMode(inModal)       切换形态：true=显示完整面板(弹窗内) false=隐藏（后台继续）
      updateProgressPanel()               按各阶段权重重算总进度条并刷新 DOM
-     closeProgressPanel()                关闭并移除面板
+     closeProgressPanel()                关闭并移除面板 + 清空全局状态
+     isProgressActive()                  是否有进行中的导入/导出（重进弹窗时据此恢复面板）
    风格：紫色系渐变 + 玻璃拟态，与 .modal 视觉一致。 */
-let _progPanel = null;
-function startProgressPanel(stages, total) {
-  closeProgressPanel();
-  _progPanel = {
-    el: null,
-    stages: stages.map(s => ({ label: s.label, val: 0, total: s.total || 0 })),
-    total: total || 0,
-  };
-  _progPanel.el = document.createElement('div');
-  _progPanel.el.id = 'bm-progress-panel';
-  _progPanel.el.innerHTML = `
-    <div class="bm-prog-total-row">
-      <span class="bm-prog-total-label">正在处理</span>
-      <span class="bm-prog-total-pct" id="bm-prog-total-pct">0%</span>
-    </div>
-    <div class="bm-prog-bar bm-prog-bar-total"><div class="bm-prog-fill" id="bm-prog-total-fill"></div></div>
-    <div class="bm-prog-stages" id="bm-prog-stages"></div>
-  `;
-  // 渲染阶段滑块
-  const stagesBox = _progPanel.el.querySelector('#bm-prog-stages');
-  _progPanel.stages.forEach((s, i) => {
-    const row = document.createElement('div');
-    row.className = 'bm-prog-stage';
-    row.innerHTML = `
-      <div class="bm-prog-stage-head">
-        <span class="bm-prog-stage-label">${escapeHtml(s.label)}</span>
-        <span class="bm-prog-stage-pct" data-i="${i}">0%</span>
-      </div>
-      <div class="bm-prog-bar"><div class="bm-prog-fill" data-i="${i}"></div></div>
-    `;
-    stagesBox.appendChild(row);
+let _progState = null;      // 全局进度状态（跨弹窗/页面持久，直到 closeProgressPanel 才清）
+let _progInModal = false;   // 当前形态：true=显示完整面板（挂在弹窗内） false=隐藏（后台继续跑）
+function _progOverall(stages) {
+  let acc = 0, weight = 0;
+  stages.forEach(s => {
+    const w = s.total > 0 ? s.total : 1;
+    weight += w;
+    const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
+    acc += ratio * w;
   });
-  // 挂到弹窗内容下方（若弹窗在，则挂在 modal-content 内部末尾；否则挂在 body 固定底部）
-  const box = $('#modal-content');
-  if (box && box.isConnected) box.appendChild(_progPanel.el);
-  else document.body.appendChild(_progPanel.el);
+  return weight > 0 ? acc / weight : 0;
+}
+function startProgressPanel(stages, total, kind = 'export') {
+  // 若已有进行中的任务且阶段定义相同，直接复用状态（避免重复开启时丢失已有进度）；
+  // 否则重置为新任务。面板 DOM 若已被外部移除（如页面重载）则重建。
+  const sameKind = _progState && _progState.kind === kind;
+  const sameLen = _progState && _progState.stages.length === stages.length;
+  if (!(sameKind && sameLen)) {
+    _progState = {
+      el: null,
+      kind,
+      stages: stages.map(s => ({ label: s.label, val: 0, total: s.total || 0 })),
+      total: total || 0,
+    };
+  }
+  if (!_progState.el) {
+    _progState.el = document.createElement('div');
+    _progState.el.id = 'bm-progress-panel';
+    _progState.el.innerHTML = `
+      <div class="bm-prog-total-row">
+        <span class="bm-prog-total-label">正在处理</span>
+        <span class="bm-prog-total-pct" id="bm-prog-total-pct">0%</span>
+      </div>
+      <div class="bm-prog-bar bm-prog-bar-total"><div class="bm-prog-fill" id="bm-prog-total-fill"></div></div>
+      <div class="bm-prog-stages" id="bm-prog-stages"></div>
+    `;
+    const stagesBox = _progState.el.querySelector('#bm-prog-stages');
+    _progState.stages.forEach((s, i) => {
+      const row = document.createElement('div');
+      row.className = 'bm-prog-stage';
+      row.innerHTML = `
+        <div class="bm-prog-stage-head">
+          <span class="bm-prog-stage-label">${escapeHtml(s.label)}</span>
+          <span class="bm-prog-stage-pct" data-i="${i}">0%</span>
+        </div>
+        <div class="bm-prog-bar"><div class="bm-prog-fill" data-i="${i}"></div></div>
+      `;
+      stagesBox.appendChild(row);
+    });
+  }
+  // 挂载：默认完整面板形态（挂在弹窗内，若弹窗不存在则退化为底部悬浮条）
+  setProgressPanelMode(_progInModal);
   updateProgressPanel();
-  return _progPanel;
+  _ensureFloatBadge(kind);  // 20261011 晚：底部小悬浮提示「正在导出中…/正在导入中…」
+  return _progState;
+}
+/* 切换进度面板显示形态：true=显示完整面板（挂 #modal-content 内部末尾）；false=隐藏（从 DOM 移除，
+   但保留 _progState 状态，供重进弹窗时恢复）。玩家离开导入导出页面后面板随之隐藏，不悬浮在外层，
+   避免影响玩家做别的功能。 */
+function setProgressPanelMode(inModal) {
+  _progInModal = !!inModal;
+  if (!_progState || !_progState.el) return;
+  const el = _progState.el;
+  if (_progInModal) {
+    const box = $('#modal-content');
+    const target = (box && box.isConnected) ? box : document.body;
+    if (el.parentNode !== target) target.appendChild(el);
+    el.classList.remove('bm-prog-float');
+  } else {
+    if (el.parentNode) el.parentNode.removeChild(el);  // 隐藏：从 DOM 移除，状态保留待重进恢复
+  }
 }
 function setStageProgress(idx, val, total) {
-  if (!_progPanel) return;
-  const s = _progPanel.stages[idx];
+  if (!_progState) return;
+  const s = _progState.stages[idx];
   if (!s) return;
   if (total !== undefined) s.total = total;
   s.val = val;
   updateProgressPanel();
 }
 function updateProgressPanel() {
-  if (!_progPanel) return;
-  const totalFill = _progPanel.el.querySelector('#bm-prog-total-fill');
-  const totalPct = _progPanel.el.querySelector('#bm-prog-total-pct');
-  // 总进度 = 各阶段（含总权重）加权平均；阶段 val 为 0~1 比例
-  let acc = 0, weight = 0;
-  _progPanel.stages.forEach(s => {
-    const w = s.total > 0 ? s.total : 1;
-    weight += w;
-    const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
-    acc += ratio * w;
-  });
-  const overall = weight > 0 ? acc / weight : 0;
-  const pct = Math.round(overall * 100);
-  totalFill.style.width = pct + '%';
-  totalPct.textContent = pct + '%';
-  // 各阶段滑块
-  const fills = _progPanel.el.querySelectorAll('.bm-prog-stage .bm-prog-fill');
-  const pcts = _progPanel.el.querySelectorAll('.bm-prog-stage-pct');
-  _progPanel.stages.forEach((s, i) => {
+  if (!_progState || !_progState.el || !_progState.el.isConnected) return;
+  const el = _progState.el;
+  const totalFill = el.querySelector('#bm-prog-total-fill');
+  const totalPct = el.querySelector('#bm-prog-total-pct');
+  const pct = Math.round(_progOverall(_progState.stages) * 100);
+  if (totalFill) totalFill.style.width = pct + '%';
+  if (totalPct) totalPct.textContent = pct + '%';
+  const fills = el.querySelectorAll('.bm-prog-stage .bm-prog-fill');
+  const pcts = el.querySelectorAll('.bm-prog-stage-pct');
+  _progState.stages.forEach((s, i) => {
     const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
     const sp = Math.round(ratio * 100);
     if (fills[i]) fills[i].style.width = sp + '%';
     if (pcts[i]) pcts[i].textContent = sp + '%';
   });
 }
+/* 是否有进行中的导入/导出任务（重进弹窗时据此判断是否恢复面板）。
+   以 _progState 是否存在为准——面板隐藏后 el 会被 detach，但任务仍在后台跑，仍算「进行中」。 */
+function isProgressActive() {
+  return !!_progState;
+}
 function closeProgressPanel() {
-  if (_progPanel && _progPanel.el && _progPanel.el.parentNode) {
-    _progPanel.el.parentNode.removeChild(_progPanel.el);
+  if (_progState && _progState.el && _progState.el.parentNode) {
+    _progState.el.parentNode.removeChild(_progState.el);
   }
-  _progPanel = null;
+  _progState = null;
+  _progInModal = false;
+  _removeFloatBadge();  // 20261011 晚：任务完成，移除底部小悬浮提示
+}
+
+/* ---------- 20261011 晚：底部小悬浮提示「正在导出中…/正在导入中…」----------
+   独立于完整进度面板的精简胶囊，固定在底部导航栏上方、聊天输入框之上，任务进行期间一直显示，
+   完成后移除。位置刻意避开底部 tab 栏（~72px）与聊天输入框（~66px），pointer-events:none 不拦截交互。 */
+let _progFloatBadge = null;
+function _ensureFloatBadge(kind) {
+  if (_progFloatBadge && _progFloatBadge.parentNode) {
+    // 已存在则仅同步文字（kind 切换：导出↔导入）
+    const t = _progFloatBadge.querySelector('.bm-float-badge-text');
+    if (t) t.textContent = (kind === 'import') ? '正在导入中…' : '正在导出中…';
+    return;
+  }
+  _progFloatBadge = document.createElement('div');
+  _progFloatBadge.id = 'bm-float-badge';
+  _progFloatBadge.className = 'bm-float-badge';
+  _progFloatBadge.innerHTML = `
+    <span class="bm-float-badge-spin"></span>
+    <span class="bm-float-badge-text">${kind === 'import' ? '正在导入中…' : '正在导出中…'}</span>
+  `;
+  document.body.appendChild(_progFloatBadge);
+}
+function _removeFloatBadge() {
+  if (_progFloatBadge && _progFloatBadge.parentNode) {
+    _progFloatBadge.parentNode.removeChild(_progFloatBadge);
+  }
+  _progFloatBadge = null;
 }
 
 /* 20260929x 重写：先收集全部 Blob 描述符，再 8 路并发转 base64 + 实时进度。
@@ -13877,6 +13993,12 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
       customFonts: await getSetting('customFonts', []),              // 自定义字体
       floatSettings: await getSetting('floatSettings', null),        // 悬浮窗设置
       bmScheduleReminders: await getSetting('bmScheduleReminders', []), // 行程提醒（网页端）
+      // 20261011 晚：超频/惊喜首次触发动画标记纳入全量备份——oc_seen(故障首次动画已看)、
+      //   oc_unlocked(超频已解锁)、oc_surpriseUnlocked(惊喜已解锁)。导入时若带这些「已触发」标记，
+      //   玩家不会再被首次动画打断（总设置可切换是否重复触发）。
+      oc_seen: await getSetting('oc_seen', false),
+      oc_unlocked: await getSetting('oc_unlocked', false),
+      oc_surpriseUnlocked: await getSetting('oc_surpriseUnlocked', false),
       // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
     },
   };
@@ -13933,7 +14055,8 @@ async function exportAll() {
         { label: '整理数据' },
         { label: '图片转码' },
         { label: '写入文件' },
-      ]);
+      ], 0, 'export');
+      setProgressPanelMode(true);
       // 阶段0：整理数据（读库）
       setStageProgress(0, 1, 1);
       // 阶段1：图片转码（buildBackupPayload 内 deepImagesToExport 回调）
@@ -14518,7 +14641,7 @@ async function renderMoments() {
   // 20260929s：昵称下方个性签名行，与个人主页设置的签名一致
   const meSign = $('#moments-me-sign');
   if (meSign) meSign.textContent = playerProfile.sign || '做个好梦';
-  if (meAv) meAv.innerHTML = playerProfile.avatar ? `<img src="${imgSrc(playerProfile.avatar)}">` : escapeHtml((playerProfile.name || '梦')[0]);
+  if (meAv) meAv.innerHTML = playerProfile.avatar ? `<img src="${imgSrcAttr(playerProfile.avatar)}">` : escapeHtml((playerProfile.name || '梦')[0]);
 
   // 封面
   const cover = $('#moments-cover');
@@ -14564,7 +14687,7 @@ async function renderMoments() {
       // 评论表情包（20260929ah 多选）：图片型 → 小图；emoji 贴纸 → 大号 emoji；兼容旧单图/单贴纸
       const cImgs = (cm.imgs && cm.imgs.length ? cm.imgs : (cm.img ? [cm.img] : []));
       const cStks = (cm.stickers && cm.stickers.length ? cm.stickers : (cm.sticker ? [cm.sticker] : []));
-      const stickerHtml = cImgs.map(im => `<img class="mo-cimg" src="${imgSrc(im, true)}" data-full="${imgSrc(im)}" data-mo-cimg="${cm.id}">`).join('')
+      const stickerHtml = cImgs.map(im => `<img class="mo-cimg" src="${imgSrcAttr(im, true)}" data-full="${imgSrcAttr(im)}" data-mo-cimg="${cm.id}">`).join('')
         + cStks.map(s => `<div class="mo-csticker">${emojiImgOf(s, 'mo-csticker-img') || escapeHtml(s)}</div>`).join('');
       return `<div class="mo-comment"><span class="mo-cname" data-mcmt="${cm.id}">${escapeHtml(who)}</span>${toHtml}：${escapeHtml(cm.content)}${stickerHtml}<button class="mo-creply" data-mreply="${cm.id}">回复</button></div>`;
     }).join('');
@@ -14576,12 +14699,12 @@ async function renderMoments() {
     card.className = 'moment-card';
     const charAuthor = post.authorType === 'char' ? characters.find(x => x.id === post.authorId) : null;
     card.innerHTML = `
-      <div class="moment-avatar${charAuthor ? ' clickable' : ''}" ${charAuthor ? `data-mo-author="${charAuthor.id}" title="查看主页"` : ''}>${author.avatar ? `<img src="${imgSrc(author.avatar)}">` : escapeHtml((author.name || '?')[0])}</div>
+      <div class="moment-avatar${charAuthor ? ' clickable' : ''}" ${charAuthor ? `data-mo-author="${charAuthor.id}" title="查看主页"` : ''}>${author.avatar ? `<img src="${imgSrcAttr(author.avatar)}">` : escapeHtml((author.name || '?')[0])}</div>
       <div class="moment-main">
         <div class="moment-name${charAuthor ? ' clickable' : ''}" ${charAuthor ? `data-mo-author="${charAuthor.id}"` : ''}>${escapeHtml(author.name)}${visLabel(post) ? `<span class="moment-visibility">${visLabel(post)}</span>` : ''}</div>
         ${post.content ? `<div class="moment-text">${escapeHtml(post.content)}</div>` : ''}
         ${(() => { const sts = (post.stickers && post.stickers.length ? post.stickers : (post.sticker ? [post.sticker] : [])); return sts.map(s => `<div class="mo-sticker">${emojiImgOf(s, 'mo-sticker-img') || escapeHtml(s)}</div>`).join(''); })()}
-        ${post.images && post.images.length ? `<div class="moment-imgs${post.images.length === 1 ? ' n1' : ''}">${post.images.map(im => `<img src="${imgSrc(im, true)}" data-full="${imgSrc(im)}">`).join('')}</div>` : ''}
+        ${post.images && post.images.length ? `<div class="moment-imgs${post.images.length === 1 ? ' n1' : ''}">${post.images.map(im => `<img src="${imgSrcAttr(im, true)}" data-full="${imgSrcAttr(im)}">`).join('')}</div>` : ''}
         <div class="moment-time-row">
           <div class="moment-time">${timeAgoStr(post.createTime)}</div>
           ${post.authorType === 'player' ? '<button class="moment-del" data-mod-del="' + post.id + '">删除</button>' : ''}
@@ -14695,7 +14818,7 @@ async function showMomentCommentModal(postId, replyTo = null) {
     }
     box.style.display = '';
     box.innerHTML = `
-      ${cmtImgs.map((im, i) => `<div style="position:relative;display:inline-block;margin:2px 6px 2px 0;"><img src="${imgSrc(im, true)}" style="max-width:120px;max-height:120px;border-radius:10px;border:1px solid var(--border);object-fit:cover;"><button data-cimgrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;">✕</button></div>`).join('')}
+      ${cmtImgs.map((im, i) => `<div style="position:relative;display:inline-block;margin:2px 6px 2px 0;"><img src="${imgSrcAttr(im, true)}" style="max-width:120px;max-height:120px;border-radius:10px;border:1px solid var(--border);object-fit:cover;"><button data-cimgrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;">✕</button></div>`).join('')}
       ${cmtStickers.map((s, i) => `<div style="position:relative;display:inline-block;font-size:42px;line-height:1;margin:2px 6px 2px 0;">${escapeHtml(s)}<button data-cstkrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;">✕</button></div>`).join('')}`;
     box.querySelectorAll('[data-cimgrm]').forEach(b => { b.onclick = () => { cmtImgs.splice(parseInt(b.dataset.cimgrm, 10), 1); renderAttach(); }; });
     box.querySelectorAll('[data-cstkrm]').forEach(b => { b.onclick = () => { cmtStickers.splice(parseInt(b.dataset.cstkrm, 10), 1); renderAttach(); }; });
@@ -14836,7 +14959,7 @@ async function mountStickerPicker(box, onPick) {
     if (!body) return;
     if (tab === 'pic') {
       body.innerHTML = `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;max-height:240px;overflow-y:auto;">
-        ${pics.map((p, i) => `<img src="${imgSrc(p.img)}" data-pick-img="1" data-idx="${i}" style="width:100%;aspect-ratio:1;object-fit:contain;border-radius:8px;cursor:pointer;background:var(--card);">`).join('')}
+        ${pics.map((p, i) => `<img src="${imgSrcAttr(p.img)}" data-pick-img="1" data-idx="${i}" style="width:100%;aspect-ratio:1;object-fit:contain;border-radius:8px;cursor:pointer;background:var(--card);">`).join('')}
       </div>`;
       body.querySelectorAll('[data-pick-img]').forEach(el => {
         el.onclick = () => {
@@ -14950,7 +15073,7 @@ function showPublishMomentModal() {
     if (!box) return;
     box.innerHTML = _moImages.map((im, i) => `
       <div style="position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid var(--border);">
-        <img src="${imgSrc(im, true)}" style="width:100%;height:100%;object-fit:cover;">
+        <img src="${imgSrcAttr(im, true)}" style="width:100%;height:100%;object-fit:cover;">
         <button data-rm="${i}" style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:var(--danger);border:none;font-size:11px;line-height:18px;cursor:pointer;">✕</button>
       </div>`).join('');
     box.querySelectorAll('[data-rm]').forEach(b => { b.onclick = () => { _moImages.splice(parseInt(b.dataset.rm), 1); renderImgs(); }; });
@@ -15077,7 +15200,7 @@ async function showMomentShareModal(postId) {
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
         ${characters.map(c => `
           <button class="btn mo-share-char" data-cid="${c.id}" style="display:flex;align-items:center;gap:6px;padding:6px 12px 6px 6px;font-size:13px;">
-            <span class="avatar" style="width:24px;height:24px;font-size:12px;overflow:hidden;">${c.avatar ? `<img src="${imgSrc(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml(c.name[0] || '?')}</span>
+            <span class="avatar" style="width:24px;height:24px;font-size:12px;overflow:hidden;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml(c.name[0] || '?')}</span>
             ${escapeHtml(c.name)}
           </button>`).join('')}
       </div>` : '<div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">还没有访客可以发送</div>'}
@@ -15086,7 +15209,7 @@ async function showMomentShareModal(postId) {
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
         ${chatGroups.map(g => `
           <button class="btn mo-share-group" data-gid="${g.id}" style="display:flex;align-items:center;gap:6px;padding:6px 12px 6px 6px;font-size:13px;">
-            <span class="avatar" style="width:24px;height:24px;font-size:12px;background:var(--purple-dim);display:flex;align-items:center;justify-content:center;overflow:hidden;">${g.avatar ? `<img src="${imgSrc(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</span>
+            <span class="avatar" style="width:24px;height:24px;font-size:12px;background:var(--purple-dim);display:flex;align-items:center;justify-content:center;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</span>
             ${escapeHtml(g.name)}
           </button>`).join('')}
       </div>` : '<div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">还没有群聊可以分享</div>'}
@@ -15643,7 +15766,7 @@ async function showGrayHallModal(opts = {}) {
       const on = sel.has(gh.charId);
       return `
       <div class="pal-row" data-gh-row="${gh.charId}">
-        <div class="pal-ic">${gh.avatar ? `<img src="${imgSrc(gh.avatar, true)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">` : escapeHtml((gh.name || '梦')[0])}</div>
+        <div class="pal-ic">${gh.avatar ? `<img src="${imgSrcAttr(gh.avatar, true)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">` : escapeHtml((gh.name || '梦')[0])}</div>
         <div class="pal-main">
           <div class="pal-title">${escapeHtml(gh.name || 'TA')}的旧日余晖</div>
           <div class="pal-sub">${sub}</div>
@@ -15653,7 +15776,7 @@ async function showGrayHallModal(opts = {}) {
     }
     return `
       <div class="pal-row" data-gh-row="${gh.charId}">
-        <div class="pal-ic">${gh.avatar ? `<img src="${imgSrc(gh.avatar, true)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">` : escapeHtml((gh.name || '梦')[0])}</div>
+        <div class="pal-ic">${gh.avatar ? `<img src="${imgSrcAttr(gh.avatar, true)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">` : escapeHtml((gh.name || '梦')[0])}</div>
         <div class="pal-main">
           <div class="pal-title">${escapeHtml(gh.name || 'TA')}的旧日余晖</div>
           <div class="pal-sub">${sub}</div>
@@ -15939,7 +16062,7 @@ async function grayViewSection(gh, sec) {
     listHtml = `
       <div style="border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:14px;margin-bottom:10px;">
         <div style="display:flex;align-items:center;gap:10px;">
-          <div class="pal-ic" style="width:44px;height:44px;border-radius:50%;overflow:hidden;font-size:18px;display:flex;align-items:center;justify-content:center;">${c.avatar ? `<img src="${imgSrc(c.avatar, true)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((c.name || '梦')[0])}</div>
+          <div class="pal-ic" style="width:44px;height:44px;border-radius:50%;overflow:hidden;font-size:18px;display:flex;align-items:center;justify-content:center;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar, true)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((c.name || '梦')[0])}</div>
           <div>
             <div style="font-size:15px;font-weight:600;">${escapeHtml(c.name || 'TA')}</div>
             <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;">💰 钱包 ¥${c.wallet ?? 100000} · 与我：${escapeHtml(String(relTxt))}</div>
@@ -16084,15 +16207,15 @@ async function graySectionDetail(gh, sec, idx) {
     if (sec === 'memory') {
       return `
         <div style="font-size:15px;font-weight:600;margin-bottom:10px;line-height:1.5;">${escapeHtml(palWithPlayerName(it.title || '（无题）'))}</div>
-        ${it.img ? `<img src="${imgSrc(it.img)}" style="max-width:100%;max-height:240px;border-radius:12px;border:1px solid rgba(255,255,255,.16);display:block;margin-bottom:12px;">` : ''}
+        ${it.img ? `<img src="${imgSrcAttr(it.img)}" style="max-width:100%;max-height:240px;border-radius:12px;border:1px solid rgba(255,255,255,.16);display:block;margin-bottom:12px;">` : ''}
         ${it.text ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap;word-break:break-word;">${escapeHtml(palWithPlayerName(it.text))}</div>` : ''}
         ${it.kind === 'chat' && it.messages && it.messages.length ? `<div style="margin-top:12px;">${palSnapHtml(it)}</div>` : ''}
-        ${(it.images || []).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">${it.images.map(im => `<img src="${imgSrc(im, true)}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,.16);">`).join('')}</div>` : ''}
+        ${(it.images || []).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">${it.images.map(im => `<img src="${imgSrcAttr(im, true)}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,.16);">`).join('')}</div>` : ''}
         ${!it.text && !it.img && !(it.messages && it.messages.length) && !(it.images || []).length ? '<div style="font-size:12px;color:var(--text-tertiary);">（无正文）</div>' : ''}`;
     }
     if (sec === 'overclock') {
       return `
-        <div style="text-align:center;font-size:40px;margin-bottom:10px;">${it.giftImg ? `<img src="${imgSrc(it.giftImg, true)}" style="width:120px;height:120px;object-fit:cover;border-radius:14px;">` : '🎁'}</div>
+        <div style="text-align:center;font-size:40px;margin-bottom:10px;">${it.giftImg ? `<img src="${imgSrcAttr(it.giftImg, true)}" style="width:120px;height:120px;object-fit:cover;border-radius:14px;">` : '🎁'}</div>
         <div style="text-align:center;font-size:16px;font-weight:600;margin-bottom:8px;">${escapeHtml(it.name || it.giftName || '礼物')}</div>
         ${(it.giftDesc || it.desc) ? `<div style="font-size:13.5px;line-height:1.8;text-align:center;color:var(--text-secondary);">${escapeHtml(it.giftDesc || it.desc)}</div>` : ''}
         ${it.note ? `<div style="font-size:12.5px;line-height:1.7;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.05);">📝 ${escapeHtml(it.note)}</div>` : ''}`;
@@ -16165,7 +16288,7 @@ function grayMomentDetail(gh, posts, idx) {
     const txt = String(p.content || p.text || '').trim();
     return `
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-        <span class="avatar" style="width:38px;height:38px;font-size:16px;overflow:hidden;flex-shrink:0;">${c.avatar ? `<img src="${imgSrc(c.avatar, true)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((c.name || '梦')[0])}</span>
+        <span class="avatar" style="width:38px;height:38px;font-size:16px;overflow:hidden;flex-shrink:0;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar, true)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((c.name || '梦')[0])}</span>
         <div style="min-width:0;">
           <div style="font-size:14.5px;font-weight:600;">${escapeHtml(c.name || 'TA')}</div>
           <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:1px;">${p.time ? new Date(p.time).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</div>
@@ -16173,12 +16296,12 @@ function grayMomentDetail(gh, posts, idx) {
       </div>
       ${txt ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap;word-break:break-word;margin-bottom:10px;">${escapeHtml(txt)}</div>` : ''}
       ${p.sticker ? `<div style="font-size:34px;margin:4px 0 8px;">${escapeHtml(p.sticker)}</div>` : ''}
-      ${(p.images || []).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${p.images.map(im => `<img src="${imgSrc(im, true)}" data-ghm-img="${imgSrc(im, true)}" style="width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,.16);cursor:pointer;">`).join('')}</div>` : ''}
+      ${(p.images || []).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${p.images.map(im => `<img src="${imgSrcAttr(im, true)}" data-ghm-img="${imgSrcAttr(im, true)}" style="width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,.16);cursor:pointer;">`).join('')}</div>` : ''}
       ${(p.likes || []).length ? `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">💗 ${p.likes.length} 人觉得很赞</div>` : ''}
       ${(p.comments || []).length ? `<div style="border-top:1px dashed rgba(255,255,255,.14);padding-top:8px;margin-top:4px;display:flex;flex-direction:column;gap:6px;">${p.comments.map(cm => `
         <div style="font-size:12.5px;line-height:1.6;">
           <span style="font-weight:600;color:var(--text-secondary);">${escapeHtml(whoName(cm.who))}：</span>${escapeHtml(String(cm.content || ''))}
-          ${cm.img ? `<img src="${imgSrc(cm.img, true)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-left:4px;">` : ''}
+          ${cm.img ? `<img src="${imgSrcAttr(cm.img, true)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-left:4px;">` : ''}
           ${cm.sticker ? `<span style="font-size:16px;vertical-align:middle;margin-left:4px;">${escapeHtml(cm.sticker)}</span>` : ''}
         </div>`).join('')}</div>` : '<div style="font-size:12px;color:var(--text-tertiary);">还没有评论</div>'}`;
   }
@@ -16312,7 +16435,7 @@ async function showMemoryPalaceModal(opts = {}) {
       })()}
       ${folders.filter(f => f.type === 'char').map(f => `
         <div class="pal-row" data-open="${f.id}">
-          <div class="pal-ic">${f.charAvatar ? `<img src="${imgSrc(f.charAvatar, true)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">` : escapeHtml((f.charName || '梦')[0])}</div>
+          <div class="pal-ic">${f.charAvatar ? `<img src="${imgSrcAttr(f.charAvatar, true)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;">` : escapeHtml((f.charName || '梦')[0])}</div>
           <div class="pal-main">
             <div class="pal-title">${escapeHtml(f.name)}</div>
             <div class="pal-sub">${cnt(f.id)} 段 · ${subCount(f.id)} 个分类 · ${f.allowAI ? 'AI 默认可读' : 'AI 不可读'}</div>
@@ -16790,7 +16913,7 @@ function palManualModal(fid, sid) {
     if (!file) return;
     try {
       imgDesc = await compressImage(file, 1280, 0.78, true);
-      $('#pm-preview').innerHTML = `<img src="${imgSrc(imgDesc)}" style="max-width:100%;max-height:150px;border-radius:10px;border:1px solid var(--border);">`;
+      $('#pm-preview').innerHTML = `<img src="${imgSrcAttr(imgDesc)}" style="max-width:100%;max-height:150px;border-radius:10px;border:1px solid var(--border);">`;
     } catch (err) { miniToast('图片读取失败'); }
   };
   $('#pm-cancel').onclick = pmBack;
@@ -16830,14 +16953,14 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
     }
     if (e.kind === 'letter' || e.kind === 'manual') {
       return `
-        ${e.img ? `<img src="${imgSrc(e.img)}" style="max-width:100%;max-height:240px;border-radius:12px;border:1px solid rgba(196,181,253,.24);display:block;margin-bottom:12px;">` : ''}
+        ${e.img ? `<img src="${imgSrcAttr(e.img)}" style="max-width:100%;max-height:240px;border-radius:12px;border:1px solid rgba(196,181,253,.24);display:block;margin-bottom:12px;">` : ''}
         ${e.text ? `<div style="font-size:13.5px;line-height:1.75;white-space:pre-wrap;word-break:break-word;color:rgba(238,232,255,.94);">${escapeHtml(palWithPlayerName(e.text))}</div>` : ''}`;
     }
     return `
-      ${e.authorName ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><span class="avatar" style="width:26px;height:26px;font-size:13px;overflow:hidden;">${e.authorAvatar ? `<img src="${imgSrc(e.authorAvatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((e.authorName || '梦')[0])}</span><span style="font-size:13px;font-weight:600;">${escapeHtml(e.authorName)}</span></div>` : ''}
+      ${e.authorName ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><span class="avatar" style="width:26px;height:26px;font-size:13px;overflow:hidden;">${e.authorAvatar ? `<img src="${imgSrcAttr(e.authorAvatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((e.authorName || '梦')[0])}</span><span style="font-size:13px;font-weight:600;">${escapeHtml(e.authorName)}</span></div>` : ''}
       ${e.text ? `<div style="font-size:13.5px;line-height:1.75;white-space:pre-wrap;word-break:break-word;color:rgba(238,232,255,.94);">${escapeHtml(palWithPlayerName(e.text))}</div>` : ''}
       ${e.sticker ? `<div style="font-size:30px;margin-top:6px;">${escapeHtml(e.sticker)}</div>` : ''}
-      ${(e.images || []).length ? `<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">${e.images.map(im => `<img src="${imgSrc(im, true)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid rgba(196,181,253,.24);">`).join('')}</div>` : ''}`;
+      ${(e.images || []).length ? `<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">${e.images.map(im => `<img src="${imgSrcAttr(im, true)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid rgba(196,181,253,.24);">`).join('')}</div>` : ''}`;
   }
 
   function jumpHtml() {
@@ -17151,7 +17274,7 @@ function palSnapHtml(e) {
   return (e.messages || []).map(s => {
     const me = s.from === 'me';
     let body;
-    if ((s.type === 'image' || s.type === 'emoji') && s.content) body = `<img src="${imgSrc(s.content)}" style="max-width:160px;max-height:160px;border-radius:10px;display:block;">`;
+    if ((s.type === 'image' || s.type === 'emoji') && s.content) body = `<img src="${imgSrcAttr(s.content)}" style="max-width:160px;max-height:160px;border-radius:10px;display:block;">`;
     else body = escapeHtml(s.content);
     return `<div class="pal-bubble-row ${me ? 'me' : ''}">
       <div class="pal-ava">${escapeHtml(palWithPlayerName(s.name || '?')[0])}</div>
@@ -17184,7 +17307,7 @@ function palMoveModal(ids, backFid) {
         ${row(palPlayerFolderName(), '根部 · AI 默认不可读', null, icon('user', 18))}
         ${playerSubs.map(sf => row(sf.name, '玩家分类 · ' + (sf.allowAI ? 'AI 可读' : 'AI 不可读'), null, icon('folder', 18))).join('')}
         ${row('隐藏夹', '绝对不给 AI 读取', null, icon('lock', 18))}
-        ${charFs.map(f => row(f.name, (f.allowAI ? 'AI 默认可读' : 'AI 不可读'), null, f.charAvatar ? `<img src="${imgSrc(f.charAvatar, true)}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;">` : icon('user', 18))).join('')}
+        ${charFs.map(f => row(f.name, (f.allowAI ? 'AI 默认可读' : 'AI 不可读'), null, f.charAvatar ? `<img src="${imgSrcAttr(f.charAvatar, true)}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;">` : icon('user', 18))).join('')}
       </div>
     `);
     $('#pmv-back').onclick = () => showPalaceFolder(backFid);
@@ -18062,7 +18185,7 @@ async function showLetterRecordsModal(charId = null) {
       return `
         <div class="letter-rec" data-tid="${tidOf(t)}" style="${batchMode ? 'cursor:pointer;' : ''}">
           ${batchMode ? `<div class="lr-check${checked ? ' on' : ''}">✓</div>` : ''}
-          <div class="avatar sm">${c && c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(name[0] || '?')}</div>
+          <div class="avatar sm">${c && c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(name[0] || '?')}</div>
           <div style="flex:1;min-width:0;">
             <div style="display:flex;align-items:center;gap:6px;min-width:0;">
               ${scopeChar ? '' : `<span style="font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(name)}</span>`}
@@ -19202,7 +19325,7 @@ function showWorldEntryView(e) {
   const ocrPaper = (e.type === 'image' && e.ocr)
     ? `<div class="wb-paper" style="margin-top:12px;">${escapeHtml(e.ocr)}</div>` : '';
   const body = e.type === 'image'
-    ? `<img src="${imgSrc(e.img)}" style="width:100%;border-radius:14px;display:block;">${ocrPaper}`
+    ? `<img src="${imgSrcAttr(e.img)}" style="width:100%;border-radius:14px;display:block;">${ocrPaper}`
     : `<div class="wb-paper wb-doc">${e.html ? e.html : escapeHtml(e.text || '')}</div>`;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
@@ -20073,10 +20196,257 @@ async function aiPalStoreMeetMemo(charId, memo, authorId) {
   } catch (e) {}
 }
 
+/* ============================================================
+   角色日常时间表 + 遗忘曲线（20261011，规则4「有自己的生活主动分享」）
+   需求：AI 模式下，每天为每个角色内置生成一张「每小时」的日程表。
+   · 时间表内置、玩家不可见（不进界面，只进 AI 上下文）。
+   · 每天生成一张新表，按「聊天天数」对应的日期推进（过零点换日）。
+   · 遗忘曲线（模仿真人记忆）：
+       0~2 天   记得最牢（完整回忆）
+       3~4 天   开始遗忘（片段模糊）
+       第 5 天  几乎忘光，只剩一点点印象
+       第 7 天  彻底遗忘 → 从存储删除
+   · 记忆宫殿（palace store）与此完全独立，互不影响。
+   存储：kv `charSchedule_<charId>` = [{ dayKey, slots:[{h,desc}] }]，最多 7 天滚动。
+   ============================================================ */
+
+/* 取某角色全部时间表（按 dayKey 升序） */
+async function charSchedules(charId) {
+  const list = await getSetting('charSchedule_' + charId, []);
+  return Array.isArray(list) ? list : [];
+}
+async function charSchedulesSave(charId, list) {
+  await setSetting('charSchedule_' + charId, list);
+}
+
+/* 一天内醒着的小时区间（供生成/回忆用）。默认 8~23 点；个别性格可深夜活动。 */
+function scheduleWakeRange(c) {
+  let from = 8, to = 23;
+  try {
+    // 极少数「夜猫子/深夜系」角色：作息延后（依据签名/人设里的夜间关键词）
+    const hay = ((c.bio || '') + ' ' + (c.sign || '')).toLowerCase();
+    if (/熬夜|夜猫|失眠|夜店|通宵|午夜|吸血鬼|暗夜|夜晚/.test(hay)) { from = 12; to = 24; }
+    else if (/早睡|清晨|晨跑|早起/.test(hay)) { from = 6; to = 21; }
+  } catch (e) {}
+  return { from, to };
+}
+
+/* 从角色「生平 + 世界书」抽取可融入日程的活动短语（纯本地，不调 AI，省 token）。
+   从 bio/sign 里提取具体「爱好/职业/习惯」关键词，生成自然的活动描述；
+   而非直接塞原文（原文是给 AI 看的完整人设，不是日程短语）。 */
+const SCHEDULE_HOBBY = [
+  ['写诗','写点诗','写诗','写诗'], ['画画','画画','画画','画会儿画'], ['摄影','拍照','出门拍照','整理照片'],
+  ['弹琴','练琴','练会儿琴','听琴'], ['唱歌','唱唱歌','哼歌','录首歌'], ['健身','健身','锻炼','去健身房'],
+  ['跑步','跑步','跑步','慢跑'], ['游泳','游泳','游会儿泳','去游泳'], ['看书','看书','看会儿书','读书'],
+  ['写作','写作','写点东西','码字'], ['打游戏','打游戏','打会儿游戏','开黑'], ['做饭','做饭','下厨','做顿好吃的'],
+  ['养花','摆弄花草','浇花','打理阳台'], ['养猫','喂猫','陪猫玩','撸猫'], ['养狗','遛狗','带狗散步','陪狗玩'],
+  ['咖啡','冲咖啡','泡咖啡','去咖啡店坐坐'], ['茶','泡茶','喝茶','去茶馆'], ['酒','小酌','调酒','去酒吧'],
+  ['电影','看电影','看部电影','去电影院'], ['旅行','规划旅行','看看旅行攻略','收拾行囊'], ['跳舞','练舞','跳舞','去舞蹈室'],
+  ['失眠','睡不着','熬夜晚睡','夜里发呆'], ['熬夜','熬夜','晚睡','夜里活动'], ['冥想','冥想','静坐','打坐'],
+  ['瑜伽','练瑜伽','做瑜伽','拉伸'], ['编程','写代码','敲代码','debug'], ['设计','做设计','画稿','改图'],
+];
+function scheduleHobbyOf(bio, sign) {
+  const hay = ((bio || '') + ' ' + (sign || ''));
+  const hits = [];
+  for (const [kw, a, b, c] of SCHEDULE_HOBBY) {
+    if (hay.includes(kw)) hits.push([a, b, c]);
+  }
+  return hits;
+}
+/* 生成某角色「某一天」的时间表（每小时一段，醒着区间内）。
+   纯本地模板 + 人设爱好 + 随机，不调 AI（省 token；后续可后台 AI 精炼）。
+   返回 [{h, desc}]。 */
+function buildCharDaySchedule(c, dayKey) {
+  const { from, to } = scheduleWakeRange(c);
+  const hobbies = scheduleHobbyOf(c.bio, c.sign);
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  // 通用日常活动池（每小时填充时从中抽）
+  const pools = {
+    morning: ['起床洗漱', '吃早饭', '晨间散步', '泡一杯茶慢慢醒神', '整理房间', '看早间新闻', '简单拉伸'],
+    work:    ['处理手头的事', '看书/学习', '出门办点事', '专注忙自己的事', '和朋友联系', '逛逛街', '买菜做饭', '打游戏放松'],
+    noon:    ['吃午饭', '午休小憩', '短暂放空'],
+    evening: ['吃晚饭', '收拾一天', '看看手机', '散步消食', '写点东西', '听听音乐', '发呆想事情'],
+    night:   ['洗漱准备休息', '回想今天', '睡前看会儿东西', '关灯睡觉'],
+  };
+  const slots = [];
+  for (let h = from; h <= to; h++) {
+    let desc;
+    if (h < 10) desc = pick(pools.morning);
+    else if (h >= 11 && h <= 13) desc = pick(pools.noon);
+    else if (h >= 19) desc = pick(pools.evening);
+    else desc = pick(pools.work);
+    // 用人设爱好给「少数几小时」注入个人特色（约 1/4 概率），让时间表贴合角色
+    if (hobbies.length && Math.random() < 0.25) {
+      const trio = pick(hobbies);   // [a, b, c] 三个活动变体
+      desc = trio[Math.floor(Math.random() * trio.length)];
+    }
+    slots.push({ h, desc });
+  }
+  return slots;
+}
+
+/* AI 实时生成某角色「某一天」的时间表（每小时一段，醒着区间内）。
+   基于人设 + 世界书设定 + 与玩家的关系，让 AI 生成贴合角色的日程。
+   每天每个角色至多调一次（由 ensureCharDaySchedule 幂等保证）。
+   返回 [{h, desc}] 或 null（失败时由调用方回退本地模板）。
+   20261011：AI 输出固定格式「HH:00 活动」逐行，便于精确解析到小时。 */
+async function buildCharDayScheduleAI(c, dayKey) {
+  const cfg = await loadAIConfig();
+  if (!(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim())) return null;
+  const { from, to } = scheduleWakeRange(c);
+  // 世界书素材（该角色可读的文本条目，截断控制 token）
+  let wbText = '';
+  try {
+    const wb = await loadWorldBook();
+    const entries = (wb && Array.isArray(wb.entries)) ? wb.entries : [];
+    const bits = [];
+    for (const e of entries) {
+      if (e.draft) continue;
+      const t = e.type === 'image' ? (e.ocr || '') : (e.text || '');
+      if (t) bits.push(t.replace(/\s+/g, ' ').trim().slice(0, 80));
+    }
+    if (bits.length) wbText = bits.slice(0, 8).join('；');   // 最多 8 条，控制 token
+  } catch (e) {}
+  const bio = (c.bio || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  const sign = (c.sign || '').replace(/\s+/g, ' ').trim().slice(0, 50);
+  const rel = (c.relation && c.relation !== '无') ? c.relation : '无（只是认识的人）';
+  const prompt = `你是角色「${c.name || 'TA'}」的生活编排助手。请为这个角色生成「今天」一天的日程表，精确到每小时。
+
+【角色人设】${bio || '（无，请自由发挥一个自然人物）'}
+【个性签名】${sign || '（无）'}
+【与玩家的关系】${rel}
+【世界书/世界观设定】${wbText || '（无）'}
+
+要求：
+1. 只覆盖醒着的时间段（约 ${from} 点到 ${to} 点），每小时一行，不要跳时段。
+2. 每行固定格式「HH:00 活动描述」，HH 用 24 小时制补零（如 09:00、14:00），冒号后跟一句简短的活动（4~8 个字），贴合这个角色的身份、职业、爱好、性格。
+3. 活动要自然、生活化、有个人特色，不要写"思考人生"这类空话；可以穿插吃饭、休息、工作、爱好、和朋友/玩家相关的小事。
+4. 不要输出任何解释、标题、序号、空行，只要逐行的时间+活动。
+5. 一共 ${to - from + 1} 行。`;
+  try {
+    const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+      { role: 'system', content: '你是一个日程生成器，只输出严格格式的逐行日程，不要任何多余内容。' },
+      { role: 'user', content: prompt },
+    ], { temperature: 0.9, maxTokens: 600, timeout: 20000 });
+    if (!r.ok || !r.text) return null;
+    // 解析：逐行「HH:00 活动」（容忍行首序号/符号前缀，如 "1. 09:00 xxx" / "- 09:00 xxx"）
+    const slots = [];
+    const lines = r.text.split(/\r?\n/);
+    for (const ln of lines) {
+      const m = ln.match(/(?:^|\s)(\d{1,2})\s*[:：]\s*0{0,2}\s*(.+?)\s*$/);
+      if (!m) continue;
+      const h = parseInt(m[1], 10);
+      let desc = m[2].replace(/^0+\s*/, '').trim();
+      if (Number.isNaN(h) || h < 0 || h > 23 || !desc) continue;
+      desc = desc.replace(/^[-—.、,，:：]\s*/, '').slice(0, 20);
+      if (desc) slots.push({ h, desc });
+    }
+    // 至少要有醒着区间一半的时段才算成功，否则判失败回退
+    if (slots.length >= Math.max(4, Math.floor((to - from + 1) / 2))) {
+      slots.sort((a, b) => a.h - b.h);
+      return slots;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+/* 遗忘曲线：根据「该表距今多少天」返回记忆强度与保留内容。
+   age = 今天(0) ~ 6（第7天彻底删）。返回 null 表示应删除。 */
+function scheduleMemoryByAge(slots, age) {
+  if (age >= 7) return null;                 // 第 7 天彻底遗忘 → 删除
+  if (age <= 2) return { strength: 'full', slots };          // 0~2 天记得最牢：完整
+  if (age <= 4) {                            // 3~4 天开始遗忘：保留约一半片段，顺序打散一点
+    const keep = slots.filter(() => Math.random() < 0.5);
+    return { strength: 'fading', slots: keep };
+  }
+  if (age === 5) {                           // 第 5 天几乎忘光：只剩一点点印象
+    const s = slots[Math.floor(Math.random() * slots.length)];
+    return { strength: 'vague', slots: s ? [s] : [] };
+  }
+  // age === 6：接近遗忘，仅剩若有若无的残影（极低概率还记得某件小事）
+  if (Math.random() < 0.3) {
+    const s = slots[Math.floor(Math.random() * slots.length)];
+    return { strength: 'trace', slots: s ? [s] : [] };
+  }
+  return { strength: 'trace', slots: [] };
+}
+
+/* 把某角色全部历史时间表，按遗忘曲线组装成给 AI 的一段话（只保留未遗忘的）。 */
+async function charScheduleAIContext(charId) {
+  try {
+    let list = await charSchedules(charId);
+    if (!list.length) return '';
+    // 清理：剔除超过 7 天彻底遗忘的
+    const today = startOfToday();
+    const kept = [];
+    const parts = [];
+    for (const it of list) {
+      if (!it || !it.dayKey || !Array.isArray(it.slots)) continue;
+      const dayTs = new Date(it.dayKey + 'T00:00:00').getTime();
+      if (Number.isNaN(dayTs)) continue;
+      const age = Math.floor((today - dayTs) / 86400000);
+      if (age < 0) { kept.push(it); continue; }   // 未来/当天
+      if (age >= 7) continue;                      // 第 7 天彻底遗忘 → 不保留（删除）
+      kept.push(it);
+      const mem = scheduleMemoryByAge(it.slots, age);
+      if (!mem) continue;
+      const slots = mem.slots || [];
+      if (!slots.length) continue;
+      const dateLabel = age === 0 ? '今天' : (age === 1 ? '昨天' : `${age} 天前`);
+      let lines;
+      if (mem.strength === 'full') {
+        lines = slots.map(s => `${String(s.h).padStart(2, '0')}:00 ${s.desc}`).join('；');
+        parts.push(`${dateLabel}的日程（你记得）：${lines}`);
+      } else if (mem.strength === 'fading') {
+        lines = slots.map(s => `${String(s.h).padStart(2, '0')}:00 ${s.desc}`).join('；');
+        parts.push(`${dateLabel}的日程（你只记得大概）：${lines}`);
+      } else { // vague / trace：只剩一点印象
+        lines = slots.map(s => s.desc).join('、');
+        parts.push(`${dateLabel}你隐约记得自己好像${lines}，但已经很模糊了。`);
+      }
+    }
+    // 落库（删除已彻底遗忘的）
+    if (kept.length !== list.length) await charSchedulesSave(charId, kept);
+    return parts.join('\n');
+  } catch (e) { return ''; }
+}
+
+/* 确保某角色「今天」的时间表已生成；返回是否新建。
+   AI 优先（贴合人设/世界书），失败回退本地模板；每天每角色至多调一次 AI。 */
+async function ensureCharDaySchedule(charId) {
+  const c = characters.find(x => x.id === charId);
+  if (!c) return false;
+  const list = await charSchedules(charId);
+  const dayKey = todayKey();
+  if (list.some(it => it && it.dayKey === dayKey)) return false;   // 今天已有
+  // 1. 先尝试 AI 实时生成（20261011）；失败/无 API 回退本地模板
+  let slots = null;
+  try { slots = await buildCharDayScheduleAI(c, dayKey); } catch (e) { slots = null; }
+  if (!slots || !slots.length) slots = buildCharDaySchedule(c, dayKey);   // 兜底
+  const next = list.filter(it => it && it.dayKey && it.dayKey !== dayKey).concat([{ dayKey, slots }]);
+  // 只保留最近 7 天
+  const sorted = next.sort((a, b) => (a.dayKey < b.dayKey ? -1 : 1));
+  while (sorted.length > 7) sorted.shift();
+  await charSchedulesSave(charId, sorted);
+  return true;
+}
+
+/* 为所有 AI 角色补齐当天时间表（过零点 / 启动时调用）。
+   串行生成（避免并发轰炸 API），单角色失败不影响其他。 */
+async function ensureAllCharSchedules() {
+  try {
+    if (!(await isAIMode())) return;          // 仅 AI 模式
+    for (const c of characters) {
+      try { await ensureCharDaySchedule(c.id); } catch (e) {}
+    }
+  } catch (e) {}
+}
+
 /* 组装「扮演某访客」时注入给 AI 的上下文。只读该访客权限内的内容：
    角色人设 + 访客专属记忆宫殿摘要 + 世界树（分批）+ 玩家侧放行记忆 + 钱包 + 近期聊天。
    绝对不读：其他访客文件夹、未勾选玩家内容、隐藏夹、其他访客群聊记忆。
-   20261002ch：新增纪念日注入（当天重点标注）+ 权重记忆单独强调。 */
+   20261002ch：新增纪念日注入（当天重点标注）+ 权重记忆单独强调。
+   20261011：新增角色日常时间表（规则4：有自己的生活主动分享，含遗忘曲线）。 */
 async function buildCharAIContext(charId, recentMessages) {
   const c = characters.find(x => x.id === charId);
   const parts = [];
@@ -20145,6 +20515,15 @@ async function buildCharAIContext(charId, recentMessages) {
     }).join('\n');
     parts.push(`【最近的对话（按时间顺序）】\n${tail}`);
   }
+  // 5.5 角色日常时间表（20261011，规则4）：你自己的日程/生活（含遗忘曲线，越久越淡）。
+  //     这是「你自己的生活」，聊天时若有提到（如你在忙什么、今天做了什么、约不约得出来），
+  //     可自然地据此回应；玩家没有问起就正常聊天，不要生硬报流水账。
+  try {
+    const sched = await charScheduleAIContext(charId);
+    if (sched && sched.length) {
+      parts.push(`【你自己的日常时间表（你作为${c ? c.name : 'TA'}的生活；记得多少就自然带出多少，模糊的别硬编）】\n${sched}`);
+    }
+  } catch (e) {}
   // 6. 玩家与该访客的书信往来（20260929ah：AI 模式下 AI 也能读到双方通信）
   try {
     if (c) {
@@ -20212,11 +20591,45 @@ async function getWorldBookAIContext(charId, triggerText) {
   return out;
 }
 
+/* 20261011：同音字容错（世界树/记忆关键词）——从打字卡字库派生「字→真实拼音」映射。
+   只用 COMMON_WORD_LIB 里有真实 py 的字；绝不调用 data.js 的 pinyinOf（它会返回随机假拼音，
+   用于打字卡演出，会把无关字误判成同音，破坏容错）。 */
+let _realPinyinMap = null;
+function _realPinyin() {
+  if (_realPinyinMap) return _realPinyinMap;
+  _realPinyinMap = {};
+  try {
+    const lib = (window.bmTypecardData && Array.isArray(window.bmTypecardData.COMMON_WORD_LIB))
+      ? window.bmTypecardData.COMMON_WORD_LIB : [];
+    for (const w of lib) {
+      if (w && w.ch && w.py && !_realPinyinMap[w.ch]) _realPinyinMap[w.ch] = String(w.py);
+    }
+  } catch (e) {}
+  return _realPinyinMap;
+}
+/* 文本 → 拼音数组（逐字，查不到的字记为 null，不参与匹配） */
+function _textPinyinArr(str) {
+  const map = _realPinyin();
+  const out = [];
+  for (const ch of String(str || '')) {
+    if (/[\u4e00-\u9fa5]/.test(ch)) out.push(map[ch] || null);
+    else out.push(null);
+  }
+  return out;
+}
+/* 拼音数组 → 带分隔串（如 ['tu','shu','guan'] → 'tu|shu|guan'），null 跳过 */
+function _pinyinKey(arr) {
+  const parts = [];
+  for (const p of arr) { if (p) parts.push(p); }
+  return parts.join('|');
+}
+
 /* 20260930bz：世界树条目是否被当前对话触发。
    ① 人名命中（提到某人 → 注入 TA 的设定）
    ② 显式关键词命中（玩家手动 keywords 最高优先 > AI aiKeywords > 本地 autoKeywords）
    ③ 滑窗关键词兜底（2~6 字显著片段命中）
-   返回 {hit:boolean, source:'name'|'manual'|'ai'|'auto'|'slide', kw:string}。
+   ④ 同音字兜底（20261011：图苏馆→图书馆，拼音同音即命中）
+   返回 {hit:boolean, source:'name'|'manual'|'ai'|'auto'|'slide'|'homo', kw:string}。
    空触发文本（无可读对话）时 {hit:false}。 */
 function _wbEntryTriggered(e, entryText, trigLower) {
   if (!trigLower) return { hit: false, source: '', kw: '' };
@@ -20258,6 +20671,32 @@ function _wbEntryTriggered(e, entryText, trigLower) {
       if (trigLower.includes(gram)) return { hit: true, source: 'slide', kw: gram };
     }
   }
+  // 6) 同音字兜底（20261011）：拼音同音即命中（图苏馆→图书馆 同音 shu=shu 时能兜住）
+  //    只对「条目侧的可信关键词」与「对话」做拼音子串匹配；要求≥2 个汉字且至少一个多音候选，避免误配。
+  try {
+    const trigPinyin = _textPinyinArr(trigLower);            // 对话逐字拼音
+    const trigKey = _pinyinKey(trigPinyin);
+    if (trigKey && trigKey.length >= 4) {                    // 至少 2 个有效拼音
+      // 候选源：条目标题正文 + 各类关键词（取可信的短词，2~6 字）
+      const candidates = [];
+      const push = (s) => { if (typeof s === 'string' && s) candidates.push(s); };
+      push(body);
+      (manual || []).forEach(push);
+      (aiKws || []).forEach(push);
+      (autoKws || []).forEach(push);
+      for (const cand of candidates) {
+        // 取候选里的中文片段（2~6 字），转拼音后与对话拼音做子串匹配
+        const candClean = String(cand).replace(/[^\u4e00-\u9fa5]+/g, '');
+        if (candClean.length < 2 || candClean.length > 6) continue;
+        const candArr = _textPinyinArr(candClean);
+        // 候选每个字都必须能查到真实拼音才参与同音匹配；否则残缺拼音可能被误 contains（如「猫咪」缺「咪」）
+        if (candArr.some(p => !p)) continue;
+        const candPy = _pinyinKey(candArr);
+        if (!candPy || candPy.length < 4) continue;
+        if (trigKey.includes(candPy)) return { hit: true, source: 'homo', kw: candClean };
+      }
+    }
+  } catch (e) {}
   return { hit: false, source: '', kw: '' };
 }
 
@@ -20506,7 +20945,10 @@ async function generateCharReply(charId, opts = {}) {
     const multiLine = wantN > 1
       ? `\n你会连着发 ${wantN} 条消息：每条单独一行输出（共 ${wantN} 行），像真实聊天里连着发几条，几条之间可以是补充、吐槽或自问自答；每条 1 句左右，不要编号。`
       : '';
-    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:标识或编号]]（取自下方【朋友圈最新动态】每行的[标识:]，用标识最精确；编号#1 是最新一条，也兼容）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。\n4. 玩家在这段对话里提到了「和你们两个人有关的重要日期」（玩家的生日、你的生日、你们认识的纪念日、你或玩家生平里的某件大事的具体日期）时：另起一行输出 [[ANNIV:日期|原因]]，日期尽量写成「YYYY-MM-DD」或「MM-DD」格式（如 [[ANNIV:10-05|玩家生日]]），由系统存成你们的权重记忆。必须是与你俩关系相关的日期才输出，普通的日程/会议日期不要输出。\n5. 玩家让你给某条朋友圈「点赞并评论/回复」时：必须同时输出两行——[[LIKE:标识或编号]] 和 [[COMMENT:标识或编号:你想评论的话]]，两个动作缺一不可；找不到对应动态就省略并在回复里自然说明。${shareDirective}${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
+    // 20261011：情绪感知与安慰准则（仅 AI 模式）——感知玩家情绪低落时及时安慰，
+    // 但安慰方式必须由「角色性格+生平+世界书设定+与玩家的关系」共同决定，不能套模板。
+    const emotionDirective = `\n行为准则（情绪）：留意玩家此刻流露的情绪。若察觉玩家情绪低落、难过、疲惫、受挫、生病、焦虑或明显消沉，请及时、自然地给予安慰，不要装作没看见、不要敷衍。但安慰的分寸与方式必须贴合你「这个人」——结合下方你的人设/生平、世界树设定，尤其是你们的关系来决定：\n· 关系是恋人/家人/挚友/朋友：真诚、温暖地安慰，可以主动关心、陪伴、给建议或帮忙。\n· 关系是陌生人或「无」：保持礼貌的关心与基本的善意，但不要过分亲昵、越界。\n· 关系是「厌恶」或「仇人」：不要说重话、不要落井下石，但也别演变成虚伪的亲密；以你人设允许的方式淡淡地缓和即可，甚至可以不置可否。\n· 关系是「宿敌」：这种时候反而可以挺 TA 一把——用你人设里那种「虽然是宿敌但此刻站你这边」的方式，给一点笨拙但真诚的支撑。\n· 若玩家并没有低落情绪，就正常聊天，不要强行说教或过度解读。`;
+    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${emotionDirective}${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:标识或编号]]（取自下方【朋友圈最新动态】每行的[标识:]，用标识最精确；编号#1 是最新一条，也兼容）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。\n4. 玩家在这段对话里提到了「和你们两个人有关的重要日期」（玩家的生日、你的生日、你们认识的纪念日、你或玩家生平里的某件大事的具体日期）时：另起一行输出 [[ANNIV:日期|原因]]，日期尽量写成「YYYY-MM-DD」或「MM-DD」格式（如 [[ANNIV:10-05|玩家生日]]），由系统存成你们的权重记忆。必须是与你俩关系相关的日期才输出，普通的日程/会议日期不要输出。\n5. 玩家让你给某条朋友圈「点赞并评论/回复」时：必须同时输出两行——[[LIKE:标识或编号]] 和 [[COMMENT:标识或编号:你想评论的话]]，两个动作缺一不可；找不到对应动态就省略并在回复里自然说明。${shareDirective}${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
     const sysNoImg = sysBase('');
     const messages = [
       { role: 'system', content: imgs.length ? sysBase('\n【视觉输入】本条消息末尾附上了最近聊天里的图片/表情包（按时间顺序），你可以直接看到它们的内容。') : sysNoImg },
@@ -20762,7 +21204,7 @@ function pickGroupMember(g, title = '选择群成员') {
       <div style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;">
         ${members.map(m => `
           <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-gpick="${m.id}">
-            <div class="avatar sm">${m.avatar ? `<img src="${imgSrc(m.avatar)}">` : escapeHtml(m.name[0] || '?')}</div>
+            <div class="avatar sm">${m.avatar ? `<img src="${imgSrcAttr(m.avatar)}">` : escapeHtml(m.name[0] || '?')}</div>
             <div style="flex:1;min-width:0;">
               <div style="font-size:14px;font-weight:600;">${escapeHtml(m.name)}</div>
               ${(g.memberNick || {})[m.id] ? `<div style="font-size:11.5px;color:var(--text-tertiary);">群名片：${escapeHtml(g.memberNick[m.id])}</div>` : ''}
@@ -21901,7 +22343,7 @@ function showGroupSurveyModal(g) {
     <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
       ${members.map(c => `
         <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-gsv="${c.id}">
-          <div class="avatar sm">${c.avatar ? `<img src="${imgSrc(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
+          <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
           <div style="flex:1;font-size:14px;font-weight:600;">${escapeHtml((g.memberNick || {})[c.id] || c.name)}</div>
           <div class="gsv-check" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:13px;color:#141019;flex-shrink:0;"></div>
         </div>`).join('')}
@@ -22669,7 +23111,7 @@ function _ocShowGiftBurst(kind, opts = {}) {
       : `<div class="oc-burst-subject"><div class="oc-burst-box oc-unbox-host">
           <div class="oc-unbox-glow"></div>
           <div class="oc-burst-shadow"></div>
-          <div class="oc-unbox-giftclip">${giftImg ? `<img class="oc-unbox-gift" src="${imgSrc(giftImg)}" alt="">` : ''}</div>
+          <div class="oc-unbox-giftclip">${giftImg ? `<img class="oc-unbox-gift" src="${imgSrcAttr(giftImg)}" alt="">` : ''}</div>
           <div class="oc-unbox-base"></div>
           <div class="oc-unbox-lid"></div>
         </div></div>`;
@@ -22847,7 +23289,7 @@ async function _ocGiftPanelHtml() {
       <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px;">
       ${allGifts.map(g => `
         <div class="oc-gift-card" data-gift-id="${g.id}" data-gift-price="${g.price}" style="min-width:0;background:var(--bg-elevated-2);border-radius:12px;padding:10px;cursor:pointer;">
-          <div style="width:100%;aspect-ratio:1/1;border-radius:9px;overflow:hidden;background:var(--bg);">${g.img ? `<img src="${imgSrc(g.img)}" style="width:100%;height:100%;object-fit:cover;display:block;">` : `<div style="font-size:34px;text-align:center;line-height:60px;">${g.emoji || '🎁'}</div>`}</div>
+          <div style="width:100%;aspect-ratio:1/1;border-radius:9px;overflow:hidden;background:var(--bg);">${g.img ? `<img src="${imgSrcAttr(g.img)}" style="width:100%;height:100%;object-fit:cover;display:block;">` : `<div style="font-size:34px;text-align:center;line-height:60px;">${g.emoji || '🎁'}</div>`}</div>
           <div style="font-size:12.5px;font-weight:600;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.name)}</div>
           <div style="font-size:11px;color:var(--text-tertiary);">¥${g.price}</div>
         </div>`).join('')}
@@ -22921,7 +23363,7 @@ async function _ocGiftCabinetHtml() {
       <div id="gc-list" style="display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow:auto;">
         ${mine.map((g, i) => `
           <div class="gc-item" data-gid="${g.id}" data-gidx="${i}" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;cursor:pointer;display:flex;align-items:center;gap:12px;">
-            <div style="width:44px;height:44px;border-radius:10px;overflow:hidden;flex:none;display:flex;align-items:center;justify-content:center;background:var(--bg);">${_ocGiftImgOf(g) ? `<img src="${imgSrc(_ocGiftImgOf(g))}" style="width:44px;height:44px;object-fit:cover;">` : '🎁'}</div>
+            <div style="width:44px;height:44px;border-radius:10px;overflow:hidden;flex:none;display:flex;align-items:center;justify-content:center;background:var(--bg);">${_ocGiftImgOf(g) ? `<img src="${imgSrcAttr(_ocGiftImgOf(g))}" style="width:44px;height:44px;object-fit:cover;">` : '🎁'}</div>
             <div style="flex:1;min-width:0;">
               <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.giftName)}</div>
               <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px;">${isIn
@@ -23038,7 +23480,7 @@ function _gcBindDeck(startIdx = 0) {
           <span class="gc-dc-who">${escapeHtml(who)}</span>
           <span class="gc-dc-tag">${fromIn ? '收到的礼物' : '送出的礼物'}</span>
         </div>
-        <div class="gc-dc-img">${img ? `<img src="${imgSrc(img)}" alt="">` : '🎁'}</div>
+        <div class="gc-dc-img">${img ? `<img src="${imgSrcAttr(img)}" alt="">` : '🎁'}</div>
         <div class="gc-dc-name">${escapeHtml(g.giftName || '礼物')}</div>
         <div class="gc-dc-body">${g.giftDesc ? escapeHtml(g.giftDesc) : ''}</div>
         <div class="gc-dc-foot">
@@ -23274,7 +23716,7 @@ function showOcGiftInfo(g, price) {
     await ocRestoreHubScroll();
   };
   const img = _ocGiftImgOf(g);
-  const imgHtml = img ? `<img src="${imgSrc(img, true)}" style="width:132px;height:132px;object-fit:cover;border-radius:18px;display:block;margin:0 auto;box-shadow:0 0 32px rgba(167,139,250,0.45),0 0 0 1px rgba(255,255,255,0.15) inset;">` : `<div style="font-size:60px;text-align:center;">🎁</div>`;
+  const imgHtml = img ? `<img src="${imgSrcAttr(img, true)}" style="width:132px;height:132px;object-fit:cover;border-radius:18px;display:block;margin:0 auto;box-shadow:0 0 32px rgba(167,139,250,0.45),0 0 0 1px rgba(255,255,255,0.15) inset;">` : `<div style="font-size:60px;text-align:center;">🎁</div>`;
   openModal(`
     <div class="oc-star-modal">
       <div class="oc-star-field"></div>
@@ -23313,7 +23755,7 @@ async function _ocBatchDeleteGifts() {
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">点选要删除的礼物（当前：${isIn ? '收到的' : '送出的'}）</div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;" id="gbd-list">
       ${mine.map(g => `<div class="gbd-item" data-gid="${g.id}" style="background:var(--bg-elevated-2);border-radius:10px;padding:11px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;">
-        <span style="font-size:17px;">${_ocGiftImgOf(g) ? `<img src="${imgSrc(_ocGiftImgOf(g))}" style="width:26px;height:26px;object-fit:cover;border-radius:7px;">` : '🎁'}</span>
+        <span style="font-size:17px;">${_ocGiftImgOf(g) ? `<img src="${imgSrcAttr(_ocGiftImgOf(g))}" style="width:26px;height:26px;object-fit:cover;border-radius:7px;">` : '🎁'}</span>
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(g.giftName)}</span>
       </div>`).join('') || '<div style="text-align:center;color:var(--text-tertiary);padding:20px;">没有可删除的礼物</div>'}
     </div>
@@ -23378,7 +23820,7 @@ function showOcAddGift() {
   $('#ocag-close').onclick = () => showOverclockHub();
   $('#ocag-img').onchange = async (e) => {
     const f = e.target.files[0];
-    if (f) { imgData = await compressImage(f, 360, 0.8, true); $('#ocag-img-prev').innerHTML = `<img src="${imgSrc(imgData, true)}" style="width:34px;height:34px;object-fit:cover;border-radius:8px;">`; }
+    if (f) { imgData = await compressImage(f, 360, 0.8, true); $('#ocag-img-prev').innerHTML = `<img src="${imgSrcAttr(imgData, true)}" style="width:34px;height:34px;object-fit:cover;border-radius:8px;">`; }
   };
   $('#ocag-save').onclick = async () => {
     const name = $('#ocag-name').value.trim();
@@ -23522,7 +23964,7 @@ function showOcSendGift(g, price) {
   if (playerProfile.wallet < price) { miniToast('钱包金额不足了'); return; }
   if (_ocSending) return;
   const img = _ocGiftImgOf(g);
-  const imgHtml = img ? `<img src="${imgSrc(img, true)}" style="width:120px;height:120px;object-fit:cover;border-radius:16px;display:block;margin:0 auto;box-shadow:0 0 30px rgba(167,139,250,0.45);">` : `<div style="font-size:56px;text-align:center;">🎁</div>`;
+  const imgHtml = img ? `<img src="${imgSrcAttr(img, true)}" style="width:120px;height:120px;object-fit:cover;border-radius:16px;display:block;margin:0 auto;box-shadow:0 0 30px rgba(167,139,250,0.45);">` : `<div style="font-size:56px;text-align:center;">🎁</div>`;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:16.5px;font-weight:600;max-width:82%;">把「${escapeHtml(g.name)}」塞进维度裂隙</div>
@@ -24050,7 +24492,7 @@ function _ocPlayOpenGiftAnim(gc, reuse) {
       // 礼物图补入（跳出阶段未带图时）
       if (img && !box.querySelector('.oc-unbox-gift')) {
         const clip = box.querySelector('.oc-unbox-giftclip');
-        if (clip) clip.innerHTML = `<img class="oc-unbox-gift" src="${imgSrc(img)}" alt="">`;
+        if (clip) clip.innerHTML = `<img class="oc-unbox-gift" src="${imgSrcAttr(img)}" alt="">`;
       }
       const openBtn = document.createElement('button');
       openBtn.className = 'btn primary oc-unbox-open-btn';
@@ -24071,7 +24513,7 @@ function _ocPlayOpenGiftAnim(gc, reuse) {
     layer.innerHTML = `<div class="oc-unbox-glow"></div>
       <div class="oc-unbox-box oc-unbox-closed">
         <div class="oc-unbox-base"></div>
-        <div class="oc-unbox-giftclip">${img ? `<img class="oc-unbox-gift" src="${imgSrc(img)}" alt="">` : ''}</div>
+        <div class="oc-unbox-giftclip">${img ? `<img class="oc-unbox-gift" src="${imgSrcAttr(img)}" alt="">` : ''}</div>
         <div class="oc-unbox-lid"></div>
       </div>
       <button class="btn primary oc-unbox-open-btn" type="button">打开礼物</button>`;
@@ -24106,7 +24548,7 @@ function _ocShowGiftModal(gc, meta, onClose) {
   const snapListSt = prevList ? prevList.scrollTop : 0;
   const img = _ocGiftImgOf(gc);
   const imgHtml = img
-    ? `<img src="${imgSrc(img)}" style="width:172px;height:172px;object-fit:cover;border-radius:22px;box-shadow:0 0 46px rgba(167,139,250,0.5),0 0 0 1px rgba(255,255,255,0.16) inset;">
+    ? `<img src="${imgSrcAttr(img)}" style="width:172px;height:172px;object-fit:cover;border-radius:22px;box-shadow:0 0 46px rgba(167,139,250,0.5),0 0 0 1px rgba(255,255,255,0.16) inset;">
        <div style="margin:12px auto 0;width:150px;height:1px;background:linear-gradient(90deg,transparent,rgba(196,168,255,0.7),transparent);"></div>`
     : '<div style="font-size:72px;">🎁</div>';
   openModal(`

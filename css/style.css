@@ -5397,4 +5397,52 @@ body.hm-bubble-hyalite #chat-scroll .msg-row.me .bubble {
   background: linear-gradient(90deg, var(--purple-dim), var(--purple));
 }
 
+/* —— 20261011 晚：底部小悬浮提示「正在导出中…/正在导入中…」——
+   固定在底部导航栏上方、聊天输入框之上（bottom 88px 避开 ~72px tabbar + ~66px 输入框），
+   pointer-events:none 不拦截点击；任务完成后由 JS 移除。 */
+.bm-float-badge {
+  position: fixed;
+  left: 50%;
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 2147482000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(24, 20, 32, 0.9);
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  pointer-events: none;
+  font-family: var(--font);
+  animation: bm-float-badge-in 0.22s ease;
+}
+.bm-float-badge-spin {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(167, 139, 250, 0.35);
+  border-top-color: #c4b5fd;
+  animation: bm-float-badge-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.bm-float-badge-text {
+  font-size: 13px;
+  color: #e9e4f7;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+@keyframes bm-float-badge-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes bm-float-badge-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+/* 聊天页：输入框（~66px）叠在 tabbar（~72px）上方，悬浮窗上移到输入框之上，避免压住输入框 */
+body[data-view="chat"] .bm-float-badge { bottom: 152px; }
+
 
