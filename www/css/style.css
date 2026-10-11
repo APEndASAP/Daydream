@@ -5336,4 +5336,65 @@ body.hm-bubble-hyalite #chat-scroll .msg-row.me .bubble {
   box-shadow: var(--hyalite-edge, 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(167, 139, 250, 0.1));
 }
 
+/* —— 20261011：导入/导出进度面板（总进度条 + 分阶段滑块，风格与 .modal 统一） —— */
+#bm-progress-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+#bm-progress-panel .bm-prog-total-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+#bm-progress-panel .bm-prog-total-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+#bm-progress-panel .bm-prog-total-pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--purple-soft);
+  font-variant-numeric: tabular-nums;
+}
+#bm-progress-panel .bm-prog-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+#bm-progress-panel .bm-prog-bar-total { height: 10px; margin-bottom: 14px; }
+#bm-progress-panel .bm-prog-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--purple), var(--purple-soft));
+  box-shadow: 0 0 10px var(--purple-glow);
+  transition: width 0.22s ease;
+}
+#bm-progress-panel .bm-prog-stages { display: flex; flex-direction: column; gap: 10px; }
+#bm-progress-panel .bm-prog-stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+#bm-progress-panel .bm-prog-stage-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+#bm-progress-panel .bm-prog-stage-pct {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+#bm-progress-panel .bm-prog-stage .bm-prog-fill {
+  background: linear-gradient(90deg, var(--purple-dim), var(--purple));
+}
+
 
