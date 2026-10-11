@@ -8,6 +8,7 @@ import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -137,6 +138,72 @@ public class BmOverlayPlugin extends Plugin {
             ret.put("granted", false);
             ret.put("openedSettings", false);
             call.resolve(ret);
+        }
+    }
+
+    /* ============ 1b. 所有文件访问权限（MANAGE_EXTERNAL_STORAGE，Android 11+） ============
+       Capacitor Filesystem 写公共 Documents 目录（Directory.Documents）在 Android 11+
+       分区存储下被禁，必须持有「所有文件访问权限」才能写；该权限是特殊权限，无法用
+       requestPermissions 弹窗，只能跳系统设置页让用户手动开启（与悬浮窗权限同类）。
+       20261011：新增，供导出全局/细分导出写「文档/白日梦备份」前检查与引导。 */
+
+    /* 检查是否已开启「所有文件访问权限」；异常一律视为未授权 */
+    @PluginMethod
+    public void checkFilePermission(PluginCall call) {
+        try {
+            boolean granted = isAllFilesAccess();
+            JSObject ret = new JSObject();
+            ret.put("granted", granted);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("granted", false);
+            call.resolve(ret);
+        }
+    }
+
+    /* 跳系统设置页开启「所有文件访问权限」；返回是否成功打开设置页 */
+    @PluginMethod
+    public void requestFilePermission(PluginCall call) {
+        try {
+            if (isAllFilesAccess()) {
+                JSObject ret = new JSObject();
+                ret.put("granted", true);
+                ret.put("openedSettings", false);
+                call.resolve(ret);
+                return;
+            }
+            Intent intent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                intent = new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        android.net.Uri.parse("package:" + getContext().getPackageName()));
+            } else {
+                // Android 10 及以下：退回应用详情页（无「所有文件访问」专用设置页）
+                intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.parse("package:" + getContext().getPackageName()));
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            JSObject ret = new JSObject();
+            ret.put("granted", false);
+            ret.put("openedSettings", true);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("granted", false);
+            ret.put("openedSettings", false);
+            call.resolve(ret);
+        }
+    }
+
+    private boolean isAllFilesAccess() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                return Environment.isExternalStorageManager();
+            }
+            return true; // Android 10 及以下无此限制，视为可写
+        } catch (Throwable t) {
+            return false;
         }
     }
 

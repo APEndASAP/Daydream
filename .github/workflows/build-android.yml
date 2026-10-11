@@ -243,6 +243,9 @@ jobs:
             'android.permission.VIBRATE',
             // 悬浮窗（SYSTEM_ALERT_WINDOW 为特殊权限，声明后仍需引导用户到设置页授权）
             'android.permission.SYSTEM_ALERT_WINDOW',
+            // 所有文件访问权限（MANAGE_EXTERNAL_STORAGE 为特殊权限，声明后仍需引导用户到设置页授权）
+            // 20261011：导出写公共「文档/白日梦备份」目录在 Android 11+ 分区存储下必需此权限
+            'android.permission.MANAGE_EXTERNAL_STORAGE',
           ];
           let added = 0;
           for (const pm of perms) {

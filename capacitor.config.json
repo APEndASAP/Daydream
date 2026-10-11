@@ -6,6 +6,9 @@
     "androidScheme": "https"
   },
   "android": {
-    "allowMixedContent": false
+    "allowMixedContent": false,
+    "permissions": [
+      "android.permission.MANAGE_EXTERNAL_STORAGE"
+    ]
   }
 }

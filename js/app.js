@@ -4327,7 +4327,7 @@ async function dataURLToBlob(s) {
    规避「一次性 writeFile 传 ~167MB base64 字符串过 Capacitor Bridge → Java Heap OOM」。
    每块 ~3MB 原始字节（base64 后 ~4MB），单次 Bridge payload 小、原生端流式追加，
    既不 OOM、又保持 .ocdata 是用户能直接选中的单文件（导入端 file.text() 完全兼容）。 */
-async function writeSingleFileChunked(path, base64, directory) {
+async function writeSingleFileChunked(path, base64, directory, onProgress = null) {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!FS || typeof FS.writeFile !== 'function') {
     throw new Error('文件系统不可用');
@@ -4338,6 +4338,7 @@ async function writeSingleFileChunked(path, base64, directory) {
   // 20261011：小数据（单块内）或插件无 appendFile 能力 → 一次性 writeFile，最稳，不碰分块边界
   if (total <= CHUNK || typeof FS.appendFile !== 'function') {
     await FS.writeFile({ path, data: base64, directory, recursive: true });
+    if (onProgress) onProgress(total, total);
     return;
   }
 
@@ -4347,6 +4348,7 @@ async function writeSingleFileChunked(path, base64, directory) {
 
   // 切块必须按 4 的倍数对齐，保证每一块都是合法的独立 base64 片段（CHUNK 本身是 4 的倍数）
   let first = true;
+  let written = 0;
   for (let off = 0; off < padded.length; off += CHUNK) {
     const seg = padded.slice(off, off + CHUNK);
     if (first) {
@@ -4356,8 +4358,10 @@ async function writeSingleFileChunked(path, base64, directory) {
       // 20261011：appendFile 补 recursive（与首块对齐），防父目录在两次调用间被清理导致追加失败
       await FS.appendFile({ path, data: seg, directory, recursive: true });
     }
-    if (CHUNK > 3 * 1024 * 1024 && off + CHUNK < padded.length) {
-      exportProgress(true, `💾 正在写入 ${Math.min(off + CHUNK, total)}/${total}…`);
+    written = Math.min(off + CHUNK, total);
+    if (onProgress) onProgress(written, total);
+    else if (CHUNK > 3 * 1024 * 1024 && off + CHUNK < padded.length) {
+      exportProgress(true, `💾 正在写入 ${written}/${total}…`);
     }
   }
 }
@@ -6155,6 +6159,21 @@ async function requestOverlayPermission() {
     miniToast('请在列表中找到「白日梦」，允许「显示在其他应用上层」');
     return false;
   } catch (e) { console.error('[悬浮窗权限]', e); miniToast('悬浮窗设置页打开失败'); return false; }
+}
+
+/* 检查「所有文件访问权限」（MANAGE_EXTERNAL_STORAGE，Android 11+）——写公共 Documents 目录必需；
+   复用自研插件 BmOverlay 的 checkFilePermission()；网页端/无插件一律视为已授权（网页端不走此链路） */
+async function bmFilePermissionCheck() {
+  const BO = bmOverlayNative();
+  if (!BO || typeof BO.checkFilePermission !== 'function') return true;
+  try { const st = await BO.checkFilePermission(); return !!(st && st.granted); } catch (e) { return true; }
+}
+
+/* 跳系统设置页开启「所有文件访问权限」；返回 { granted, openedSettings } */
+async function bmFilePermissionRequest() {
+  const BO = bmOverlayNative();
+  if (!BO || typeof BO.requestFilePermission !== 'function') return { granted: true, openedSettings: false };
+  try { return await BO.requestFilePermission(); } catch (e) { return { granted: false, openedSettings: false }; }
 }
 
 function formatDuration(sec) {
@@ -9155,6 +9174,29 @@ function showConfirm(message, onConfirm) {
   `);
   $('#confirm-cancel').onclick = closeModal;
   $('#confirm-ok').onclick = () => { closeModal(); onConfirm(); };
+}
+
+/* 20261011：Promise 化的确认弹窗（支持自定义按钮文字），供导出权限引导等需要 await 结果处复用。
+   返回 true=点确定，false=点取消/关窗。 */
+function confirmAsync(message, okText = '确定', cancelText = '取消') {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (settled) return; settled = true; resolve(v); };
+    openModal(`
+      <div style="text-align:center;margin-bottom:8px;">
+        <div style="font-size:40px;margin-bottom:12px;">🔐</div>
+        <div style="font-size:15px;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-word;">${escapeHtml(message)}</div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px;">
+        <button class="btn" style="flex:1;" id="confirm-async-cancel">${escapeHtml(cancelText)}</button>
+        <button class="btn primary" style="flex:1;" id="confirm-async-ok">${escapeHtml(okText)}</button>
+      </div>
+    `);
+    const okBtn = $('#confirm-async-ok');
+    const cancelBtn = $('#confirm-async-cancel');
+    if (okBtn) okBtn.onclick = () => { closeModal(); done(true); };
+    if (cancelBtn) cancelBtn.onclick = () => { closeModal(); done(false); };
+  });
 }
 
 /* ---------- 轻提示（不阻断操作，不顶掉当前弹窗；替代原生 alert） ---------- */
@@ -13352,19 +13394,52 @@ function showImportModal(back = null) {
   $('#import-go').onclick = async () => {
     const file = $('#import-file').files[0];
     if (!file) { showToast('请先选择备份文件'); return; }
-    let data;
-    try {
-      data = JSON.parse(await file.text());
-    } catch (e) {
-      showToast('文件解析失败，请确认是有效的《白日梦》备份');
-      return;
-    }
     const mode = (document.querySelector('input[name="import-mode"]:checked') || {}).value || 'overwrite';
-    if (data.app !== 'bairimeng') {
-      showConfirm('该文件似乎不是《白日梦》的备份，仍要导入吗？', () => doImport(data, mode));
-      return;
+    // 20261011：四阶段进度面板（读取文件 → 解析数据 → 还原图片 → 写入数据库），
+    // 分块读取文件并实时刷新进度，根治「导入全局点确定就卡死/像假死」的观感。
+    let prog = null;
+    try {
+      prog = startProgressPanel([
+        { label: '读取文件' },
+        { label: '解析数据' },
+        { label: '还原图片' },
+        { label: '写入数据库' },
+      ]);
+      // 阶段0：分块读取文件（大文件整读会让 WebView 主线程长时间无响应，分块 + yield 让出）
+      const CHUNK = 4 * 1024 * 1024; // 4MB/块
+      const size = file.size || 0;
+      const parts = [];
+      let off = 0;
+      while (off < size) {
+        const seg = await file.slice(off, Math.min(off + CHUNK, size)).text();
+        parts.push(seg);
+        off += CHUNK;
+        setStageProgress(0, off, size);
+        await new Promise(r => setTimeout(r, 0)); // yield 让出主线程，UI 可刷新
+      }
+      setStageProgress(0, 1, 1);
+      // 阶段1：解析数据
+      let data;
+      try {
+        data = JSON.parse(parts.join(''));
+      } catch (e) {
+        closeProgressPanel();
+        showToast('文件解析失败，请确认是有效的《白日梦》备份');
+        return;
+      }
+      setStageProgress(1, 1, 1);
+      if (data.app !== 'bairimeng') {
+        closeProgressPanel();
+        showConfirm('该文件似乎不是《白日梦》的备份，仍要导入吗？', () => doImport(data, mode));
+        return;
+      }
+      // 阶段2+3：还原图片 + 写入数据库（doImport 内部驱动这两阶段进度）
+      await doImport(data, mode, (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total));
+      closeProgressPanel();
+    } catch (e) {
+      if (prog) closeProgressPanel();
+      miniToast('导入失败：' + (e && e.message ? e.message : '未知错误'));
     }
-    doImport(data, mode);
   };
 }
 
@@ -13388,7 +13463,7 @@ async function imgDescFromExport(v) {
     return { blob, thumb, w: v.w || 0, h: v.h || 0 };
   } catch (e) { return ''; }
 }
-async function deepImagesFromExport(node) {
+async function deepImagesFromExport(node, onProgress = null) {
   if (!node || typeof node !== 'object') return node;
   // 20260929x：与导出对称——先收集 {__img} 载荷，8 路并发还原 + 进度（大数据量导入不再像卡死）
   const found = []; // { parent, key, n }
@@ -13413,14 +13488,17 @@ async function deepImagesFromExport(node) {
       if (it.parent) it.parent[it.key] = conv;
       done++;
       if (total > 8 && (done % 8 === 0 || done === total)) exportProgress(true, `⬇️ 正在还原图片 ${done}/${total}…`);
+      if (onProgress && (done % 8 === 0 || done === total)) { try { onProgress(done, total); } catch (e) {} }
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
   exportProgress(false);
+  if (onProgress) { try { onProgress(total, total); } catch (e) {} }
   return node;
 }
 
-async function doImport(data, mode = 'overwrite') {
+async function doImport(data, mode = 'overwrite', onStage = null) {
+  const _stage = (idx, val, total) => { if (onStage) { try { onStage(idx, val, total); } catch (e) {} } };
   try {
     // 20261005ea：3.0 自动备份（图片独立文件）——图片是 {__img:3, ref} 引用，需 FS.readFile 读回；
     // 2.2 及旧备份（图片 base64 内嵌）走原 deepImagesFromExport 逻辑不变。
@@ -13437,8 +13515,10 @@ async function doImport(data, mode = 'overwrite') {
       // 若 FS.readFile 不可用（如网页端误导入 3.0），保留 {__img:3} 原样，图片按缺失处理，不崩溃
     } else {
       // 20260929g：新格式图片载荷转回 Blob；旧备份 base64 字符串原样保留（玩家选择：不迁移）
-      data = await deepImagesFromExport(data);
+      // 20261011：阶段2「还原图片」进度回调
+      data = await deepImagesFromExport(data, (done, total) => _stage(2, done, total));
     }
+    _stage(2, 1, 1);
     if (mode === 'overwrite') {
       // 清空现有数据
       await idbClear('characters');
@@ -13450,18 +13530,22 @@ async function doImport(data, mode = 'overwrite') {
       await idbClear('kv');
     }
     // 写入导入的数据（覆盖模式直接写；合并模式按 id 合并覆盖）
+    // 20261011：阶段3「写入数据库」进度——按各集合条数加权汇总
     const chars = Array.isArray(data.characters) ? data.characters : [];
-    for (const c of chars) await idbPut('characters', c);
     const msgs = Array.isArray(data.messages) ? data.messages : [];
-    for (const m of msgs) await idbPut('messages', m);
     const emos = Array.isArray(data.emojis) ? data.emojis : [];
-    for (const e of emos) await idbPut('emojis', e);
     const pals = Array.isArray(data.palace) ? data.palace : []; // 记忆宫殿条目
-    for (const e of pals) await idbPut('palace', e);
     const srvs = Array.isArray(data.surveys) ? data.surveys : []; // 问卷（20260929al）
-    for (const e of srvs) await idbPut('surveys', e);
     const gifts = Array.isArray(data.gifts) ? data.gifts : []; // 超频礼物柜（20260929ao）
-    for (const e of gifts) await idbPut('gifts', e);
+    const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length || 1;
+    let wDone = 0;
+    for (const c of chars) { await idbPut('characters', c); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
+    for (const m of msgs) { await idbPut('messages', m); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
+    for (const e of emos) { await idbPut('emojis', e); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
+    for (const e of pals) { await idbPut('palace', e); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
+    for (const e of srvs) { await idbPut('surveys', e); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
+    for (const e of gifts) { await idbPut('gifts', e); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
+    _stage(3, wTotal, wTotal);
     if (data.cards) {
       if (mode === 'merge') {
         // 合并字卡：用导入的去重合并
@@ -13528,8 +13612,11 @@ async function imgDescToExport(v) {
   };
 }
 
-/* 导出进度提示（Blob→base64 打包可能持续数秒，必须有可见反馈，否则像"点了没反应"） */
+/* 导出进度提示（Blob→base64 打包可能持续数秒，必须有可见反馈，否则像"点了没反应"）
+   20261011：升级为「总进度条 + 分阶段滑块」面板，挂在弹窗下方，风格与白日梦统一。
+   兼容旧调用 exportProgress(true, text) 单行文字模式（细分导出仍在用）。 */
 let _exportProgEl = null;
+let _exportProgStages = null; // { total: 0~1, stageName, stageIdx, stageVal, stageTotal } 面板状态
 function exportProgress(show, text) {
   if (!_exportProgEl || !_exportProgEl.isConnected) {
     _exportProgEl = document.createElement('div');
@@ -13542,9 +13629,97 @@ function exportProgress(show, text) {
   _exportProgEl.style.display = 'block';
 }
 
+/* ---------- 20261011：完整进度面板（总进度条 + 分阶段滑块）----------
+   挂在当前弹窗（#modal-content）内、弹窗内容下方；关闭弹窗自动移除。
+   API：
+     startProgressPanel(stages, total)  stages=[{label}]  开启面板
+     setStageProgress(idx, val, total)   更新某阶段滑块（val 可为 0~1 或绝对计数+total）
+     updateProgressPanel()               按各阶段权重重算总进度条并刷新 DOM
+     closeProgressPanel()                关闭并移除面板
+   风格：紫色系渐变 + 玻璃拟态，与 .modal 视觉一致。 */
+let _progPanel = null;
+function startProgressPanel(stages, total) {
+  closeProgressPanel();
+  _progPanel = {
+    el: null,
+    stages: stages.map(s => ({ label: s.label, val: 0, total: s.total || 0 })),
+    total: total || 0,
+  };
+  _progPanel.el = document.createElement('div');
+  _progPanel.el.id = 'bm-progress-panel';
+  _progPanel.el.innerHTML = `
+    <div class="bm-prog-total-row">
+      <span class="bm-prog-total-label">正在处理</span>
+      <span class="bm-prog-total-pct" id="bm-prog-total-pct">0%</span>
+    </div>
+    <div class="bm-prog-bar bm-prog-bar-total"><div class="bm-prog-fill" id="bm-prog-total-fill"></div></div>
+    <div class="bm-prog-stages" id="bm-prog-stages"></div>
+  `;
+  // 渲染阶段滑块
+  const stagesBox = _progPanel.el.querySelector('#bm-prog-stages');
+  _progPanel.stages.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'bm-prog-stage';
+    row.innerHTML = `
+      <div class="bm-prog-stage-head">
+        <span class="bm-prog-stage-label">${escapeHtml(s.label)}</span>
+        <span class="bm-prog-stage-pct" data-i="${i}">0%</span>
+      </div>
+      <div class="bm-prog-bar"><div class="bm-prog-fill" data-i="${i}"></div></div>
+    `;
+    stagesBox.appendChild(row);
+  });
+  // 挂到弹窗内容下方（若弹窗在，则挂在 modal-content 内部末尾；否则挂在 body 固定底部）
+  const box = $('#modal-content');
+  if (box && box.isConnected) box.appendChild(_progPanel.el);
+  else document.body.appendChild(_progPanel.el);
+  updateProgressPanel();
+  return _progPanel;
+}
+function setStageProgress(idx, val, total) {
+  if (!_progPanel) return;
+  const s = _progPanel.stages[idx];
+  if (!s) return;
+  if (total !== undefined) s.total = total;
+  s.val = val;
+  updateProgressPanel();
+}
+function updateProgressPanel() {
+  if (!_progPanel) return;
+  const totalFill = _progPanel.el.querySelector('#bm-prog-total-fill');
+  const totalPct = _progPanel.el.querySelector('#bm-prog-total-pct');
+  // 总进度 = 各阶段（含总权重）加权平均；阶段 val 为 0~1 比例
+  let acc = 0, weight = 0;
+  _progPanel.stages.forEach(s => {
+    const w = s.total > 0 ? s.total : 1;
+    weight += w;
+    const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
+    acc += ratio * w;
+  });
+  const overall = weight > 0 ? acc / weight : 0;
+  const pct = Math.round(overall * 100);
+  totalFill.style.width = pct + '%';
+  totalPct.textContent = pct + '%';
+  // 各阶段滑块
+  const fills = _progPanel.el.querySelectorAll('.bm-prog-stage .bm-prog-fill');
+  const pcts = _progPanel.el.querySelectorAll('.bm-prog-stage-pct');
+  _progPanel.stages.forEach((s, i) => {
+    const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
+    const sp = Math.round(ratio * 100);
+    if (fills[i]) fills[i].style.width = sp + '%';
+    if (pcts[i]) pcts[i].textContent = sp + '%';
+  });
+}
+function closeProgressPanel() {
+  if (_progPanel && _progPanel.el && _progPanel.el.parentNode) {
+    _progPanel.el.parentNode.removeChild(_progPanel.el);
+  }
+  _progPanel = null;
+}
+
 /* 20260929x 重写：先收集全部 Blob 描述符，再 8 路并发转 base64 + 实时进度。
    旧版串行逐张 await，图库一大导出要等几分钟且零反馈（用户报"导出点了没反应"的根因） */
-async function deepImagesToExport(node, label = '正在打包图片') {
+async function deepImagesToExport(node, label = '正在打包图片', onProgress = null) {
   if (!node || typeof node !== 'object') return node;
   if (node instanceof Blob) return node; // 防御：不应单独出现
   const found = []; // { parent, key, n }
@@ -13565,12 +13740,13 @@ async function deepImagesToExport(node, label = '正在打包图片') {
       const conv = await imgDescToExport(it.n);
       if (it.parent) it.parent[it.key] = conv; else topConv = conv;
       done++;
-      if (total > 8 && (done % 8 === 0 || done === total)) exportProgress(true, `⬇️ ${label} ${done}/${total}…`);
+      if (onProgress) onProgress(done, total);
+      else if (total > 8 && (done % 8 === 0 || done === total)) exportProgress(true, `⬇️ ${label} ${done}/${total}…`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
-  exportProgress(false);
-  if (total > 8) miniToast(`图片打包完成（${total} 张，${((Date.now() - t0) / 1000).toFixed(1)} 秒）`);
+  if (!onProgress) exportProgress(false);
+  if (total > 8 && !onProgress) miniToast(`图片打包完成（${total} 张，${((Date.now() - t0) / 1000).toFixed(1)} 秒）`);
   return topConv !== null ? topConv : node;
 }
 
@@ -13659,7 +13835,7 @@ async function restoreImagesV3(node, readImage) {
 
 /* 20261002ce：把"打包全量备份数据"抽成公共函数，手动导出 exportAll 与自动备份 autoBackup 共用，
    保证两处导出的内容一字不差（灰度殿堂/书信/世界树/朋友圈/记事簿/字体等 kv 数据都完整包含）。 */
-async function buildBackupPayload(mode = '2.2') {
+async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
   const data = {
     app: 'bairimeng',
     format: 'ocdata',
@@ -13709,51 +13885,94 @@ async function buildBackupPayload(mode = '2.2') {
   // 默认 2.2（手动备份 exportAll）走原逻辑不变。
   if (mode === '3.0') return data;
   // .ocdata：单文件备份（JSON 结构 + 图片 base64 内嵌，无需手动解压，可直接导入导出）
-  return await deepImagesToExport(data, '正在打包全量备份'); // Blob → base64 内嵌（JSON 可序列化）
+  return await deepImagesToExport(data, '正在打包全量备份', onImgProgress); // Blob → base64 内嵌（JSON 可序列化）
+}
+
+/* 20261011：探测公共 Documents 目录是否可写（写一个探针文件再读回删除）。
+   返回 true=可写（走公共文档目录），false=不可写（需降级应用专属目录）。
+   只影响 APK 端（有 Capacitor Filesystem 时才调用）。 */
+async function probeDocumentsWritable() {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!FS || typeof FS.writeFile !== 'function') return true; // 非 APK 环境不探测，走原逻辑
+  const probePath = '白日梦备份/.write-probe-' + Date.now();
+  try {
+    await FS.writeFile({ path: probePath, data: 'ok', directory: 'DOCUMENTS', recursive: true });
+    try { await FS.deleteFile({ path: probePath, directory: 'DOCUMENTS' }); } catch (e) {}
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function exportAll() {
   let save = null;
+  let prog = null;
   try {
     save = await beginExport('白日梦数据备份.ocdata'); // 先取保存句柄（点击激活期内），再慢慢打包图片
     if (save.cancelled) return;
     const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
     if (FS && FS.writeFile) {
+      // 20261011：导出前主动检查「所有文件访问权限」（Android 11+ 写公共 Documents 必需）。
+      // 未授权 → 弹引导窗跳系统设置，用户开启后返回再点导出即可成功；已授权/网页端 → 直接继续。
+      const fileGranted = await bmFilePermissionCheck();
+      if (!fileGranted) {
+        const go = await confirmAsync('导出需要「所有文件访问权限」才能写入「文档/白日梦备份」文件夹。\n是否现在去系统设置开启？', '去开启', '暂不导出');
+        if (go) {
+          await bmFilePermissionRequest();
+          miniToast('请在系统设置里允许「白日梦」访问所有文件，开启后返回再点导出');
+        }
+        return;
+      }
       // 20261009：APK（Capacitor）环境——改回「单文件」+ 分块写盘。旧 3.0 文件夹模式
       // 导出成一整个文件夹（manifest + images 散落），用户无法用文件选择器选单文件导入，
       // 违背手动导出「单个 .ocdata 文件」的初衷。现在用 writeSingleFileChunked 把单文件
       // 逐块 appendFile 写盘，既保持单文件（导入端 file.text() 完全兼容）、又规避
       // 「一次性 writeFile 传 ~167MB base64 过 Bridge → OOM 闪退」。
-      miniToast('正在导出全量数据（图片较多，请稍候）…');
-      exportProgress(true, '📦 正在打包全量备份…');
-      const safeData = await buildBackupPayload(); // 2.2：图片 base64 内嵌成单文件
-      exportProgress(false);
+      // 20261011：三阶段进度面板（打包数据 → 图片转码 → 写入文件），挂在导出弹窗下方。
+      prog = startProgressPanel([
+        { label: '整理数据' },
+        { label: '图片转码' },
+        { label: '写入文件' },
+      ]);
+      // 阶段0：整理数据（读库）
+      setStageProgress(0, 1, 1);
+      // 阶段1：图片转码（buildBackupPayload 内 deepImagesToExport 回调）
+      const safeData = await buildBackupPayload('2.2', (done, total) => {
+        setStageProgress(1, done, total);
+      });
+      setStageProgress(1, 1, 1);
+      // JSON 序列化 → base64（大对象 stringify 可能耗时，归入阶段0/阶段1之间）
       const json = JSON.stringify(safeData);
-      // JSON 字符串 → base64（分块写盘用纯 base64，避免 UTF8 编码歧义）
       const b64 = await new Promise((res, rej) => {
         const r = new FileReader();
         r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
         r.onerror = () => rej(new Error('读取失败'));
         r.readAsDataURL(new Blob([json], { type: 'application/json' }));
       });
-      // 单文件落点：文档/白日梦备份/白日梦数据备份.ocdata（固定文件名，覆盖上次手动导出）
-      await writeSingleFileChunked('白日梦备份/白日梦数据备份.ocdata', b64, 'DOCUMENTS');
-      exportProgress(false);
+      // 阶段2：写入文件（writeSingleFileChunked 分块回调）
+      await writeSingleFileChunked('白日梦备份/白日梦数据备份.ocdata', b64, 'DOCUMENTS', (done, total) => {
+        setStageProgress(2, done, total);
+      });
+      setStageProgress(2, 1, 1);
+      closeProgressPanel();
       miniToast('已导出单文件「白日梦数据备份.ocdata」到「文档/白日梦备份」，导入时选该文件即可');
       return;
     }
-    // 网页端（无 Capacitor）：仍走 2.2 单文件 <a download> 下载
+    // 网页端（无 Capacitor）：仍走 2.2 单文件 <a download> 下载（不弹进度面板，网页端保持原样）
     miniToast('正在打包全量数据，图库大时需要几秒…');
     const safeData = await buildBackupPayload();
     const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
     await finishExport(save, blob, '全量备份已导出');
   } catch (e) {
-    exportProgress(false);
+    closeProgressPanel();
     // 20261011：导出失败时清理可能残留的半截文件（分块写盘中途失败会留下半个 .ocdata，
     // 之后导入这个半截文件必然失败，形成"导出失败→导入失败"的连锁）。清理失败静默忽略。
     try {
       const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
-      if (FS && FS.deleteFile) await FS.deleteFile({ path: '白日梦备份/白日梦数据备份.ocdata', directory: 'DOCUMENTS' });
+      if (FS && FS.deleteFile) {
+        await FS.deleteFile({ path: '白日梦备份/白日梦数据备份.ocdata', directory: 'DOCUMENTS' });
+        await FS.deleteFile({ path: '白日梦备份/白日梦数据备份.ocdata', directory: 'DATA' });
+      }
     } catch (cleanErr) {}
     miniToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
   }
