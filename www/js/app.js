@@ -43,6 +43,7 @@ let chatSettings = {
   lettersEnabled: true,          // 访客随机来信总开关（书信 13）
   lettersDailyLimit: 2,          // 访客随机来信每日上限（0~5，书信 13）
   skipOverclockAnim: false,      // 超频：跳过裂隙动画（20260929ao；低端机/卡顿时建议开启）
+  importReplayOcAnim: false,     // 20261011 晚：导入数据时若带「已触发」标记，是否再重复触发超频/惊喜首次动画（默认关=不重复触发）
   typecardOn: false,             // 20261008：打字卡总开关（默认关；总设置对所有访客生效，访客主页聊天设置可单独覆盖）
   typecardMode: 'bubble',        // 20261008：打字卡展示模式 bubble=气泡内嵌 / float=悬浮窗（默认气泡内嵌）
   typecardSpeed: 1.0,            // 20261008：打字卡速度连续倍率（0.6=最快 ~ 5.0=最慢，默认 1.0 中间值；20261009 上限延长到 5.0）
@@ -328,6 +329,7 @@ async function showSoftwareNotice(opts = {}) {
         <div class="nt-sub">本网站/软件由小红书用户：@蓝色鸽子窝（1139353519）原创制作</div>
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所制作的传讯字卡网站中字卡部分的代码，兼容其字卡导入</div>
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所设计的每日弹卡功能，本软件「入梦签 · 每日弹卡」即参考该创意制作</div>
+        <div class="nt-sub" style="margin-top:4px;">参考使用了小红书 @VII（Septem6439_cccg）老师所开源的真拟态玻璃（hyalite 液态玻璃）源码，本软件「玻璃美化预设 · 2号液态玻璃」即基于该开源库制作</div>
         ${isReview ? '<button class="icon-btn" id="notice-close" style="position:absolute;top:0;right:0;color:rgba(230,222,255,0.9);">✕</button>' : ''}
         <div class="nt-line"></div>
         <p class="nt-lead">感谢你来到《白日梦》。为了维护良好的创作与交流环境，请在下载、使用或分享本软件前，仔细阅读以下声明。</p>
@@ -6362,6 +6364,10 @@ function openModal(html, opts) {
   if (o.gray) box.classList.add('modal-gray-hall');
   $('#modal-mask').classList.toggle('mask-oc-clear', !!o.noBackdrop);
   $('#modal-mask').classList.add('show');
+  // 20261011 晚：openModal 会清空 #modal-content 的 innerHTML——若后台进度面板当前挂在弹窗内
+  // （显示中），先隐藏（从 DOM 移除），避免被 innerHTML 覆盖丢失；之后由对应弹窗的
+  // showImportModal/showExport 挂点再按需 setProgressPanelMode(true) 恢复显示。
+  if (isProgressActive() && _progState.el.parentNode === box) setProgressPanelMode(false);
   box.innerHTML = html;
   // 20261008 晚九轮：打字卡悬浮球/悬浮窗只在单聊聊天页出现——弹窗（个人主页/朋友圈封面/
   // 设置等）打开时同步藏起（面板 z 远高于弹窗，不藏会浮在弹窗上），关弹窗自动恢复
@@ -6395,6 +6401,8 @@ function closeModal() {
   // 20261008 晚九轮：真关闭（未重开子弹窗）→ 打字卡悬浮球/悬浮窗按条件恢复。
   // 子功能 return 路径由 showCharProfile/showSettingsModal 内部的 openModal 挂点同步。
   try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
+  // 20261011 晚：弹窗真关闭时，若有后台进行中的导入/导出，隐藏进度面板（进程后台继续，重进恢复）
+  if (isProgressActive()) setProgressPanelMode(false);
 }
 
 /* 访客主页子功能上下文标记（关闭后回到访客主页） */
@@ -6411,6 +6419,8 @@ function forceCloseModal() {
   resetModalSizing(); // 20260929bg：同 closeModal，清理缩放残留
   // 20261008 晚九轮：强制关弹窗后同步打字卡悬浮球/悬浮窗显隐
   try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
+  // 20261011 晚：强制关弹窗后，隐藏后台进度面板（进程后台继续，重进恢复）
+  if (isProgressActive()) setProgressPanelMode(false);
 }
 
 // 点击遮罩空白处关闭弹窗
@@ -12517,6 +12527,13 @@ async function showSettingsModal() {
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，你在聊天里对访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统会自动识别并弹窗确认，把行程写入系统日历/闹钟提醒。字卡模式与 AI 模式通用，关闭后不再自动检测。</div>
     </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>✨ 导入时重复触发超频/惊喜动画</span>
+        <input type="checkbox" id="gs-import-replay-oc" ${chatSettings.importReplayOcAnim ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">默认关闭——从备份导入数据时，若备份里已记录「超频/惊喜的首次动画触发过」，则不再重复触发。开启后，导入带触发标记的数据也会重新播放超频/惊喜首次动画。</div>
+    </div>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-anniv-card-setting">
       入梦签纪念日设置 <span>🎉</span>
     </button>
@@ -12559,6 +12576,15 @@ async function showSettingsModal() {
       chatSettings.bmSchedDetect = schedBox.checked;
       await setSetting('chatSettings', chatSettings);
       miniToast(schedBox.checked ? '日程自动检测已开启' : '日程自动检测已关闭');
+    };
+  }
+  // 20261011 晚：导入时重复触发超频/惊喜动画开关（默认关=不重复触发）
+  {
+    const replayOc = $('#gs-import-replay-oc');
+    if (replayOc) replayOc.onchange = async () => {
+      chatSettings.importReplayOcAnim = replayOc.checked;
+      await setSetting('chatSettings', chatSettings);
+      miniToast(replayOc.checked ? '导入时将重复触发超频/惊喜首次动画' : '导入时将跳过已触发过的超频/惊喜动画');
     };
   }
   $('#btn-splash-audio-guide').onclick = () => showSplashAudioGuideModal(); // 20260930bx：浏览器自动播放白名单引导
@@ -12979,6 +13005,8 @@ function showDataCatModal(id) {
     $('#btn-export').onclick = exportAll;
     $('#btn-import').onclick = () => showImportModal(showDataModal);
     $('#btn-clear-stale').onclick = clearStaleCache;
+    // 20261011 晚：重进数据迁移页时，若有进行中的导入/导出任务，恢复完整进度面板继续显示
+    if (isProgressActive()) setProgressPanelMode(true);
   } else if (id === 'chat') {
     body.innerHTML = `
       ${btn('btn-export-chat', '导出聊天记录', '⬇')}
@@ -13389,6 +13417,8 @@ function showImportModal(back = null) {
       <button class="btn primary" style="flex:1;" id="import-go">导入</button>
     </div>
   `);
+  // 20261011 晚：重进导入弹窗时，若有进行中的导入任务，恢复完整进度面板继续显示实时进度
+  if (isProgressActive()) setProgressPanelMode(true);
   $('#import-close').onclick = () => back ? back() : closeModal();
   $('#import-cancel').onclick = () => back ? back() : closeModal();
   $('#import-go').onclick = async () => {
@@ -13397,6 +13427,7 @@ function showImportModal(back = null) {
     const mode = (document.querySelector('input[name="import-mode"]:checked') || {}).value || 'overwrite';
     // 20261011：四阶段进度面板（读取文件 → 解析数据 → 还原图片 → 写入数据库），
     // 分块读取文件并实时刷新进度，根治「导入全局点确定就卡死/像假死」的观感。
+    // 20261011 晚：进度状态全局持久——关闭弹窗后台继续，重进恢复完整面板。
     let prog = null;
     try {
       prog = startProgressPanel([
@@ -13404,7 +13435,8 @@ function showImportModal(back = null) {
         { label: '解析数据' },
         { label: '还原图片' },
         { label: '写入数据库' },
-      ]);
+      ], 0, 'import');
+      setProgressPanelMode(true);
       // 阶段0：分块读取文件（大文件整读会让 WebView 主线程长时间无响应，分块 + yield 让出）
       const CHUNK = 4 * 1024 * 1024; // 4MB/块
       const size = file.size || 0;
@@ -13577,7 +13609,14 @@ async function doImport(data, mode = 'overwrite', onStage = null) {
     if (data.chatSettings) await setSetting('chatSettings', data.chatSettings);
     if (data.chatTheme) await setSetting('chatTheme', data.chatTheme);
     if (data.settings) {
+      // 20261011 晚：超频/惊喜首次触发动画标记——默认「不重复触发」= 导入时保留备份里的
+      //   「已触发」标记（oc_seen/oc_unlocked/oc_surpriseUnlocked 照常写入，动画不再重播）；
+      //   玩家在总设置开启「导入时重复触发动画」后，这三个标记跳过写入（保持 false），
+      //   下次进入聊天会重新触发首次动画。
+      const replayOc = !!chatSettings.importReplayOcAnim;
+      const ocAnimKeys = new Set(['oc_seen', 'oc_unlocked', 'oc_surpriseUnlocked']);
       for (const [k, v] of Object.entries(data.settings)) {
+        if (replayOc && ocAnimKeys.has(k)) continue; // 重复触发模式：跳过写入触发标记
         if (v !== null && v !== undefined) await setSetting(k, v);
       }
     }
@@ -13630,91 +13669,156 @@ function exportProgress(show, text) {
 }
 
 /* ---------- 20261011：完整进度面板（总进度条 + 分阶段滑块）----------
-   挂在当前弹窗（#modal-content）内、弹窗内容下方；关闭弹窗自动移除。
+   20261011 晚：升级为「后台持久进度」——进度状态存全局 _progState（阶段定义+各阶段进度），
+   面板只在导入/导出弹窗内显示，不依赖弹窗生命周期：
+     · 导入/导出 async 进程在后台继续跑，关闭弹窗不会中断；
+     · 玩家离开导入导出页面后，进度面板随之隐藏（不显示悬浮条，不影响玩家做别的功能）；
+     · 玩家重进导入导出弹窗时，面板恢复显示，继续呈现实时进度；
+     · 进程完成（closeProgressPanel）才清空状态。
    API：
-     startProgressPanel(stages, total)  stages=[{label}]  开启面板
+     startProgressPanel(stages, total, kind)  stages=[{label}] kind='import'|'export'  开启/重建面板
      setStageProgress(idx, val, total)   更新某阶段滑块（val 可为 0~1 或绝对计数+total）
+     setProgressPanelMode(inModal)       切换形态：true=显示完整面板(弹窗内) false=隐藏（后台继续）
      updateProgressPanel()               按各阶段权重重算总进度条并刷新 DOM
-     closeProgressPanel()                关闭并移除面板
+     closeProgressPanel()                关闭并移除面板 + 清空全局状态
+     isProgressActive()                  是否有进行中的导入/导出（重进弹窗时据此恢复面板）
    风格：紫色系渐变 + 玻璃拟态，与 .modal 视觉一致。 */
-let _progPanel = null;
-function startProgressPanel(stages, total) {
-  closeProgressPanel();
-  _progPanel = {
-    el: null,
-    stages: stages.map(s => ({ label: s.label, val: 0, total: s.total || 0 })),
-    total: total || 0,
-  };
-  _progPanel.el = document.createElement('div');
-  _progPanel.el.id = 'bm-progress-panel';
-  _progPanel.el.innerHTML = `
-    <div class="bm-prog-total-row">
-      <span class="bm-prog-total-label">正在处理</span>
-      <span class="bm-prog-total-pct" id="bm-prog-total-pct">0%</span>
-    </div>
-    <div class="bm-prog-bar bm-prog-bar-total"><div class="bm-prog-fill" id="bm-prog-total-fill"></div></div>
-    <div class="bm-prog-stages" id="bm-prog-stages"></div>
-  `;
-  // 渲染阶段滑块
-  const stagesBox = _progPanel.el.querySelector('#bm-prog-stages');
-  _progPanel.stages.forEach((s, i) => {
-    const row = document.createElement('div');
-    row.className = 'bm-prog-stage';
-    row.innerHTML = `
-      <div class="bm-prog-stage-head">
-        <span class="bm-prog-stage-label">${escapeHtml(s.label)}</span>
-        <span class="bm-prog-stage-pct" data-i="${i}">0%</span>
-      </div>
-      <div class="bm-prog-bar"><div class="bm-prog-fill" data-i="${i}"></div></div>
-    `;
-    stagesBox.appendChild(row);
+let _progState = null;      // 全局进度状态（跨弹窗/页面持久，直到 closeProgressPanel 才清）
+let _progInModal = false;   // 当前形态：true=显示完整面板（挂在弹窗内） false=隐藏（后台继续跑）
+function _progOverall(stages) {
+  let acc = 0, weight = 0;
+  stages.forEach(s => {
+    const w = s.total > 0 ? s.total : 1;
+    weight += w;
+    const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
+    acc += ratio * w;
   });
-  // 挂到弹窗内容下方（若弹窗在，则挂在 modal-content 内部末尾；否则挂在 body 固定底部）
-  const box = $('#modal-content');
-  if (box && box.isConnected) box.appendChild(_progPanel.el);
-  else document.body.appendChild(_progPanel.el);
+  return weight > 0 ? acc / weight : 0;
+}
+function startProgressPanel(stages, total, kind = 'export') {
+  // 若已有进行中的任务且阶段定义相同，直接复用状态（避免重复开启时丢失已有进度）；
+  // 否则重置为新任务。面板 DOM 若已被外部移除（如页面重载）则重建。
+  const sameKind = _progState && _progState.kind === kind;
+  const sameLen = _progState && _progState.stages.length === stages.length;
+  if (!(sameKind && sameLen)) {
+    _progState = {
+      el: null,
+      kind,
+      stages: stages.map(s => ({ label: s.label, val: 0, total: s.total || 0 })),
+      total: total || 0,
+    };
+  }
+  if (!_progState.el) {
+    _progState.el = document.createElement('div');
+    _progState.el.id = 'bm-progress-panel';
+    _progState.el.innerHTML = `
+      <div class="bm-prog-total-row">
+        <span class="bm-prog-total-label">正在处理</span>
+        <span class="bm-prog-total-pct" id="bm-prog-total-pct">0%</span>
+      </div>
+      <div class="bm-prog-bar bm-prog-bar-total"><div class="bm-prog-fill" id="bm-prog-total-fill"></div></div>
+      <div class="bm-prog-stages" id="bm-prog-stages"></div>
+    `;
+    const stagesBox = _progState.el.querySelector('#bm-prog-stages');
+    _progState.stages.forEach((s, i) => {
+      const row = document.createElement('div');
+      row.className = 'bm-prog-stage';
+      row.innerHTML = `
+        <div class="bm-prog-stage-head">
+          <span class="bm-prog-stage-label">${escapeHtml(s.label)}</span>
+          <span class="bm-prog-stage-pct" data-i="${i}">0%</span>
+        </div>
+        <div class="bm-prog-bar"><div class="bm-prog-fill" data-i="${i}"></div></div>
+      `;
+      stagesBox.appendChild(row);
+    });
+  }
+  // 挂载：默认完整面板形态（挂在弹窗内，若弹窗不存在则退化为底部悬浮条）
+  setProgressPanelMode(_progInModal);
   updateProgressPanel();
-  return _progPanel;
+  _ensureFloatBadge(kind);  // 20261011 晚：底部小悬浮提示「正在导出中…/正在导入中…」
+  return _progState;
+}
+/* 切换进度面板显示形态：true=显示完整面板（挂 #modal-content 内部末尾）；false=隐藏（从 DOM 移除，
+   但保留 _progState 状态，供重进弹窗时恢复）。玩家离开导入导出页面后面板随之隐藏，不悬浮在外层，
+   避免影响玩家做别的功能。 */
+function setProgressPanelMode(inModal) {
+  _progInModal = !!inModal;
+  if (!_progState || !_progState.el) return;
+  const el = _progState.el;
+  if (_progInModal) {
+    const box = $('#modal-content');
+    const target = (box && box.isConnected) ? box : document.body;
+    if (el.parentNode !== target) target.appendChild(el);
+    el.classList.remove('bm-prog-float');
+  } else {
+    if (el.parentNode) el.parentNode.removeChild(el);  // 隐藏：从 DOM 移除，状态保留待重进恢复
+  }
 }
 function setStageProgress(idx, val, total) {
-  if (!_progPanel) return;
-  const s = _progPanel.stages[idx];
+  if (!_progState) return;
+  const s = _progState.stages[idx];
   if (!s) return;
   if (total !== undefined) s.total = total;
   s.val = val;
   updateProgressPanel();
 }
 function updateProgressPanel() {
-  if (!_progPanel) return;
-  const totalFill = _progPanel.el.querySelector('#bm-prog-total-fill');
-  const totalPct = _progPanel.el.querySelector('#bm-prog-total-pct');
-  // 总进度 = 各阶段（含总权重）加权平均；阶段 val 为 0~1 比例
-  let acc = 0, weight = 0;
-  _progPanel.stages.forEach(s => {
-    const w = s.total > 0 ? s.total : 1;
-    weight += w;
-    const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
-    acc += ratio * w;
-  });
-  const overall = weight > 0 ? acc / weight : 0;
-  const pct = Math.round(overall * 100);
-  totalFill.style.width = pct + '%';
-  totalPct.textContent = pct + '%';
-  // 各阶段滑块
-  const fills = _progPanel.el.querySelectorAll('.bm-prog-stage .bm-prog-fill');
-  const pcts = _progPanel.el.querySelectorAll('.bm-prog-stage-pct');
-  _progPanel.stages.forEach((s, i) => {
+  if (!_progState || !_progState.el || !_progState.el.isConnected) return;
+  const el = _progState.el;
+  const totalFill = el.querySelector('#bm-prog-total-fill');
+  const totalPct = el.querySelector('#bm-prog-total-pct');
+  const pct = Math.round(_progOverall(_progState.stages) * 100);
+  if (totalFill) totalFill.style.width = pct + '%';
+  if (totalPct) totalPct.textContent = pct + '%';
+  const fills = el.querySelectorAll('.bm-prog-stage .bm-prog-fill');
+  const pcts = el.querySelectorAll('.bm-prog-stage-pct');
+  _progState.stages.forEach((s, i) => {
     const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
     const sp = Math.round(ratio * 100);
     if (fills[i]) fills[i].style.width = sp + '%';
     if (pcts[i]) pcts[i].textContent = sp + '%';
   });
 }
+/* 是否有进行中的导入/导出任务（重进弹窗时据此判断是否恢复面板）。
+   以 _progState 是否存在为准——面板隐藏后 el 会被 detach，但任务仍在后台跑，仍算「进行中」。 */
+function isProgressActive() {
+  return !!_progState;
+}
 function closeProgressPanel() {
-  if (_progPanel && _progPanel.el && _progPanel.el.parentNode) {
-    _progPanel.el.parentNode.removeChild(_progPanel.el);
+  if (_progState && _progState.el && _progState.el.parentNode) {
+    _progState.el.parentNode.removeChild(_progState.el);
   }
-  _progPanel = null;
+  _progState = null;
+  _progInModal = false;
+  _removeFloatBadge();  // 20261011 晚：任务完成，移除底部小悬浮提示
+}
+
+/* ---------- 20261011 晚：底部小悬浮提示「正在导出中…/正在导入中…」----------
+   独立于完整进度面板的精简胶囊，固定在底部导航栏上方、聊天输入框之上，任务进行期间一直显示，
+   完成后移除。位置刻意避开底部 tab 栏（~72px）与聊天输入框（~66px），pointer-events:none 不拦截交互。 */
+let _progFloatBadge = null;
+function _ensureFloatBadge(kind) {
+  if (_progFloatBadge && _progFloatBadge.parentNode) {
+    // 已存在则仅同步文字（kind 切换：导出↔导入）
+    const t = _progFloatBadge.querySelector('.bm-float-badge-text');
+    if (t) t.textContent = (kind === 'import') ? '正在导入中…' : '正在导出中…';
+    return;
+  }
+  _progFloatBadge = document.createElement('div');
+  _progFloatBadge.id = 'bm-float-badge';
+  _progFloatBadge.className = 'bm-float-badge';
+  _progFloatBadge.innerHTML = `
+    <span class="bm-float-badge-spin"></span>
+    <span class="bm-float-badge-text">${kind === 'import' ? '正在导入中…' : '正在导出中…'}</span>
+  `;
+  document.body.appendChild(_progFloatBadge);
+}
+function _removeFloatBadge() {
+  if (_progFloatBadge && _progFloatBadge.parentNode) {
+    _progFloatBadge.parentNode.removeChild(_progFloatBadge);
+  }
+  _progFloatBadge = null;
 }
 
 /* 20260929x 重写：先收集全部 Blob 描述符，再 8 路并发转 base64 + 实时进度。
@@ -13877,6 +13981,12 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
       customFonts: await getSetting('customFonts', []),              // 自定义字体
       floatSettings: await getSetting('floatSettings', null),        // 悬浮窗设置
       bmScheduleReminders: await getSetting('bmScheduleReminders', []), // 行程提醒（网页端）
+      // 20261011 晚：超频/惊喜首次触发动画标记纳入全量备份——oc_seen(故障首次动画已看)、
+      //   oc_unlocked(超频已解锁)、oc_surpriseUnlocked(惊喜已解锁)。导入时若带这些「已触发」标记，
+      //   玩家不会再被首次动画打断（总设置可切换是否重复触发）。
+      oc_seen: await getSetting('oc_seen', false),
+      oc_unlocked: await getSetting('oc_unlocked', false),
+      oc_surpriseUnlocked: await getSetting('oc_surpriseUnlocked', false),
       // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
     },
   };
@@ -13933,7 +14043,8 @@ async function exportAll() {
         { label: '整理数据' },
         { label: '图片转码' },
         { label: '写入文件' },
-      ]);
+      ], 0, 'export');
+      setProgressPanelMode(true);
       // 阶段0：整理数据（读库）
       setStageProgress(0, 1, 1);
       // 阶段1：图片转码（buildBackupPayload 内 deepImagesToExport 回调）
