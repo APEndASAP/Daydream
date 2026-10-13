@@ -5081,7 +5081,7 @@ async function bmClearConversationTray(cid) {
   } catch (e) {}
 }
 
-function notifyIncoming(c, body, title, kind = 'msg') {
+async function notifyIncoming(c, body, title, kind = 'msg') {
   try {
     if (chatSettings.notifySystem === false) return;
     const cs = c ? getCharChatSettings(c) : null;
@@ -5100,7 +5100,7 @@ function notifyIncoming(c, body, title, kind = 'msg') {
       // 20261004dk：会话式通知出口（灰度）——仅「消息」类且开关打开时尝试走 BmConversationNotify，
       //   失败/插件不存在/非消息类一律 fallback 回旧 LocalNotifications，不影响任何现有通知。
       if (kind === 'msg' && bmConversationEnabled()) {
-        bmConversationNotify(c, body, title).then((ok) => {
+        await bmConversationNotify(c, body, title).then((ok) => {
           if (!ok) { bmNativeNotify(LN, c, body, title, kind); return; }
           // 20261004dk修复：插件成功发出会话式通知后，补撤该角色同类消息的预排闹钟
           // （旧 each 分支 4399 行 / merge 分支 4350 行都做了这一步；插件分支绕过了
@@ -5113,7 +5113,7 @@ function notifyIncoming(c, body, title, kind = 'msg') {
         });
         return;
       }
-      bmNativeNotify(LN, c, body, title, kind);
+      await bmNativeNotify(LN, c, body, title, kind);
       return;
     }
     if (!('Notification' in window)) return;
@@ -5416,7 +5416,11 @@ async function bmRegisterAlarm(char, kind, dueAt) {
     const key = char.id + '|' + kind;
     const id = bmNotifIdFor(char.id, kind);
     const cur = map[key];
-    if (cur && cur.dueAt && cur.dueAt <= dueAt) return;   // 已挂更早的闹钟 → 保持最早一次（合并语义）
+    // 20261013 修复「通知只到 2-3 条就断」：旧判定「cur.dueAt <= dueAt 就 return」会把
+    // 「已过期/已送达、待清理的残留闹钟」也当成「更早的合法闹钟」永久 return，导致下一轮
+    // 原生闹钟永不续排 → 进程冻结后通知彻底停摆。现在：只有「旧的 dueAt 仍在未来且早于
+    // 新的 dueAt」才保持最早一次（合并语义）；已过期（<=now）的残留一律续排覆盖。
+    if (cur && cur.dueAt && cur.dueAt > Date.now() && cur.dueAt <= dueAt) return;
     if (cur && cur.notifId != null) { try { await LN.cancel({ notifications: [{ id: cur.notifId }] }); } catch (e) {} }
     const name = char.name || '访客';
     // 20261002cp：gift 闹钟文案与「维度动静」统一（惊喜/礼物都算维度动静）
@@ -9390,8 +9394,8 @@ async function deliverCharMessage(c, content, type = 'text', extra = null) {
   }
   if (shouldDingFor(c)) playDing();
   // 20261002cp：查岗/普通消息分标题——查岗显示「xx 发起了突击查岗」，普通消息仍显示内容
-  if (type === 'checkin') notifyIncoming(c, typeof content === 'string' ? content : '（查岗卡片）', c.name + ' 发起了突击查岗', 'checkin');
-  else notifyIncoming(c, typeof content === 'string' ? content : '（卡片消息）'); // 20260929bi：收敛到统一通知出口（含挂后台）
+  if (type === 'checkin') await notifyIncoming(c, typeof content === 'string' ? content : '（查岗卡片）', c.name + ' 发起了突击查岗', 'checkin');
+  else await notifyIncoming(c, typeof content === 'string' ? content : '（卡片消息）'); // 20260929bi：收敛到统一通知出口（含挂后台）
 }
 
 /* ---------- 通用文件导出（20260929p：根治"假导出"；20261011 统一单路径）
