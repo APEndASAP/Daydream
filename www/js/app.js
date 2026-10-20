@@ -4469,6 +4469,36 @@ function _proactiveNextLoad() {
   return _proactiveNextPromise;
 }
 
+/* 20261020 固定间隔持久化：_lastProactive 的 kv 镜像（key 'proactiveFixedLast'）。
+   语义（审计要求）：只在「消息生成 + 落库成功」后才更新并落库，失败绝不推进基准，
+   避免失败被误记成功而推迟下一次触发。冷启动用 _proactiveFixedLoad 恢复，
+   避免重启后固定模式 dueAt 回退为「启动时刻 + interval」。 */
+const PROACTIVE_FIXED_KEY = 'proactiveFixedLast';
+let _proactiveFixedLoaded = false;
+let _proactiveFixedPromise = null;
+function _proactiveFixedSave() {
+  try { setSetting(PROACTIVE_FIXED_KEY, _lastProactive).catch(() => {}); } catch (e) {}
+}
+function _proactiveFixedLoad() {
+  if (_proactiveFixedPromise) return _proactiveFixedPromise;
+  _proactiveFixedPromise = (async () => {
+    try {
+      const saved = await getSetting(PROACTIVE_FIXED_KEY, null);
+      if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+        for (const k in saved) {
+          const v = saved[k];
+          if (typeof v === 'number' && isFinite(v) && v > 0) {
+            // 只恢复比当前内存值更晚的（避免覆盖掉本会话已推进的基准）
+            if (!_lastProactive[k] || v > _lastProactive[k]) _lastProactive[k] = v;
+          }
+        }
+      }
+    } catch (e) {}
+    _proactiveFixedLoaded = true;
+  })();
+  return _proactiveFixedPromise;
+}
+
 /* 20261009 召唤自动发消息持久化：把「下次召唤触发时间点」持久化到 kv（key 'summonAutoNextAt'），
    复用主线 nextProactiveAt 同一套语义与懒加载互斥模式。召唤开关（typecardSummon）独立于主动消息，
    区间随机间隔（typecardSummonIntervalMin~Max，默认 40~240 分钟）到点自动拼发一条碎梦重拼消息。 */
@@ -4595,6 +4625,8 @@ function startProactiveTimer() {
   // 绝不重新随机（否则每次刷新都重新 1~5 分钟，短会话永远等不到，破坏随机调度语义）。
   // 已过期的值会原样保留，由 __proactiveScan 的 now>=triggerAt 分支识别为「已到期」补发。
   _proactiveNextLoad();
+  // 20261020：恢复固定间隔基准 _lastProactive（成功才推进的持久化镜像，冷启动不回退）
+  _proactiveFixedLoad();
   // 20261009：恢复召唤自动发消息调度（懒加载幂等；与主线 nextProactiveAt 同语义）
   _summonAutoLoad();
   // 前台 15s 高频扫描（经统一入口，bmIsBg 只作省电软开关：后台时跳过省电）
@@ -4650,7 +4682,7 @@ async function __proactiveScan() {
           if (!_pv || !isFinite(_pv) || _pv <= 0 || _pv < now - 24 * 3600 * 1000) {
             _proactiveRandUntil[c.id] = now + randInt(lo, hi) * 60000;
             _proactiveNextSave(); // 20261008：首次播种的 nextProactiveAt 落库（跨会话恢复）
-            bmRegisterAlarm(c, 'msg', _proactiveRandUntil[c.id]); // 20261002ca：预排原生精确闹钟（进程冻结也能到点提醒）
+            bmBackgroundSchedule(bmTaskId(c.id, 'proactive'), c.id, _proactiveRandUntil[c.id], c.name, 'msg'); // 20261020：预排原生后台任务（进程冻结也能到点）
           }
           triggerAt = _proactiveRandUntil[c.id];
         } else {
@@ -4658,31 +4690,34 @@ async function __proactiveScan() {
         }
         if (now >= triggerAt) {
           bmDiag('proactive_fire', { charId: c.id, random: !!s.proactiveRandom, triggerAt, now, overdueMs: now - triggerAt });
-          _lastProactive[c.id] = now;
-          if (s.proactiveRandom) {
-            const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
-            const hi2 = Math.max(lo2, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
-            _proactiveRandUntil[c.id] = now + randInt(lo2, hi2) * 60000;
-            _proactiveNextSave(); // 20261008：发送成功后重新生成下一次 nextProactiveAt 并落库
+          // 20261020：taskId 原子锁——闹钟与 tick 两条路径统一先抢占，只有抢占成功者才处理，
+          // 杜绝同一到期时刻重复生成/重复落库。taskId = charId|proactive（稳定，覆盖式幂等）。
+          const taskId = bmTaskId(c.id, 'proactive');
+          if (_claimTask(taskId)) {
+            // 统一处理：查 bmTaskMsg[taskId] → 有则补 confirm；无则生成 → 落库 → confirm。
+            const ok = await _bmProcessTask(c, 'msg', taskId);
+            _releaseTask(taskId, ok);
+            if (ok) {
+              // 只在「消息成功落库并确认」后才推进基准（固定/随机一致，失败绝不推进）
+              if (s.proactiveRandom) {
+                const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
+                const hi2 = Math.max(lo2, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
+                _proactiveRandUntil[c.id] = now + randInt(lo2, hi2) * 60000;
+                _proactiveNextSave(); // 发送成功后重新生成下一次 nextProactiveAt 并落库
+              } else {
+                // 20261020：固定模式——成功才推进基准并落库，失败保持原基准（任务留待重试）
+                _lastProactive[c.id] = now;
+                _proactiveFixedSave();
+              }
+              // 主动发消息也可能随机附带一次戳一戳（AI 模式下不触发）
+              maybeCharPoke(c);
+              // 20260929al：访客随机向玩家提问（每天0~3条，搭在主动消息节奏上，不新增定时器）
+              maybeCharAskPlayer(c);
+              // 20261002ca：本轮已触发 → 预排下一轮原生后台任务（挂后台/进程冻结也照常到点）
+              const nextDue = s.proactiveRandom ? _proactiveRandUntil[c.id] : (_lastProactive[c.id] + (s.proactiveMin || 10) * 60000);
+              bmBackgroundSchedule(bmTaskId(c.id, 'proactive'), c.id, nextDue, c.name, 'msg');
+            }
           }
-          // 20260929ba：转账/红包不再搭载在主动消息里——独立「随机红包」模式（下方 s.randomPacket 块）
-          // 20260929ah：AI 模式下主动消息由 AI 生成（节奏不变）；失败软回退字卡（不回滚模式开关）
-          let msg = null;
-          if (await isAIMode()) {
-            const r = await aiSoftReply(c,
-              '请主动给玩家发一条消息（像自然地想起对方）：可以是分享、问候、吐槽或关心，1~3 句，符合角色口吻。',
-              () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
-            msg = r;
-          } else {
-            msg = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
-          }
-          await deliverCharMessage(c, msg, 'text');
-          // 主动发消息也可能随机附带一次戳一戳（AI 模式下不触发）
-          maybeCharPoke(c);
-          // 20260929al：访客随机向玩家提问（每天0~3条，搭在主动消息节奏上，不新增定时器）
-          maybeCharAskPlayer(c);
-          // 20261002ca：本轮已触发 → 预排下一轮原生闹钟（挂后台/进程冻结也照常到点提醒）
-          bmRegisterAlarm(c, 'msg', s.proactiveRandom ? _proactiveRandUntil[c.id] : (now + (s.proactiveMin || 10) * 60000));
           // 超频已从主动消息分离，固定在 15 秒 tick 每访客独立计时；此处不再触发
         }
       }
@@ -4722,13 +4757,13 @@ async function __proactiveScan() {
         if (!_summonAutoUntil[c.id]) {
           _summonAutoUntil[c.id] = now + nextIv() * 60000; // 首次播种：区间随机后触发
           _summonAutoSave();
-          // 预排原生闹钟（挂后台/进程冻结也能到点提醒）
-          try { bmRegisterAlarm(c, 'msg', _summonAutoUntil[c.id]); } catch (e) {}
+          // 预排原生后台任务（挂后台/进程冻结也能到点提醒）；taskId 类别=summon
+          try { bmBackgroundSchedule(bmTaskId(c.id, 'summon'), c.id, _summonAutoUntil[c.id], c.name, 'summon'); } catch (e) {}
         } else if (now >= _summonAutoUntil[c.id]) {
           // 到点：自动触发一次召唤拼字消息（engine.summonAuto 内部自检开关/防重入）
           _summonAutoUntil[c.id] = now + nextIv() * 60000; // 重排下一次：再次区间随机
           _summonAutoSave();
-          try { bmRegisterAlarm(c, 'msg', _summonAutoUntil[c.id]); } catch (e) {}
+          try { bmBackgroundSchedule(bmTaskId(c.id, 'summon'), c.id, _summonAutoUntil[c.id], c.name, 'summon'); } catch (e) {}
           try {
             if (window.bmTypecard && typeof window.bmTypecard.summonAuto === 'function') {
               await window.bmTypecard.summonAuto(c.id);
@@ -5361,6 +5396,172 @@ function bmNotifIdFor(charId, kind) {
   return Math.abs(h) % 2147483000;
 }
 
+/* ===== 20261020 后台主动消息：taskId 原子处理锁 + 落库查重（bm-background 一体化修复） ===== */
+
+/* 稳定的主动消息 taskId = charId|类别。类别 ∈ proactive/summon/checkin/call/packet。
+   同角色同类别恒用同一 taskId，靠「覆盖而非叠加」实现天然幂等。 */
+function bmTaskId(charId, kind) { return String(charId) + '|' + String(kind); }
+
+/* 进程内原子处理锁：_taskClaimed[taskId] = 抢占时间戳。
+   只负责「进程内并发互斥」，绝不用于推断消息是否落库（落库以 bmTaskMsg 为准）。 */
+let _taskClaimed = {};
+const _TASK_CLAIM_TTL = 5 * 60000; // 僵尸锁超时 5 分钟
+
+/* 抢占处理权：同步读 + 同步置位（JS 单线程同步块内原子，无异步间隙）。
+   返回 true = 抢占成功（本路径继续生成+落库）；false = 已有路径在处理，立即退出。
+   持久化 kv bmBgTaskStates 在【异步、失败可回退】中执行——写失败则清内存锁回退，
+   绝不留「内存有值但 kv 无记录」的半态。 */
+function _claimTask(taskId) {
+  const now = Date.now();
+  const cur = _taskClaimed[taskId];
+  if (cur && (now - cur < _TASK_CLAIM_TTL)) return false; // 已被抢占且未超时
+  _taskClaimed[taskId] = now; // 同步置位 = 原子
+  // 异步持久化 claimed 状态（失败回退内存锁）
+  (async () => {
+    try {
+      const map = (await getSetting('bmBgTaskStates', {})) || {};
+      map[taskId] = 'claimed';
+      await setSetting('bmBgTaskStates', map);
+    } catch (e) {
+      // 持久化失败 → 回退内存锁，本次不处理，交由下次重试（避免半态）
+      delete _taskClaimed[taskId];
+      bmDiag('claim_persist_fail', { taskId, err: String(e && e.message || e) });
+    }
+  })();
+  return true;
+}
+
+/* 释放处理权（落库成功/失败后都要调用）。done=true 时同时清 kv claimed 状态。 */
+function _releaseTask(taskId, done) {
+  delete _taskClaimed[taskId];
+  (async () => {
+    try {
+      const map = (await getSetting('bmBgTaskStates', {})) || {};
+      if (done) map[taskId] = 'done'; else delete map[taskId];
+      await setSetting('bmBgTaskStates', map);
+    } catch (e) {}
+  })();
+}
+
+/* 落库查重：taskId → msgId 映射（kv，持久化，权威判据）。
+   返回 { msgId } 或 null。存在 msgId = 消息已成功落库，只差 confirm。 */
+async function bmTaskMsgGet(taskId) {
+  try {
+    const map = (await getSetting('bmTaskMsg', {})) || {};
+    const mid = map[taskId];
+    return mid ? { msgId: mid } : null;
+  } catch (e) { return null; }
+}
+
+/* 记录 taskId → msgId 映射（消息落库成功后调用）。写失败只记日志，
+   不改变「消息已落库」的事实——重试时靠消息记录上的 taskId 字段辅助查重兜底。 */
+async function bmTaskMsgSet(taskId, msgId) {
+  try {
+    const map = (await getSetting('bmTaskMsg', {})) || {};
+    map[taskId] = msgId;
+    await setSetting('bmTaskMsg', map);
+  } catch (e) {
+    bmDiag('taskmsg_persist_fail', { taskId, msgId, err: String(e && e.message || e) });
+  }
+}
+
+/* 辅助查重：当 kv 映射丢失（映射写失败），按消息记录上的 taskId 字段扫描兜底。
+   返回 msgId 或 null。只在 bmTaskMsgGet 返回 null 时调用。 */
+async function bmTaskMsgScanByField(charId, taskId) {
+  try {
+    const all = await idbGetAll('messages');
+    for (const m of (all || [])) {
+      if (m && m.taskId === taskId && m.charId === charId) return m.id;
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+/* 取原生后台插件实例；网页端/无插件返回 null。 */
+function bmBackgroundNative() {
+  const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
+  if (!PLG) return null;
+  const BB = PLG.BmBackground;
+  if (!BB || typeof BB.schedule !== 'function') return null;
+  return BB;
+}
+
+/* 排一个原生后台任务（schedule）；网页端/无插件静默跳过（60s tick 兜底）。 */
+async function bmBackgroundSchedule(taskId, charId, dueAt, name, kind) {
+  const BB = bmBackgroundNative();
+  if (!BB) return false;
+  try { const r = await BB.schedule({ taskId, charId, dueAt, name, kind }); return !!(r && r.ok); }
+  catch (e) { bmDiag('bgsched_error', { taskId, err: String(e && e.message || e) }); return false; }
+}
+
+/* 确认任务完成（消息已落库后调用）：标记 done + 撤闹钟。 */
+async function bmBackgroundConfirm(taskId) {
+  const BB = bmBackgroundNative();
+  if (!BB) return;
+  try { await BB.confirm({ taskId }); bmDiag('bgconfirm', { taskId }); }
+  catch (e) { bmDiag('bgconfirm_error', { taskId, err: String(e && e.message || e) }); }
+}
+
+/* 回前台恢复：把「已到期未完成」任务拉回 JS，逐个补处理。 */
+async function bmBackgroundRecover() {
+  const BB = bmBackgroundNative();
+  if (!BB) return;
+  try {
+    const r = await BB.recoverDue();
+    const due = (r && r.dueTasks) || [];
+    for (const t of due) {
+      if (!t || !t.taskId) continue;
+      bmDiag('bgrecover_task', { taskId: t.taskId, charId: t.charId, dueAt: t.dueAt });
+      // 找到对应角色，走与 tick 相同的统一处理入口（补生成/补 confirm）
+      const ch = characters.find(x => x && x.id === t.charId);
+      if (ch) await _bmProcessTask(ch, t.kind || 'msg', t.taskId);
+    }
+  } catch (e) { bmDiag('bgrecover_error', { err: String(e && e.message || e) }); }
+}
+
+/* 统一任务处理入口：闹钟到期事件 + 回前台 recoverDue 都走这里。
+   顺序：查 bmTaskMsg[taskId] → 有 msgId 补 confirm；无则生成 → 落库 → confirm。
+   返回 true = 消息已成功落库并确认（含「已有消息只补 confirm」的情况）；false = 落库失败。 */
+async function _bmProcessTask(c, kind, taskId) {
+  // 1. 查落库映射（权威）：已有 msgId = 消息已落库，只差 confirm
+  const existing = await bmTaskMsgGet(taskId);
+  if (existing) {
+    await bmBackgroundConfirm(taskId);
+    bmDiag('bg_process_already_persisted', { taskId, msgId: existing.msgId });
+    return true;
+  }
+  // 1.5 辅助查重：映射写失败时，按消息记录 taskId 字段兜底
+  const fieldHit = await bmTaskMsgScanByField(c.id, taskId);
+  if (fieldHit) {
+    await bmTaskMsgSet(taskId, fieldHit); // 补齐映射
+    await bmBackgroundConfirm(taskId);
+    bmDiag('bg_process_field_hit', { taskId, msgId: fieldHit });
+    return true;
+  }
+  // 2. 无消息 → 生成 + 落库
+  let msg = null;
+  if (await isAIMode()) {
+    const r = await aiSoftReply(c,
+      '请主动给玩家发一条消息（像自然地想起对方）：可以是分享、问候、吐槽或关心，1~3 句，符合角色口吻。',
+      () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
+    msg = r;
+  } else {
+    msg = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
+  }
+  // 3. 落库（带 taskId）+ 4. 成功后写映射 + confirm
+  const r = await deliverCharMessage(c, msg, 'text', null, taskId);
+  if (r && r.persisted) {
+    await bmTaskMsgSet(taskId, r.msgId);
+    await bmBackgroundConfirm(taskId);
+    bmDiag('bg_process_done', { taskId, msgId: r.msgId });
+    return true;
+  } else {
+    bmDiag('bg_process_persist_fail', { taskId, err: r && r.error });
+    // 落库失败：任务留 pending，下次重试（不 confirm、不撤闹钟）
+    return false;
+  }
+}
+
 /* ===== 20261019 通知/后台诊断日志（环形缓冲，localStorage 持久化，进程被杀也能留下） ===== */
 const __BM_DIAG_KEY = 'bmDiagLog';
 const __BM_DIAG_MAX = 500;              // 环形缓冲上限条数
@@ -5614,6 +5815,9 @@ function restoreAppState(isActive) {
        bmOverlayHide 隐藏原生窗）。现在回前台仅恢复省电态，原生悬浮窗保持原状，
        只有用户主动点击悬浮窗上的「切回完整通话」按钮才进入完整通话页。 */
     bmSetBgState(false);
+    // 20261020：回前台补处理后台逾期未完成的任务（原生闹钟到点但进程被冻结/杀死时，
+    //   任务留 pending，回前台靠 recoverDue 拉回补生成/补确认）。修复原「回前台补发是死代码」。
+    try { bmBackgroundRecover(); } catch (e) {}
   } catch (e) {}
 }
 function markAppBackground() {                  // 挂后台：复位去重标记，供下次回前台判定
@@ -5633,6 +5837,33 @@ try {
         if (!st.isActive) { bmSetBgState(true); markAppBackground(); }
         else { restoreAppState(true); }
       } catch (e) {}
+    });
+  }
+} catch (e) {}
+
+/* 20261020：注册 bm-background 原生到期事件监听。原生闹钟到点（WebView 存活）会推
+   bmBackgroundDue 事件，这里统一走 _claimTask → _bmProcessTask，与 JS tick 同一条处理链路，
+   杜绝双路径重复生成。 */
+try {
+  const BB = bmBackgroundNative();
+  if (BB && typeof BB.addListener === 'function') {
+    BB.addListener('bmBackgroundDue', (data) => {
+      try {
+        const d = data || {};
+        const taskId = d.taskId;
+        const charId = d.charId;
+        if (!taskId || !charId) return;
+        const ch = characters.find(x => x && x.id === charId);
+        if (!ch) return;
+        bmDiag('bg_due_event', { taskId, charId, dueAt: d.dueAt });
+        // 抢占 + 统一处理（同 tick 路径）
+        if (_claimTask(taskId)) {
+          (async () => {
+            const ok = await _bmProcessTask(ch, 'msg', taskId);
+            _releaseTask(taskId, ok);
+          })();
+        }
+      } catch (e) { bmDiag('bg_due_event_error', { err: String(e && e.message || e) }); }
     });
   }
 } catch (e) {}
@@ -9469,12 +9700,25 @@ function _inNonChatPage() {
 }
 
 /* 统一投递：角色发给玩家的消息（text/查岗等）——他访客消息不进当前聊天页 */
-async function deliverCharMessage(c, content, type = 'text', extra = null) {
+async function deliverCharMessage(c, content, type = 'text', extra = null, taskId = null) {
+  // 20261020：三态返回值——供后台主动消息链路准确区分「落库成功 / 落库失败」，
+  // 从而决定是否 confirm(taskId)。落库成功与通知成功解耦：通知失败不改变 persisted 判定，
+  // 不触发重新生成。返回值：{ persisted:true, msgId } 或 { persisted:false, error }，永不抛异常。
+  let m = { id: uid('msg'), charId: c.id, from: 'them', type, content, time: Date.now() };
+  if (extra) m.content = extra;
+  if (taskId) m.taskId = taskId; // 20261020：主动消息落库记录附加 taskId（旧消息无此字段，完全兼容）
+
+  // ① 落库（独立 try/catch，失败即 persisted:false）
   try {
-    const m = { id: uid('msg'), charId: c.id, from: 'them', type, content, time: Date.now() };
-    if (extra) m.content = extra;
     await idbPut('messages', m);
-    bmDiag('deliver_persisted', { charId: c.id, type, msgId: m.id });
+  } catch (e) {
+    bmDiag('deliver_persist_fail', { charId: c && c.id, type, taskId, err: String(e && e.message || e) });
+    return { persisted: false, error: String(e && e.message || e) };
+  }
+  bmDiag('deliver_persisted', { charId: c.id, type, msgId: m.id, taskId: taskId || undefined });
+
+  // ② 后续（通知/未读/横幅）——独立 try/catch，失败只记日志，不影响 persisted
+  try {
     const cs = getCharChatSettings(c);
     if (_inChatWith(c.id) && !bmIsBg()) {
       appendMessage(m);
@@ -9482,7 +9726,7 @@ async function deliverCharMessage(c, content, type = 'text', extra = null) {
       setSetting('lastRead_' + c.id, Date.now());
       // 20260930：聊天页内当前角色发消息也响提示音（其他角色不响）
       if (shouldDingFor(c)) playDing();
-      return;
+      return { persisted: true, msgId: m.id };
     }
     // 不在该访客聊天页：累计未读普通消息计数（>10 条才提示）
     const e = _ev(c.id);
@@ -9500,7 +9744,10 @@ async function deliverCharMessage(c, content, type = 'text', extra = null) {
     bmDiag('deliver_notify', { charId: c.id, type, kind: (type === 'checkin' ? 'checkin' : undefined) });
     if (type === 'checkin') await notifyIncoming(c, typeof content === 'string' ? content : '（查岗卡片）', c.name + ' 发起了突击查岗', 'checkin');
     else await notifyIncoming(c, typeof content === 'string' ? content : '（卡片消息）'); // 20260929bi：收敛到统一通知出口（含挂后台）
-  } catch (e) { bmDiag('deliver_error', { charId: c && c.id, err: String(e && e.message || e) }); }
+  } catch (e) { bmDiag('deliver_notify_error', { charId: c && c.id, taskId, err: String(e && e.message || e) }); }
+
+  // ③ 落库已成功（无论通知成败）
+  return { persisted: true, msgId: m.id };
 }
 
 /* ---------- 通用文件导出（20260929p：根治"假导出"；20261011 统一单路径）
@@ -10829,6 +11076,10 @@ async function showChatThemeModal() {
         <button class="btn" id="theme-css-save" style="padding:9px 18px;font-size:13px;font-weight:600;">保存并应用</button>
         <span id="theme-css-status" style="font-size:12px;flex:1;min-width:0;line-height:1.5;"></span>
       </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+        <button class="btn" id="theme-css-copy" style="padding:7px 14px;font-size:12px;">复制 CSS</button>
+        <button class="btn" id="theme-css-clear" style="padding:7px 14px;font-size:12px;color:#f87171;border-color:rgba(248,113,113,0.4);">删除 CSS</button>
+      </div>
       <div id="css-preview-box" data-prev-bg="dark" style="margin-top:10px;padding:12px;border-radius:14px;background:#17131f;border:1px solid rgba(255,255,255,0.08);">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
           <div id="css-preview-label" style="font-size:11px;color:rgba(255,255,255,0.45);">CSS 实时预览（与真实气泡同结构，编辑即时变化）</div>
@@ -11108,6 +11359,39 @@ async function showChatThemeModal() {
       miniToast('自定义 CSS 已保存并应用');
       renderCssStatus(vd, '✓ 已保存并应用');
     }
+  };
+  // 20261020：复制 CSS——把输入框当前内容复制到剪贴板，成功/失败都小字提醒
+  $('#theme-css-copy').onclick = async () => {
+    const val = $('#theme-css').value;
+    if (!val || !val.trim()) { miniToast('CSS 内容为空，无可复制'); return; }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(val);
+      } else {
+        // 兜底：老 WebView 无 navigator.clipboard，用临时 textarea + execCommand
+        const ta = document.createElement('textarea');
+        ta.value = val;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (!ok) throw new Error('execCommand failed');
+      }
+      miniToast('CSS 已复制到剪贴板');
+    } catch (e) {
+      miniToast('复制失败，请长按输入框手动复制');
+    }
+  };
+  // 20261020：删除 CSS——清空输入框内容并即时同步（预览与保存态一起清空）
+  $('#theme-css-clear').onclick = () => {
+    const ta = $('#theme-css');
+    ta.value = '';
+    chatTheme.customCss = '';
+    applyChatTheme(); // 立即撤销已注入的自定义样式，聊天页同步恢复
+    try { syncBubbleFallback(); } catch (e) {}
+    renderCssStatus(null, '');
+    miniToast('CSS 已清空（如需彻底生效请点「保存并应用」）');
   };
   // 打开设置时对已存 CSS 做一次体检，健康状态一目了然
   renderCssStatus(bmValidateCustomCss($('#theme-css').value));

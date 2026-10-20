@@ -11,6 +11,8 @@ on:
       - 'capacitor.config.json'
       - 'package.json'
       - 'bm-overlay/**'
+      - 'bm-conversation-notify/**'
+      - 'bm-background/**'
       - '.github/workflows/build-android.yml'
 
 jobs:
@@ -55,6 +57,14 @@ jobs:
           cp -r bm-conversation-notify node_modules/bm-conversation-notify
           echo "bm-conversation-notify 插件已固化到 node_modules"
           ls -la node_modules/bm-conversation-notify/android/src/main/java/com/bairimeng/conversation/
+
+      # 20261020：固化本地后台插件 bm-background（与 bm-overlay/bm-conversation-notify 同款 file: 依赖固化）
+      - name: 固化本地后台插件 bm-background
+        run: |
+          rm -rf node_modules/bm-background
+          cp -r bm-background node_modules/bm-background
+          echo "bm-background 插件已固化到 node_modules"
+          ls -la node_modules/bm-background/android/src/main/java/com/bairimeng/background/
 
       - name: 生成安卓原生壳
         run: npx cap add android
@@ -159,6 +169,49 @@ jobs:
           console.log(s);
           NODE_EOF
           node /tmp/register-bm-conversation.js
+
+      # 20261020：注册 BmBackground 后台插件到 MainActivity。
+      #   与 BmOverlay/BmConversationNotify 同构——Capacitor 6 不会自动实例化自定义插件，必须手动 registerPlugin。
+      #   BmBackgroundReceiver 的注册在插件自身 AndroidManifest.xml 里声明（receiver + intent-filter），
+      #   cap sync 会合并进主工程 Manifest，无需在此额外注入。
+      - name: 注册 BmBackground 插件到 MainActivity（20261020）
+        run: |
+          cat > /tmp/register-bm-background.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmBackgroundPlugin.class)')) {
+            console.log('BmBackgroundPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          const imp = 'import com.bairimeng.background.BmBackgroundPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          if (s.includes('public void onCreate(')) {
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmBackgroundPlugin.class);\n    $1');
+          } else {
+            s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmBackgroundPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}');
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmBackgroundPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-background.js
 
       # 20261001 修复：图标生成必须在 cap add 之后执行（cg 版排在壳生成之前，
       # android/ 目录尚不存在导致 capacitor-assets 静默失败，APK 用了 Capacitor 默认蓝色图标）。
@@ -324,6 +377,14 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :bm-overlay:compileDebugJavaWithJavac --no-daemon
           echo "=== bm-overlay 插件 Java 编译通过 ==="
+
+      # 20261020：单独编译后台插件 bm-background 验证 Java 语法/依赖（构建期静态编译检查）
+      - name: 单独编译后台插件验证（bm-background）
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :bm-background:compileDebugJavaWithJavac --no-daemon
+          echo "=== bm-background 插件 Java 编译通过 ==="
 
       - name: 构建 APK（Debug）— 20260930cg
         working-directory: android

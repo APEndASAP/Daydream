@@ -18,6 +18,7 @@
     "@ebarooni/capacitor-calendar": "6.7.2",
     "bm-overlay": "file:./bm-overlay",
     "bm-conversation-notify": "file:./bm-conversation-notify",
+    "bm-background": "file:./bm-background",
     "capacitor-overlay": "7.0.3"
   },
   "devDependencies": {

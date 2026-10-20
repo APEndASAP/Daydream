@@ -257,6 +257,9 @@
     _summonBusy: false,  // 召唤流程进行中标志（防连点）
     _summonDismissed: false, // 用户点球主动收起召唤悬浮窗（true 时 _ensureSummonPanel 不自动重建）
     _summonCid: null,    // 召唤面板对应的角色 id（换角色时复位 dismissed）
+    _summonDismissedMap: {}, // 20261020：召唤「点球收起」按角色持久化缓存（{charId:bool}，启动预读 kv typecardSummonDismissed）
+    _floatExpanded: false,      // 20261020：形态 B（打字卡+float）悬浮窗「点击圆点展开的待机面板」是否处于展开态（记忆上次，进聊天页恢复）
+    _floatExpandedLoaded: false, // 展开态是否已从 kv 懒加载过（幂等哨兵）
     _summonAutoUntil: {}, // 20261009：召唤自动发消息「下次触发时间点」内存态（charId -> ts；持久化见 kv 'summonAutoNextAt'）
     _summonAutoLoaded: false, // 召唤自动调度是否已从 kv 懒加载过（幂等哨兵）
 
@@ -301,8 +304,8 @@
       if (summon) {
         // 形态 A：常驻待机悬浮窗 + 悬浮球（球回归：点球收起/展开，不再是藏球）
         if (this._summonCid !== curCid) {
-          this._summonCid = curCid;          // 换角色/换聊天：复位「用户主动收起」状态
-          this._summonDismissed = false;
+          this._summonCid = curCid;          // 换角色/换聊天：改为按角色恢复「点球收起」记忆（20261020，不再粗暴复位）
+          this._restoreSummonDismissed(curCid);
         }
         ui._onDotTap = function () { engine.toggleSummonPanel(); };
         ui.ensureFloatDot();
@@ -313,16 +316,15 @@
         if (this._state === STATE.IDLE) this._ensureSummonPanel();
       } else {
         // 形态 B/C：先撤召唤面板
-        // 20261010：弹窗打开（_tcModalOpen）时是「临时离开聊天页」，不该复位用户「主动收起」
-        // 状态——否则关弹窗后 _ensureSummonPanel 会误弹悬浮窗（用户报：点撤回弹窗关闭后悬浮窗弹出）。
-        // 只在真正离开聊天页/关闭召唤（非弹窗）时才复位，让下次进入召唤模式正常出现。
-        if (!_tcModalOpen()) {
-          this._summonDismissed = false;
-        }
+        // 20261020：点球收起已按角色持久化，离开聊天页（切主页/朋友圈等）不再复位记忆——
+        // 否则「收起→切走→切回」又会误弹悬浮窗。仅当真正关闭召唤开关时才复位（由 toggleSummonPanel
+        // 的开关关闭分支处理）。
         this._destroySummonPanel();
         if (showDot) {
           ui.ensureFloatDot();
           ui._onDotTap = function () { engine.toggleFloatPanel(); };
+          // 20261020：进入聊天页时恢复「上次展开/收起」记忆——上次是展开态则自动展开待机面板
+          this._restoreFloatExpanded();
         } else {
           // 离开聊天页/关闭功能：待机面板一并收起
           if (this._idlePanel) {
@@ -543,12 +545,47 @@
       if (this._idlePanel) {
         ui.destroyGhost(this._idlePanel);
         this._idlePanel = null;
+        this._floatExpanded = false; // 20261020：收起，记忆为「下次进聊天页默认收起」
+        try { if (typeof global.setSetting === 'function') global.setSetting('typecardFloatExpanded', false); } catch (e) {}
         return;
       }
+      this._expandIdlePanel();
+      this._floatExpanded = true; // 20261020：展开，记忆为「下次进聊天页默认展开」
+      try { if (typeof global.setSetting === 'function') global.setSetting('typecardFloatExpanded', true); } catch (e) {}
+    },
+
+    // 20261020：进聊天页时恢复形态 B「上次展开/收起」记忆。
+    // 幂等懒加载 kv 'typecardFloatExpanded'（只读一次）；上次是展开态且当前无待机面板
+    // （无演出/未手动展开）→ 自动展开待机面板，与用户「进聊天页应该记住上次状态」一致。
+    _restoreFloatExpanded: function () {
+      const self = this;
+      // 已加载过：直接用内存态判断（切换角色/切页时不重复异步读）
+      if (self._floatExpandedLoaded) {
+        if (self._floatExpanded && !self._idlePanel && self._state === STATE.IDLE) {
+          self._expandIdlePanel();
+        }
+        return;
+      }
+      self._floatExpandedLoaded = true;
+      try {
+        if (typeof global.getSetting === 'function') {
+          global.getSetting('typecardFloatExpanded', false).then(function (v) {
+            self._floatExpanded = !!v;
+            if (self._floatExpanded && !self._idlePanel && self._state === STATE.IDLE) {
+              self._expandIdlePanel();
+            }
+          }).catch(function () {});
+        }
+      } catch (e) {}
+    },
+
+    // 展开形态 B 待机面板（内部工具：buildFloatPanel(null) + insertFloatPanel + 置灰标题点）
+    _expandIdlePanel: function () {
+      const ui = global.bmTypecardUi;
+      if (!ui || this._idlePanel) return;
       const panel = ui.buildFloatPanel(null);
       if (!panel) return;
       ui.insertFloatPanel(panel);
-      // 待机态：标题圆点置灰（与演出中的呼吸态区分）
       try {
         const d = panel._shadow.querySelector('.tc-title-dot');
         if (d) d.classList.add('tc-idle');
@@ -581,10 +618,30 @@
         try { ui.destroyGhost(this._summonPanel); } catch (e) {}
         this._summonPanel = null;
         this._summonDismissed = true;
+        this._persistSummonDismissed(true); // 20261020：收起按角色落库，切走/重开也不丢失
         return;
       }
       this._summonDismissed = false;
+      this._persistSummonDismissed(false); // 20261020：展开按角色落库
       this._ensureSummonPanel();
+    },
+
+    // 20261020：召唤「点球收起」按角色持久化（kv typecardSummonDismissed = {charId:bool}）。
+    _persistSummonDismissed: function (v) {
+      try {
+        const cid = curCharId();
+        if (!cid || typeof global.getSetting !== 'function' || typeof global.setSetting !== 'function') return;
+        this._summonDismissedMap[cid] = !!v; // 同步更新内存缓存（供下次同步读）
+        const m = this._summonDismissedMap;
+        global.setSetting('typecardSummonDismissed', m).catch(function () {});
+      } catch (e) {}
+    },
+
+    // 20261020：进召唤模式时同步恢复该角色「点球收起」记忆（读预读缓存，无异步竞态）。
+    // 该角色上次主动收起 → _summonDismissed=true，_ensureSummonPanel 静默不弹，只留悬浮球。
+    _restoreSummonDismissed: function (cid) {
+      if (!cid) { this._summonDismissed = false; return; }
+      this._summonDismissed = !!this._summonDismissedMap[cid];
     },
 
     // 是否该演出这条消息（纯同步判断，不读异步配置，保证 deliverReply 不被阻塞）
@@ -888,6 +945,16 @@
   try {
     const _ui = global.bmTypecardUi;
     if (_ui && typeof _ui.preloadFloatPos === 'function') _ui.preloadFloatPos();
+  } catch (e) {}
+
+  // 20261020：engine 加载即预读召唤「点球收起」按角色记忆（填内存缓存），
+  // 进召唤模式同步恢复，消除异步竞态（该角色上次收起就不会先弹一下再收）。
+  try {
+    if (typeof global.getSetting === 'function') {
+      global.getSetting('typecardSummonDismissed', {}).then(function (map) {
+        if (map && typeof map === 'object') engine._summonDismissedMap = map;
+      }).catch(function () {});
+    }
   } catch (e) {}
 
   global.bmTypecard = engine;
