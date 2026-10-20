@@ -13,8 +13,6 @@ import android.os.Build;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
-import com.getcapacitor.JSObject;
-
 import java.util.List;
 
 /**
@@ -41,9 +39,11 @@ public class BmBackgroundReceiver extends BroadcastReceiver {
             String action = intent == null ? null : intent.getAction();
 
             // 开机/重启：读任务表，重排所有「未完成且未过期」的闹钟
+            // 注：ACTION_QUICKBOOT_POWERON 是部分厂商（华为/小米等）的快速开机广播，非标准 SDK 常量，
+            //     必须用字符串字面量匹配，否则编译期找不到 Intent.ACTION_QUICKBOOT_POWERON。
             if (Intent.ACTION_BOOT_COMPLETED.equals(action)
                     || Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action)
-                    || Intent.ACTION_QUICKBOOT_POWERON.equals(action)) {
+                    || "android.intent.action.QUICKBOOT_POWERON".equals(action)) {
                 reschedulePending(context);
                 return;
             }
@@ -67,30 +67,10 @@ public class BmBackgroundReceiver extends BroadcastReceiver {
             return; // 已清理/已完成 → 幂等跳过
         }
 
-        // 2. 尝试拿插件实例（进程存活 + WebView 已初始化的通信捷径）
-        BmBackgroundPlugin plugin = BmBackgroundPlugin.getInstance();
-        if (plugin != null && plugin.getBridge() != null && plugin.getBridge().getWebView() != null
-                && plugin.getActivity() != null) {
-            // WebView 存活 → 主线程推事件给 JS，由 JS 走统一的 _claimTask → 生成 → 落库 → confirm 流程
-            final BmBackgroundPlugin p = plugin;
-            final String tid = taskId;
-            final String cid = task.charId;
-            final long due = task.dueAt;
-            plugin.getActivity().runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        JSObject data = new JSObject();
-                        data.put("taskId", tid);
-                        data.put("charId", cid);
-                        data.put("dueAt", due);
-                        p.notifyListeners(BmBackgroundPlugin.EVENT_DUE, data);
-                    } catch (Throwable t) {
-                        android.util.Log.e("BmBackground", "notifyListeners failed: " + t.getMessage());
-                    }
-                }
-            });
-        } else {
+        // 2. 尝试通过插件实例推事件（进程存活 + WebView 已初始化的通信捷径）
+        //    emitDue 内部判实例/桥/WebView 存活，任一缺失返回 false → 走兜底通知
+        boolean pushed = BmBackgroundPlugin.emitDue(taskId, task.charId, task.dueAt);
+        if (!pushed) {
             // WebView 不可用 → 保留 pending + 引导通知兜底
             sendGuideNotification(context, task);
         }

@@ -4,7 +4,10 @@ import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
 
+import com.getcapacitor.Bridge;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -37,6 +40,46 @@ public class BmBackgroundPlugin extends Plugin {
 
     public static BmBackgroundPlugin getInstance() {
         return sInstance.get();
+    }
+
+    /**
+     * Receiver 到点时调用的唯一入口：把「到期任务」事件在主线程推给已初始化的 WebView。
+     *
+     * 为什么不直接在 Receiver 里调 notifyListeners：
+     *   - notifyListeners(String, JSObject) 是 Plugin 的 protected 方法，Receiver 是外部类无权访问；
+     *   - getActivity() 返回 AppCompatActivity（需要 appcompat 依赖），且主线程切换逻辑应收敛在插件内部。
+     *
+     * 这里封装：判实例/桥/WebView 存活 → 主线程 notifyListeners。三者任一缺失返回 false，
+     * 由 Receiver 走「保留 pending + 引导通知」兜底。
+     */
+    public static boolean emitDue(String taskId, String charId, long dueAt) {
+        final BmBackgroundPlugin p = sInstance.get();
+        if (p == null) return false;
+        final Bridge bridge = p.getBridge();
+        if (bridge == null || bridge.getWebView() == null) return false;
+        final String tid = taskId;
+        final String cid = charId;
+        final long due = dueAt;
+        try {
+            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        JSObject data = new JSObject();
+                        data.put("taskId", tid);
+                        data.put("charId", cid);
+                        data.put("dueAt", due);
+                        p.notifyListeners(EVENT_DUE, data);
+                    } catch (Throwable t) {
+                        android.util.Log.e("BmBackground", "emitDue notify failed: " + t.getMessage());
+                    }
+                }
+            });
+            return true;
+        } catch (Throwable t) {
+            android.util.Log.e("BmBackground", "emitDue post failed: " + t.getMessage());
+            return false;
+        }
     }
 
     @Override
