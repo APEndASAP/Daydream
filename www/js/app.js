@@ -4558,15 +4558,27 @@ function charCardPools(c) {
    同时成立 → 扫描完全停摆。现统一入口只做「并发去重」，不再用 bmIsBg 互斥；到点落库+通知由
    __proactiveScan 内部既有守卫负责，前台 60s 多扫几次只做轻量判断、不碰 DOM，省电影响可忽略。 */
 let _proactiveScanBusy = false;   // 扫描并发锁：两个定时器同时触发时只放行一个，避免重入
+let _proactiveScanBusyAt = 0;     // 20261019 诊断：记录 busy 置位时间戳，用于算「已忙多久」
 let _proactiveScanPending = false; // 扫描期间有新的触发请求排队（本轮结束后再补扫一次，防止漏判到点）
 async function requestProactiveScan() {
-  if (_proactiveScanBusy) { _proactiveScanPending = true; return; }
+  if (_proactiveScanBusy) {
+    _proactiveScanPending = true;
+    bmDiag('scan_busy', { busyMs: Date.now() - _proactiveScanBusyAt });
+    return;
+  }
   _proactiveScanBusy = true;
+  _proactiveScanBusyAt = Date.now();
+  bmDiag('scan_start', {});
+  const _st = Date.now();
   try {
     await __proactiveScan();
-  } catch (e) {}
+  } catch (e) {
+    bmDiag('scan_error', { err: String(e && e.message || e) });
+  }
   finally {
     _proactiveScanBusy = false;
+    _proactiveScanBusyAt = 0;
+    bmDiag('scan_end', { costMs: Date.now() - _st, pending: _proactiveScanPending });
     if (_proactiveScanPending) {
       _proactiveScanPending = false;
       requestProactiveScan();
@@ -4608,6 +4620,7 @@ async function __proactiveScan() {
   {
     const day = todayKey();
     for (const c of characters) {
+      try { // 20261019 诊断：每角色独立 try/catch，单角色抛错不中断整轮扫描
       const s = getCharChatSettings(c);
       const now = Date.now();
       if (!_lastProactive[c.id]) _lastProactive[c.id] = now;
@@ -4644,6 +4657,7 @@ async function __proactiveScan() {
           triggerAt = _lastProactive[c.id] + (s.proactiveMin || 10) * 60000;
         }
         if (now >= triggerAt) {
+          bmDiag('proactive_fire', { charId: c.id, random: !!s.proactiveRandom, triggerAt, now, overdueMs: now - triggerAt });
           _lastProactive[c.id] = now;
           if (s.proactiveRandom) {
             const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
@@ -4779,7 +4793,8 @@ async function __proactiveScan() {
       }
 
       // —— 权重记忆主动表示（20261002ch）：纪念日当天主动庆祝/送礼/发圈 + 平时权重记忆低频提及 ——
-      try { await _maybeWeightedAction(c, now); } catch (e) {}
+      try { await _maybeWeightedAction(c, now); } catch (e) { bmDiag('char_weighted_error', { charId: c.id, err: String(e && e.message || e) }); }
+      } catch (e) { bmDiag('char_scan_error', { charId: c.id, err: String(e && e.message || e) }); } // 20261019 诊断：单角色异常不中断整轮
     }
   }
 }
@@ -4793,6 +4808,10 @@ async function __proactiveScan() {
 let _annivDoneToday = {};   // { charId: todayKey } 防当天重复触发
 async function _maybeWeightedAction(c, now = Date.now()) {
   try {
+    // 20261019：字卡模式下彻底关闭「权重记忆自动提起 / 纪念日主动庆祝」——
+    //   否则字卡模式会把权重记忆条目的 title 原文直出成「我突然想起……」消息，
+    //   玩家存进记忆宫殿的信（title=信前30字）会被原样拼进聊天，造成「信变成字卡/消息」的假象。
+    if (!(await isAIMode())) return;
     const day = todayKey();
     const myAnniv = anniversaries.filter(a => a.charId === c.id);
     // 今天是否该角色的纪念日（纪念日列表 或 权重记忆条目 annivDate 命中）
@@ -5083,9 +5102,9 @@ async function bmClearConversationTray(cid) {
 
 async function notifyIncoming(c, body, title, kind = 'msg') {
   try {
-    if (chatSettings.notifySystem === false) return;
+    if (chatSettings.notifySystem === false) { bmDiag('notify_off_system', { kind }); return; }
     const cs = c ? getCharChatSettings(c) : null;
-    if (cs && cs.muteNotifications) return;
+    if (cs && cs.muteNotifications) { bmDiag('notify_muted', { charId: c.id, kind }); return; }
     // 20261004dr：与群聊同步收紧——只在本会话正在看时静音；看别的会话/列表/主页照常提醒
     // （此前 view==='chat' 全量静音，真机「一会儿提醒一会不提醒」的另一半根因）
     const inThisChat = c && currentCharId === c.id && document.body.dataset.view === 'chat';
@@ -5249,7 +5268,8 @@ async function bmNativeNotify(LN, c, body, title, kind = 'msg') {
         currentCharId: (window.currentCharId || null), stage: 'each_schedule',
       });
     } catch (e) {}
-  } catch (e) {}
+    bmDiag('notify_sent_each', { cid, kind: k, notificationId: uniqId, body: bodyText.slice(0, 30) });
+  } catch (e) { bmDiag('notify_error', { err: String(e && e.message || e) }); }
 }
 
 /* ============================================================
@@ -5341,6 +5361,85 @@ function bmNotifIdFor(charId, kind) {
   return Math.abs(h) % 2147483000;
 }
 
+/* ===== 20261019 通知/后台诊断日志（环形缓冲，localStorage 持久化，进程被杀也能留下） ===== */
+const __BM_DIAG_KEY = 'bmDiagLog';
+const __BM_DIAG_MAX = 500;              // 环形缓冲上限条数
+function bmDiag(tag, info) {
+  try {
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(__BM_DIAG_KEY) || '[]'); } catch (e) { arr = []; }
+    if (!Array.isArray(arr)) arr = [];
+    arr.push({
+      t: Date.now(),
+      ts: new Date().toISOString(),
+      tag: tag,
+      hidden: document.hidden,
+      vis: document.visibilityState,
+      bg: !!(window.__bmBgOn),
+      info: info || {},
+    });
+    if (arr.length > __BM_DIAG_MAX) arr = arr.slice(arr.length - __BM_DIAG_MAX);
+    localStorage.setItem(__BM_DIAG_KEY, JSON.stringify(arr));
+    // 20261019 诊断：错误类日志出现时，节流弹一次轻量提醒（每 10 分钟最多一次，避免刷屏）
+    if (/error|fail|catch/i.test(tag || '') || (info && info.err)) {
+      const last = parseInt(localStorage.getItem('bmDiagErrToastAt') || '0', 10);
+      if (Date.now() - last > 10 * 60000) {
+        localStorage.setItem('bmDiagErrToastAt', String(Date.now()));
+        try { if (typeof miniToast === 'function') miniToast('检测到运行报错，可到「总设置→诊断日志」查看复制'); } catch (e) {}
+      }
+    }
+  } catch (e) {}
+}
+/* 读日志（真机排查时通过 CDP eval 调用，返回最近 N 条） */
+function bmDiagDump(n) {
+  try {
+    const arr = JSON.parse(localStorage.getItem(__BM_DIAG_KEY) || '[]');
+    return arr.slice(-(n || 100));
+  } catch (e) { return []; }
+}
+/* 20261019 诊断入口辅助：判断一条日志是否「报错」（tag 含 error 或 info.err 存在） */
+function bmDiagIsErr(rec) {
+  try {
+    if (!rec) return false;
+    if (/error|fail|catch/i.test(rec.tag || '')) return true;
+    if (rec.info && rec.info.err) return true;
+    return false;
+  } catch (e) { return false; }
+}
+/* 把日志数组格式化成可复制的多行文本（倒序=最新在前，方便读） */
+function bmDiagFormat(arr, onlyErr) {
+  try {
+    if (!Array.isArray(arr)) return '(无日志)';
+    let rows = arr;
+    if (onlyErr) rows = arr.filter(bmDiagIsErr);
+    if (!rows.length) return '(无' + (onlyErr ? '错误' : '') + '日志)';
+    return rows.slice().reverse().map(r => {
+      const info = (() => { try { return JSON.stringify(r.info || {}); } catch (e) { return String(r.info); } })();
+      return `[${r.ts || ''}] ${r.tag} hidden=${r.hidden ? 1 : 0} vis=${r.vis || ''} bg=${r.bg ? 1 : 0} ${info}`;
+    }).join('\n');
+  } catch (e) { return '(日志格式化失败: ' + e.message + ')'; }
+}
+/* 复制文本到剪贴板（APK 走 navigator.clipboard，失败降级 textarea+execCommand） */
+function bmDiagCopy(text) {
+  return new Promise((resolve) => {
+    const done = (ok) => resolve(!!ok);
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta); done(ok);
+      } catch (e) { done(false); }
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => done(true)).catch(fallback);
+      } else fallback();
+    } catch (e) { fallback(); }
+  });
+}
+
 /* 原生通知渠道（幂等） */
 async function bmEnsureChannel(LN) {
   try {
@@ -5410,8 +5509,8 @@ async function bmBgTick() {
 async function bmRegisterAlarm(char, kind, dueAt) {
   try {
     const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
-    if (!LN || typeof LN.schedule !== 'function') return; // 网页端无原生闹钟：60s tick 已覆盖
-    if (!(dueAt > Date.now() + 5000)) return;             // 5 秒内到期的不排（JS 定时器更准，避免双弹）
+    if (!LN || typeof LN.schedule !== 'function') { bmDiag('alarm_noLN', { kind }); return; } // 网页端无原生闹钟：60s tick 已覆盖
+    if (!(dueAt > Date.now() + 5000)) { bmDiag('alarm_skip_5s', { charId: char.id, kind, dueAt, diffMs: dueAt - Date.now() }); return; }             // 5 秒内到期的不排（JS 定时器更准，避免双弹）
     const map = (await getSetting('bmBgAlarms', {})) || {};
     const key = char.id + '|' + kind;
     const id = bmNotifIdFor(char.id, kind);
@@ -5420,7 +5519,7 @@ async function bmRegisterAlarm(char, kind, dueAt) {
     // 「已过期/已送达、待清理的残留闹钟」也当成「更早的合法闹钟」永久 return，导致下一轮
     // 原生闹钟永不续排 → 进程冻结后通知彻底停摆。现在：只有「旧的 dueAt 仍在未来且早于
     // 新的 dueAt」才保持最早一次（合并语义）；已过期（<=now）的残留一律续排覆盖。
-    if (cur && cur.dueAt && cur.dueAt > Date.now() && cur.dueAt <= dueAt) return;
+    if (cur && cur.dueAt && cur.dueAt > Date.now() && cur.dueAt <= dueAt) { bmDiag('alarm_keep_earlier', { charId: char.id, kind, curDueAt: cur.dueAt, newDueAt: dueAt }); return; }
     if (cur && cur.notifId != null) { try { await LN.cancel({ notifications: [{ id: cur.notifId }] }); } catch (e) {} }
     const name = char.name || '访客';
     // 20261002cp：gift 闹钟文案与「维度动静」统一（惊喜/礼物都算维度动静）
@@ -5440,7 +5539,8 @@ async function bmRegisterAlarm(char, kind, dueAt) {
         schedule: { at: new Date(dueAt), allowWhileIdle: true },
       }],
     });
-  } catch (e) {}
+    bmDiag('alarm_registered', { charId: char.id, kind, notifId: id, dueAt, hadPrev: !!(cur && cur.dueAt), prevDueAt: cur && cur.dueAt });
+  } catch (e) { bmDiag('alarm_error', { err: String(e && e.message || e) }); }
 }
 
 /* 事件送达/取消 → 撤掉对应原生闹钟（若已弹出也一并清掉托盘）。
@@ -5450,16 +5550,17 @@ async function bmClearAlarm(charId, kind, dueAt = null) {
   try {
     if (charId && charId.id) charId = charId.id; // 兼容角色对象
     const LN = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
-    if (!LN) return;
+    if (!LN) { bmDiag('clear_noLN', { charId, kind, dueAt }); return; }
     const map = (await getSetting('bmBgAlarms', {})) || {};
     const key = charId + '|' + kind;
     const cur = map[key];
-    if (!cur) return;
-    if (dueAt != null && cur.dueAt && Math.abs(cur.dueAt - dueAt) > 30000 && cur.dueAt > Date.now()) return; // 别的场次，不动
+    if (!cur) { bmDiag('clear_noCur', { charId, kind, dueAt }); return; }
+    if (dueAt != null && cur.dueAt && Math.abs(cur.dueAt - dueAt) > 30000 && cur.dueAt > Date.now()) { bmDiag('clear_otherSession', { charId, kind, dueAt, curDueAt: cur.dueAt }); return; } // 别的场次，不动
     delete map[key];
     await setSetting('bmBgAlarms', map);
     try { await LN.cancel({ notifications: [{ id: cur.notifId != null ? cur.notifId : bmNotifIdFor(charId, kind) }] }); } catch (e) {}
-  } catch (e) {}
+    bmDiag('clear_done', { charId, kind, dueAt, clearedDueAt: cur.dueAt, notifId: cur.notifId });
+  } catch (e) { bmDiag('clear_error', { err: String(e && e.message || e) }); }
 }
 
 /* 回前台：清掉已过点/已送达的原生闹钟与托盘通知（用户已回来，红点在应用内看） */
@@ -9369,33 +9470,37 @@ function _inNonChatPage() {
 
 /* 统一投递：角色发给玩家的消息（text/查岗等）——他访客消息不进当前聊天页 */
 async function deliverCharMessage(c, content, type = 'text', extra = null) {
-  const m = { id: uid('msg'), charId: c.id, from: 'them', type, content, time: Date.now() };
-  if (extra) m.content = extra;
-  await idbPut('messages', m);
-  const cs = getCharChatSettings(c);
-  if (_inChatWith(c.id) && !bmIsBg()) {
-    appendMessage(m);
-    // 20260929aw：正在看的消息直接标记已读——防退出聊天后导航页仍提示未读
-    setSetting('lastRead_' + c.id, Date.now());
-    // 20260930：聊天页内当前角色发消息也响提示音（其他角色不响）
+  try {
+    const m = { id: uid('msg'), charId: c.id, from: 'them', type, content, time: Date.now() };
+    if (extra) m.content = extra;
+    await idbPut('messages', m);
+    bmDiag('deliver_persisted', { charId: c.id, type, msgId: m.id });
+    const cs = getCharChatSettings(c);
+    if (_inChatWith(c.id) && !bmIsBg()) {
+      appendMessage(m);
+      // 20260929aw：正在看的消息直接标记已读——防退出聊天后导航页仍提示未读
+      setSetting('lastRead_' + c.id, Date.now());
+      // 20260930：聊天页内当前角色发消息也响提示音（其他角色不响）
+      if (shouldDingFor(c)) playDing();
+      return;
+    }
+    // 不在该访客聊天页：累计未读普通消息计数（>10 条才提示）
+    const e = _ev(c.id);
+    e.msgs = (e.msgs || 0) + 1;
+    await _saveUnreadEvents();
+    renderChatList();
+    refreshUnreadBadges();
+    // 只有该访客未读普通消息超过 10 条才弹横幅（且避免刷屏：恰好跨过 10 时才提示一次）
+    // 20260929be 细则三：60 秒窗口内超 3 个访客发来东西 → 聚合卡片取代单条横幅
+    if (e.msgs === 11 && !_noteCrossPageIncoming(c.id)) {
+      showTopBanner(`<b>${escapeHtml(c.name)}</b> 给你发送了一些消息<div class="tb-sub">点进与 TA 的聊天查看</div>`, { charId: c.id });
+    }
     if (shouldDingFor(c)) playDing();
-    return;
-  }
-  // 不在该访客聊天页：累计未读普通消息计数（>10 条才提示）
-  const e = _ev(c.id);
-  e.msgs = (e.msgs || 0) + 1;
-  await _saveUnreadEvents();
-  renderChatList();
-  refreshUnreadBadges();
-  // 只有该访客未读普通消息超过 10 条才弹横幅（且避免刷屏：恰好跨过 10 时才提示一次）
-  // 20260929be 细则三：60 秒窗口内超 3 个访客发来东西 → 聚合卡片取代单条横幅
-  if (e.msgs === 11 && !_noteCrossPageIncoming(c.id)) {
-    showTopBanner(`<b>${escapeHtml(c.name)}</b> 给你发送了一些消息<div class="tb-sub">点进与 TA 的聊天查看</div>`, { charId: c.id });
-  }
-  if (shouldDingFor(c)) playDing();
-  // 20261002cp：查岗/普通消息分标题——查岗显示「xx 发起了突击查岗」，普通消息仍显示内容
-  if (type === 'checkin') await notifyIncoming(c, typeof content === 'string' ? content : '（查岗卡片）', c.name + ' 发起了突击查岗', 'checkin');
-  else await notifyIncoming(c, typeof content === 'string' ? content : '（卡片消息）'); // 20260929bi：收敛到统一通知出口（含挂后台）
+    // 20261002cp：查岗/普通消息分标题——查岗显示「xx 发起了突击查岗」，普通消息仍显示内容
+    bmDiag('deliver_notify', { charId: c.id, type, kind: (type === 'checkin' ? 'checkin' : undefined) });
+    if (type === 'checkin') await notifyIncoming(c, typeof content === 'string' ? content : '（查岗卡片）', c.name + ' 发起了突击查岗', 'checkin');
+    else await notifyIncoming(c, typeof content === 'string' ? content : '（卡片消息）'); // 20260929bi：收敛到统一通知出口（含挂后台）
+  } catch (e) { bmDiag('deliver_error', { charId: c && c.id, err: String(e && e.message || e) }); }
 }
 
 /* ---------- 通用文件导出（20260929p：根治"假导出"；20261011 统一单路径）
@@ -9673,9 +9778,38 @@ function showCardsModal() {
   const batch = !!window._cardsBatch;
   const total = cards.customReplies.length + cards.customReplyGroups.reduce((s, g) => s + g.items.length, 0);
 
+  // 搜索态：收集所有字卡（未分组+分组）扁平化，按关键词过滤，命中项带原始定位（删改用）
+  const q = (window._cardsSearch || '').trim().toLowerCase();
+  const searchOn = tab === 'replies' && !batch && q.length > 0;
+  let searchResults = [];
+  if (searchOn) {
+    cards.customReplies.forEach((t, i) => { if (String(t).toLowerCase().includes(q)) searchResults.push({ t, g: null, i }); });
+    cards.customReplyGroups.forEach((g, gi) => {
+      (g.items || []).forEach((t, ii) => { if (String(t).toLowerCase().includes(q)) searchResults.push({ t, g: gi, i: ii }); });
+    });
+  }
+
   // 各模块渲染（普通字卡分区展示未分组+分组；其他模块简单列表）
   let body = '';
-  if (tab === 'replies') {
+  if (searchOn) {
+    // 搜索结果视图：扁平列表，命中项可删除（定位回原始数组）
+    body = `
+      <div style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">匹配 ${searchResults.length} 条</div>
+      <div style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
+        ${searchResults.length === 0
+          ? '<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:24px 0;">没有匹配的字卡</div>'
+          : searchResults.map((r, k) => {
+              const loc = r.g === null ? `#未分组` : `#${cards.customReplyGroups[r.g].name || '未命名分组'}`;
+              return `
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:10px;">
+                <span style="flex:1;font-size:14px;word-break:break-word;">${escapeHtml(r.t)}</span>
+                <span style="color:var(--text-tertiary);font-size:11px;flex-shrink:0;">${escapeHtml(loc)}</span>
+                <button class="badge" style="cursor:pointer;color:var(--danger);flex-shrink:0;" data-search-del="${k}">删</button>
+              </div>`;
+            }).join('')}
+      </div>
+    `;
+  } else if (tab === 'replies') {
     body = `
       <div style="margin-bottom:16px;">
         <div style="font-size:14px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;" data-fold-ungroup>
@@ -9761,6 +9895,13 @@ function showCardsModal() {
       ${CARD_MODULES.map(m => `<button class="emoji-tab ${m.key === tab ? 'active' : ''}" data-mod="${m.key}">${m.label}</button>`).join('')}
     </div>
 
+    ${tab === 'replies' && !batch ? `
+      <div style="position:relative;margin-bottom:14px;">
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-tertiary);font-size:14px;">🔍</span>
+        <input class="input" id="cards-search" placeholder="搜索字卡…" style="padding-left:36px;" value="${escapeHtml(window._cardsSearch || '')}">
+      </div>
+    ` : ''}
+
     ${tab === 'replies' ? `<div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">共 ${total} 条字卡 · ${cards.customReplyGroups.length} 个分组${batch ? ' · <span style="color:var(--purple-soft);">批量模式：点击字卡勾选，可整组勾选或移动</span>' : ''}</div>` : ''}
 
     ${body}
@@ -9793,6 +9934,30 @@ function showCardsModal() {
       showCardsModal();
     };
   });
+
+  // 搜索输入：实时过滤（输入时更新搜索词并重渲染，保留光标焦点）
+  const searchInput = $('#cards-search');
+  if (searchInput) {
+    searchInput.oninput = () => {
+      window._cardsSearch = searchInput.value;
+      showCardsModal();
+      const next = $('#cards-search');
+      if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
+    };
+  }
+
+  // 搜索结果删除：按扁平结果的原始定位删除
+  document.querySelectorAll('[data-search-del]').forEach(el => {
+    el.onclick = () => {
+      const k = parseInt(el.dataset.searchDel);
+      const r = searchResults[k];
+      if (!r) return;
+      if (r.g === null) cards.customReplies.splice(r.i, 1);
+      else cards.customReplyGroups[r.g].items.splice(r.i, 1);
+      saveCards(cards).then(() => showCardsModal());
+    };
+  });
+  if (searchOn) return; // 搜索态只展示过滤结果，不渲染折叠/分组/批量等交互
 
   // 非 replies 模块：添加/删除
   if (tab !== 'replies') {
@@ -12562,6 +12727,26 @@ async function showSettingsModal() {
       软件声明与使用须知 <span>📜</span>
     </button>
 
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🩺 诊断日志（通知/后台排查）</span>
+        <span id="gs-diag-badge" style="font-size:11px;color:var(--text-tertiary);"></span>
+      </div>
+      <div id="gs-diag-err" style="display:none;font-size:12px;color:#e55;margin-top:6px;line-height:1.6;"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn" style="flex:1;min-width:120px;" id="btn-diag-view-err">查看报错</button>
+        <button class="btn" style="flex:1;min-width:120px;" id="btn-diag-copy-err">复制报错日志</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <button class="btn" style="flex:1;min-width:120px;" id="btn-diag-view-all">查看全部</button>
+        <button class="btn" style="flex:1;min-width:120px;" id="btn-diag-copy-all">复制全部日志</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <button class="btn" style="flex:1;" id="btn-diag-clear">清空日志</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:8px;line-height:1.6;">用于排查「消息落库/后台通知失灵」。日志存在本机（最多 500 条，进程被杀也不丢）。有报错时顶部会红字提醒，可直接复制报错日志发来。</div>
+    </div>
+
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-keepalive-guide">
       后台保活设置引导 <span>🛡️</span>
     </button>
@@ -12694,6 +12879,54 @@ async function showSettingsModal() {
     }
   };
   $('#btn-software-notice').onclick = () => showSoftwareNotice({ review: true }); // 20260929bk：总设置重看软件声明
+  // 20261019 诊断日志入口：查看/复制报错、查看/复制全部、清空
+  {
+    const all = bmDiagDump(500);
+    const errs = all.filter(bmDiagIsErr);
+    const badge = $('#gs-diag-badge'), errBox = $('#gs-diag-err');
+    if (badge) badge.textContent = `${all.length} 条 · 报错 ${errs.length}`;
+    if (errBox && errs.length) {
+      errBox.style.display = 'block';
+      errBox.innerHTML = `⚠️ 检测到 ${errs.length} 条报错（最近：${errs.length ? bmDiagIsErr(errs[errs.length - 1]) ? (errs[errs.length - 1].tag || '') : '' : ''}）。点「复制报错日志」发给开发者。`;
+    }
+    const showLogModal = (onlyErr, title) => {
+      const txt = bmDiagFormat(all, onlyErr);
+      openModal(`
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <div style="font-size:16px;font-weight:600;">${title}</div>
+          <button class="icon-btn" id="diag-view-close">✕</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:8px;">共 ${onlyErr ? errs.length : all.length} 条（最新在前，最多 500 条）</div>
+        <pre id="diag-view-text" style="max-height:52vh;overflow:auto;background:var(--bg-base);border-radius:10px;padding:10px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;margin:0;">${(txt || '').replace(/</g, '&lt;')}</pre>
+        <div style="display:flex;gap:10px;margin-top:12px;">
+          <button class="btn" style="flex:1;" id="diag-view-copy">复制</button>
+          <button class="btn primary" style="flex:1;" id="diag-view-ok">关闭</button>
+        </div>`);
+      $('#diag-view-close').onclick = closeModal;
+      $('#diag-view-ok').onclick = closeModal;
+      $('#diag-view-copy').onclick = async () => {
+        const ok = await bmDiagCopy(txt);
+        miniToast(ok ? '已复制到剪贴板' : '复制失败，请长按文本框手动复制');
+      };
+    };
+    $('#btn-diag-view-err').onclick = () => showLogModal(true, '🩺 报错日志');
+    $('#btn-diag-view-all').onclick = () => showLogModal(false, '🩺 全部诊断日志');
+    $('#btn-diag-copy-err').onclick = async () => {
+      const ok = await bmDiagCopy(bmDiagFormat(all, true));
+      miniToast(ok ? '报错日志已复制' : '复制失败');
+    };
+    $('#btn-diag-copy-all').onclick = async () => {
+      const ok = await bmDiagCopy(bmDiagFormat(all, false));
+      miniToast(ok ? '全部日志已复制' : '复制失败');
+    };
+    $('#btn-diag-clear').onclick = () => {
+      showConfirm('确定清空诊断日志吗？清空后之前记录无法找回。', () => {
+        try { localStorage.removeItem(__BM_DIAG_KEY); } catch (e) {}
+        miniToast('日志已清空');
+        showSettingsModal();
+      });
+    };
+  }
   $('#btn-keepalive-guide').onclick = () => showKeepAliveModal(); // 20260929bl：后台保活设置引导
   // 20261001cn：清除缓存不再是空壳——直接执行真实的冗余清理（与「数据管理」页同一逻辑）
   $('#btn-clear-cache').onclick = () => { clearStaleCache(); };
