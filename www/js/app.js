@@ -4682,42 +4682,38 @@ async function __proactiveScan() {
           if (!_pv || !isFinite(_pv) || _pv <= 0 || _pv < now - 24 * 3600 * 1000) {
             _proactiveRandUntil[c.id] = now + randInt(lo, hi) * 60000;
             _proactiveNextSave(); // 20261008：首次播种的 nextProactiveAt 落库（跨会话恢复）
-            bmBackgroundSchedule(bmTaskId(c.id, 'proactive'), c.id, _proactiveRandUntil[c.id], c.name, 'msg'); // 20261020：预排原生后台任务（进程冻结也能到点）
+            bmRegisterAlarm(c, 'msg', _proactiveRandUntil[c.id]); // 20261002ca：预排原生精确闹钟（进程冻结也能到点提醒）
           }
           triggerAt = _proactiveRandUntil[c.id];
         } else {
           triggerAt = _lastProactive[c.id] + (s.proactiveMin || 10) * 60000;
         }
         if (now >= triggerAt) {
-          bmDiag('proactive_fire', { charId: c.id, random: !!s.proactiveRandom, triggerAt, now, overdueMs: now - triggerAt });
-          // 20261020：taskId 原子锁——闹钟与 tick 两条路径统一先抢占，只有抢占成功者才处理，
-          // 杜绝同一到期时刻重复生成/重复落库。taskId = charId|proactive（稳定，覆盖式幂等）。
-          const taskId = bmTaskId(c.id, 'proactive');
-          if (_claimTask(taskId)) {
-            // 统一处理：查 bmTaskMsg[taskId] → 有则补 confirm；无则生成 → 落库 → confirm。
-            const ok = await _bmProcessTask(c, 'msg', taskId);
-            _releaseTask(taskId, ok);
-            if (ok) {
-              // 只在「消息成功落库并确认」后才推进基准（固定/随机一致，失败绝不推进）
-              if (s.proactiveRandom) {
-                const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
-                const hi2 = Math.max(lo2, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
-                _proactiveRandUntil[c.id] = now + randInt(lo2, hi2) * 60000;
-                _proactiveNextSave(); // 发送成功后重新生成下一次 nextProactiveAt 并落库
-              } else {
-                // 20261020：固定模式——成功才推进基准并落库，失败保持原基准（任务留待重试）
-                _lastProactive[c.id] = now;
-                _proactiveFixedSave();
-              }
-              // 主动发消息也可能随机附带一次戳一戳（AI 模式下不触发）
-              maybeCharPoke(c);
-              // 20260929al：访客随机向玩家提问（每天0~3条，搭在主动消息节奏上，不新增定时器）
-              maybeCharAskPlayer(c);
-              // 20261002ca：本轮已触发 → 预排下一轮原生后台任务（挂后台/进程冻结也照常到点）
-              const nextDue = s.proactiveRandom ? _proactiveRandUntil[c.id] : (_lastProactive[c.id] + (s.proactiveMin || 10) * 60000);
-              bmBackgroundSchedule(bmTaskId(c.id, 'proactive'), c.id, nextDue, c.name, 'msg');
-            }
+          _lastProactive[c.id] = now;
+          if (s.proactiveRandom) {
+            const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
+            const hi2 = Math.max(lo2, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
+            _proactiveRandUntil[c.id] = now + randInt(lo2, hi2) * 60000;
+            _proactiveNextSave(); // 20261008：发送成功后重新生成下一次 nextProactiveAt 并落库
           }
+          // 20260929ba：转账/红包不再搭载在主动消息里——独立「随机红包」模式（下方 s.randomPacket 块）
+          // 20260929ah：AI 模式下主动消息由 AI 生成（节奏不变）；失败软回退字卡（不回滚模式开关）
+          let msg = null;
+          if (await isAIMode()) {
+            const r = await aiSoftReply(c,
+              '请主动给玩家发一条消息（像自然地想起对方）：可以是分享、问候、吐槽或关心，1~3 句，符合角色口吻。',
+              () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
+            msg = r;
+          } else {
+            msg = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
+          }
+          await deliverCharMessage(c, msg, 'text');
+          // 主动发消息也可能随机附带一次戳一戳（AI 模式下不触发）
+          maybeCharPoke(c);
+          // 20260929al：访客随机向玩家提问（每天0~3条，搭在主动消息节奏上，不新增定时器）
+          maybeCharAskPlayer(c);
+          // 20261002ca：本轮已触发 → 预排下一轮原生闹钟（挂后台/进程冻结也照常到点提醒）
+          bmRegisterAlarm(c, 'msg', s.proactiveRandom ? _proactiveRandUntil[c.id] : (now + (s.proactiveMin || 10) * 60000));
           // 超频已从主动消息分离，固定在 15 秒 tick 每访客独立计时；此处不再触发
         }
       }
@@ -4757,13 +4753,13 @@ async function __proactiveScan() {
         if (!_summonAutoUntil[c.id]) {
           _summonAutoUntil[c.id] = now + nextIv() * 60000; // 首次播种：区间随机后触发
           _summonAutoSave();
-          // 预排原生后台任务（挂后台/进程冻结也能到点提醒）；taskId 类别=summon
-          try { bmBackgroundSchedule(bmTaskId(c.id, 'summon'), c.id, _summonAutoUntil[c.id], c.name, 'summon'); } catch (e) {}
+          // 预排原生闹钟（挂后台/进程冻结也能到点提醒）
+          try { bmRegisterAlarm(c, 'msg', _summonAutoUntil[c.id]); } catch (e) {}
         } else if (now >= _summonAutoUntil[c.id]) {
           // 到点：自动触发一次召唤拼字消息（engine.summonAuto 内部自检开关/防重入）
           _summonAutoUntil[c.id] = now + nextIv() * 60000; // 重排下一次：再次区间随机
           _summonAutoSave();
-          try { bmBackgroundSchedule(bmTaskId(c.id, 'summon'), c.id, _summonAutoUntil[c.id], c.name, 'summon'); } catch (e) {}
+          try { bmRegisterAlarm(c, 'msg', _summonAutoUntil[c.id]); } catch (e) {}
           try {
             if (window.bmTypecard && typeof window.bmTypecard.summonAuto === 'function') {
               await window.bmTypecard.summonAuto(c.id);
