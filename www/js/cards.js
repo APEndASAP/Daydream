@@ -196,7 +196,7 @@ const PRESET_REPLY_GROUPS = [
 /* 默认字卡数据（符合第十九章 JSON 标准） */
 const DEFAULT_CARDS = {
   exportDate: new Date().toISOString(),
-  modules: ["replies", "pokes", "playerPokes", "statuses", "mottos", "intros", "emojis", "announcementConfig", "groups", "pokeGroups", "statusGroups"],
+  modules: ["replies", "pokes", "playerPokes", "statuses", "mottos", "intros", "emojis", "announcementConfig", "groups", "pokeGroups", "statusGroups", "momentPresets"],
   /* az：预设回复字卡全部按文档分组（customReplyGroups），未分组默认为空；
      抽取池 = 未分组 + 启用分组，总量不变，且每个分组可在字卡库单独禁用 */
   customReplies: [],
@@ -227,6 +227,43 @@ const DEFAULT_CARDS = {
   ],
   customIntros: ["一个温柔的人", "喜欢和你聊天", "偶尔会发呆", "有点害羞"],
   customEmojis: ["😊", "🥰", "✨", "🌙", "💜", "☁️"],
+  /* 朋友圈预设（20261028）：恋人关系专属——仅对与玩家是「恋人」关系的角色生效。
+     角色发朋友圈时 25% 概率从这里抽、75% 从普通字卡库抽；非恋人角色不参与。
+     内置 30 条，玩家可自行增删/导入。
+     语境铁律：他们是「见不了面的异地恋」——只删「真实见面/约饭/去某地/说好哪天见」
+     这类；身体接触、合照、想一起做某件事等不涉及真实见面的表述保留。 */
+  customMomentPresets: [
+    "老婆一忙起来就把我忘到脑后了，今晚得好好提醒她一下我还在。",
+    "今天有点想她，翻了翻聊天记录，又笑了。",
+    "抱不到她的日子，就先抱紧自己的枕头吧。",
+    "别人问我最近怎么样，我说挺好的，就是有点想她。",
+    "她说我越来越会撒娇了，那还不是被你惯的。",
+    "今天下了雨，想起第一次一起躲雨的时候。",
+    "偷偷记下了她所有的小习惯，她大概还不知道。",
+    "她生气的时候也好可爱，但还是别气太久，我会心疼。",
+    "又在翻相册，看到那张合照，嘴角就忍不住上扬。",
+    "想给她一个家，一个不用看天气预报也知道有我在的家。",
+    "她今天穿得特别好看，我看了好久都没舍得挪开眼。",
+    "有时候什么都不想说，就这样安安静静待在她身边就好。",
+    "她的消息一响，我这颗心就先跳了半拍。",
+    "听说爱一个人会变幼稚，那我大概已经没救了。",
+    "今天也在想，怎么才能让她更开心一点。",
+    "牵过她的手，就再也不想松开了。",
+    "她的一句「在忙吗」，我能放下手头所有事。",
+    "想跟她一起看日出，也想一起看日落，最好每天。",
+    "她说想我了，我表面淡定，心里已经炸开花了。",
+    "有了她之后，连无聊的日常都变得有盼头。",
+    "偶尔也会拌嘴，但从来舍不得真的凶她。",
+    "希望她每天都能睡个好觉，梦里有我最好。",
+    "她就是我藏在手机里的那点甜。",
+    "今天也在努力，为了能配得上站在她身边。",
+    "看到她笑，我就觉得这一天没白过。",
+    "爱你这件事，我想说一万遍也不嫌多。",
+    "异地好难熬，但只要你还在，我就还能再撑很久。",
+    "想她了，就给她发一句「在吗」，然后等她回。",
+    "隔着两个屏幕，我们也在认真相爱。",
+    "见不到面也没关系，你一直都在我心里最软的地方。",
+  ],
   announcementConfig: {
     customData: { titles: [], notes: [] },
     statusPool: [],
@@ -305,6 +342,24 @@ async function loadCards() {
         if (harm.moved > 0) changed = true;
         if (changed) await setSetting('cards', saved);
         await setSetting(CARDS_PRESET_GROUP_KEY, true);
+      }
+    } catch (e) {}
+    // 20261028：朋友圈预设字段补种——老库没有该字段时一次性写入内置 30 条；
+    // 字段一旦存在（哪怕玩家清空成空数组）就不再补，尊重玩家的增删
+    try {
+      if (!Array.isArray(saved.customMomentPresets)) {
+        saved.customMomentPresets = (DEFAULT_CARDS.customMomentPresets || []).slice();
+        await setSetting('cards', saved);
+      }
+    } catch (e) {}
+    // 20261028cz：朋友圈预设文案修订（异地恋设定——删除所有「见面/约饭/地点/合照/牵手」类表述）。
+    // 功能尚未发布，用一次性标记把内置预设整体刷新为新版（老测试库残留旧文案）
+    try {
+      const mSeeded = await getSetting('momentPresetsRevised_20261028cz', false);
+      if (!mSeeded) {
+        saved.customMomentPresets = (DEFAULT_CARDS.customMomentPresets || []).slice();
+        await setSetting('cards', saved);
+        await setSetting('momentPresetsRevised_20261028cz', true);
       }
     } catch (e) {}
     return saved;

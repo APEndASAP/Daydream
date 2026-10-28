@@ -4,7 +4,7 @@
    ============================================================ */
 
 const DB_NAME = 'bairimeng';
-const DB_VERSION = 5; // 20260929ao：+1 新增 gifts store（超频礼物柜：收到的礼物+寄语，按送礼物的人索引）
+const DB_VERSION = 6; // 20261028：+1 新增 surveyLibrary store（问卷库：玩家库+角色库，预存问卷模板）
 
 let _db = null;
 
@@ -42,6 +42,12 @@ function openDB() {
         // 超频礼物柜（20260929ao）：收到的礼物 + 寄语，按送礼物的人（charId，项链=all）索引
         const gs = db.createObjectStore('gifts', { keyPath: 'id' });
         gs.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('surveyLibrary')) {
+        // 问卷库（20261028）：预存问卷模板。owner='player'（全局玩家库）/ 'char'（每角色独立库）
+        // 按 owner+charId 索引，便于快速取某一角色（或全局）的问卷
+        const sl = db.createObjectStore('surveyLibrary', { keyPath: 'id' });
+        sl.createIndex('owner_charId', ['owner', 'charId'], { unique: false });
       }
     };
     req.onsuccess = (e) => { _db = e.target.result; resolve(_db); };

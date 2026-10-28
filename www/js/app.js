@@ -120,7 +120,7 @@ function sanitizeCards(c) {
     const filtered = cleanList(c[key]);
     if (filtered.length !== c[key].length) { c[key] = filtered; dirty = true; }
   };
-  ['customReplies', 'customPokes', 'customPlayerPokes', 'customStatuses', 'customMottos', 'customIntros', 'customEmojis'].forEach(cleanArr);
+  ['customReplies', 'customPokes', 'customPlayerPokes', 'customStatuses', 'customMottos', 'customIntros', 'customEmojis', 'customMomentPresets'].forEach(cleanArr);
   const cleanGroups = (key) => {
     if (!Array.isArray(c[key])) return;
     const before = c[key].length;
@@ -150,6 +150,22 @@ async function init() {
      面板拦截，这里直接不初始化（不建库不渲染），保护页由 head 脚本注入。
      根治"文件卡片打开 → 空库界面 → 以为数据串了"（数据全在 8902，一份没丢）。 */
   if (window.__BM_ORIGIN_OK === false) return;
+  /* 20261028：读「软件内音乐音量」到内存缓存（供入梦签白噪音实时取用） */
+  try { getSetting('appBgmVol', '100').then(v => { const n = parseInt(v, 10); if (!isNaN(n)) _appBgmVolCache = Math.max(0, Math.min(200, n)); }).catch(() => {}); } catch (e) {}
+  /* 20261028：全局音频解锁兜底——玩家第一次真实交互（点击/触摸/按键）时预加载露珠水晶声等
+     短音效。开屏点击虽已让页面获得 user activation，但若玩家直接跳过开屏或未点到开屏，
+     这里作为兜底，保证入梦签里拨动露珠等短音效一定能响。只挂一次，不重复。 */
+  {
+    const _unlockOnce = () => {
+      try { window.ChimeAudio && window.ChimeAudio.unlock && window.ChimeAudio.unlock(); } catch (e) {}
+      try { document.removeEventListener('pointerdown', _unlockOnce, true); document.removeEventListener('keydown', _unlockOnce, true); document.removeEventListener('touchstart', _unlockOnce, true); } catch (e) {}
+    };
+    try {
+      document.addEventListener('pointerdown', _unlockOnce, true);
+      document.addEventListener('keydown', _unlockOnce, true);
+      document.addEventListener('touchstart', _unlockOnce, true);
+    } catch (e) {}
+  }
   /* 20260929ab：一次性自动清库（?autoclear=1）——用户要求"直接帮我清除"，
      入口=带参链接，打开即清空全部 5 个 store（与总设置「重置」同一套动作），
      然后抹掉参数自动刷新，落到全新初始状态。只认显式参数，绝非常规行为。 */
@@ -759,6 +775,12 @@ async function generateDailyCard() {
   const statusPool = (cards && cards.customStatuses && cards.customStatuses.length) ? cards.customStatuses : ['平静'];
   // 纪念日：弹卡纪念日角色今天的纪念日（与 computeTodayAnnivText 同一套逻辑，保证缓存校验一致）
   const annivText = await computeTodayAnnivText();
+  // 20261027：经期潮汐关心（AI 模式按角色性格生成；字卡回退温柔句池）
+  const careSig = await periodTodaySig();
+  const careText = careSig ? await periodCareText(char) : '';
+  // 20261027：当天节日/节气签（内置字卡库随机抽取，不公开）
+  let festival = null;
+  try { festival = (typeof pickFestivalCard === 'function') ? pickFestivalCard(new Date()) : null; } catch (e) { festival = null; }
   // 20260929ae：AI 模式下，心情/寄语/来信心文由 AI 生成；天气/状态仍走字卡（特殊项一）
   let aiText = null;
   if (await isAIMode()) {
@@ -776,6 +798,9 @@ async function generateDailyCard() {
     status: drawFrom(statusPool), // 状态：全局池，不跟随角色（特殊项一：永远走字卡）
     msg: (aiText && aiText.msg) || drawFrom(replyPool) || '今晚也要梦到我哦。', // 来信心文
     annivText: annivText, // 今日纪念日（空则无）
+    careSig: careSig,     // 20261027：经期潮汐状态签名（缓存校验用）
+    careText: careText,   // 20261027：经期关心文案（空则无）
+    festival: festival,   // 20261027：当天节日/节气签（内置字卡库随机抽取）
   };
   await setSetting('dailyCardData', data);
   return data;
@@ -792,8 +817,16 @@ async function getTodayCard() {
   // 或「今天为纪念日」，缓存的 annivText 不会跟着变。这里校验缓存里记录的纪念日文案与
   // 当前设置实时算出的是否一致，不一致（含从有到无、从无到有、换了角色/原因）就重生成。
   const expectAnniv = await computeTodayAnnivText();
+  // 20261027：经期状态签名变了（开启/关闭/跨期相）也要重生成（纯计算，不触发 AI）
+  const expectCare = await periodTodaySig();
+  // 20261028：节日/节气签校验——实时算出今天应命中的 key（不含随机句），
+  // 与缓存的 festival.key 比对。防止改了节气匹配逻辑（如就近→当天）后旧缓存仍被复用。
+  let expectFestKey = null;
+  try { const f = (typeof pickFestivalCard === 'function') ? pickFestivalCard(new Date()) : null; expectFestKey = f ? f.key : null; } catch (e) { expectFestKey = null; }
+  const cachedFestKey = (data && data.festival) ? data.festival.key : null;
   if (!data || data.date !== todayKey() || (data.charId || null) !== expectId
-      || (data.annivText || '') !== expectAnniv) {
+      || (data.annivText || '') !== expectAnniv || (data.careSig || '') !== expectCare
+      || cachedFestKey !== expectFestKey) {
     data = await generateDailyCard();
   }
   return data;
@@ -813,7 +846,21 @@ async function computeTodayAnnivText() {
   return `${ac ? ac.name : 'TA'}的${todayAnniv.reason}`;
 }
 
+/* 解析某入梦签命中的 fx 类型。节气清明（type=solar，梨花）与节日清明（type=festival，杏花雨）
+   共用 key='qingming'，但 DREAM_FX_MAP 只映射了节日版的 apricot，需在此区分节气版走 pear。 */
+function resolveDreamFx(d) {
+  if (!d || !d.festival || !window.DREAM_FX_MAP) return null;
+  if (d.festival.type === 'solar' && d.festival.key === 'qingming') return 'pear';
+  return window.DREAM_FX_MAP[d.festival.key] || null;
+}
+
 function buildDailyCardHtml(d, btnId) {
+  // 20261028：当天命中节日/节气 → 用「动画节气版」入梦签（Canvas 动画背景 + 节气排版）；
+  // 其余日期保持原有完整排版（心情/天气/状态/寄语/来信等）。
+  if (d.festival && window.DREAM_FX_MAP) {
+    const fx = resolveDreamFx(d) || 'leaf';
+    return buildFestivalCardHtml(d, btnId, fx);
+  }
   const now = new Date();
   const dateStr = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}.${String(now.getDate()).padStart(2, '0')}`;
   const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -839,6 +886,19 @@ function buildDailyCardHtml(d, btnId) {
         <div style="text-align:center;background:linear-gradient(135deg,rgba(167,139,250,0.22),rgba(244,114,182,0.16));border:1px solid var(--purple-dim);border-radius:16px;padding:12px 16px;margin-bottom:10px;">
           <div style="font-size:12px;color:var(--purple-soft);letter-spacing:1px;">🎉 今天是纪念日</div>
           <div style="font-size:15px;font-weight:700;margin-top:4px;">${escapeHtml(d.annivText)}</div>
+        </div>
+      ` : ''}
+
+      ${d.careText ? `
+        <div style="text-align:center;background:linear-gradient(135deg,rgba(244,114,182,0.18),rgba(167,139,250,0.14));border:1px solid var(--purple-dim);border-radius:16px;padding:11px 16px;margin-bottom:10px;">
+          <div style="font-size:14.5px;line-height:1.6;color:var(--purple-soft);font-weight:600;">${escapeHtml(d.careText)}</div>
+        </div>
+      ` : ''}
+
+      ${d.festival ? `
+        <div style="text-align:center;background:linear-gradient(160deg,rgba(167,139,250,0.16),rgba(244,114,182,0.10));border:1px solid var(--purple-dim);border-radius:16px;padding:13px 16px;margin-bottom:10px;">
+          <div style="font-size:11px;color:var(--purple-soft);letter-spacing:2px;margin-bottom:4px;">${escapeHtml(d.festival.name)} · ${escapeHtml(d.festival.title)}</div>
+          <div style="font-size:14.5px;line-height:1.7;color:var(--purple-soft);font-weight:600;">${escapeHtml(d.festival.line)}</div>
         </div>
       ` : ''}
 
@@ -868,10 +928,313 @@ function buildDailyCardHtml(d, btnId) {
   `;
 }
 
+/* ============ 20261028：入梦签「动画节气版」——当天命中节日/节气时使用 ============
+   动画 Canvas 作背景氛围层，文字排版浮在上层（动画样品页定稿的 dm-* 结构）。
+   字段映射：d.festival.name/title/line → 节气标签/主标题/寄语正文；
+   d.annivText/careText → 纪念日/经期胶囊（无则条件渲染不占位）；
+   底部短句 = d.motto（寄语，AI 模式 AI 生成 / 字卡模式字卡随机抽）。 */
+function buildFestivalCardHtml(d, btnId, fx) {
+  const now = new Date();
+  const dateStr = `${now.getMonth() + 1}月${now.getDate()}日`;
+  const noChar = !d.charId;
+  const displayName = noChar ? '访客' : (d.charName || '梦角');
+  const fallbackLetter = noChar ? '梦' : ((d.charName || '梦')[0]);
+  const hasBadges = !!(d.annivText || d.careText);
+  // 20261028：有底部装饰的 fx——这些动画在卡片底部画荷叶/荷花/水面/河灯/嫩芽/炭炉等，
+  // 需在寄语与按钮之间留出装饰区（拉长卡片、按钮下移）。其余 fx 不加。
+  const BOTDEC_FX = ['lotus','apricot','wave','flag','sprout','rainripple','riverlamp','dew','geese','hearth','pear'];
+  const botdec = BOTDEC_FX.indexOf(fx) >= 0 ? ' fx-botdec' : '';
+  return `
+    <div class="daily-card festival-card fade-in${botdec}" style="position:relative;overflow:hidden;padding:0;">
+      <canvas class="dream-fx-canvas" id="dream-fx-canvas"></canvas>
+      <div class="dream-fx-inner">
+        <div class="dream-fx-head">
+          <div class="dream-fx-avatar">
+            ${d.charAvatar ? `<img src="${imgSrcAttr(d.charAvatar)}">` : escapeHtml(fallbackLetter)}
+          </div>
+          <div style="min-width:0;text-align:left;">
+            <div class="dream-fx-name">${escapeHtml(displayName)}</div>
+            <div class="dream-fx-date">${dateStr} · 入梦签</div>
+          </div>
+        </div>
+        ${hasBadges ? `<div class="dream-fx-badges">
+          ${d.annivText ? `<div class="dream-fx-badge anniv">🎉 ${escapeHtml(d.annivText)}</div>` : ''}
+          ${d.careText ? `<div class="dream-fx-badge care">🌸 ${escapeHtml(d.careText)}</div>` : ''}
+        </div>` : ''}
+        <div class="dream-fx-term">${escapeHtml(d.festival.name)}</div>
+        <div class="dream-fx-title">${escapeHtml(d.festival.title)}</div>
+        <div class="dream-fx-msg">${escapeHtml(d.festival.line)}</div>
+        <div class="dream-fx-from">${escapeHtml(d.motto || '')}</div>
+        <button class="btn primary block dream-fx-btn" id="${btnId}">我收到啦</button>
+      </div>
+    </div>
+  `;
+}
+
 /* 弹卡渲染（当天内容固定） */
 async function openDailyCardModal(d, onReceive) {
+  // 20261028：弹卡打开的一瞬间就触发节气/节日音效（在 openModal 之前先播，与卡片显现同步）
+  const fx = resolveDreamFx(d);
+  if (fx) _playDreamFxAudio(fx);
   openModal(buildDailyCardHtml(d, 'btn-daily-receive'));
   $('#btn-daily-receive').onclick = onReceive;
+  // 20261028：节气动画版 → 启动动画 + 绑定风场/烟花交互；关闭时统一清理
+  mountDreamCardFx(d);
+}
+
+/* 20261028：入梦签节气/节日调试器（开发者模式专属）。
+   从总设置「开发者模式」开启后，点「入梦签节气/节日调试」进入：列出全部节日+节气，
+   点任意一项即预览对应的入梦签动画卡片（含动画/音效/交互），方便逐一看效果。 */
+/* 调试器占位勾选状态（跨会话记忆，避免每次重勾） */
+let _fxDebugAnniv = false;
+let _fxDebugCare = false;
+/* 调试器列表滚动位置（关闭动画卡返回选择页后恢复，避免每次回到顶部） */
+let _fxDebugScrollTop = 0;
+/* 20261028：玩家「入梦签效果查看」模式——仅能打开节气/节日调试器，其余开发者功能一律禁用。
+   与 developerMode 完全隔离：玩家模式下 chatSettings.developerMode 仍为 false，故不会命中任何开发者命令/日志分支。 */
+let _playerFxView = false;
+
+function showDreamFxDebugModal() {
+  // 20261028：允许两种进入方式——完整开发者模式，或「玩家效果查看」密码（只进调试器）
+  if (!chatSettings.developerMode && !_playerFxView) { miniToast('需先开启开发者模式或输入查看密码'); return; }
+  // 先恢复上次的占位勾选记忆，再渲染（记忆为空则用默认 false）
+  _fxDebugRestoreState();
+  renderFxDebug();
+}
+
+/* 渲染调试器选择页（点动画卡「我收到啦」后回到这里重新选择） */
+function renderFxDebug() {
+  // 20261028：滚动位置记忆——若当前已有列表（从动画卡返回），先记下 scrollTop，渲染后恢复
+  const _prevScroll = document.querySelector('.fx-debug-scroll');
+  if (_prevScroll) _fxDebugScrollTop = _prevScroll.scrollTop;
+  const groups = [];
+  // 节日
+  const festItems = [];
+  for (const k in FESTIVAL_CARDS) {
+    const f = FESTIVAL_CARDS[k];
+    festItems.push(`<div class="fx-debug-item" data-type="festival" data-key="${k}" data-name="${escapeHtml(f.name)}" data-title="${escapeHtml(f.title)}">${escapeHtml(f.name)}</div>`);
+  }
+  if (festItems.length) groups.push(`<div class="fx-debug-group"><div class="fx-debug-gtitle">节日</div>${festItems.join('')}</div>`);
+  // 节气
+  const termItems = [];
+  for (const t of SOLAR_TERM_CARDS) {
+    termItems.push(`<div class="fx-debug-item" data-type="solar" data-key="${t.id}" data-name="${escapeHtml(t.name)}" data-title="${escapeHtml(t.title)}">${escapeHtml(t.name)}</div>`);
+  }
+  if (termItems.length) groups.push(`<div class="fx-debug-group"><div class="fx-debug-gtitle">节气</div>${termItems.join('')}</div>`);
+  if (!groups.length) { miniToast('未找到节日/节气数据'); return; }
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div style="font-size:16px;font-weight:600;">入梦签节气/节日调试</div>
+      <button class="icon-btn" id="fx-debug-close">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.6;">点任意一项预览对应的入梦签动画卡片；点卡片「我收到啦」会回到这里继续选择。勾选状态会自动记住。</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--bg-elevated-2);border-radius:10px;">
+      <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="dbg-anniv" style="width:16px;height:16px;accent-color:var(--purple);"> 纪念日占位
+      </label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="dbg-care" style="width:16px;height:16px;accent-color:var(--purple);"> 经期占位
+      </label>
+    </div>
+    <div class="fx-debug-scroll">${groups.join('')}</div>`);
+  // 20261028：恢复上次的滚动位置（关闭动画卡返回后不回顶部）
+  const _scrollEl = document.querySelector('.fx-debug-scroll');
+  if (_scrollEl && _fxDebugScrollTop > 0) {
+    try { _scrollEl.scrollTop = _fxDebugScrollTop; } catch (e) {}
+  }
+  // 关闭按钮：回到总设置（复用 closeModal 的 _settingsActive 返回逻辑）
+  const dbgClose = $('#fx-debug-close');
+  if (dbgClose) dbgClose.onclick = closeModal;
+  // 20261028：占位勾选状态记忆——回填上次勾选 + 变更即持久化
+  const _anniv = document.getElementById('dbg-anniv');
+  const _care = document.getElementById('dbg-care');
+  if (_anniv) {
+    _anniv.checked = !!_fxDebugAnniv;
+    _anniv.onchange = () => { _fxDebugAnniv = _anniv.checked; try { setSetting('fxDebugAnniv', _fxDebugAnniv); } catch (e) {} };
+  }
+  if (_care) {
+    _care.checked = !!_fxDebugCare;
+    _care.onchange = () => { _fxDebugCare = _care.checked; try { setSetting('fxDebugCare', _fxDebugCare); } catch (e) {} };
+  }
+  // 冷启动首次打开时异步记忆可能晚于渲染返回——再兜底同步一次勾选状态
+  try {
+    getSetting('fxDebugAnniv', false).then(v => { if (_anniv) _anniv.checked = !!v; _fxDebugAnniv = !!v; }).catch(() => {});
+    getSetting('fxDebugCare', false).then(v => { if (_care) _care.checked = !!v; _fxDebugCare = !!v; }).catch(() => {});
+  } catch (e) {}
+  // 绑定点击：选中某项 → 打开对应动画卡片（「我收到啦」回到本选择页）
+  document.querySelectorAll('.fx-debug-item').forEach(el => {
+    el.onclick = () => {
+      const key = el.getAttribute('data-key');
+      const name = el.getAttribute('data-name');
+      const title = el.getAttribute('data-title');
+      const type = el.getAttribute('data-type');
+      let line = '';
+      if (type === 'festival' && FESTIVAL_CARDS[key]) {
+        line = FESTIVAL_CARDS[key].lines[0];
+      } else if (type === 'solar') {
+        const t = SOLAR_TERM_CARDS.find(x => x.id === key);
+        if (t) line = t.lines[0];
+      }
+      // 读取当前勾选状态，注入占位文字以预览两行徽章同时出现的排版
+      const annivText = (_anniv && _anniv.checked) ? '纪念日 · 今天' : '';
+      const careText = (_care && _care.checked) ? '经期提醒 · 今天' : '';
+      // 构造入梦签数据并打开动画卡片（头像取当前入梦签角色，无则用占位）
+      const dc = (characters && characters.length) ? characters[0] : null;
+      const d = {
+        charId: dc ? dc.id : null,
+        charName: dc ? dc.name : '访客',
+        charAvatar: dc ? (dc.avatar || '') : '',
+        annivText, careText,
+        motto: '调试预览 · 入梦签',
+        festival: { type, key, name, title, line },
+      };
+      // 「我收到啦」：停动画 → 回到调试选择页（而非退到总设置/空白）
+      openDailyCardModal(d, () => {
+        try { unmountDreamCardFx(); } catch (e) {}
+        renderFxDebug();
+      });
+    };
+  });
+}
+
+/* 初始化：恢复调试器占位勾选记忆（懒加载，首次进调试器前读取一次即可） */
+function _fxDebugRestoreState() {
+  try {
+    getSetting('fxDebugAnniv', false).then(v => { _fxDebugAnniv = !!v; }).catch(() => {});
+    getSetting('fxDebugCare', false).then(v => { _fxDebugCare = !!v; }).catch(() => {});
+  } catch (e) {}
+}
+
+/* ============ 20261028：入梦签动画挂载/清理（纯增量，不影响其他弹窗） ============ */
+let _dreamFxKind = null;        // 当前动画类型
+let _dreamFxCanvas = null;      // 当前 canvas
+let _dreamFxLastPt = null;      // 风场：上一次指针位置
+let _dreamFxDown = null;        // 烟花：按下位置
+/* 软件内音乐音量内存缓存（百分数 0~200，默认 100）——供入梦签白噪音实时取用，
+   避免每次弹卡都异步读库；init 读一次、滑条 oninput 同步更新。 */
+let _appBgmVolCache = 100;
+/* 自动播放当前节气/节日的背景音效（入梦签弹出即触发，无需点击）。
+   FX_AUDIO[fx] 可为 字符串(file) / [file, vol] / null(静音) 三种形态。 */
+function _playDreamFxAudio(fx) {
+  const audio = window.FX_AUDIO && window.FX_AUDIO[fx];
+  if (!audio || !window.BgAudio) return;   // null = 静音，不播
+  let file, vol = 1.0;
+  if (Array.isArray(audio)) { file = audio[0]; vol = audio[1]; }
+  else { file = audio; }
+  // 20261028：入梦签白噪音音量跟随「软件内音乐音量」滑条（appBgmVol，百分数 0~200，默认 100）。
+  // 在各自音效的固有音量基础上再乘软件内音乐音量，拖动滑条即生效（下次弹卡按最新值）。
+  try {
+    const appVol = (typeof _appBgmVolCache === 'number') ? _appBgmVolCache : 100;
+    vol = vol * Math.max(0, Math.min(200, appVol)) / 100;
+  } catch (e) {}
+  try { window.BgAudio.play(file, vol); } catch (e) {}
+}
+/* 启动动画 + 绑定交互（仅节气动画版入梦签） */
+function mountDreamCardFx(d) {
+  const cv = document.getElementById('dream-fx-canvas');
+  if (!cv) return;   // 非节气版，无 canvas
+  const fx = resolveDreamFx(d);
+  if (!fx || typeof window.runFx !== 'function') return;
+  _dreamFxKind = fx;
+  _dreamFxCanvas = cv;
+  _dreamFxLastPt = null; _dreamFxDown = null;
+  window.stopFx && window.stopFx();
+  window.runFx(fx, cv);
+  // 音效已在 openDailyCardModal 弹卡前统一触发，此处不再重复播放
+  const card = cv.closest('.festival-card');
+  if (!card) return;
+  const dpr = window.devicePixelRatio || 1;
+  const onMove = (e) => {
+    const cur = { x: e.clientX, y: e.clientY };
+    if (_dreamFxLastPt) {
+      const dx = cur.x - _dreamFxLastPt.x, dy = cur.y - _dreamFxLastPt.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.5) {
+        const nx = dx / len, ny = dy / len;
+        const W = window.FXWIND;
+        W.vx = nx; W.vy = ny;
+        W.life = Math.min(1.6, W.life + len * 0.03);
+        W.strength = Math.min(1, 0.6 + len * 0.06);
+        const rect = card.getBoundingClientRect();
+        const sx = (e.clientX - rect.left) * dpr, sy = (e.clientY - rect.top) * dpr;
+        W.cx = sx; W.radius = rect.width * dpr * 0.42;
+        if (Math.random() < 0.75) {
+          W.streak.push({ x: sx + (Math.random() - 0.5) * 40 * dpr, y: sy + (Math.random() - 0.5) * 60 * dpr, vx: nx * 13, vy: ny * 13, a: 0.5 });
+        }
+      }
+    }
+    // 更新鼠标归一化位置（寒露露珠磁吸跟随）
+    {
+      const rect = card.getBoundingClientRect();
+      window.DreamFxMouse && window.DreamFxMouse.set((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+    }
+    // 寒露露珠叮铃（防抖 260ms）——滑动拨到露珠即响
+    _dewChimeAt(card);
+    _dreamFxLastPt = cur;
+    if (_dreamFxDown) _dreamFxDown.moved = _dreamFxDown.moved || Math.hypot(cur.x - _dreamFxDown.x, cur.y - _dreamFxDown.y) > 6;
+  };
+  // 露珠叮铃检测：鼠标/手指拨到露珠附近即触发水晶声（move 与 down 共用）
+  const _dewChimeAt = () => {
+    if (_dreamFxKind !== 'geese' || !window.DreamFxDew) return;
+    const pts = window.DreamFxDew.getPts();
+    const mp = window.DreamFxMouse.get();
+    for (const dd of pts) {
+      const dist = Math.hypot(mp.x - dd.nx, mp.y - dd.ny);
+      if (dist < 0.10) {
+        const nowT = performance.now();
+        if (nowT - window.DreamFxDew.getLast() > 260) { window.DreamFxDew.setLast(nowT); window.ChimeAudio && window.ChimeAudio.play(); }
+        break;
+      }
+    }
+  };
+  const onLeave = () => { _dreamFxLastPt = null; };
+  const onDown = (e) => {
+    _dreamFxDown = { x: e.clientX, y: e.clientY, moved: false };
+    // 20261028：pointerdown 是浏览器认可的用户激活手势——首次按下时解锁音频自动播放权限，
+    // 之后滑动拨露珠（pointermove）的叮铃声才能被放行（根因：自动播放策略拦截 pointermove 的 play）
+    window.ChimeAudio && window.ChimeAudio.unlock && window.ChimeAudio.unlock();
+    // 按下位置同步到露珠检测（点中露珠也能响）
+    {
+      const rect = card.getBoundingClientRect();
+      window.DreamFxMouse && window.DreamFxMouse.set((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+      _dewChimeAt();
+    }
+  };
+  const onUp = (e) => {
+    if (_dreamFxDown && !_dreamFxDown.moved) {
+      // 点击注入烟花（仅烟花类）
+      if (_dreamFxKind === 'firework' || _dreamFxKind === 'national') {
+        const rect = card.getBoundingClientRect();
+        const px = (e.clientX - rect.left) * dpr, py = (e.clientY - rect.top) * dpr;
+        window.FXBURSTS.push(window.newBurstGlobal(px, py, _dreamFxKind));
+      }
+    }
+    _dreamFxDown = null;
+  };
+  card.addEventListener('pointermove', onMove);
+  card.addEventListener('pointerleave', onLeave);
+  card.addEventListener('pointerdown', onDown);
+  card.addEventListener('pointerup', onUp);
+  card._dreamFxHandlers = { onMove, onLeave, onDown, onUp };
+}
+/* 清理动画 + 解绑交互（关闭弹窗时调用；下次打开重新 mount 恢复） */
+function unmountDreamCardFx() {
+  window.stopFx && window.stopFx();
+  window.BgAudio && window.BgAudio.stop();
+  if (_dreamFxCanvas) {
+    const card = _dreamFxCanvas.closest('.festival-card');
+    if (card && card._dreamFxHandlers) {
+      const h = card._dreamFxHandlers;
+      card.removeEventListener('pointermove', h.onMove);
+      card.removeEventListener('pointerleave', h.onLeave);
+      card.removeEventListener('pointerdown', h.onDown);
+      card.removeEventListener('pointerup', h.onUp);
+      card._dreamFxHandlers = null;
+    }
+  }
+  _dreamFxCanvas = null; _dreamFxKind = null; _dreamFxLastPt = null; _dreamFxDown = null;
+  if (window.FXWIND) { window.FXWIND.vx = 0; window.FXWIND.vy = 0; window.FXWIND.life = 0; window.FXWIND.streak = []; }
+  if (window.FXBURSTS) window.FXBURSTS.length = 0;
 }
 
 /* 启动时弹卡：当天已弹过（dailyShown === today）则不再弹。
@@ -2447,19 +2810,50 @@ function renderBatchList() {
   list.appendChild(bar);
   $('#batch-cancel').onclick = () => { batchMode = false; batchSelected = new Set(); renderChatList(); };
   // 20260929be：批量勾选多个访客 → 直接移入某个分组（与建立群聊同交互）；20261001cp：群聊 id 同样可移入
+  // 20261027：无分组时不再拦截，直接进「新建分组」面板；有分组时列表尾部也带新建入口
   $('#batch-move').onclick = () => {
     if (batchSelected.size === 0) { showToast('请先勾选访客或群聊'); return; }
-    if (charGroups.length === 0) { showToast('还没有分组，先在「访客分组」里新建一个'); return; }
+    const renderNewGroupPanel = () => {
+      openModal(`
+        <div style="font-size:17px;font-weight:600;margin-bottom:6px;">新建分组</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">创建分组并把所选 ${batchSelected.size} 项（访客/群聊）移入</div>
+        <input class="input" id="bm-new-name" placeholder="分组名称" maxlength="16" style="width:100%;margin-bottom:14px;">
+        <button class="btn block" id="bm-new-cancel">取消</button>
+        <button class="btn primary block" id="bm-new-create" style="margin-top:10px;">创建并移入</button>
+      `);
+      $('#bm-new-cancel').onclick = () => { closeModal(); renderBatchList(); };
+      $('#bm-new-create').onclick = async () => {
+        const name = ($('#bm-new-name').value || '').trim();
+        if (!name) { showToast('请输入分组名称'); return; }
+        const moved = batchSelected.size;
+        const grp = { id: uid('cg'), name, memberIds: [], _collapsed: false };
+        charGroups.push(grp);
+        batchSelected.forEach(cid => {
+          charGroups.forEach(g => { if (g !== grp) g.memberIds = (g.memberIds || []).filter(x => x !== cid); });
+          if (!grp.memberIds.includes(cid)) grp.memberIds.push(cid);
+        });
+        await saveCharGroupsAndRefresh();
+        batchMode = false;
+        batchSelected = new Set();
+        closeModal();
+        renderChatList();
+        miniToast(`已创建「${name}」并移入 ${moved} 项`);
+      };
+      setTimeout(() => { try { $('#bm-new-name').focus(); } catch (e) {} }, 80);
+    };
+    if (charGroups.length === 0) { renderNewGroupPanel(); return; }
     openModal(`
       <div style="font-size:17px;font-weight:600;margin-bottom:14px;">把 ${batchSelected.size} 项（访客/群聊）移入分组</div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px;">
         ${charGroups.map((g, gi) => `
           <button class="btn" style="justify-content:flex-start;" data-bm-group="${gi}">${icon('folder', 15)} ${escapeHtml(g.name)}（${(g.memberIds || []).length}）</button>
         `).join('')}
+        <button class="btn" style="justify-content:flex-start;" id="bm-new">📁 新建分组并移入…</button>
       </div>
       <button class="btn block" id="bm-cancel">取消</button>
     `);
     $('#bm-cancel').onclick = () => { closeModal(); renderBatchList(); };
+    $('#bm-new').onclick = renderNewGroupPanel;
     document.querySelectorAll('[data-bm-group]').forEach(btn => {
       btn.onclick = async () => {
         const grp = charGroups[parseInt(btn.dataset.bmGroup)];
@@ -3056,7 +3450,7 @@ function msgBodyHtml(m, oneLine = false) {
         status = remain > 0 ? ('预计还有 ' + remain + ' 分钟回答') : '正在翻问卷作答…';
       } else status = '待回答';
       return `<div class="msg-card" data-survey-card="${m.id}" style="cursor:pointer;">
-        <span class="msg-card-tag">📋 ${isCharAsk ? 'TA 的问卷' : '我发出的问卷'}</span>
+        <span class="msg-card-tag" style="display:inline-flex;align-items:center;gap:4px;">${icon('checklist', 13)} ${isCharAsk ? 'TA 的问卷' : '我发出的问卷'}</span>
         <div style="margin-top:4px;font-size:14px;font-weight:600;">${escapeHtml(sv.title || '我向你发出了一份问卷，快来回答吧！')}</div>
         <div style="margin-top:4px;font-size:12px;color:var(--text-tertiary);">共 ${total} 题 · ${status}</div>
         ${!isCharAsk && !sv.done ? `<div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);">点击查看题目与回答状态</div>` : ''}
@@ -3723,6 +4117,8 @@ function _devPwdHash(s) {
 }
 const DEV_PWD_HASH = 'qbnrxg';          // 开发者密码哈希
 const DEV_PWD_LEN = 11;                 // 密码长度（降低短输入碰撞误判）
+const PLAYER_FX_PWD_HASH = '1ywjcbe';   // 20261028：玩家「入梦签效果查看」密码 geziwo 的哈希（独立于开发者密码）
+const PLAYER_FX_PWD_LEN = 6;            // 玩家密码长度
 
 async function executeDeveloperCommand(command) {
   if (!chatSettings.developerMode) return false;
@@ -6747,6 +7143,8 @@ function closeModal() {
   try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
   // 20261011 晚：弹窗真关闭时，若有后台进行中的导入/导出，隐藏进度面板（进程后台继续，重进恢复）
   if (isProgressActive()) setProgressPanelMode(false);
+  // 20261028：关闭入梦签动画节气版 → 停动画 + 停背景音效（下次打开重新 mount 恢复）
+  try { unmountDreamCardFx(); } catch (e) {}
 }
 
 /* 访客主页子功能上下文标记（关闭后回到访客主页） */
@@ -6765,6 +7163,8 @@ function forceCloseModal() {
   try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
   // 20261011 晚：强制关弹窗后，隐藏后台进度面板（进程后台继续，重进恢复）
   if (isProgressActive()) setProgressPanelMode(false);
+  // 20261028：关闭入梦签动画节气版 → 停动画 + 停背景音效
+  try { unmountDreamCardFx(); } catch (e) {}
 }
 
 // 点击遮罩空白处关闭弹窗
@@ -7241,7 +7641,7 @@ async function showCharProfile(charId = null) {
         ${c.bio ? `<div class="cp-bio">${escapeHtml(c.bio)}</div>` : ''}
         <div class="cp-chips">
           <span class="chip">💰 ¥${c.wallet ?? 100000}</span>
-          <span class="chip ghost">关系：${escapeHtml(relation)}</span>
+          <span class="chip ghost" id="cp-relation-chip" style="cursor:pointer;">关系：${escapeHtml(relation)}</span>
         </div>
         <div class="cp-funcs">
           ${funcs.map(f => `
@@ -7289,6 +7689,9 @@ async function showCharProfile(charId = null) {
     showCharProfile();
   };
   $('#btn-set-relation').onclick = () => showRelationModal(c);
+  // 20261027：主页「关系」标签点击直达关系网设置（含自定义关系入口）
+  const _relChip = $('#cp-relation-chip');
+  if (_relChip) _relChip.onclick = () => showRelationModal(c);
   // 朋友圈设置（合并入口：消息提醒 / 不看TA / 不让TA看我的 / 每日上限）
   $('#btn-moments-settings').onclick = () => showCharMomentsSettingsModal(c);
   $('#btn-banwords').onclick = () => showBanWordsModal(c);
@@ -7437,48 +7840,67 @@ function showRelationModal(c) {
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">你和「${escapeHtml(c.name)}」的关系</div>
     <div style="color:var(--text-secondary);font-size:12px;margin-bottom:10px;">关系类型会影响 TA 对你的回复语气</div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;" id="rel-self-group">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;" id="rel-self-group">
       ${RELATION_TYPES.map(r => `
         <button class="btn rel-self-opt" data-r="${r}" style="${r === (c.relation || '无') ? 'background:var(--purple);color:#141019;' : ''}">${r}</button>
       `).join('')}
+      <button class="btn rel-self-opt" data-r="__custom__" style="${!RELATION_TYPES.includes(c.relation || '无') ? 'background:var(--purple);color:#141019;' : ''}">自定义</button>
     </div>
+    <input class="input" id="rel-custom-input" placeholder="输入你们的关系（如：笔友 / 师徒 / 邻居）" maxlength="12"
+      style="width:100%;margin-bottom:20px;display:${!RELATION_TYPES.includes(c.relation || '无') ? 'block' : 'none'};"
+      value="${!RELATION_TYPES.includes(c.relation || '无') ? escapeHtml(c.relation || '') : ''}">
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">「${escapeHtml(c.name)}」与其他访客的关系</div>
     <div style="color:var(--text-secondary);font-size:12px;margin-bottom:10px;">设定访客之间的羁绊，让群聊和互动更真实</div>
     <div id="rel-peer-group" style="margin-bottom:16px;">
       ${peers.length === 0
         ? '<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0;">还没有其他访客，先添加更多访客吧</div>'
-        : peers.map(p => `
+        : peers.map(p => {
+            const pr = peerRels[p.id] || '无';
+            const prCustom = !RELATION_TYPES.includes(pr);
+            return `
           <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);">
             <div class="avatar sm">${p.avatar ? `<img src="${imgSrcAttr(p.avatar)}">` : (p.name[0] || '?')}</div>
             <div style="flex:1;min-width:0;font-size:14px;font-weight:600;">${escapeHtml(p.name)}</div>
             <select class="input rel-peer-sel" data-peer="${p.id}" style="width:auto;padding:6px 10px;font-size:13px;">
-              ${RELATION_TYPES.map(r => `<option value="${r}" ${r === (peerRels[p.id] || '无') ? 'selected' : ''}>${r}</option>`).join('')}
+              ${RELATION_TYPES.map(r => `<option value="${r}" ${!prCustom && r === pr ? 'selected' : ''}>${r}</option>`).join('')}
+              <option value="__custom__" ${prCustom ? 'selected' : ''}>自定义</option>
             </select>
           </div>
-        `).join('')}
+          <input class="input rel-peer-custom" data-peer="${p.id}" placeholder="输入关系（如：笔友）" maxlength="12"
+            style="width:100%;padding:6px 10px;font-size:13px;margin:-2px 0 8px;display:${prCustom ? 'block' : 'none'};"
+            value="${prCustom ? escapeHtml(pr) : ''}">
+        `; }).join('')}
     </div>
 
     <button class="btn primary block" id="relation-save">保存</button>
   `);
 
-  // 与玩家的关系选择
-  let selected = c.relation || '无';
+  // 与玩家的关系选择（20261027：支持自定义关系——选「自定义」出现输入框）
+  let selected = RELATION_TYPES.includes(c.relation || '无') ? (c.relation || '无') : '__custom__';
+  const customInput = $('#rel-custom-input');
   document.querySelectorAll('.rel-self-opt').forEach(el => {
     el.onclick = () => {
       selected = el.dataset.r;
       document.querySelectorAll('.rel-self-opt').forEach(x => { x.style.background = ''; x.style.color = ''; });
       el.style.background = 'var(--purple)';
       el.style.color = '#141019';
+      if (customInput) customInput.style.display = selected === '__custom__' ? 'block' : 'none';
     };
   });
 
   $('#relation-close').onclick = closeModal;
   $('#relation-save').onclick = async () => {
-    c.relation = selected;
+    c.relation = selected === '__custom__' ? ((customInput && customInput.value.trim()) || '无') : selected;
     const newPeerRels = { ...peerRels };
     document.querySelectorAll('.rel-peer-sel').forEach(sel => {
-      newPeerRels[sel.dataset.peer] = sel.value;
+      // 20261027：自定义关系——选中「自定义」时取对应输入框的值
+      if (sel.value === '__custom__') {
+        const inp = document.querySelector(`.rel-peer-custom[data-peer="${sel.dataset.peer}"]`);
+        newPeerRels[sel.dataset.peer] = inp ? ((inp.value || '').trim() || '无') : '无';
+      } else {
+        newPeerRels[sel.dataset.peer] = sel.value;
+      }
     });
     c.peerRelations = newPeerRels; // 单向：仅存本角色对他人的关系
     await saveChar(c);
@@ -7804,48 +8226,94 @@ async function showRelationsModal(selectedId = null) {
     </div>
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">与玩家（你）的关系 <span style="color:var(--text-tertiary);font-size:12px;font-weight:400;">点击即保存</span></div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
       ${RELATION_TYPES.map(r => `
         <button class="btn rel-chip" data-r="${r}" style="padding:7px 14px;font-size:13px;${r === (c.relation || '无') ? 'background:var(--purple);color:#141019;' : ''}">${r}</button>
       `).join('')}
+      <button class="btn rel-chip" data-r="__custom__" style="padding:7px 14px;font-size:13px;${!RELATION_TYPES.includes(c.relation || '无') ? 'background:var(--purple);color:#141019;' : ''}">自定义</button>
     </div>
+    <input class="input" id="rel-all-custom-input" placeholder="输入你们的关系，回车保存" maxlength="12"
+      style="width:100%;margin-bottom:20px;display:${!RELATION_TYPES.includes(c.relation || '无') ? 'block' : 'none'};"
+      value="${!RELATION_TYPES.includes(c.relation || '无') ? escapeHtml(c.relation || '') : ''}">
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">与其他访客的关系 <span style="color:var(--text-tertiary);font-size:12px;font-weight:400;">下拉选择即保存</span></div>
     ${peers.length === 0
       ? '<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0;">还没有其他访客，先添加更多访客吧</div>'
-      : peers.map(p => `
+      : peers.map(p => {
+          const pr = peerRels[p.id] || '无';
+          const prCustom = !RELATION_TYPES.includes(pr);
+          return `
         <div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);">
           <div class="avatar sm">${p.avatar ? `<img src="${imgSrcAttr(p.avatar)}">` : (p.name[0] || '?')}</div>
           <div style="flex:1;min-width:0;font-size:14px;font-weight:600;">${escapeHtml(p.name)}</div>
           <select class="input rel-peer-sel" data-peer="${p.id}" style="width:auto;padding:6px 10px;font-size:13px;">
-            ${RELATION_TYPES.map(r => `<option value="${r}" ${r === (peerRels[p.id] || '无') ? 'selected' : ''}>${r}</option>`).join('')}
+            ${RELATION_TYPES.map(r => `<option value="${r}" ${!prCustom && r === pr ? 'selected' : ''}>${r}</option>`).join('')}
+            <option value="__custom__" ${prCustom ? 'selected' : ''}>自定义</option>
           </select>
         </div>
-      `).join('')}
+        <input class="input rel-peer-custom" data-peer="${p.id}" placeholder="输入关系，回车保存" maxlength="12"
+          style="width:100%;padding:7px 10px;font-size:13px;margin:-4px 0 10px;display:${prCustom ? 'block' : 'none'};"
+          value="${prCustom ? escapeHtml(pr) : ''}">
+      `; }).join('')}
   `);
 
   $('#rel-all-close').onclick = closeModal;
   $('#rel-back').onclick = () => showRelationsModal(null);
 
-  // 与玩家的关系：点击即保存
+  // 与玩家的关系：点击即保存（20261027：「自定义」chip 展开输入框，回车/失焦保存）
+  const _allCustom = $('#rel-all-custom-input');
+  const _saveCustomRel = async () => {
+    const v = (_allCustom.value || '').trim() || '无';
+    c.relation = v;
+    await saveChar(c);
+    miniToast('已更新与你的关系');
+    showRelationsModal(c.id);
+  };
   document.querySelectorAll('.rel-chip').forEach(el => {
     el.onclick = async () => {
+      if (el.dataset.r === '__custom__') {
+        if (_allCustom) { _allCustom.style.display = 'block'; try { _allCustom.focus(); } catch (e) {} }
+        return;
+      }
       c.relation = el.dataset.r;
       await saveChar(c);
       miniToast('已更新与你的关系');
       showRelationsModal(c.id); // 刷新高亮
     };
   });
+  if (_allCustom) {
+    _allCustom.onkeydown = (e) => { if (e.key === 'Enter') _saveCustomRel(); };
+    _allCustom.onblur = () => { if (_allCustom.isConnected && (_allCustom.value || '').trim()) _saveCustomRel(); };
+  }
 
   // 与其他访客的关系：下拉即保存（单向，仅存本角色对他人的关系）
+  // 20261027：自定义关系——选「自定义」展开输入框，回车/失焦保存
   document.querySelectorAll('.rel-peer-sel').forEach(sel => {
     sel.onchange = async () => {
       const pid = sel.dataset.peer;
+      const inp = document.querySelector(`.rel-peer-custom[data-peer="${pid}"]`);
+      if (sel.value === '__custom__') {
+        if (inp) { inp.style.display = 'block'; try { inp.focus(); } catch (e) {} }
+        return;
+      }
+      if (inp) inp.style.display = 'none';
       c.peerRelations = c.peerRelations || {};
       c.peerRelations[pid] = sel.value;
       await saveChar(c);
       miniToast('关系已更新（单向）');
     };
+  });
+  document.querySelectorAll('.rel-peer-custom').forEach(inp => {
+    const save = async () => {
+      if (!inp.isConnected) return; // 防止关弹窗触发的 blur 误保存
+      const pid = inp.dataset.peer;
+      c.peerRelations = c.peerRelations || {};
+      c.peerRelations[pid] = (inp.value || '').trim() || '无';
+      await saveChar(c);
+      miniToast('关系已更新（单向）');
+    };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
+    inp.onblur = save;
   });
 }
 
@@ -9346,8 +9814,18 @@ function openGroupCallScreen(g, members, kind, msg) {
 
 /* 访客随机来电（5.8：随机接收视频/语音通话，可接听/拒绝/未接听）；kind 可强制指定 'video'/'voice'（开发者命令用） */
 async function triggerIncomingCall(c, kind) {
-  // 若已有通话进行中，跳过
-  if (_callActive) return;
+  // 20261027：并行通话拦截——玩家正与别人通话时，这位访客的来电不再弹来电界面，
+  // 而是在 TA 的聊天页生成「戳一戳」样式的小消息（未接通来电）+ 发一条系统通知
+  if (_callActive) {
+    const t = new Date();
+    const hhmm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+    const m = { id: uid('msg'), charId: c.id, from: 'them', type: 'poke', content: `在[${hhmm}]给你打了一通电话，但信号未能接通`, time: Date.now() };
+    await idbPut('messages', m);
+    if (currentCharId === c.id && document.body.dataset.view === 'chat') appendMessage(m);
+    else renderChatList();
+    notifyIncoming(c, `${c.name} 在 ${hhmm} 给你打了一通电话，但信号未能接通`, '来电未接通', 'call');
+    return;
+  }
   if (kind !== 'video' && kind !== 'voice') kind = Math.random() < 0.5 ? 'video' : 'voice';
   const msg = { id: uid('msg'), charId: c.id, from: 'them', type: 'call', content: { kind, ended: false, duration: 0, incoming: true }, time: Date.now() };
   await idbPut('messages', msg);
@@ -10014,6 +10492,7 @@ const CARD_MODULES = [
   { key: 'statuses', label: '状态' },
   { key: 'mottos', label: '寄语' },
   { key: 'emojis', label: '表情' },
+  { key: 'momentPresets', label: '朋友圈预设' },
 ];
 
 function showCardsModal() {
@@ -10097,13 +10576,15 @@ function showCardsModal() {
     `;
   } else {
     // 其他模块（访客戳一戳/玩家戳一戳/状态/寄语/表情）：简单列表 + 添加/删除
-    const listKey = { pokes: 'customPokes', playerPokes: 'customPlayerPokes', statuses: 'customStatuses', mottos: 'customMottos', emojis: 'customEmojis' }[tab];
+    const listKey = { pokes: 'customPokes', playerPokes: 'customPlayerPokes', statuses: 'customStatuses', mottos: 'customMottos', emojis: 'customEmojis', momentPresets: 'customMomentPresets' }[tab];
     const list = cards[listKey] || [];
     const pokeNote = tab === 'pokes'
       ? '<div style="font-size:12px;color:var(--text-tertiary);margin:-6px 0 12px;">访客戳玩家时从这个库抽取，展示为「访客名 + 文案」，出现在聊天页面中间（不是气泡）</div>'
       : (tab === 'playerPokes'
         ? '<div style="font-size:12px;color:var(--text-tertiary);margin:-6px 0 12px;">你在聊天页 + 面板里使用的戳一戳，展示为「你 + 文案」（可用 TA 指代访客），初始为空、与访客库分开</div>'
-        : '');
+        : (tab === 'momentPresets'
+          ? '<div style="font-size:12px;color:var(--text-tertiary);margin:-6px 0 12px;">恋人关系专属：仅对与你（玩家）是「恋人」关系的角色生效。TA 发朋友圈时，25% 概率从这里抽、75% 从普通字卡库抽；非恋人角色不会用到这个库。</div>'
+          : ''));
     body = `
       <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">共 ${list.length} 条</div>
       ${pokeNote}
@@ -10118,6 +10599,10 @@ function showCardsModal() {
         <input class="input" id="mod-add-input" placeholder="添加一条…" style="flex:1;">
         <button class="btn primary" id="mod-add-btn">添加</button>
       </div>
+      ${tab === 'momentPresets' ? `
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn block" id="mod-batch-import">⬆ 批量导入（每行一条）</button>
+      </div>` : ''}
     `;
   }
 
@@ -10204,7 +10689,7 @@ function showCardsModal() {
 
   // 非 replies 模块：添加/删除
   if (tab !== 'replies') {
-    const listKey = { pokes: 'customPokes', playerPokes: 'customPlayerPokes', statuses: 'customStatuses', mottos: 'customMottos', emojis: 'customEmojis' }[tab];
+    const listKey = { pokes: 'customPokes', playerPokes: 'customPlayerPokes', statuses: 'customStatuses', mottos: 'customMottos', emojis: 'customEmojis', momentPresets: 'customMomentPresets' }[tab];
     if (!cards[listKey]) cards[listKey] = [];
     document.querySelectorAll('[data-mod-del]').forEach(el => {
       el.onclick = () => {
@@ -10220,7 +10705,25 @@ function showCardsModal() {
       cards[listKey].push(t);
       saveCards(cards).then(() => showCardsModal());
     };
-    $('#btn-cards-batchnote').onclick = () => miniToast('该模块暂不支持批量管理');
+    // 20261028：朋友圈预设批量导入（每行一条）
+    const batchBtn = $('#mod-batch-import');
+    if (batchBtn) {
+      batchBtn.onclick = () => {
+        showCardInputModal('批量导入朋友圈预设', '', async (text) => {
+          const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
+          if (!lines.length) { showToast('没有有效内容'); return; }
+          cards[listKey] = cards[listKey] || [];
+          const exist = new Set(cards[listKey]);
+          let added = 0;
+          for (const ln of lines) { if (!exist.has(ln)) { cards[listKey].push(ln); exist.add(ln); added++; } }
+          await saveCards(cards);
+          miniToast(`已导入 ${added} 条${added < lines.length ? `（跳过重复 ${lines.length - added} 条）` : ''}`);
+          showCardsModal();
+        });
+      };
+    }
+    const batchNoteBtn = $('#btn-cards-batchnote');
+    if (batchNoteBtn) batchNoteBtn.onclick = () => miniToast('该模块暂不支持批量管理');
     return;
   }
 
@@ -10396,9 +10899,11 @@ function showCardsModal() {
     };
   });
 
-  $('#btn-cards-import').onclick = () => showCardImportModal();
+  const importBtn = $('#btn-cards-import');
+  if (importBtn) importBtn.onclick = () => showCardImportModal();
 
-  $('#btn-cards-export').onclick = async () => {
+  const exportBtn = $('#btn-cards-export');
+  if (exportBtn) exportBtn.onclick = async () => {
     // 导出前自动去重（持久化后台进行，不阻塞导出；导出的就是去重后的内存数据）
     const { removed } = dedupeCards(cards);
     saveCards(cards).catch(() => {});
@@ -10826,6 +11331,29 @@ function showCardImportModal() {
 /* ---------- 聊天美化（玩家主页入口：气泡颜色 + 自定义CSS；背景图在访客主页单独设置） ---------- */
 const BUBBLE_ME_COLORS = ['#8b5cf6', '#c084fc', '#f472b6', '#60a5fa', '#34d399', '#fbbf24', '#f87171', '#e5e7eb'];
 const BUBBLE_THEM_COLORS = ['#26232e', '#312b40', '#1f2937', '#2d2a24', '#242f2b', '#33262a', '#252833', '#3a3a3a'];
+/* 20261028：马卡龙色系（浅色柔和系）——玩家气泡与角色气泡各一组。
+   浅底必须配深字（浅色文字在浅色气泡上不可读），故用 data-text 标注文字色。
+   玩家气泡默认白字、角色气泡默认浅字，马卡龙色统一用深色字 #4a3b3b。 */
+const BUBBLE_ME_MACARON = [
+  { bg: '#ffd6e7', text: '#5c3a4a' },  // 樱花粉
+  { bg: '#ffe0c2', text: '#5c4630' },  // 奶油杏
+  { bg: '#fff0b3', text: '#5c5330' },  // 香草黄
+  { bg: '#d4f4dd', text: '#2f5c3f' },  // 薄荷绿
+  { bg: '#d6e8ff', text: '#2f4660' },  // 天空蓝
+  { bg: '#e8d9ff', text: '#453a5c' },  // 丁香紫
+  { bg: '#ffd9d9', text: '#5c3a3a' },  // 蜜桃红
+  { bg: '#c9f0f2', text: '#2f5a5c' },  // 浅湖青
+];
+const BUBBLE_THEM_MACARON = [
+  { bg: '#f7c8d9', text: '#5c3a4a' },  // 樱花粉
+  { bg: '#f5d9b8', text: '#5c4630' },  // 奶油杏
+  { bg: '#f5e6a8', text: '#5c5330' },  // 香草黄
+  { bg: '#c3e8cf', text: '#2f5c3f' },  // 薄荷绿
+  { bg: '#c4daf0', text: '#2f4660' },  // 天空蓝
+  { bg: '#dcc9f0', text: '#453a5c' },  // 丁香紫
+  { bg: '#f5cccc', text: '#5c3a3a' },  // 蜜桃红
+  { bg: '#b8e2e5', text: '#2f5a5c' },  // 浅湖青
+];
 
 /* 20261004di：自定义 CSS 校验——浏览器对无效 CSS 规则是「静默丢弃」的，玩家完全无感。
    这里把源文本按顶层规则切块（括号配对，跳过注释/字符串），逐条喂给离屏 <style> 的
@@ -10942,13 +11470,26 @@ async function loadCustomFonts() {
   } catch (e) {}
 }
 
+// 织梦点当前激活 tab（记住，方便背景上传/气泡换色后重开弹窗回到原 tab）
+let _dreamThemeTab = '色彩';
+
 async function showChatThemeModal() {
   openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <div style="font-size:18px;font-weight:600;">织梦点</div>
       <button class="icon-btn" id="theme-close">✕</button>
     </div>
 
+    <div class="cs-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn dt-tab" data-dt-tab="色彩" style="flex:1;min-width:60px;padding:7px 4px;font-size:12.5px;">色彩</button>
+      <button class="btn dt-tab" data-dt-tab="玻璃" style="flex:1;min-width:60px;padding:7px 4px;font-size:12.5px;">玻璃</button>
+      <button class="btn dt-tab" data-dt-tab="气泡" style="flex:1;min-width:60px;padding:7px 4px;font-size:12.5px;">气泡</button>
+      <button class="btn dt-tab" data-dt-tab="字体" style="flex:1;min-width:60px;padding:7px 4px;font-size:12.5px;">字体</button>
+      <button class="btn dt-tab" data-dt-tab="背景" style="flex:1;min-width:60px;padding:7px 4px;font-size:12.5px;">背景</button>
+      <button class="btn dt-tab" data-dt-tab="高级" style="flex:1;min-width:60px;padding:7px 4px;font-size:12.5px;">高级</button>
+    </div>
+
+    <section class="dt-panel" data-dt-panel="色彩">
     <div class="field">
       <label>全局色彩（点选即换，浅色系会自动把界面换成浅底深字）</label>
       <div style="display:flex;gap:10px;flex-wrap:wrap;" id="theme-global-colors">
@@ -10962,7 +11503,9 @@ async function showChatThemeModal() {
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:8px;" id="gt-cur-name">当前：${(GLOBAL_THEMES[_globalThemeId] || GLOBAL_THEMES.dark).name}${(_globalThemeId || 'dark') !== 'dark' ? ' · 浅色下文字已自动加深，保证可读性' : ''}</div>
     </div>
+    </section>
 
+    <section class="dt-panel" data-dt-panel="玻璃">
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
         <span>玻璃拟态模式</span>
@@ -11022,12 +11565,18 @@ async function showChatThemeModal() {
         <button class="btn call-preset-btn" data-p="2" style="padding:7px 13px;font-size:12px;">2号 · 液态玻璃</button>
       </div>
     </div>
+    </section>
 
+    <section class="dt-panel" data-dt-panel="气泡">
     <div class="field">
       <label>我的气泡颜色</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;" id="theme-me-colors">
         ${BUBBLE_ME_COLORS.map(col => `
-          <div class="color-dot" data-col="${col}" style="background:${col};${col === chatTheme.bubbleMe ? 'outline:2px solid var(--purple-soft);outline-offset:2px;' : ''}"></div>
+          <div class="color-dot" data-col="${col}" data-text="#ffffff" style="background:${col};${col === chatTheme.bubbleMe ? 'outline:2px solid var(--purple-soft);outline-offset:2px;' : ''}"></div>
+        `).join('')}
+        <span style="width:100%;font-size:11px;color:var(--text-tertiary);margin-top:4px;">马卡龙色系</span>
+        ${BUBBLE_ME_MACARON.map(m => `
+          <div class="color-dot" data-col="${m.bg}" data-text="${m.text}" style="background:${m.bg};${m.bg === chatTheme.bubbleMe ? 'outline:2px solid var(--purple-soft);outline-offset:2px;' : ''}"></div>
         `).join('')}
       </div>
     </div>
@@ -11036,11 +11585,23 @@ async function showChatThemeModal() {
       <label>对方气泡颜色</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;" id="theme-them-colors">
         ${BUBBLE_THEM_COLORS.map(col => `
-          <div class="color-dot" data-col="${col}" style="background:${col};${col === chatTheme.bubbleThem ? 'outline:2px solid var(--purple-soft);outline-offset:2px;' : ''}"></div>
+          <div class="color-dot" data-col="${col}" data-text="#f2f0f6" style="background:${col};${col === chatTheme.bubbleThem ? 'outline:2px solid var(--purple-soft);outline-offset:2px;' : ''}"></div>
+        `).join('')}
+        <span style="width:100%;font-size:11px;color:var(--text-tertiary);margin-top:4px;">马卡龙色系</span>
+        ${BUBBLE_THEM_MACARON.map(m => `
+          <div class="color-dot" data-col="${m.bg}" data-text="${m.text}" style="background:${m.bg};${m.bg === chatTheme.bubbleThem ? 'outline:2px solid var(--purple-soft);outline-offset:2px;' : ''}"></div>
         `).join('')}
       </div>
     </div>
 
+    <div style="background:var(--bg-elevated-2);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+      <div style="font-size:11px;color:var(--text-tertiary);">预览效果</div>
+      <div style="display:flex;justify-content:flex-end;"><span style="background:${chatTheme.bubbleMe};color:${chatTheme.bubbleMeText};padding:8px 12px;border-radius:16px 16px 4px 16px;font-size:13px;max-width:70%;">这样聊起来更有氛围啦</span></div>
+      <div><span style="background:${chatTheme.bubbleThem};color:${chatTheme.bubbleThemText};padding:8px 12px;border-radius:16px 16px 16px 4px;font-size:13px;max-width:70%;display:inline-block;">嗯嗯，我一直在呢</span></div>
+    </div>
+    </section>
+
+    <section class="dt-panel" data-dt-panel="字体">
     <div class="field">
       <label>聊天字体</label>
       <button class="btn" id="theme-font-btn" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;">
@@ -11058,28 +11619,24 @@ async function showChatThemeModal() {
       </button>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">应用到导航、主页、朋友圈、弹窗等全部界面；全部为可商用开源字体</div>
     </div>
+    </section>
 
-    <div style="background:var(--bg-elevated-2);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
-      <div style="font-size:11px;color:var(--text-tertiary);">预览效果</div>
-      <div style="display:flex;justify-content:flex-end;"><span style="background:${chatTheme.bubbleMe};color:${chatTheme.bubbleMeText};padding:8px 12px;border-radius:16px 16px 4px 16px;font-size:13px;max-width:70%;">这样聊起来更有氛围啦</span></div>
-      <div><span style="background:${chatTheme.bubbleThem};color:${chatTheme.bubbleThemText};padding:8px 12px;border-radius:16px 16px 16px 4px;font-size:13px;max-width:70%;display:inline-block;">嗯嗯，我一直在呢</span></div>
-    </div>
-
+    <section class="dt-panel" data-dt-panel="高级">
     <div class="field">
       <label>自定义 CSS（高级美化）</label>
-      <textarea class="textarea" id="theme-css" placeholder="输入 CSS 代码自定义美化，例如：&#10;#chat-scroll { background-color:#1a1626; }&#10;.msg-row.me .bubble { border-radius:20px 20px 4px 20px; }" style="min-height:110px;font-family:monospace;font-size:12px;white-space:pre;overflow:auto;display:block;">${escapeHtml(chatTheme.customCss || '')}</textarea>
-      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
-        <button class="btn" id="theme-css-save" style="padding:9px 18px;font-size:13px;font-weight:600;">保存并应用</button>
-        <span id="theme-css-status" style="font-size:12px;flex:1;min-width:0;line-height:1.5;"></span>
+      <textarea class="textarea" id="theme-css" placeholder="输入 CSS 代码自定义美化，例如：&#10;#chat-scroll { background-color:#1a1626; }&#10;.msg-row.me .bubble { border-radius:20px 20px 4px 20px; }" style="min-height:110px;font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;overflow-wrap:anywhere;overflow:auto;display:block;width:100%;max-width:100%;box-sizing:border-box;">${escapeHtml(chatTheme.customCss || '')}</textarea>
+      <div style="display:flex;align-items:flex-start;gap:10px;margin-top:8px;">
+        <button class="btn" id="theme-css-save" style="padding:9px 18px;font-size:13px;font-weight:600;flex-shrink:0;">保存并应用</button>
+        <span id="theme-css-status" style="font-size:12px;flex:1;min-width:0;line-height:1.5;word-break:break-word;overflow-wrap:anywhere;"></span>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
         <button class="btn" id="theme-css-copy" style="padding:7px 14px;font-size:12px;">复制 CSS</button>
         <button class="btn" id="theme-css-clear" style="padding:7px 14px;font-size:12px;color:#f87171;border-color:rgba(248,113,113,0.4);">删除 CSS</button>
       </div>
-      <div id="css-preview-box" data-prev-bg="dark" style="margin-top:10px;padding:12px;border-radius:14px;background:#17131f;border:1px solid rgba(255,255,255,0.08);">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
-          <div id="css-preview-label" style="font-size:11px;color:rgba(255,255,255,0.45);">CSS 实时预览（与真实气泡同结构，编辑即时变化）</div>
-          <div style="display:flex;gap:4px;">
+      <div id="css-preview-box" data-prev-bg="dark" style="margin-top:10px;padding:12px;border-radius:14px;background:#17131f;border:1px solid rgba(255,255,255,0.08);max-width:100%;box-sizing:border-box;overflow:hidden;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+          <div id="css-preview-label" style="font-size:11px;color:rgba(255,255,255,0.45);flex:1;min-width:0;word-break:break-word;">CSS 实时预览（与真实气泡同结构，编辑即时变化）</div>
+          <div style="display:flex;gap:4px;flex-shrink:0;">
             <button class="btn" data-prev-bg-btn="dark" style="padding:3px 8px;font-size:11px;line-height:1.4;">深色底</button>
             <button class="btn" data-prev-bg-btn="light" style="padding:3px 8px;font-size:11px;line-height:1.4;">浅色底</button>
           </div>
@@ -11091,7 +11648,9 @@ async function showChatThemeModal() {
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">编辑时聊天页实时预览；点「保存并应用」才写入长期保存。常用选择器：#chat-scroll（聊天区）、.msg-row.me .bubble（我的气泡）、.msg-row.them .bubble（对方气泡），也兼容 .message / .message-sent / .message-received 写法</div>
     </div>
+    </section>
 
+    <section class="dt-panel" data-dt-panel="背景">
     <div class="field">
       <label>背景定制（10：上传图片即可替换系统默认背景）</label>
       <div style="display:flex;flex-direction:column;gap:10px;">
@@ -11111,8 +11670,21 @@ async function showChatThemeModal() {
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">上传后立即生效；玻璃拟态元素会自动透出你设置的背景</div>
     </div>
+    </section>
   `);
   $('#theme-close').onclick = closeModal;
+
+  // 20261028：织梦点 tab 切换 + 记忆当前 tab（背景上传/气泡换色重开弹窗后回到原 tab）
+  const dtTabs = $$('.dt-tab');
+  const dtPanels = $$('.dt-panel');
+  const activateDt = (name) => {
+    if (![...dtPanels].some(p => p.dataset.dtPanel === name)) name = '色彩';
+    _dreamThemeTab = name;
+    dtTabs.forEach(b => b.classList.toggle('on', b.dataset.dtTab === name));
+    dtPanels.forEach(p => { p.style.display = (p.dataset.dtPanel === name) ? 'block' : 'none'; });
+  };
+  dtTabs.forEach(b => { b.onclick = () => activateDt(b.dataset.dtTab); });
+  activateDt(_dreamThemeTab);
 
   // 20260929bo：全局色彩预设点选（立即生效并持久化；浅色下正文/弹窗/输入框等自动浅底深字）
   $$('#theme-global-colors .gt-dot').forEach(d => {
@@ -11305,7 +11877,7 @@ async function showChatThemeModal() {
     document.querySelectorAll(`#${selId} .color-dot`).forEach(dot => {
       dot.onclick = async () => {
         chatTheme[key] = dot.dataset.col;
-        chatTheme[textKey] = textCol;
+        chatTheme[textKey] = dot.dataset.text || textCol; // 20261028：马卡龙色浅底用深字，其余走默认
         await setSetting('chatTheme', chatTheme);
         applyChatTheme();
         showChatThemeModal();
@@ -11432,6 +12004,66 @@ async function showChatThemeModal() {
 }
 
 /* ---------- 访客日记（与 TA 的通话时长/认识天数/消息数） ---------- */
+/* 20261027：日记高频词停用词表——语气词/叠词/聊天口头禅，不计入高频统计 */
+const DIARY_STOPWORDS = new Set([
+  '哈哈','哈哈哈','嘿嘿','呵呵','嘻嘻','嗯嗯','嗯','哦','噢','啊','呀','嘛','吧','呢','么','啦','嘞','诶','哎','唉','喂','哈','呵','嘿','嘻',
+  '真的','确实','其实','反正','就是','然后','那个','这个','这样','那样','怎么','什么','为什么','怎么样','是不是','对不对','有没有',
+  '好的','好吧','好呀','好啊','可以','还行','不错','没事','没关系','不用','谢谢','多谢','客气','晚安','早安','午安','再见','拜拜','拜拜啦',
+  '感觉','觉得','知道','以为','可能','应该','大概','或许','一定','肯定','原来','不过','但是','可是','所以','因为','如果','虽然','然后','而且',
+  '今天','明天','昨天','现在','刚刚','刚才','等会','一会','有时候','经常','总是','一直','已经','正在','马上','突然',
+  '一个','一次','一下','一点','一些','这种','那种','这样','那样','这么多','那么',
+  '想你','爱你','喜欢你','好喜欢','超级','特别','非常','真的假的','有意思','没意思',
+]);
+/* 20261027：日记页统计用的简短时长——小时/分钟级即可（不带秒），
+   「2小时5分5秒（1 次）」过长会把统计卡标签挤换行（凸出不对称根因之一） */
+function diaryCallText(sec) {
+  sec = sec || 0;
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if (h > 0) return `${h}小时${m}分`;
+  if (m > 0) return `${m}分`;
+  return `${s}秒`;
+}
+/* 从若干条文本消息里统计高频词（中文 2~4 字滑窗 + 停用词/语气词过滤），返回 Top N [{word,count}] */
+function diaryTopWords(texts, topN = 5) {
+  const freq = new Map();
+  for (const raw of texts) {
+    if (typeof raw !== 'string' || !raw) continue;
+    let s = raw.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u180E\u00AD\uFE00-\uFE0F\u0300-\u036F]/g, '');
+    s = s.replace(/[^\p{L}\p{N}\u4e00-\u9fa5]+/gu, ' ');
+    const segs = s.split(/\s+/).filter(Boolean);
+    for (const seg of segs) {
+      const arr = Array.from(seg);
+      if (/^[\u4e00-\u9fa5]+$/.test(seg)) {
+        // 中文：滑窗 2~4 字（长优先，与 worldExtractKeywords 同源）
+        if (arr.length <= 4) { arr.length >= 2 && addTok(arr.join('')); continue; }
+        for (let len = 4; len >= 2; len--) {
+          for (let i = 0; i + len <= arr.length; i++) addTok(arr.slice(i, i + len).join(''));
+        }
+      } else {
+        // 英文/数字整词
+        if (seg.length >= 2) addTok(seg.toLowerCase());
+      }
+    }
+  }
+  function addTok(t) {
+    if (!t || t.length < 2) return;
+    if (WORLD_STOPWORDS.has(t) || DIARY_STOPWORDS.has(t)) return;
+    freq.set(t, (freq.get(t) || 0) + 1);
+  }
+  // 频次降序；优先频次≥2 的词，不足则取出现过的
+  const entries = [...freq.entries()].sort((a, b) => b[1] - a[1]);
+  const min2 = entries.filter(([, c]) => c >= 2);
+  let pool = (min2.length >= topN ? min2 : entries);
+  // 子串去重净化：短词若被同频次或更高频次的长词包含（如「你喜」⊂「你喜欢」且频次相同），丢弃短词
+  const kept = [];
+  for (const [w, c] of pool) {
+    if (kept.some(([kw, kc]) => c <= kc && kw.includes(w))) continue;
+    kept.push([w, c]);
+  }
+  pool = kept;
+  return pool.slice(0, topN).map(([word, count]) => ({ word, count }));
+}
+
 async function showCharDiaryModal(c) {
   const all = await idbGetAll('messages');
   const msgs = all.filter(m => m.charId === c.id);
@@ -11454,7 +12086,23 @@ async function showCharDiaryModal(c) {
       callCount++;
     }
   });
-  const callText = callSec > 0 ? formatDuration(callSec) : '还没有通过话';
+  const callText = callSec > 0 ? diaryCallText(callSec) : '还没有通过话';
+  // 20261027：高频词——分别统计「我（用户）」与「TA（角色）」的文本消息，排除语气词，Top5
+  const meTexts = [], taTexts = [];
+  msgs.forEach(m => {
+    if (m.type === 'text' && typeof m.content === 'string' && m.content.trim()) {
+      (m.from === 'me' ? meTexts : taTexts).push(m.content);
+    }
+  });
+  const meTop = diaryTopWords(meTexts, 3);
+  const taTop = diaryTopWords(taTexts, 3);
+  // 20261027 改版：竖排榜单 Top1~3，「TOP+名次」金黄高亮，词与次数普通灰
+  const wordRow = (w, i) => `
+    <div class="diary-word-row">
+      <span class="diary-top-tag">TOP ${i + 1}</span>
+      <span class="diary-word-txt">${escapeHtml(w.word)}</span>
+      <span class="diary-word-ct">${w.count} 次</span>
+    </div>`;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">我们的日记</div>
@@ -11484,8 +12132,33 @@ async function showCharDiaryModal(c) {
         <span class="diary-val">${msgCount} 条消息</span>
       </div>
     </div>
+    <div style="margin-top:18px;">
+      <div style="font-size:14px;font-weight:600;margin-bottom:12px;">高频词</div>
+      <div class="diary-word-tabs" id="diary-word-tabs">
+        <button class="diary-word-tab on" data-dw="me">我 <span style="opacity:.55;">${meTexts.length}</span></button>
+        <button class="diary-word-tab" data-dw="ta">${escapeHtml(c.name || 'TA')} <span style="opacity:.55;">${taTexts.length}</span></button>
+      </div>
+      <div class="diary-word-panel" id="diary-word-panel-me">
+        ${meTop.length ? meTop.map(wordRow).join('') : '<span class="diary-word-empty">还没有说过话，多发几句吧</span>'}
+      </div>
+      <div class="diary-word-panel" id="diary-word-panel-ta" style="display:none;">
+        ${taTop.length ? taTop.map(wordRow).join('') : '<span class="diary-word-empty">TA 还没说过话</span>'}
+      </div>
+    </div>
   `);
   $('#diary-close').onclick = closeModal;
+  // 20261027：高频词 Tab 切换（我 / TA）
+  document.querySelectorAll('#diary-word-tabs .diary-word-tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('#diary-word-tabs .diary-word-tab').forEach(t => t.classList.remove('on'));
+      tab.classList.add('on');
+      const who = tab.dataset.dw;
+      const pm = document.getElementById('diary-word-panel-me');
+      const pt = document.getElementById('diary-word-panel-ta');
+      if (pm) pm.style.display = who === 'me' ? '' : 'none';
+      if (pt) pt.style.display = who === 'ta' ? '' : 'none';
+    };
+  });
 }
 
 /* ---------- 纪念日（玩家主页左上角：访客导航 → 新建/删除纪念日） ---------- */
@@ -11575,19 +12248,109 @@ function nextAnniversaryInfo() {
 function startOfToday() { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(); }
 function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
 
+/* ========== 20261027：纪念日「日历视图」+ 角色备忘日程（仅供观看，不提醒） ==========
+   角色备忘：像真人用日历——平时不记，某天有「值得记下来的事」才记 1~2 笔。
+   事件内容从角色内置时间表（charSchedule_<charId>，AI/字卡双模式，永不直接展示）里
+   挑时段，写成带时间点的备忘句。概率可调（kv charMemoProb，默认 0.4）。
+   存储：kv charMemo_<charId> = [{ day:'YYYY-MM-DD', items:['下午3点，xxx'] }]，滚动 60 天。 */
+let _annivView = 'list';       // 'list' | 'calendar'（跨开关记忆）
+let _annivCalY = 0, _annivCalM = 0, _annivSelDay = '';
+function annivDayKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function memoHourLabel(h) {
+  if (h === 0) return '午夜';
+  if (h < 6) return `凌晨${h}点`;
+  if (h < 12) return `上午${h}点`;
+  if (h === 12) return '中午12点';
+  if (h < 18) return `下午${h - 12}点`;
+  return `晚上${h - 12}点`;
+}
+/* 确保某角色某天的备忘条目存在（幂等 + 自持久化；只给今天及过去的日子生成） */
+async function ensureCharMemoForDay(charId, dayKey) {
+  const key = 'charMemo_' + charId;
+  const list = await getSetting(key, []);
+  let entry = list.find(e => e && e.day === dayKey);
+  if (entry) return entry;
+  const dayT = new Date(dayKey + 'T00:00:00').getTime();
+  if (dayT > startOfToday()) return { day: dayKey, items: [] };
+  const prob = Math.min(0.95, Math.max(0.05, Number(await getSetting('charMemoProb', 0.4)) || 0.4));
+  let items = [];
+  if (Math.random() < prob) {
+    const scheds = await charSchedules(charId);
+    const dayS = scheds.find(s => s && s.dayKey === dayKey);
+    if (dayS && Array.isArray(dayS.slots) && dayS.slots.length) {
+      const pool = dayS.slots.slice();
+      const n = 1 + (Math.random() < 0.5 ? 1 : 0);
+      for (let i = 0; i < n && pool.length; i++) {
+        const k = Math.floor(Math.random() * pool.length);
+        const s = pool.splice(k, 1)[0];
+        if (s && s.desc) items.push(`${memoHourLabel(s.h)}，${s.desc}`);
+      }
+    }
+  }
+  entry = { day: dayKey, items };
+  list.push(entry);
+  await charMemoSave(charId, list);
+  return entry;
+}
+async function charMemoSave(charId, memoList) {
+  const sorted = memoList.filter(Boolean).sort((a, b) => (a.day < b.day ? -1 : 1));
+  while (sorted.length > 60) sorted.shift();
+  await setSetting('charMemo_' + charId, sorted);
+}
+
 function showCharAnniversaryModal(charId) {
   const c = characters.find(x => x.id === charId);
   if (!c) { showAnniversaryModal(); return; }
-  const list = anniversaries.filter(a => a.charId === charId).sort((a, b) => (a.date < b.date ? -1 : 1));
   openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <div style="display:flex;align-items:center;gap:6px;min-width:0;">
         <button class="icon-btn" id="anniv-back" style="font-size:22px;flex-shrink:0;">‹</button>
         <div style="font-size:18px;font-weight:600;">${escapeHtml(c.name)} 的纪念日</div>
       </div>
       <button class="icon-btn" id="anniv-list-close">✕</button>
     </div>
-    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;max-height:300px;overflow-y:auto;" id="anniv-list">
+    <div style="display:flex;gap:8px;margin-bottom:12px;" id="anniv-tabs">
+      <button class="btn" data-anniv-view="list" style="flex:1;padding:8px 0;">📋 列表</button>
+      <button class="btn" data-anniv-view="calendar" style="flex:1;padding:8px 0;">🗓 日历</button>
+    </div>
+    <div id="anniv-body"></div>
+  `);
+  $('#anniv-list-close').onclick = closeModal;
+  $('#anniv-back').onclick = () => showAnniversaryModal();
+  const paintTabs = () => {
+    document.querySelectorAll('[data-anniv-view]').forEach(b => {
+      const on = b.dataset.annivView === _annivView;
+      b.style.background = on ? 'var(--purple)' : '';
+      b.style.color = on ? '#141019' : '';
+    });
+  };
+  document.querySelectorAll('[data-anniv-view]').forEach(b => {
+    b.onclick = () => { _annivView = b.dataset.annivView; paintTabs(); renderAnnivBody(charId); };
+  });
+  paintTabs();
+  renderAnnivBody(charId);
+}
+
+/* 按当前视图渲染列表 / 日历 */
+async function renderAnnivBody(charId) {
+  const body = $('#anniv-body');
+  if (!body) return;
+  if (_annivView === 'calendar') {
+    if (!_annivCalY) { const n = new Date(); _annivCalY = n.getFullYear(); _annivCalM = n.getMonth(); }
+    body.innerHTML = '<div id="anniv-cal-wrap" style="min-height:200px;color:var(--text-tertiary);text-align:center;padding:30px 0;">加载中…</div>';
+    await renderAnnivCalendar(charId);
+  } else {
+    renderAnnivList(charId);
+  }
+}
+
+/* 列表视图（原列表原样保留） */
+function renderAnnivList(charId) {
+  const body = $('#anniv-body');
+  if (!body) return;
+  const list = anniversaries.filter(a => a.charId === charId).sort((a, b) => (a.date < b.date ? -1 : 1));
+  body.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;max-height:340px;overflow-y:auto;">
       ${list.length === 0
         ? '<div style="color:var(--text-tertiary);text-align:center;padding:24px;">还没有纪念日，点击下方「新建纪念日」添加</div>'
         : list.map(a => {
@@ -11608,9 +12371,7 @@ function showCharAnniversaryModal(charId) {
           }).join('')}
     </div>
     <button class="btn primary block" id="anniv-new">＋ 新建纪念日</button>
-  `);
-  $('#anniv-list-close').onclick = closeModal;
-  $('#anniv-back').onclick = () => showAnniversaryModal();
+  `;
   $('#anniv-new').onclick = () => showNewAnniversaryModal(charId);
   document.querySelectorAll('[data-anniv-del]').forEach(el => {
     el.onclick = async () => {
@@ -11618,8 +12379,121 @@ function showCharAnniversaryModal(charId) {
       showConfirm('确定删除这个纪念日吗？', async () => {
         anniversaries = anniversaries.filter(a => a.id !== id);
         await saveAnniversaries();
-        showCharAnniversaryModal(charId);
+        renderAnnivList(charId);
       });
+    };
+  });
+}
+
+/* 日历视图：格子标记 🎉纪念日 · 🟣TA记下的 · 🟠玩家记的行程；点日子看当天详情 */
+async function renderAnnivCalendar(charId) {
+  const wrap = $('#anniv-cal-wrap');
+  if (!wrap) return;
+  const y = _annivCalY, m = _annivCalM;
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7;   // 周一开头
+  const todayDk = annivDayKey(new Date());
+  const annivs = anniversaries.filter(a => a.charId === charId);
+  let scheds = [];
+  try { scheds = await bmLoadSchedules(); } catch (e) {}
+  // 今天先确保时间表存在（幂等），备忘才有的挑
+  try { await ensureCharDaySchedule(charId); } catch (e) {}
+  let cells = '';
+  for (let i = 0; i < lead; i++) cells += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dk = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const hasAnniv = annivs.some(a => a.date === dk || a.date === dk.slice(5));
+    let memoItems = [];
+    if (dk <= todayDk) {
+      const e = await ensureCharMemoForDay(charId, dk);
+      if (e && e.items) memoItems = e.items;
+    }
+    const hasMemo = memoItems.length > 0;
+    const hasSched = scheds.some(it => it && it.charId === charId && annivDayKey(new Date(it.at)) === dk);
+    const isToday = dk === todayDk;
+    const sel = _annivSelDay === dk;
+    cells += `<button class="ac-day${isToday ? ' today' : ''}${sel ? ' sel' : ''}" data-ac-day="${dk}" style="position:relative;">
+      <span class="ac-num">${d}</span>
+      <span class="ac-marks">${hasAnniv ? '🎉' : ''}${hasMemo ? '<i class="ac-dot"></i>' : ''}${hasSched ? '<i class="ac-dot p"></i>' : ''}</span>
+    </button>`;
+  }
+  wrap.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <button class="icon-btn" id="ac-prev">‹</button>
+      <div style="font-size:15px;font-weight:600;">${y} 年 ${m + 1} 月</div>
+      <button class="icon-btn" id="ac-next">›</button>
+    </div>
+    <div class="ac-grid" style="margin-bottom:4px;">
+      ${['一', '二', '三', '四', '五', '六', '日'].map(w => `<div class="ac-week">${w}</div>`).join('')}
+    </div>
+    <div class="ac-grid">${cells}</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text-tertiary);margin:8px 2px 0;">
+      <span>🎉 纪念日</span><span><i class="ac-dot"></i> TA 记下的</span><span><i class="ac-dot p"></i> 你记的行程</span>
+    </div>
+    <div id="ac-detail" style="margin-top:10px;"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn" style="flex:1;" id="ac-prob">⚙ 记录频率</button>
+      <button class="btn primary" style="flex:1;" id="ac-new-anniv">＋ 新建纪念日</button>
+    </div>
+  `;
+  $('#ac-prev').onclick = () => { _annivCalM--; if (_annivCalM < 0) { _annivCalM = 11; _annivCalY--; } _annivSelDay = ''; renderAnnivCalendar(charId); };
+  $('#ac-next').onclick = () => { _annivCalM++; if (_annivCalM > 11) { _annivCalM = 0; _annivCalY++; } _annivSelDay = ''; renderAnnivCalendar(charId); };
+  $('#ac-new-anniv').onclick = () => showNewAnniversaryModal(charId);
+  $('#ac-prob').onclick = () => showCharMemoProbModal(charId);
+  wrap.querySelectorAll('[data-ac-day]').forEach(btn => {
+    btn.onclick = () => { _annivSelDay = btn.dataset.acDay; renderAnnivCalendar(charId); };
+  });
+  if (_annivSelDay && _annivSelDay.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)) {
+    const detailMemo = await getSetting('charMemo_' + charId, []);
+    renderAnnivDayDetail(charId, _annivSelDay, detailMemo, scheds);
+  }
+}
+
+/* 某天详情：纪念日 + TA 记下的 + 玩家记的行程（全部仅供观看） */
+function renderAnnivDayDetail(charId, dk, memoList, scheds) {
+  const box = $('#ac-detail');
+  if (!box) return;
+  const annivs = anniversaries.filter(a => a.charId === charId && (a.date === dk || a.date === dk.slice(5)));
+  const e = memoList.find(x => x && x.day === dk);
+  const memoItems = (e && e.items) || [];
+  let schedLines = [];
+  try {
+    schedLines = (scheds || []).filter(it => it && it.charId === charId && annivDayKey(new Date(it.at)) === dk)
+      .map(it => `${bmFormatCNTime(it.at)} ${it.title || '日程'}`);
+  } catch (err) {}
+  const block = (title, arr, icon) => !arr.length ? '' : `
+    <div style="margin-bottom:10px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:5px;">${icon} ${title}</div>
+      ${arr.map(t => `<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">${escapeHtml(t)}</div>`).join('')}
+    </div>`;
+  const nothing = !annivs.length && !memoItems.length && !schedLines.length;
+  box.innerHTML = `
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px;">📅 ${dk}${dk === annivDayKey(new Date()) ? '（今天）' : ''}</div>
+    ${nothing ? '<div style="font-size:12.5px;color:var(--text-tertiary);padding:6px 2px;">这一天没有记录</div>' : ''}
+    ${block('纪念日', annivs.map(a => a.reason || '纪念日'), '🎉')}
+    ${block('TA 记下的', memoItems, '✍️')}
+    ${block('你记的行程', schedLines, '⏰')}
+  `;
+}
+
+/* 备忘记录频率调节（全局，默认 40%） */
+function showCharMemoProbModal(charId) {
+  getSetting('charMemoProb', 0.4).then(v => {
+    openModal(`
+      <div style="font-size:17px;font-weight:600;margin-bottom:6px;">TA 记日历的频率</div>
+      <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">调低 = TA 更少往日历上记事；调高 = 几乎每天都记一笔。</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <input type="range" id="acm-prob" min="5" max="90" step="5" value="${Math.round((Number(v) || 0.4) * 100)}" style="flex:1;">
+        <span id="acm-prob-val" style="font-size:14px;font-weight:700;color:var(--purple-soft);min-width:44px;text-align:right;">${Math.round((Number(v) || 0.4) * 100)}%</span>
+      </div>
+      <button class="btn primary block" id="acm-save" style="margin-top:14px;">保存</button>
+    `);
+    const rg = $('#acm-prob');
+    rg.oninput = () => { $('#acm-prob-val').textContent = rg.value + '%'; };
+    $('#acm-save').onclick = async () => {
+      await setSetting('charMemoProb', parseInt(rg.value, 10) / 100);
+      closeModal();
+      miniToast('已保存');
     };
   });
 }
@@ -11632,13 +12506,13 @@ function showNewAnniversaryModal(charId) {
     <div class="field">
       <label>纪念日日期</label>
       <input class="input" type="date" id="anniv-date">
-      <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap;">
         <span style="font-size:12px;color:var(--text-tertiary);white-space:nowrap;">或直接输入</span>
-        <input class="input" type="number" id="anniv-year" min="1900" max="2100" placeholder="年" style="width:86px;flex:none;">
+        <input class="input" type="number" id="anniv-year" min="1900" max="2100" placeholder="年" style="width:64px;flex:none;">
         <span style="font-size:13px;color:var(--text-tertiary);">年</span>
-        <input class="input" type="number" id="anniv-month" min="1" max="12" placeholder="月" style="width:74px;flex:none;">
+        <input class="input" type="number" id="anniv-month" min="1" max="12" placeholder="月" style="width:56px;flex:none;">
         <span style="font-size:13px;color:var(--text-tertiary);">月</span>
-        <input class="input" type="number" id="anniv-day" min="1" max="31" placeholder="日" style="width:74px;flex:none;">
+        <input class="input" type="number" id="anniv-day" min="1" max="31" placeholder="日" style="width:56px;flex:none;">
         <span style="font-size:13px;color:var(--text-tertiary);">日</span>
       </div>
       <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:6px;">两种方式任填一种；年份可不填（不填 = 每年重复的月-日，填了 = 具体日期，会精确计算「已过 N 天」）</div>
@@ -12206,9 +13080,9 @@ const GLOBAL_THEMES = {
   dark:   { name: '星夜紫（默认）', cls: '',          dot: 'linear-gradient(135deg,#241f31,#3a2f55)', accent: '#a78bfa' },
   lilac:  { name: '薄暮藕荷',       cls: 'tl-lilac',  dot: 'linear-gradient(135deg,#f3effa,#e6def7)', accent: '#7c5cf0' },
   sakura: { name: '春樱粉',         cls: 'tl-sakura', dot: 'linear-gradient(135deg,#fbf1f5,#f7e3ec)', accent: '#d6568d' },
-  sky:    { name: '晴空蓝',         cls: 'tl-sky',    dot: 'linear-gradient(135deg,#eef5fc,#ddecf9)', accent: '#3b7fd4' },
-  mint:   { name: '薄荷奶绿',       cls: 'tl-mint',   dot: 'linear-gradient(135deg,#eefaf3,#ddf2e8)', accent: '#279d6e' },
-  cream:  { name: '奶油杏',         cls: 'tl-cream',  dot: 'linear-gradient(135deg,#faf6ee,#f5ead8)', accent: '#c98a2d' },
+  sky:    { name: '冰露蓝',         cls: 'tl-sky',    dot: 'linear-gradient(135deg,#eff5fb,#cfe4f4)', accent: '#a5c8e8' },
+  mint:   { name: '薄荷青绿',       cls: 'tl-mint',   dot: 'linear-gradient(135deg,#eff8f3,#cdeedf)', accent: '#a5d6c0' },
+  cream:  { name: '暖阳杏黄',       cls: 'tl-cream',  dot: 'linear-gradient(135deg,#faf6ee,#ffe3a0)', accent: '#eaa92e' },
   mist:   { name: '云雾灰',         cls: 'tl-mist',   dot: 'linear-gradient(135deg,#f2f3f5,#e4e6ea)', accent: '#5b6270' },
 };
 let _globalThemeId = 'dark';
@@ -12229,14 +13103,29 @@ function applyGlobalThemeNow() {
 /* ---------- 聊天设置（5.3：回复节奏/主动消息/提示音/撤回）
    全局（玩家主页）与访客级（访客主页）共用一套 UI，只是保存目标不同 ---------- */
 function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
+  // 20261028：聊天设置按功能 tab 分类——点每个 tab，下方显示该功能相关的设置项，
+  // 便于逐功能切换、单独设置，避免单页从上到下全部平铺（过长、难找）。
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <div style="font-size:18px;font-weight:600;">${title}</div>
       <button class="icon-btn" id="cs-close">✕</button>
     </div>
-    ${subtitle ? `<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:14px;">${subtitle}</div>` : ''}
+    ${subtitle ? `<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;">${subtitle}</div>` : ''}
+
+    <div class="cs-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+      ${!isPerChar ? `<button class="btn cs-tab on" data-cs-tab="通知" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">通知</button>` : ''}
+      <button class="btn cs-tab" data-cs-tab="回复" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">回复</button>
+      <button class="btn cs-tab" data-cs-tab="主动" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">主动</button>
+      <button class="btn cs-tab" data-cs-tab="通话" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">通话</button>
+      <button class="btn cs-tab" data-cs-tab="声音" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">声音</button>
+      <button class="btn cs-tab" data-cs-tab="消息" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">消息</button>
+      <button class="btn cs-tab" data-cs-tab="打字卡" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">打字卡</button>
+      ${(isPerChar || s.overclockUnlocked) ? `<button class="btn cs-tab" data-cs-tab="超频" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">超频</button>` : ''}
+      ${isPerChar ? `<button class="btn cs-tab" data-cs-tab="行程" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">行程</button>` : ''}
+    </div>
 
     ${!isPerChar ? `
+    <section class="cs-panel" data-cs-panel="通知">
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
         <span>消息通知方式</span>
@@ -12251,8 +13140,18 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <input type="checkbox" id="cs-notify-conversation" ${s.notifyConversationEnabled ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">仅对安装版（Android）生效；开启后由系统分组式通知接管消息提醒，异常时自动退回上面的通知方式</div>
-    </div>` : ''}
+    </div>
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>系统通知（挂后台/切走时弹系统弹窗）</span>
+        <input type="checkbox" id="cs-notify-sys" ${s.notifySystem !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">类似 QQ/微信的桌面弹窗：软件挂在后台或不在该聊天页时，新消息/书信/朋友圈等走系统通知。通知权限：<span id="cs-notify-status" style="color:var(--purple-soft);">检测中…</span> <button class="btn" id="cs-notify-ask" style="padding:4px 12px;font-size:12px;margin-left:6px;">申请通知权限</button></div>
+    </div>
+    </section>
+    ` : ''}
 
+    <section class="cs-panel" data-cs-panel="回复">
     ${!isPerChar ? `
     <div class="field">
       <label>聊天模式（全局，聊天窗口顶栏开关可随时切换）</label>
@@ -12283,7 +13182,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <input class="input" type="number" min="0" max="5" value="${s.groupRounds ?? 2}" id="cs-group-rounds" style="width:100px;">
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">1 轮 = 群内每个成员各发言一次；到轮立即停止，防刷屏防卡死。可在每个群的群聊设置里单独覆盖。此项只与群聊相关，访客个人主页的聊天设置里不再显示</div>
     </div>` : ''}
+    </section>
 
+    <section class="cs-panel" data-cs-panel="主动">
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
         <span>访客主动发消息</span>
@@ -12346,6 +13247,32 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
 
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>访客随机戳一戳</span>
+        <select class="input" id="cs-poke-mode" style="width:auto;padding:8px 10px;font-size:13px;">
+          <option value="off" ${s.charPoke === 'off' ? 'selected' : ''}>关</option>
+          <option value="mid" ${(s.charPoke || 'mid') === 'mid' ? 'selected' : ''}>偶尔（约 10%）</option>
+          <option value="often" ${s.charPoke === 'often' ? 'selected' : ''}>经常（约 25%）</option>
+        </select>
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，访客发消息（回复和主动消息）时可能随机附带一次戳一戳：从字卡库「访客戳一戳」抽文案，以「访客名 + 文案」显示在聊天页面中间（不是气泡）</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>访客主动寄书信</span>
+        <input type="checkbox" id="cs-letters" ${s.lettersEnabled !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，访客会按固定间隔主动寄来书信（火漆印信封），每天不超过下方上限</div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+        <span style="font-size:13px;color:var(--text-secondary);white-space:nowrap;">每日上限（0～5 封）</span>
+        <input class="input" type="number" min="0" max="5" value="${s.lettersDailyLimit ?? 2}" id="cs-letter-limit" style="width:80px;">
+      </div>
+    </div>
+    </section>
+
+    <section class="cs-panel" data-cs-panel="通话">
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
         <span>通话悬浮窗模式</span>
         <select class="input" id="cs-float-mode" style="width:auto;padding:8px 10px;font-size:13px;">
           <option value="internal" ${floatSettings.floatMode === 'internal' ? 'selected' : ''}>仅悬浮在软件内部</option>
@@ -12381,7 +13308,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;" id="cs-float2-mode-hint">「其他应用上悬浮」需打包成 APP（Android）才能悬浮到系统桌面/其他应用上；网页端会自动回退为软件内悬浮</div>
     </div>
+    </section>
 
+    <section class="cs-panel" data-cs-panel="声音">
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
         <span>消息提示音</span>
@@ -12403,31 +13332,18 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <input type="file" id="cs-sound-file" accept="audio/*" style="display:none;">
       </div>
     </div>
-
+    ${isPerChar ? `
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
-        <span>访客随机戳一戳</span>
-        <select class="input" id="cs-poke-mode" style="width:auto;padding:8px 10px;font-size:13px;">
-          <option value="off" ${s.charPoke === 'off' ? 'selected' : ''}>关</option>
-          <option value="mid" ${(s.charPoke || 'mid') === 'mid' ? 'selected' : ''}>偶尔（约 10%）</option>
-          <option value="often" ${s.charPoke === 'often' ? 'selected' : ''}>经常（约 25%）</option>
-        </select>
+        <span>关闭该访客的消息提示音</span>
+        <input type="checkbox" id="cs-mute" ${s.muteNotifications ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，访客发消息（回复和主动消息）时可能随机附带一次戳一戳：从字卡库「访客戳一戳」抽文案，以「访客名 + 文案」显示在聊天页面中间（不是气泡）</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，TA 发消息时不再响提示音、也不弹系统通知（未读红点仍会显示）。注意：你在聊天页面里时，任何提示音都不会响</div>
     </div>
+    ` : ''}
+    </section>
 
-    <div class="field">
-      <label style="display:flex;align-items:center;justify-content:space-between;">
-        <span>访客主动寄书信</span>
-        <input type="checkbox" id="cs-letters" ${s.lettersEnabled !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
-      </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，访客会按固定间隔主动寄来书信（火漆印信封），每天不超过下方上限</div>
-      <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
-        <span style="font-size:13px;color:var(--text-secondary);white-space:nowrap;">每日上限（0～5 封）</span>
-        <input class="input" type="number" min="0" max="5" value="${s.lettersDailyLimit ?? 2}" id="cs-letter-limit" style="width:80px;">
-      </div>
-    </div>
-
+    <section class="cs-panel" data-cs-panel="消息">
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
         <span>允许撤回消息</span>
@@ -12443,7 +13359,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">20261002cb：默认关闭——TA 发表情包只用 TA 自己的专属表情包库（TA 主页里上传的那套）；开启后，TA 也会随机使用你（玩家）上传的表情包库（TA 自己的库优先）。总设置对所有访客生效，访客主页的聊天设置可单独覆盖</div>
     </div>
+    </section>
 
+    <section class="cs-panel" data-cs-panel="打字卡">
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
         <span>碎梦重拼（复古打字机输入法演出）</span>
@@ -12491,7 +13409,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">召唤开启后，TA 会在最小～最大分钟之间的随机时刻自动拼发一条碎梦重拼消息（无需你点按钮）；挂后台/锁屏时同样会通过系统通知提醒你。可设 1~720 分钟，最小大于最大时自动对调，默认 40～240 分钟</div>
     </div>
+    </section>
 
+    <section class="cs-panel" data-cs-panel="超频">
     ${!isPerChar && s.overclockUnlocked ? `
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
@@ -12518,26 +13438,21 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，TA 在主动发消息时才可能顺带送出礼物或惊喜</div>
     </div>
     ` : ''}
+    </section>
 
-    ${!isPerChar ? `
-    <div class="field">
-      <label style="display:flex;align-items:center;justify-content:space-between;">
-        <span>系统通知（挂后台/切走时弹系统弹窗）</span>
-        <input type="checkbox" id="cs-notify-sys" ${s.notifySystem !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
-      </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">类似 QQ/微信的桌面弹窗：软件挂在后台或不在该聊天页时，新消息/书信/朋友圈等走系统通知。通知权限：<span id="cs-notify-status" style="color:var(--purple-soft);">检测中…</span> <button class="btn" id="cs-notify-ask" style="padding:4px 12px;font-size:12px;margin-left:6px;">申请通知权限</button></div>
-    </div>
-    ` : ''}
-
+    <section class="cs-panel" data-cs-panel="行程">
     ${isPerChar ? `
     <div class="field">
-      <label style="display:flex;align-items:center;justify-content:space-between;">
-        <span>关闭该访客的消息提示音</span>
-        <input type="checkbox" id="cs-mute" ${s.muteNotifications ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
-      </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，TA 发消息时不再响提示音、也不弹系统通知（未读红点仍会显示）。注意：你在聊天页面里时，任何提示音都不会响</div>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">📌 TA 的日常行程标签</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">TA 每天会按这些标签随机记录一条自己的重要行程（如「上班」「学习」「回家」），沉淀进记事簿日历，你随时可回看。字卡模式直接随机抽标签；AI 模式会参考这些标签生成。可增删。</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;" id="cs-sched-tags">${(s.scheduleTags || []).map(t => `<span class="badge" style="display:inline-flex;align-items:center;gap:5px;padding:6px 11px;font-size:12.5px;">${escapeHtml(t)}<button class="cs-tag-del" data-tag="${escapeHtml(t)}" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0;font-size:13px;line-height:1;">×</button></span>`).join('')}</div>
+      <div style="display:flex;gap:8px;">
+        <input class="input" id="cs-sched-tag-new" placeholder="新标签，如：健身" style="flex:1;">
+        <button class="btn" id="cs-sched-tag-add" style="padding:8px 14px;font-size:13px;">＋ 添加</button>
+      </div>
     </div>
     ` : ''}
+    </section>
 
     <button class="btn primary block" id="cs-save">保存</button>
   `;
@@ -12545,11 +13460,63 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
 
 function bindChatSettings(s, onSave, tcChar) {
   $('#cs-close').onclick = closeModal;
+  // 20261028：tab 式分类切换——点某个 tab，下方显示该功能的面板，其余隐藏。
+  // 关键：激活项必须显式设 display:block（不能设空串回退到 .cs-panel{display:none}，
+  // 否则所有面板都隐藏、点任何 tab 都空白——这是之前 tab 空白的根因）。
+  const csTabs = document.querySelectorAll('.cs-tab');
+  const csPanels = document.querySelectorAll('.cs-panel');
+  if (csTabs.length && csPanels.length) {
+    const activate = (name) => {
+      csTabs.forEach(b => {
+        const on = b.dataset.csTab === name;
+        b.classList.toggle('on', on);
+      });
+      csPanels.forEach(p => { p.style.display = (p.dataset.csPanel === name) ? 'block' : 'none'; });
+    };
+    csTabs.forEach(b => { b.onclick = () => activate(b.dataset.csTab); });
+    // 默认激活第一个「有内容」的 tab：角色单人设置里「通知」tab 内容为空（通知项仅总设置渲染），
+    // 若默认停在空 tab，会让人以为设置坏了。这里跳过空面板，直接激活第一个有实际设置项的 tab。
+    const firstWithContent = [...csTabs].find(b => {
+      const p = [...csPanels].find(pp => pp.dataset.csPanel === b.dataset.csTab);
+      return p && p.textContent.trim().length > 0;
+    });
+    activate((firstWithContent || csTabs[0]).dataset.csTab);
+  }
+  // 20261028：角色行程标签增删（仅角色单人聊天设置渲染；即时更新 s.scheduleTags，保存时落库）
+  const schedTagWrap = $('#cs-sched-tags');
+  if (schedTagWrap) {
+    const redrawTags = () => {
+      const tags = s.scheduleTags || [];
+      schedTagWrap.innerHTML = tags.map(t => `<span class="badge" style="display:inline-flex;align-items:center;gap:5px;padding:6px 11px;font-size:12.5px;">${escapeHtml(t)}<button class="cs-tag-del" data-tag="${escapeHtml(t)}" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0;font-size:13px;line-height:1;">×</button></span>`).join('');
+      schedTagWrap.querySelectorAll('.cs-tag-del').forEach(btn => {
+        btn.onclick = () => {
+          s.scheduleTags = (s.scheduleTags || []).filter(x => x !== btn.dataset.tag);
+          redrawTags();
+        };
+      });
+    };
+    redrawTags();
+    const tagAddBtn = $('#cs-sched-tag-add');
+    const tagInput = $('#cs-sched-tag-new');
+    const doAdd = () => {
+      const v = (tagInput.value || '').trim();
+      if (!v) { miniToast('先输入标签'); return; }
+      if (v.length > 6) { miniToast('标签最多 6 个字'); return; }
+      s.scheduleTags = s.scheduleTags || [];
+      if (!s.scheduleTags.includes(v)) s.scheduleTags.push(v);
+      tagInput.value = '';
+      redrawTags();
+    };
+    if (tagAddBtn) tagAddBtn.onclick = doAdd;
+    if (tagInput) tagInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } };
+  }
   // 20260929bi：悬浮窗2号浮游开关（仅总聊天设置；立即生效）
   const f2cb = $('#cs-float2');
   if (f2cb) f2cb.onchange = async () => {
-    chatSettings.allowFloat2 = f2cb.checked;
-    await setSetting('chatSettings', chatSettings);
+    // 20261027 fix：同步写入当前合并视图 s——访客级保存走「与全局差异比较」，
+    // 之前只改全局不改 s，保存时反而把旧值固化进访客覆盖（勾选不记忆的根因）
+    s.allowFloat2 = f2cb.checked;
+    if (!tcChar) { chatSettings.allowFloat2 = f2cb.checked; await setSetting('chatSettings', chatSettings); }
     miniToast(f2cb.checked ? '悬浮窗2号已允许浮游' : '悬浮窗2号已锁定居中');
   };
   // 20260929bk：悬浮窗2号模式选择（软件内 / 其他应用上）——全局与访客级都渲染
@@ -12929,6 +13896,8 @@ async function showCharChatSettingsModal(c) {
   const unlocked = await isOverclockUnlocked();
   const s = getCharChatSettings(c);
   s.overclockUnlocked = unlocked;
+  s._char = c;                              // 20261028：行程标签编辑需要角色引用
+  s.scheduleTags = charScheduleTags(c);     // 20261028：角色行程标签
   openModal(chatSettingsHtml(s, '聊天设置', `针对「${escapeHtml(c.name)}」的独立设置，仅影响 TA 一人`, true));
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
@@ -12937,6 +13906,8 @@ async function showCharChatSettingsModal(c) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
+    // 20261028：行程标签写回角色对象（c.scheduleTags）
+    c.scheduleTags = s.scheduleTags;
     await saveChar(c);
     miniToast('已保存该访客的聊天设置');
     closeModal();
@@ -12981,6 +13952,13 @@ async function showSettingsModal() {
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启需输入密码。开启后可在访客单聊输入命令，让访客发朋友圈/表情包/戳一戳/查岗/超频/视频通话/发红包/书信/问卷。命令不会作为普通消息发送，且不受任何功能解锁限制。</div>
     </div>
+    ${chatSettings.developerMode ? `
+    <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-dream-fx-debug">
+      入梦签节气/节日调试 <span>🎑</span>
+    </button>` : ''}
+    <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-player-fx-view">
+      入梦签效果查看（玩家） <span>🎑</span>
+    </button>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>⏰ 聊天日程+闹钟自动检测</span>
@@ -13090,6 +14068,8 @@ async function showSettingsModal() {
     avIn.oninput = () => {
       avVal.textContent = avIn.value + '%';
       setSetting('appBgmVol', String(avIn.value));
+      // 20261028：同步更新入梦签白噪音音量缓存（下次弹卡按最新值）
+      _appBgmVolCache = Math.max(0, Math.min(200, parseInt(avIn.value, 10) || 100));
       if (window.__bmSplashVol) window.__bmSplashVol.setApp(avIn.value);
     };
   }
@@ -13119,6 +14099,19 @@ async function showSettingsModal() {
           await setSetting('chatSettings', chatSettings);
           box.checked = true;
           miniToast('开发者模式已开启');
+          // 20261028：开启成功后动态插入「入梦签节气/节日调试」按钮（无需关闭重开总设置）
+          if (!$('#btn-dream-fx-debug')) {
+            const devField = box.closest('.field');
+            if (devField) {
+              const btn = document.createElement('button');
+              btn.className = 'btn block';
+              btn.id = 'btn-dream-fx-debug';
+              btn.style.cssText = 'margin-bottom:10px;justify-content:space-between;';
+              btn.innerHTML = '入梦签节气/节日调试 <span>🎑</span>';
+              btn.onclick = () => showDreamFxDebugModal();
+              devField.insertAdjacentElement('afterend', btn);
+            }
+          }
         } else {
           miniToast('密码错误');
           input.value = '';
@@ -13134,6 +14127,47 @@ async function showSettingsModal() {
     await setSetting('chatSettings', chatSettings);
     miniToast('开发者模式已关闭');
   };
+  // 20261028：入梦签节气/节日调试器（仅开发者模式可见）——点开选任意节日/节气，
+  // 直接预览对应的入梦签动画卡片（含动画/音效/交互），方便在软件内逐一看效果。
+  const btnFxDebug = $('#btn-dream-fx-debug');
+  if (btnFxDebug) btnFxDebug.onclick = () => showDreamFxDebugModal();
+  // 20261028：玩家「入梦签效果查看」入口——输入玩家密码 geziwo 后仅能打开调试器，
+  // 不能使用任何其他开发者功能（不写入 developerMode，开发者命令/日志分支全部不命中）。
+  const btnPlayerFxView = $('#btn-player-fx-view');
+  if (btnPlayerFxView) {
+    btnPlayerFxView.onclick = () => {
+      openModal(`
+        <div style="font-size:17px;font-weight:600;margin-bottom:6px;">入梦签效果查看</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:16px;line-height:1.6;">输入密码后仅能浏览入梦签的节气/节日效果展示，不开放任何其他开发者功能。</div>
+        <div class="field">
+          <input class="input" type="password" id="player-fx-pwd-input" placeholder="请输入查看密码" autocomplete="off">
+        </div>
+        <div style="display:flex;gap:10px;margin-top:6px;">
+          <button class="btn" style="flex:1;" id="player-fx-pwd-cancel">取消</button>
+          <button class="btn primary" style="flex:1;" id="player-fx-pwd-ok">确认</button>
+        </div>`);
+      const pinput = $('#player-fx-pwd-input');
+      $('#player-fx-pwd-cancel').onclick = closeModal;
+      const pconfirm = () => {
+        const v = (pinput.value || '').trim();
+        // 玩家密码 geziwo：只比对哈希，代码不存明文；与开发者密码完全独立
+        if (_devPwdHash(v) === PLAYER_FX_PWD_HASH && v.length === PLAYER_FX_PWD_LEN) {
+          closeModal();
+          _playerFxView = true;   // 内存态，仅本次会话生效，下次需重输
+          miniToast('已进入入梦签效果查看');
+          showDreamFxDebugModal();
+        } else {
+          miniToast('密码错误');
+          pinput.value = '';
+          pinput.focus();
+        }
+      };
+      $('#player-fx-pwd-ok').onclick = pconfirm;
+      pinput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') pconfirm(); });
+      setTimeout(() => pinput.focus(), 60);
+    };
+  }
+
   /* 布局自检（20260929o）：底栏是否完整落在视口内 + 缩放信息。
      若"底栏被裁"与版本号一起出现，说明页面没有加载到最新代码（强刷 Ctrl+F5）；
      若 DPR ≠ 1 说明浏览器/系统缩放非 100%，配合窗口截图可定位裁切来源 */
@@ -15082,12 +16116,19 @@ async function charMomentPost(c) {
   if (aiContent) {
     content = aiContent;
   } else {
-    const r = Math.random();
-    if (r < 0.5) content = drawReply(cards, getCharBanWords(c), c.relation, c.bannedGroups || []);
-    else if (r < 0.75) content = drawFrom(cards.customMottos) || drawReply(cards, [], null, []);
-    else {
-      const emo = drawFrom(cards.customEmojis) || '✨';
-      content = emo + ' ' + drawFrom(cards.customStatuses);
+    // 20261028：恋人关系专属——与玩家是「恋人」的角色，25% 概率从朋友圈预设库抽、
+    // 75% 从普通字卡库抽；非恋人角色或预设为空则完全走原有逻辑
+    const presets = (cards && Array.isArray(cards.customMomentPresets) && cards.customMomentPresets.length) ? cards.customMomentPresets : [];
+    if (c.relation === '恋人' && presets.length && Math.random() < 0.25) {
+      content = drawFrom(presets);
+    } else {
+      const r = Math.random();
+      if (r < 0.5) content = drawReply(cards, getCharBanWords(c), c.relation, c.bannedGroups || []);
+      else if (r < 0.75) content = drawFrom(cards.customMottos) || drawReply(cards, [], null, []);
+      else {
+        const emo = drawFrom(cards.customEmojis) || '✨';
+        content = emo + ' ' + drawFrom(cards.customStatuses);
+      }
     }
   }
   const post = {
@@ -17515,6 +18556,7 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
   let busy = false;
   let _anims = [];
   let bgCur = 0;
+  let focusMode = false; // 20261027：独立查看模式——单卡居中 + 左右箭头，禁用拖拽/点按手势防误触
 
   function entryBgImg(e) {
     if (e.img) return e.img;
@@ -17594,6 +18636,31 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
     el.style.filter = s.f;
     el.style.zIndex = s.z;
     el.classList.toggle('front', k === 0);
+  }
+  /* 20261027：独立查看模式切换——单卡居中（其余卡隐藏）↔ 三张卡扇形堆叠 */
+  function applyFocusMode() {
+    const stage = $('#pal-deck-stage');
+    const hud = $('#pal-deck-hud');
+    const hint = $('#pal-deck-hint');
+    const fbtn = $('#pc-focus');
+    if (focusMode) {
+      // 独立查看：保留三张卡扇形堆叠外观不动，只锁掉手势（拖拽/点按都不翻卡），翻卡靠底部箭头
+      if (stage) stage.classList.add('focus');
+      if (fbtn) {
+        fbtn.innerHTML = `${icon('cards', 15)} <span id="pc-focus-label">返回堆叠</span>`;
+        fbtn.title = '返回可滑动堆叠视图';
+      }
+      if (hud) hud.classList.add('focus');
+      if (hint) hint.textContent = '已锁定滑动手势 · 用底部箭头切换';
+    } else {
+      if (stage) stage.classList.remove('focus');
+      if (fbtn) {
+        fbtn.innerHTML = `${icon('expand', 15)} <span id="pc-focus-label">独立查看</span>`;
+        fbtn.title = '独立查看（锁定手势，只用箭头切换，防误触）';
+      }
+      if (hud) hud.classList.remove('focus');
+      if (hint) hint.textContent = '左右滑动 · 点按抽出这张卡片';
+    }
   }
 
   /* 高斯模糊背景：前景是图片记忆时展示其模糊放大图，两层交叉淡化 */
@@ -17702,6 +18769,7 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
   function onDown(ev) {
     const el = ev.currentTarget;
     if (busy || n < 2 || el !== cards[0]) return;
+    if (focusMode) return; // 20261027：独立查看模式禁用手势（拖拽/点按），只走左右箭头
     if (ev.target.closest('[data-cact]')) return;
     drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, dx: 0, dy: 0, t: Date.now(), moved: false, el };
     try { el.setPointerCapture(ev.pointerId); } catch (e) {}
@@ -17741,32 +18809,39 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
   }
 
   openModal(`
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+      <div style="position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px;">
         <button class="icon-btn" id="pc-back">${icon('chevleft', 18)}</button>
-        <div style="flex:1;text-align:center;">
+        <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;white-space:nowrap;">
           <div style="font-size:15px;font-weight:600;letter-spacing:1px;">记忆宫殿</div>
           <div style="font-size:10.5px;color:rgba(213,200,255,.55);font-style:italic;margin-top:1px;">every memory, a little starlight</div>
         </div>
-        <button class="icon-btn" id="pc-list" title="查看列表">${icon('listview', 17)}</button>
-        <button class="icon-btn" id="pc-close">${icon('close', 18)}</button>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button class="icon-btn" id="pc-list" title="查看列表">${icon('listview', 17)}</button>
+          <button class="icon-btn" id="pc-close">${icon('close', 18)}</button>
+        </div>
       </div>
-      <div class="pal-deck-stage">
+      <div class="pal-deck-stage" id="pal-deck-stage">
         <div class="pal-deck-bg" id="pal-deck-bg"><img alt=""><img alt=""></div>
         <div class="pal-deck" id="pal-deck"></div>
       </div>
-      <div class="pal-deck-hud">
+      <div class="pal-deck-hud" id="pal-deck-hud">
         <button class="pal-card-arrow" id="pc-prev" ${n < 2 ? 'disabled' : ''}>${icon('chevleft', 16)}</button>
         <div class="pal-card-count" id="pal-deck-count"></div>
         <button class="pal-card-arrow" id="pc-next" ${n < 2 ? 'disabled' : ''}>${icon('chevright', 16)}</button>
       </div>
-      <div class="pal-deck-hint">左右滑动 · 点按抽出这张卡片</div>
+      <div style="display:flex;justify-content:center;margin-top:10px;">
+        <button class="btn" id="pc-focus" style="display:inline-flex;align-items:center;gap:6px;padding:8px 20px;font-size:13px;border-radius:999px;border:1px solid rgba(196,168,255,.32);background:rgba(167,139,250,.14);color:#d9ccff;">${icon('expand', 15)} <span id="pc-focus-label">独立查看</span></button>
+      </div>
+      <div class="pal-deck-hint" id="pal-deck-hint">左右滑动 · 点按抽出这张卡片</div>
       ${jumpHtml()}
     `, { galaxy: true });
 
   $('#pc-close').onclick = () => showPalaceFolder(backFid);
   $('#pc-back').onclick = () => showPalaceFolder(backFid);
+  // 20261027：箭头翻卡统一走抽卡动画（保留堆叠观感）；独立模式下手势已被 onDown 锁定，箭头照常可用
   $('#pc-prev').onclick = () => advance(-1);
   $('#pc-next').onclick = () => advance(1);
+  $('#pc-focus').onclick = () => { focusMode = !focusMode; applyFocusMode(); };
   // 列表浮层（右上角「查看列表」）：竖长可滚动，直接点选某条记忆
   const jump = $('#pal-jump');
   $('#pc-list').onclick = () => {
@@ -18388,19 +19463,62 @@ async function showDivinationApiModal() {
   };
 }
 
-/* ---------- 记事簿：玩家记录事件，梦角到点提醒（走通知系统），文案抽字卡 ---------- */
+/* ---------- 记事簿：玩家记录事件，梦角到点提醒（走通知系统），文案抽字卡 ----------
+   20261027：新增「日历视图」（与列表并存切换）+「经期潮汐」记录（见 nbPeriod_*）。 */
+let _nbView = 'list';   // 'list' | 'calendar'
+let _nbCalY = 0, _nbCalM = 0, _nbSelDay = '';
 async function showNotebookModal() {
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div style="font-size:18px;font-weight:600;">记事簿</div>
+      <button class="icon-btn" id="note-close">✕</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button class="btn" data-nb-view="list" style="flex:1;padding:8px 0;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('listview', 15)} 列表</button>
+      <button class="btn" data-nb-view="calendar" style="flex:1;padding:8px 0;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('daily', 15)} 日历</button>
+      <button class="btn" data-nb-view="tide" style="flex:1;padding:8px 0;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('tide', 15)} 潮汐</button>
+    </div>
+    <div id="nb-body"></div>
+  `);
+  $('#note-close').onclick = closeModal;
+  document.querySelectorAll('[data-nb-view]').forEach(b => {
+    b.onclick = () => { _nbView = b.dataset.nbView; paintNbTabs(); renderNbBody(); };
+  });
+  paintNbTabs();
+  await renderNbBody();
+}
+function paintNbTabs() {
+  document.querySelectorAll('[data-nb-view]').forEach(b => {
+    const on = b.dataset.nbView === _nbView;
+    b.style.background = on ? 'var(--purple)' : '';
+    b.style.color = on ? '#141019' : '';
+  });
+}
+async function renderNbBody() {
+  const body = $('#nb-body');
+  if (!body) return;
+  if (_nbView === 'calendar') {
+    if (!_nbCalY) { const n = new Date(); _nbCalY = n.getFullYear(); _nbCalM = n.getMonth(); }
+    body.innerHTML = '<div id="nb-cal-wrap" style="min-height:200px;color:var(--text-tertiary);text-align:center;padding:30px 0;">加载中…</div>';
+    await renderNotebookCalendar();
+  } else if (_nbView === 'tide') {
+    await renderNotebookTide();
+  } else {
+    await renderNotebookList();
+  }
+}
+
+/* 列表视图（原列表原样保留） */
+async function renderNotebookList() {
+  const body = $('#nb-body');
+  if (!body) return;
   const items = (await getSetting('notebookItems', [])).sort((a, b) => (a.done - b.done) || (a.remindAt || 0) - (b.remindAt || 0));
   const fmtWhen = (ts) => {
     if (!ts) return '';
     const d = new Date(ts);
     return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
-  openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:18px;font-weight:600;">记事簿</div>
-      <button class="icon-btn" id="note-close">✕</button>
-    </div>
+  body.innerHTML = `
     <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">记下重要的事，到点梦角会提醒你（App 走本地通知，网页走浏览器通知）</div>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;max-height:300px;overflow-y:auto;" id="note-list">
       ${items.length === 0 ? '<div style="color:var(--text-tertiary);text-align:center;padding:20px;">还没有记录，先添加一条吧</div>'
@@ -18415,6 +19533,10 @@ async function showNotebookModal() {
           </div>`).join('')}
     </div>
     <div class="field">
+      <div style="display:flex;gap:8px;margin-bottom:10px;" id="note-type-row">
+        <button class="btn note-type-btn on" data-ntype="todo" style="flex:1;padding:7px 0;font-size:12.5px;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('checklist', 14)} 待办</button>
+        <button class="btn note-type-btn" data-ntype="sched" style="flex:1;padding:7px 0;font-size:12.5px;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('bell', 14)} 行程</button>
+      </div>
       <input class="input" id="note-text" placeholder="记点什么…">
       <div style="font-size:12.5px;color:var(--text-secondary);margin:10px 0 6px;">提醒时间（可不填，仅作记录）</div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
@@ -18431,14 +19553,21 @@ async function showNotebookModal() {
         <button class="btn primary" id="note-add" style="flex:none;margin-left:auto;">添加</button>
       </div>
     </div>
-  `);
-  $('#note-close').onclick = closeModal;
+  `;
+  let _noteType = 'todo';
+  document.querySelectorAll('.note-type-btn').forEach(b => {
+    b.onclick = () => {
+      _noteType = b.dataset.ntype;
+      document.querySelectorAll('.note-type-btn').forEach(x => x.classList.toggle('on', x === b));
+      $('#note-text').placeholder = _noteType === 'sched' ? '行程内容，如：去医院复诊' : '记点什么…';
+    };
+  });
   document.querySelectorAll('[data-note-check]').forEach(el => {
     el.onclick = async () => {
       const items2 = await getSetting('notebookItems', []);
       const it = items2.find(x => x.id === el.dataset.noteCheck);
       if (it) { it.done = !it.done; await setSetting('notebookItems', items2); }
-      showNotebookModal();
+      renderNotebookList();
     };
   });
   document.querySelectorAll('[data-note-del]').forEach(el => {
@@ -18446,7 +19575,7 @@ async function showNotebookModal() {
       let items2 = await getSetting('notebookItems', []);
       items2 = items2.filter(x => x.id !== el.dataset.noteDel);
       await setSetting('notebookItems', items2);
-      showNotebookModal();
+      renderNotebookList();
     };
   });
   $('#note-add').onclick = async () => {
@@ -18469,10 +19598,434 @@ async function showNotebookModal() {
       if (hour < 0 || hour > 23 || min < 0 || min > 59) { miniToast('时间格式不对'); return; }
       remindAt = new Date(y, mo - 1, d, hour, min).getTime();
     }
+    if (_noteType === 'sched') {
+      // 行程：写入 bmScheduleReminders，source=player（玩家自己记的，不带 charName）
+      const list = await bmLoadSchedules();
+      list.push({ id: uid('sched'), at: remindAt || Date.now(), title: text, charId: null, charName: '', source: 'player', fired: false });
+      await bmSaveSchedules(list);
+      try { bmSchedulePageTimers(); } catch (e) {}
+      miniToast('已添加行程');
+    } else {
+      items2.push({ id: uid('note'), text, at: Date.now(), remindAt, done: false, reminded: false });
+      await setSetting('notebookItems', items2);
+    }
+    renderNotebookList();
+  };
+}
+
+/* ==================== 经期潮汐（玩家真实经期；仅供玩家本人，角色/AI 按此表达关心） ==================== */
+async function getPeriodInfo() { return await getSetting('menstrualInfo', null); }
+/* 某天的潮汐状态（纯计算）：null=未开启/无数据；
+   { inPeriod, periodDay, daysToNext, pre5 } —— inPeriod=经期中（第 N 天），pre5=距下次经期 ≤5 天 */
+function periodStateFor(info, dk) {
+  if (!info || !info.lastStart || info.enabled === false) return null;
+  const base = new Date(info.lastStart + 'T00:00:00').getTime();
+  const t = new Date(dk + 'T00:00:00').getTime();
+  if (isNaN(base) || isNaN(t)) return null;
+  const day = Math.round((t - base) / 86400000);
+  if (day < 0) return null;
+  const cycle = Math.min(60, Math.max(20, Number(info.cycleDays) || 28));
+  const plen = Math.min(10, Math.max(2, Number(info.periodDays) || 5));
+  const dInCycle = day % cycle;
+  const inPeriod = dInCycle < plen;
+  const daysToNext = cycle - dInCycle;
+  return { inPeriod, periodDay: inPeriod ? dInCycle + 1 : 0, daysToNext, pre5: !inPeriod && daysToNext <= 5 };
+}
+/* 今天状态签名（入梦签缓存一致性校验用，纯计算不调 AI） */
+async function periodTodaySig() {
+  const info = await getPeriodInfo();
+  const st = info ? periodStateFor(info, annivDayKey(new Date())) : null;
+  if (!st) return '';
+  return st.inPeriod ? `P${st.periodDay}` : (st.pre5 ? `N${st.daysToNext}` : '');
+}
+/* 今天的关心文案（缓存按 天+签名 存，避免重复调 AI） */
+async function periodCareText(char) {
+  const sig = await periodTodaySig();
+  if (!sig) return '';
+  const today = annivDayKey(new Date());
+  const cacheKey = 'periodCareCache_' + today;
+  const cache = await getSetting(cacheKey, null);
+  if (cache && cache.sig === sig) return cache.text || '';
+  const cname = char ? char.name : 'TA';
+  const st = periodStateFor(await getPeriodInfo(), today);
+  let line = '';
+  if (await isAIMode()) {
+    try {
+      const cfg = await loadAIConfig();
+      const phase = st.inPeriod
+        ? `玩家今天正处于经期第 ${st.periodDay} 天`
+        : `玩家的经期大约 ${st.daysToNext} 天后就要来了`;
+      const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+        { role: 'system', content: `你是「${cname}」。${phase}，请以你的性格、你们的关系，给玩家写一句贴心的关心（1 句，15 字以内，可带 emoji）。不要提"经期"两个字以外的医学术语，温柔自然。` },
+        { role: 'user', content: '请写这句关心。' },
+      ], { temperature: 0.9 });
+      if (r.ok && r.text) line = r.text.trim().slice(0, 40);
+    } catch (e) {}
+  }
+  if (!line) {
+    // 20261027：字卡模式回退——改用内置扩充池（20 条），随机抽取
+    line = (typeof pickPeriodCareLine === 'function')
+      ? pickPeriodCareLine(!!st.inPeriod)
+      : (st.inPeriod
+          ? ['多喝温水，别让肚子着凉。', '今天早点休息，我陪着你。', '记得保暖，疼就说一声。', '抱抱你，今天要好好照顾自己。'][Math.floor(Math.random() * 4)]
+          : ['这几天早点睡，照顾好自己。', '快到那几天了，记得别贪凉。', '提前抱一个，有我在呢。'][Math.floor(Math.random() * 3)]);
+  }
+  const text = st.inPeriod ? `🌸 经期第 ${st.periodDay} 天 · ${line}` : `🌸 潮汐将近（约 ${st.daysToNext} 天）· ${line}`;
+  await setSetting(cacheKey, { sig, text });
+  return text;
+}
+/* 经期每日提醒（挂记事簿心跳；每天最多一次）：经期中 + 前 5 天 */
+async function periodDailyNotify() {
+  const info = await getPeriodInfo();
+  if (!info || info.enabled === false) return;
+  const today = annivDayKey(new Date());
+  if (await getSetting('periodNotified_' + today, false)) return;
+  const st = periodStateFor(info, today);
+  if (!st) return;
+  let title = '', body = '';
+  const cname = (characters[0] || {}).name || 'TA';
+  if (st.inPeriod) {
+    title = '🌸 经期关心';
+    body = (st.periodDay === 1 ? '今天是第一天，' : `经期第 ${st.periodDay} 天，`) + `记得保暖、多喝温水，${cname}挂念着你。`;
+  } else if (st.pre5) {
+    title = '🌸 潮汐将近';
+    body = `大概还有 ${st.daysToNext} 天到经期，这几天记得休息好，${cname}陪着你。`;
+  } else return;
+  await setSetting('periodNotified_' + today, true);
+  miniToast(title + '：' + body.slice(0, 26));
+  notifyIncoming(characters[0], body.slice(0, 120), title);
+}
+/* 潮汐视图：渲染进记事簿面板内（非独立弹窗），与列表/日历同面板切换。
+   20261028：原 showMenstrualModal 独立弹窗改为面板内 tide 视图，关闭/返回不再整体退出。 */
+async function renderNotebookTide() {
+  const body = $('#nb-body');
+  if (!body) return;
+  const info = (await getPeriodInfo()) || { enabled: false, lastStart: '', cycleDays: 28, periodDays: 5, log: [] };
+  const log = Array.isArray(info.log) ? info.log : [];
+  body.innerHTML = `
+    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">只记给你自己看：到点会在入梦签里收到 TA 的关心，临近 5 天和经期中每天提醒一次。</div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:14px;">
+      <input type="checkbox" id="pm-on" ${info.enabled ? 'checked' : ''}> 开启经期潮汐
+    </label>
+    <div class="field">
+      <label>最近一次经期开始日</label>
+      <input class="input" type="date" id="pm-start" value="${escapeHtml(info.lastStart || '')}">
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;">
+      <div class="field" style="flex:1;">
+        <label>周期天数</label>
+        <input class="input" type="number" id="pm-cycle" min="20" max="60" value="${Number(info.cycleDays) || 28}">
+      </div>
+      <div class="field" style="flex:1;">
+        <label>经期天数</label>
+        <input class="input" type="number" id="pm-days" min="2" max="10" value="${Number(info.periodDays) || 5}">
+      </div>
+    </div>
+    ${log.length ? `
+      <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;">历史记录</div>
+      <div style="max-height:110px;overflow-y:auto;margin-bottom:12px;">
+        ${log.slice().sort((a, b) => (a.start < b.start ? 1 : -1)).map(l => `
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">
+            <span style="flex:1;font-size:12.5px;">${escapeHtml(l.start)}${l.end ? ' ~ ' + escapeHtml(l.end) : ''}</span>
+            <button class="badge" style="cursor:pointer;color:var(--danger);" data-pm-del="${l.start}">删</button>
+          </div>`).join('')}
+      </div>` : ''}
+    <div style="display:flex;gap:10px;">
+      <button class="btn" style="flex:1;" id="pm-log">＋ 记录这次经期</button>
+      <button class="btn primary" style="flex:1;" id="pm-save">保存</button>
+    </div>
+  `;
+  document.querySelectorAll('[data-pm-del]').forEach(el => {
+    el.onclick = async () => {
+      const cur = (await getPeriodInfo()) || {};
+      cur.log = (cur.log || []).filter(l => l.start !== el.dataset.pmDel);
+      await setSetting('menstrualInfo', cur);
+      renderNotebookTide();
+    };
+  });
+  $('#pm-log').onclick = async () => {
+    const start = $('#pm-start').value;
+    if (!start) { miniToast('先填开始日期'); return; }
+    const cur = (await getPeriodInfo()) || { enabled: true, cycleDays: 28, periodDays: 5, log: [] };
+    if (!cur.log.some(l => l.start === start)) cur.log.push({ start });
+    cur.lastStart = start;
+    await setSetting('menstrualInfo', cur);
+    miniToast('已记录');
+    renderNotebookTide();
+  };
+  $('#pm-save').onclick = async () => {
+    const cur = (await getPeriodInfo()) || { log: [] };
+    cur.enabled = $('#pm-on').checked;
+    const start = $('#pm-start').value;
+    if (start) cur.lastStart = start;
+    cur.cycleDays = parseInt($('#pm-cycle').value, 10) || 28;
+    cur.periodDays = parseInt($('#pm-days').value, 10) || 5;
+    await setSetting('menstrualInfo', cur);
+    miniToast(cur.enabled ? '潮汐已开启' : '潮汐已关闭');
+    // 保存后留在潮汐视图，不退出面板；若日历视图在背后则一并刷新日历标记
+    renderNotebookTide();
+  };
+}
+
+/* ==================== 记事簿日历视图：⏰ 待办 · 🌸 经期实记 · ◌ 潮汐预测 ==================== */
+async function renderNotebookCalendar() {
+  const wrap = $('#nb-cal-wrap');
+  if (!wrap) return;
+  const y = _nbCalY, m = _nbCalM;
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7;   // 周一开头
+  const todayDk = annivDayKey(new Date());
+  const items = await getSetting('notebookItems', []);
+  const pinfo = await getPeriodInfo();
+  let scheds = [];
+  try { scheds = await bmLoadSchedules(); } catch (e) {}
+  let cells = '';
+  for (let i = 0; i < lead; i++) cells += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dk = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dayNotes = items.filter(it => it && it.remindAt && annivDayKey(new Date(it.remindAt)) === dk);
+    const dayScheds = scheds.filter(it => it && it.at && annivDayKey(new Date(it.at)) === dk);
+    const st = periodStateFor(pinfo, dk);
+    const logged = pinfo && Array.isArray(pinfo.log) && pinfo.log.some(l => l.start === dk);
+    const isToday = dk === todayDk;
+    const sel = _nbSelDay === dk;
+    cells += `<button class="ac-day${isToday ? ' today' : ''}${sel ? ' sel' : ''}" data-nb-day="${dk}">
+      <span class="ac-num">${d}</span>
+      <span class="ac-marks">${logged ? '🌸' : ''}${(st && st.inPeriod) ? '<i class="ac-dot m"></i>' : ''}${(st && st.pre5) ? '<i class="ac-dot m2"></i>' : ''}${dayScheds.length ? '<i class="ac-dot s"></i>' : ''}${dayNotes.length ? '<i class="ac-dot p"></i>' : ''}</span>
+    </button>`;
+  }
+  wrap.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <button class="icon-btn" id="nbc-prev">‹</button>
+      <div style="font-size:15px;font-weight:600;">${y} 年 ${m + 1} 月</div>
+      <button class="icon-btn" id="nbc-next">›</button>
+    </div>
+    <div class="ac-grid" style="margin-bottom:4px;">
+      ${['一', '二', '三', '四', '五', '六', '日'].map(w => `<div class="ac-week">${w}</div>`).join('')}
+    </div>
+    <div class="ac-grid">${cells}</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text-tertiary);margin:8px 2px 0;">
+      <span>🌸 经期开始</span><span><i class="ac-dot m"></i> 经期中</span><span><i class="ac-dot m2"></i> 潮汐将近</span><span><i class="ac-dot s"></i> 行程</span><span><i class="ac-dot p"></i> 待办</span>
+    </div>
+    <div id="nbc-detail" style="margin-top:10px;"></div>
+  `;
+  $('#nbc-prev').onclick = () => { _nbCalM--; if (_nbCalM < 0) { _nbCalM = 11; _nbCalY--; } _nbSelDay = ''; renderNotebookCalendar(); };
+  $('#nbc-next').onclick = () => { _nbCalM++; if (_nbCalM > 11) { _nbCalM = 0; _nbCalY++; } _nbSelDay = ''; renderNotebookCalendar(); };
+  wrap.querySelectorAll('[data-nb-day]').forEach(btn => {
+    btn.onclick = () => { _nbSelDay = btn.dataset.nbDay; renderNotebookCalendar(); };
+  });
+  if (_nbSelDay && _nbSelDay.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)) {
+    const dayNotes = items.filter(it => it && it.remindAt && annivDayKey(new Date(it.remindAt)) === _nbSelDay);
+    const dayScheds = scheds.filter(it => it && it.at && annivDayKey(new Date(it.at)) === _nbSelDay);
+    const st = periodStateFor(pinfo, _nbSelDay);
+    const box = $('#nbc-detail');
+    const bits = [];
+    if (st && st.inPeriod) bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">🌸 经期第 ${st.periodDay} 天（预测）</div>`);
+    if (pinfo && Array.isArray(pinfo.log) && pinfo.log.some(l => l.start === _nbSelDay)) bits.push('<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">🌸 你记录的经期开始日</div>');
+    if (st && st.pre5) bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">🌊 潮汐将近（约 ${st.daysToNext} 天后到）</div>`);
+    dayScheds.forEach(it => {
+      const isChar = it.source === 'char' || (it.source !== 'player' && it.charName);
+      const who = isChar ? (it.charName ? `${it.charName} 记的` : 'TA 记的') : '你记的';
+      bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">⏰ ${escapeHtml(it.title || '行程')} <span style="color:var(--text-tertiary);font-size:11.5px;">${escapeHtml(bmFormatCNTime(it.at))} · ${escapeHtml(who)}</span></div>`);
+    });
+    dayNotes.forEach(it => bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">📝 ${escapeHtml(it.text)}${it.done ? '（已完成）' : ''}</div>`));
+    box.innerHTML = `
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">📅 ${_nbSelDay}${_nbSelDay === todayDk ? '（今天）' : ''}</div>
+      ${bits.length ? bits.join('') : '<div style="font-size:12.5px;color:var(--text-tertiary);padding:6px 2px;">这一天没有记录</div>'}
+      <div style="display:flex;gap:10px;margin-top:12px;">
+        <button class="btn" style="flex:1;" id="nbc-add-sched">⏰ 添加行程</button>
+        <button class="btn primary" style="flex:1;" id="nbc-add-note">📝 添加记事</button>
+      </div>
+    `;
+    $('#nbc-add-note').onclick = () => showNotebookAddNoteModal(_nbSelDay);
+    $('#nbc-add-sched').onclick = () => showNotebookAddSchedModal(_nbSelDay);
+  }
+}
+
+/* 从日历「添加记事/行程」子表单返回：重开记事簿并定位到日历 + 选中该日（栈式返回，不整体退出） */
+async function reopenNotebookCalAt(dayKey) {
+  if (dayKey) {
+    const p = String(dayKey).split('-');
+    if (p.length === 3) { _nbCalY = parseInt(p[0], 10); _nbCalM = parseInt(p[1], 10) - 1; _nbSelDay = dayKey; }
+  }
+  _nbView = 'calendar';
+  await showNotebookModal();
+}
+
+/* 日历日期 → 添加记事（写入 notebookItems，默认提醒日 = 选中日） */
+function showNotebookAddNoteModal(dayKey) {
+  openModal(`
+    <div style="font-size:18px;font-weight:600;margin-bottom:14px;">📝 添加记事</div>
+    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">日期：<b>${escapeHtml(dayKey)}</b>（可改）</div>
+    <div class="field">
+      <input class="input" id="nbadd-date" type="date" value="${escapeHtml(dayKey)}">
+    </div>
+    <div class="field">
+      <label>记事内容</label>
+      <input class="input" id="nbadd-text" placeholder="记点什么…">
+    </div>
+    <div class="field">
+      <label>提醒时间（可选，默认当天 09:00）</label>
+      <input class="input" id="nbadd-time" type="time" value="09:00">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn" style="flex:1;" id="nbadd-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="nbadd-save">保存</button>
+    </div>
+  `);
+  $('#nbadd-cancel').onclick = () => reopenNotebookCalAt(dayKey);
+  $('#nbadd-save').onclick = async () => {
+    const text = $('#nbadd-text').value.trim();
+    if (!text) { miniToast('先写点内容吧'); return; }
+    const date = $('#nbadd-date').value;
+    const tm = $('#nbadd-time').value || '09:00';
+    let remindAt = null;
+    if (date) {
+      const hh = parseInt(tm.slice(0, 2), 10) || 0;
+      const mi = parseInt(tm.slice(3, 5), 10) || 0;
+      remindAt = new Date(date + 'T' + tm).getTime();
+      if (isNaN(remindAt)) remindAt = null;
+    }
+    const items2 = await getSetting('notebookItems', []);
     items2.push({ id: uid('note'), text, at: Date.now(), remindAt, done: false, reminded: false });
     await setSetting('notebookItems', items2);
-    showNotebookModal();
+    miniToast('已添加记事');
+    reopenNotebookCalAt(date || dayKey);
   };
+}
+
+/* 日历日期 → 添加行程（写入 bmScheduleReminders，走系统日历+通知提醒） */
+function showNotebookAddSchedModal(dayKey) {
+  openModal(`
+    <div style="font-size:18px;font-weight:600;margin-bottom:14px;">⏰ 添加行程</div>
+    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">日期：<b>${escapeHtml(dayKey)}</b>（可改）</div>
+    <div class="field">
+      <input class="input" id="nbsched-date" type="date" value="${escapeHtml(dayKey)}">
+    </div>
+    <div class="field">
+      <label>行程内容</label>
+      <input class="input" id="nbsched-text" placeholder="如：去医院复诊">
+    </div>
+    <div class="field">
+      <label>提醒时间（可选，默认当天 09:00）</label>
+      <input class="input" id="nbsched-time" type="time" value="09:00">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn" style="flex:1;" id="nbsched-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="nbsched-save">保存</button>
+    </div>
+  `);
+  $('#nbsched-cancel').onclick = () => reopenNotebookCalAt(dayKey);
+  $('#nbsched-save').onclick = async () => {
+    const title = $('#nbsched-text').value.trim();
+    if (!title) { miniToast('先写行程内容吧'); return; }
+    const date = $('#nbsched-date').value;
+    const tm = $('#nbsched-time').value || '09:00';
+    let at = null;
+    if (date) at = new Date(date + 'T' + tm).getTime();
+    if (!at || isNaN(at)) { miniToast('请填日期'); return; }
+    const list = await bmLoadSchedules();
+    list.push({ id: uid('sched'), at, title, charId: null, charName: '', source: 'player', fired: false });
+    await bmSaveSchedules(list);
+    try { bmSchedulePageTimers(); } catch (e) {}
+    miniToast('已添加行程');
+    reopenNotebookCalAt(date || dayKey);
+  };
+}
+
+/* ==================== 角色记录自己的重要行程（20261028） ====================
+   需求：角色每天按玩家为其设置的「行程标签」（工作/学习/上班/回家等）概率生成并
+   记录一条「角色自己的重要行程」，写入行程列表（source='char'，带 charName），
+   长期沉淀，玩家可在记事簿日历回看历史、并与自己记的行程（source='player'）区分。
+   · 字卡模式：直接从标签池随机抽 1~2 个标签拼成行程；
+   · AI 模式：参考标签让 AI 生成一句贴合角色的行程描述。
+   标签只在「角色主页 → 单人聊天设置」里可增删（存 c.scheduleTags）。 */
+const CHAR_SCHED_DEFAULT_TAGS = ['工作', '学习', '上班', '回家'];
+/* 角色行程标签（带默认值兜底） */
+function charScheduleTags(c) {
+  const t = (c && c.scheduleTags) || null;
+  return (Array.isArray(t) && t.length) ? t : CHAR_SCHED_DEFAULT_TAGS.slice();
+}
+/* 字卡模式：从标签池随机抽 1~2 个，拼成一条自然行程标题 */
+function charScheduleFromTags(c) {
+  const tags = charScheduleTags(c);
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const n = Math.random() < 0.4 ? 2 : 1;
+  const chosen = [];
+  const pool = tags.slice();
+  for (let i = 0; i < n && pool.length; i++) {
+    chosen.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  if (chosen.length === 0) chosen.push('忙自己的事');
+  if (chosen.length === 1) return chosen[0];
+  return chosen.join(' + ');
+}
+/* 给某角色「今天」补行程（若尚未记录）。返回是否真的写入。
+   20261028 改：概率触发后，当天随机记 2~3 条（非固定 1 条），每条落在不同时刻、标题不同。 */
+async function maybeRecordCharSchedule(c) {
+  if (!c || !c.id) return false;
+  const today = annivDayKey(new Date());
+  const flagKey = 'charSchedDone_' + c.id + '_' + today;
+  if (await getSetting(flagKey, false)) return false;   // 今天已记录
+  // 概率触发（约 60% 的角色每天会记录自己的行程；其余 40% 当天不记）
+  if (Math.random() >= 0.6) { await setSetting(flagKey, true); return false; }
+  // 触发后：当天随机记 2~3 条（不同时刻、不同标签，模拟 TA 一天里的若干件事）
+  const count = 2 + (Math.random() < 0.5 ? 1 : 0);
+  const list = await bmLoadSchedules();
+  const dayKey = today;
+  const usedTitles = new Set();
+  let written = 0;
+  for (let i = 0; i < count; i++) {
+    let title = '';
+    if (await isAIMode()) {
+      try {
+        const cfg = await loadAIConfig();
+        const tags = charScheduleTags(c);
+        const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+          { role: 'system', content: `你是「${c.name || 'TA'}」的行程记录助手。请为 TA 记录一条「今天」的日常重要行程，参考这些标签：${tags.join('、')}。输出一条简短自然的行程（6 个字以内，如「上午去上班」「下午自习」），不要解释、不要标点结尾。` },
+          { role: 'user', content: '请记录一条今天的行程。' },
+        ], { temperature: 0.9, maxTokens: 40, timeout: 15000 });
+        if (r.ok && r.text) title = r.text.trim().slice(0, 12);
+      } catch (e) {}
+    }
+    if (!title) title = charScheduleFromTags(c);
+    // 去重：同一天内避免重复标题（重新抽一次标签）
+    if (usedTitles.has(title)) {
+      let alt = '';
+      for (let t = 0; t < 6; t++) {
+        alt = charScheduleFromTags(c);
+        if (!usedTitles.has(alt)) break;
+      }
+      if (alt && !usedTitles.has(alt)) title = alt;
+    }
+    usedTitles.add(title);
+    // 每条落在当天 8~22 点的不同随机时刻（角色自己的作息）
+    const h = 8 + Math.floor(Math.random() * 15);
+    const mi = Math.floor(Math.random() * 60);
+    const at = new Date(today + 'T' + String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0')).getTime();
+    // 防重：同一天同角色同标题不再重复写
+    const exists = list.some(it => it.source === 'char' && it.charId === c.id && it.title === title && it.at && annivDayKey(new Date(it.at)) === dayKey);
+    if (!exists) {
+      list.push({ id: uid('sched'), at, title, charId: c.id, charName: c.name || 'TA', source: 'char', fired: false });
+      written++;
+    }
+  }
+  if (written > 0) {
+    await bmSaveSchedules(list);
+    try { bmSchedulePageTimers(); } catch (e) {}
+  }
+  await setSetting(flagKey, true);
+  return written > 0;
+}
+/* 每天为所有角色补一条自己的行程（挂记事簿心跳，每天最多一次） */
+async function dailyCharScheduleRecord() {
+  const today = annivDayKey(new Date());
+  const doneKey = 'charSchedGlobal_' + today;
+  if (await getSetting(doneKey, false)) return;
+  await setSetting(doneKey, true);
+  for (const c of (characters || [])) {
+    try { await maybeRecordCharSchedule(c); } catch (e) {}
+  }
 }
 
 /* 记事簿心跳：到点提醒（30 秒一查；文案=梦角名 + 字卡抽的一句话） */
@@ -18506,6 +20059,8 @@ function startNotebookTimer() {
         notifyIncoming(c, body.slice(0, 120), '⏰ 记事簿提醒');
       }
       if (dirty) await setSetting('notebookItems', items);
+      await periodDailyNotify();   // 20261027：经期潮汐每日关心提醒（前 5 天 + 经期中）
+      await dailyCharScheduleRecord();  // 20261028：角色每日记录自己的重要行程（概率）
     } catch (e) {}
   };
   tick();
@@ -18573,6 +20128,7 @@ async function showLetterRecordsModal(charId = null) {
   let folders = await getSetting('letterFolders', []);      // [{id,name}]
   let folderMap = await getSetting('letterFolderMap', {});  // { 线程id: 文件夹id（''=未分组） }
   let curFolder = 'all';       // 'all' | '__none__'（未分组） | 文件夹id
+  let curFrom = 'all';         // 20261028：发出方 tab 'all' | 'me'（玩家发出） | 'them'（角色发出）
   let batchMode = false;
   const selected = new Set();  // 线程 id
 
@@ -18596,6 +20152,7 @@ async function showLetterRecordsModal(charId = null) {
       </div>
     </div>
     ${scopeChar ? `<div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:8px;">只显示与「${escapeHtml(scopeChar.name)}」的往来书信</div>` : ''}
+    <div class="lr-fromtabs" id="lr-fromtabs" style="display:flex;gap:6px;margin-bottom:8px;"></div>
     <div class="lr-folders" id="lr-folders"></div>
     <div class="lr-newrow" id="lr-newrow" style="display:none;">
       <input class="input" id="lr-newname" placeholder="文件夹名称" style="flex:1;">
@@ -18622,10 +20179,31 @@ async function showLetterRecordsModal(charId = null) {
 
   const saveFolders = () => setSetting('letterFolders', folders);
   const saveMap = () => setSetting('letterFolderMap', folderMap);
+  // 20261028：线程的发出方——看根信（最初寄出的信）的 from；无根信时看回信
+  const threadFrom = (t) => (t.root ? t.root.from : (t.replyMsg ? t.replyMsg.from : 'me'));
+  // 20261028：发出方 tab 权限高于文件夹——先按 from 过滤，再按文件夹过滤
   const shownThreads = () => threads.filter(t => {
+    if (curFrom !== 'all' && threadFrom(t) !== curFrom) return false;
     const v = folderMap[tidOf(t)] || '';
     return curFolder === 'all' ? true : v === (curFolder === '__none__' ? '' : curFolder);
   });
+
+  function renderFromTabs() {
+    const el = $('#lr-fromtabs');
+    const defs = [
+      { k: 'all', name: '全部' },
+      { k: 'me', name: '我发出的' },
+      { k: 'them', name: 'TA 发出的' },
+    ];
+    el.innerHTML = defs.map(d => `<button class="btn lr-ftab${curFrom === d.k ? ' on' : ''}" data-from="${d.k}" style="flex:1;padding:6px 4px;font-size:12.5px;">${d.name}</button>`).join('');
+    el.querySelectorAll('.lr-ftab').forEach(b => {
+      b.onclick = () => {
+        curFrom = b.dataset.from;
+        selected.clear();
+        render();
+      };
+    });
+  }
 
   function renderFolderBar() {
     const el = $('#lr-folders');
@@ -18802,7 +20380,7 @@ async function showLetterRecordsModal(charId = null) {
     };
   }
 
-  function render() { renderFolderBar(); renderList(); renderBatchBar(); }
+  function render() { renderFromTabs(); renderFolderBar(); renderList(); renderBatchBar(); }
 
   $('#lr-selall').onclick = () => {
     const shown = shownThreads();
@@ -22563,7 +24141,7 @@ async function _answerSurvey(sv) {
 
     // 更新聊天卡片消息的状态
     await _refreshSurveyCardMsg(cur);
-    miniToast('📋 ' + (c ? c.name : 'TA') + ' 已答完你的问卷');
+    miniToast((c ? c.name : 'TA') + ' 已答完你的问卷');
     if (currentCharId === cur.charId && document.body.dataset.view === 'chat') {
       renderMessages(cur.charId);
     } else {
@@ -22651,6 +24229,17 @@ async function charAskPlayer(c) {
   const day = todayKey();
   const key = c.id + '|' + day;
   _surveyCharAskCount[key] = (_surveyCharAskCount[key] || 0) + 1;
+
+  // 20261028：优先从「角色问卷库」随机抽一份完整问卷提问（多题）；无库/未命中则回退单题。
+  // 角色问卷库只针对当前角色（不互通），有题时约一半概率走问卷库，一半走单题字卡/AI。
+  try {
+    const lib = await _svLibGetAll('char', c.id);
+    if (lib.length && Math.random() < 0.5) {
+      await charAskPlayerWithSurvey(c, drawFrom(lib));
+      return;
+    }
+  } catch (e) {}
+
   // 从字卡库/默认问题池抽一个问题（AI 模式由 AI 出题）
   let question = '';
   const aiOn = await isAIMode();
@@ -22705,6 +24294,49 @@ async function charAskPlayer(c) {
   }
 }
 
+/* 20261028：角色用「角色问卷库」里的一份问卷向玩家提问（手动触发）。
+   复用 charAskPlayer 的落库/卡片/通知链路，但发的是问卷库的多题问卷而非单题。 */
+async function charAskPlayerWithSurvey(c, item) {
+  if (!c || !item) return;
+  const qs = (item.questions || []).filter(q => q.text && q.text.trim());
+  if (!qs.length) { miniToast('这份问卷没有题目'); return; }
+  const title = item.title || qs[0].text.slice(0, 20);
+  const sv = {
+    id: uid('survey'),
+    charId: c.id,
+    from: 'them',
+    title,
+    questions: qs.map(q => ({
+      id: uid('q'), text: q.text.trim(), type: q.type || 'text',
+      options: q.options || [], answer: '', answeredAt: 0,
+    })),
+    state: 'answering', // 等待玩家作答
+    queueAt: 0,
+    createdAt: Date.now(),
+    msgId: '',
+    readBack: '',
+  };
+  await idbPut('surveys', sv);
+
+  const m = {
+    id: uid('msg'), charId: c.id, from: 'them', type: 'survey', time: Date.now(),
+    content: { surveyId: sv.id, title, totalCount: qs.length, answeredCount: 0, done: false, charAsk: true },
+  };
+  sv.msgId = m.id;
+  await idbPut('surveys', sv);
+  await idbPut('messages', m);
+  notifyIncoming(c, '向你发送了一份问卷「' + String(title || '').slice(0, 40) + '」，快来回答吧', c.name + ' 发送了一份问卷', 'survey');
+
+  if (currentCharId === c.id && document.body.dataset.view === 'chat') {
+    appendMessage(m);
+    if (shouldDingFor(c)) playDing();
+  } else {
+    renderChatList();
+    if (shouldDingFor(c)) playDing();
+  }
+  miniToast('已用这份问卷向玩家提问');
+}
+
 /* 玩家回答角色发来的提问（输入框作答，落库 + 更新卡片） */
 async function playerAnswerSurvey(surveyId, answer) {
   const sv = await idbGet('surveys', surveyId);
@@ -22721,6 +24353,25 @@ async function playerAnswerSurvey(surveyId, answer) {
   else renderChatList();
   miniToast('已提交你的回答');
   _charReactToAnswers(sv); // 20260930cb：玩家答完 → 角色逐题回「感想」
+}
+
+/* 20261028：玩家逐题回答角色发来的多题问卷（问卷库发出）。
+   逐题填入 answer，全部未答完也允许提交（至少一题有答案），答完的发感想。 */
+async function playerAnswerSurveyAll(surveyId, answers) {
+  const sv = await idbGet('surveys', surveyId);
+  if (!sv) { miniToast('问卷不存在'); return; }
+  const qs = sv.questions || [];
+  (answers || []).forEach((a, i) => {
+    if (qs[i] && a) { qs[i].answer = a; qs[i].answeredAt = Date.now(); }
+  });
+  sv.state = 'done';
+  sv.doneAt = Date.now();
+  await idbPut('surveys', sv);
+  await _refreshSurveyCardMsg(sv);
+  if (currentCharId === sv.charId && document.body.dataset.view === 'chat') renderMessages(sv.charId);
+  else renderChatList();
+  miniToast('已提交你的回答');
+  _charReactToAnswers(sv);
 }
 
 /* 角色对玩家的问卷回答逐题发感想（20260930cb）：每题一条、间隔连发。
@@ -22778,7 +24429,7 @@ async function openSurveyDetail(surveyId, opts = {}) {
   const snapListSt = prevList ? prevList.scrollTop : 0;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:18px;font-weight:600;">📋 问卷详情</div>
+      <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('checklist', 20)} 问卷详情</div>
       <button class="icon-btn" id="svd-close">✕</button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:12px;">${isCharAsk ? (c ? c.name : 'TA') + ' 向你提问' : '你向 ' + (c ? c.name : 'TA') + ' 提问'} · 共 ${sv.questions.length} 题 · ${done ? '已全部回答' : (_surveyEtaText(sv) || (answered > 0 ? '回答中' : '待回答'))}</div>
@@ -22795,7 +24446,14 @@ async function openSurveyDetail(surveyId, opts = {}) {
     ${isCharAsk && !done ? `
       <div class="field" style="margin-top:14px;">
         <label>你的回答</label>
-        <textarea class="textarea" id="svd-answer" placeholder="输入你的回答…" style="min-height:70px;"></textarea>
+        <div style="display:flex;flex-direction:column;gap:10px;" id="svd-answer-wrap">
+          ${sv.questions.map((q, i) => `
+            <div>
+              <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:4px;">第 ${i + 1} 题</div>
+              <textarea class="textarea" data-svd-ans="${i}" placeholder="输入第 ${i + 1} 题的回答…" style="min-height:52px;"></textarea>
+            </div>
+          `).join('')}
+        </div>
         <button class="btn primary block" id="svd-submit" style="margin-top:10px;">提交回答</button>
       </div>
     ` : ''}
@@ -22812,9 +24470,12 @@ async function openSurveyDetail(surveyId, opts = {}) {
   };
   if (isCharAsk && !done) {
     $('#svd-submit').onclick = async () => {
-      const ans = $('#svd-answer').value.trim();
-      if (!ans) { miniToast('请输入你的回答'); return; }
-      await playerAnswerSurvey(surveyId, ans);
+      // 20261028：支持多题问卷——逐题收集回答，至少答一题即可提交
+      const inputs = document.querySelectorAll('[data-svd-ans]');
+      const answers = [];
+      inputs.forEach(inp => { answers.push((inp.value || '').trim()); });
+      if (!answers.some(a => a)) { miniToast('请至少回答一题'); return; }
+      await playerAnswerSurveyAll(surveyId, answers);
       openSurveyDetail(surveyId, opts);
     };
   }
@@ -22826,13 +24487,14 @@ function showSurveyHub() {
   const c = currentCharId ? characters.find(x => x.id === currentCharId) : null;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:18px;font-weight:600;">📋 问卷</div>
+      <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('checklist', 20)} 问卷</div>
       <button class="icon-btn" id="svh-close">✕</button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">${c ? '当前聊天对象：' + escapeHtml(c.name) : '请先在单聊里打开问卷'}</div>
     <div style="display:flex;flex-direction:column;gap:10px;">
-      <button class="btn primary block" id="svh-add" ${c ? '' : 'disabled'} style="padding:14px;">➕ 添加问卷</button>
-      <button class="btn block" id="svh-view" style="padding:14px;">📖 查看问卷</button>
+      <button class="btn primary block" id="svh-add" ${c ? '' : 'disabled'} style="padding:14px;display:flex;align-items:center;justify-content:center;gap:8px;">${icon('plus', 16)} 添加问卷</button>
+      <button class="btn block" id="svh-view" style="padding:14px;display:flex;align-items:center;justify-content:center;gap:8px;">${icon('listview', 16)} 查看问卷</button>
+      <button class="btn block" id="svh-library" style="padding:14px;display:flex;align-items:center;justify-content:center;gap:8px;">${icon('book', 16)} 问卷库（预存问卷，角色提问时抽取）</button>
     </div>
   `);
   $('#svh-close').onclick = closeModal;
@@ -22841,6 +24503,364 @@ function showSurveyHub() {
     showSurveyCompose([c.id]);
   };
   $('#svh-view').onclick = () => showSurveyList();
+  $('#svh-library').onclick = () => showSurveyLibrary();
+}
+
+/* ============================================================
+   问卷库（20261028）：预存问卷模板，区分玩家库（全局共享）与角色库（每角色独立，不互通）
+   - 数据存 surveyLibrary store：{ id, owner:'player'|'char', charId, title, questions:[{text,type,options}], folderId, createdAt }
+   - 分组存 kv：svLibFolders（玩家库）、svLibCharFolders（{charId:[{id,name}]}）
+   - 角色向玩家提问（charAskPlayer）时从角色库抽取
+   ============================================================ */
+
+/* 取问卷库列表（owner='player' 全量；owner='char' 按 charId） */
+async function _svLibGetAll(owner, charId) {
+  const all = await idbGetAll('surveyLibrary');
+  return all
+    .filter(s => s.owner === owner && (owner === 'player' ? true : s.charId === charId))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+/* 取分组列表 */
+async function _svLibFolders(owner, charId) {
+  if (owner === 'player') return await getSetting('svLibFolders', []);
+  const map = await getSetting('svLibCharFolders', {});
+  return (map && map[charId]) || [];
+}
+async function _svLibSaveFolders(owner, charId, folders) {
+  if (owner === 'player') { await setSetting('svLibFolders', folders); return; }
+  const map = await getSetting('svLibCharFolders', {});
+  map[charId] = folders;
+  await setSetting('svLibCharFolders', map);
+}
+
+/* 问卷库管理主界面 */
+async function showSurveyLibrary() {
+  const c = currentCharId ? characters.find(x => x.id === currentCharId) : null;
+  let owner = 'player';          // 当前激活库：'player' | 'char'
+  let curFolder = 'all';         // 'all' | '__none__' | 文件夹id
+  let batchMode = false;
+  const selected = new Set();
+
+  const render = async () => {
+    const charId = owner === 'char' ? (c ? c.id : '') : '';
+    const items = await _svLibGetAll(owner, charId);
+    const folders = await _svLibFolders(owner, charId);
+    const shown = items.filter(it => curFolder === 'all' ? true : (it.folderId || '') === (curFolder === '__none__' ? '' : curFolder));
+
+    // 顶部库 tab
+    $('#svlib-owntabs').innerHTML = [
+      `<button class="btn svlib-own${owner === 'player' ? ' on' : ''}" data-own="player" style="flex:1;padding:7px 4px;font-size:12.5px;">玩家问卷库</button>`,
+      `<button class="btn svlib-own${owner === 'char' ? ' on' : ''}" data-own="char" style="flex:1;padding:7px 4px;font-size:12.5px;" ${c ? '' : 'disabled'}>角色问卷库</button>`,
+    ].join('');
+    $$('#svlib-owntabs .svlib-own').forEach(b => {
+      b.onclick = () => {
+        if (!c && b.dataset.own === 'char') { miniToast('请先进入与访客的单聊'); return; }
+        owner = b.dataset.own;
+        curFolder = 'all'; selected.clear(); batchMode = false;
+        render();
+      };
+    });
+
+    // 分组 chips
+    const fc = $('#svlib-folders');
+    const chips = [
+      `<div class="lr-fchip${curFolder === 'all' ? ' on' : ''}" data-f="all">全部</div>`,
+      `<div class="lr-fchip${curFolder === '__none__' ? ' on' : ''}" data-f="__none__">未分组</div>`,
+    ];
+    for (const f of folders) chips.push(`<div class="lr-fchip${curFolder === f.id ? ' on' : ''}" data-f="${f.id}">${escapeHtml(f.name)}<span class="fx" data-fx="${f.id}" title="删除分组（问卷移回未分组）">✕</span></div>`);
+    chips.push(`<div class="lr-fchip" data-f="__new__" style="border-style:dashed;">＋ 新建分组</div>`);
+    fc.innerHTML = chips.join('');
+    fc.querySelectorAll('.lr-fchip').forEach(chip => {
+      chip.onclick = async (ev) => {
+        if (ev.target.classList.contains('fx')) return;
+        const f = chip.dataset.f;
+        if (f === '__new__') {
+          openModal(`
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="font-size:16px;font-weight:600;">新建分组</div>
+              <button class="icon-btn" id="svlff-close">✕</button>
+            </div>
+            <input class="input" id="svlff-name" placeholder="分组名称（2~8字）" style="width:100%;box-sizing:border-box;margin-bottom:12px;">
+            <button class="btn primary block" id="svlff-ok" style="padding:12px;">确定</button>
+          `);
+          $('#svlff-close').onclick = closeModal;
+          $('#svlff-name').onkeydown = (e) => { if (e.key === 'Enter') $('#svlff-ok').click(); };
+          $('#svlff-ok').onclick = async () => {
+            const nm = ($('#svlff-name').value || '').trim();
+            if (!nm) { miniToast('先输入分组名'); return; }
+            if (nm.length > 8) { miniToast('分组名最多 8 个字'); return; }
+            if (folders.some(x => x.name === nm)) { miniToast('已有同名分组'); return; }
+            const nf = { id: 'svlf' + Date.now().toString(36), name: nm };
+            folders.push(nf);
+            await _svLibSaveFolders(owner, charId, folders);
+            closeModal();
+            curFolder = nf.id;
+            render();
+          };
+          setTimeout(() => { const inp = $('#svlff-name'); if (inp) inp.focus(); }, 120);
+          return;
+        }
+        curFolder = f; selected.clear(); render();
+      };
+    });
+    fc.querySelectorAll('[data-fx]').forEach(x => {
+      x.onclick = async (ev) => {
+        ev.stopPropagation();
+        const fid = x.dataset.fx;
+        const idx = folders.findIndex(y => y.id === fid);
+        if (idx >= 0) folders.splice(idx, 1);
+        await _svLibSaveFolders(owner, charId, folders);
+        // 该分组下的问卷移回未分组
+        for (const it of items) if (it.folderId === fid) { it.folderId = ''; await idbPut('surveyLibrary', it); }
+        if (curFolder === fid) curFolder = 'all';
+        miniToast('分组已删除，问卷移入未分组');
+        render();
+      };
+    });
+
+    // 列表
+    $('#svlib-count').textContent = `${owner === 'player' ? '玩家问卷库' : (c ? c.name + ' 的问卷库' : '角色问卷库')} · ${shown.length} 份${batchMode ? ' · 点选要删除的问卷' : ''}`;
+    const list = $('#svlib-list');
+    if (!shown.length) {
+      list.innerHTML = `<div style="text-align:center;color:var(--text-tertiary);font-size:13px;padding:28px;">还没有问卷，点下方「＋ 添加问卷」建立第一份</div>`;
+    } else {
+      list.innerHTML = shown.map(it => {
+        const sel = selected.has(it.id);
+        return `<div class="svl-item" data-svlib="${it.id}" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;cursor:pointer;display:flex;align-items:center;gap:10px;${sel ? 'box-shadow:inset 0 0 0 2px var(--purple-soft);' : ''}">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(it.title || '问卷')}</div>
+            <div style="font-size:12px;color:var(--text-tertiary);margin-top:3px;">${(it.questions || []).length} 题${it.folderId ? ' · ' + escapeHtml((folders.find(f => f.id === it.folderId) || {}).name || '') : ''}</div>
+          </div>
+          <div style="flex-shrink:0;display:flex;gap:8px;align-items:center;">
+            ${batchMode ? (sel ? `<span style="font-size:18px;color:var(--purple-soft);">✓</span>` : `<span style="font-size:11px;color:var(--text-tertiary);">${timeAgoStr(it.createdAt)}</span>`) : `<button class="btn" data-svlib-send="${it.id}" style="padding:6px 12px;font-size:12px;">发出</button>`}
+          </div>
+        </div>`;
+      }).join('');
+      // 条目点击：批量模式切换选中；普通模式看详情（编辑）
+      list.querySelectorAll('[data-svlib]').forEach(el => {
+        el.onclick = () => {
+          const id = el.dataset.svlib;
+          if (batchMode) {
+            if (selected.has(id)) selected.delete(id); else selected.add(id);
+            render();
+          } else {
+            openSurveyLibraryDetail(id);
+          }
+        };
+      });
+      // 「发出」按钮：把这份问卷发给当前角色（玩家库发给自己选的角色；角色库则是角色提问用）
+      list.querySelectorAll('[data-svlib-send]').forEach(b => {
+        b.onclick = async (ev) => {
+          ev.stopPropagation();
+          const item = items.find(x => x.id === b.dataset.svlibSend);
+          if (!item) return;
+          if (owner === 'player') {
+            if (!c) { miniToast('请先进入与访客的单聊'); return; }
+            await sendSurveyToChar(c.id, item.questions, item.questions.some(q => q.type === 'choice'), {});
+          } else {
+            // 角色库的问卷：触发角色向玩家提问（用这份问卷）
+            await charAskPlayerWithSurvey(c, item);
+          }
+        };
+      });
+    }
+
+    // 批量管理按钮状态
+    const bb = $('#svlib-batch');
+    if (bb) bb.textContent = batchMode ? '删除选中' : '批量管理';
+    if (bb) bb.style.background = batchMode ? 'var(--danger)' : '';
+  };
+
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('book', 20)} 问卷库</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="btn" id="svlib-batch" style="padding:6px 12px;font-size:12px;">批量管理</button>
+        <button class="icon-btn" id="svlib-close">✕</button>
+      </div>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">预存问卷：角色向玩家提问时从「角色问卷库」抽取；玩家库全局共享、可随时「发出」给任意角色</div>
+    <div id="svlib-owntabs" style="display:flex;gap:6px;margin-bottom:8px;"></div>
+    <div class="lr-folders" id="svlib-folders"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div style="font-size:12.5px;color:var(--text-tertiary);" id="svlib-count"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto;" id="svlib-list"></div>
+    <button class="btn primary block" id="svlib-add" style="padding:13px;margin-top:12px;">＋ 添加问卷（可导入 Word / 图片识别）</button>
+  `);
+
+  $('#svlib-close').onclick = () => showSurveyHub();
+  $('#svlib-add').onclick = () => showSurveyLibraryCompose(owner, owner === 'char' ? (c ? c.id : '') : '');
+  $('#svlib-batch').onclick = async () => {
+    if (batchMode) {
+      if (!selected.size) { miniToast('请先点选要删除的问卷'); return; }
+      showConfirm(`确定删除选中的 ${selected.size} 份问卷吗？`, async () => {
+        for (const id of selected) await idbDelete('surveyLibrary', id);
+        selected.clear(); batchMode = false;
+        miniToast('已删除');
+        render();
+      });
+    } else {
+      batchMode = true; selected.clear();
+      miniToast('点选要删除的问卷，再点「删除选中」确认');
+      render();
+    }
+  };
+
+  render();
+}
+
+/* 问卷库详情（查看/编辑题目，可改标题） */
+async function openSurveyLibraryDetail(id) {
+  const item = await idbGet('surveyLibrary', id);
+  if (!item) { miniToast('问卷不存在'); return; }
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div style="font-size:17px;font-weight:600;">问卷详情</div>
+      <button class="icon-btn" id="svld-close">✕</button>
+    </div>
+    <div style="max-height:50vh;overflow:auto;display:flex;flex-direction:column;gap:8px;">
+      ${(item.questions || []).map((q, i) => `
+        <div style="background:var(--bg-elevated-2);border-radius:12px;padding:11px 12px;">
+          <div style="font-size:13.5px;font-weight:600;margin-bottom:4px;">${i + 1}. ${escapeHtml(q.text)}</div>
+          ${q.type === 'choice' && q.options && q.options.length ? `<div style="font-size:12.5px;color:var(--text-secondary);">${q.options.map((o, oi) => `${String.fromCharCode(65 + oi)}. ${escapeHtml(o)}`).join('　')}</div>` : ''}
+        </div>`).join('') || `<div style="text-align:center;color:var(--text-tertiary);padding:20px;">空问卷</div>`}
+    </div>
+  `);
+  $('#svld-close').onclick = closeModal;
+}
+
+/* 问卷库添加/编辑界面：复用题目编辑交互（手动/Word/图片识别），保存到问卷库 */
+function showSurveyLibraryCompose(owner, charId) {
+  const c = owner === 'char' ? characters.find(x => x.id === charId) : null;
+  const whoLabel = owner === 'player' ? '存入「玩家问卷库」' : `存入「${c ? c.name : '该角色'}」的角色问卷库`;
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div style="font-size:17px;font-weight:600;">添加问卷到问卷库</div>
+      <button class="icon-btn" id="svlc-close">✕</button>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">${escapeHtml(whoLabel)} · 手动输入题目，或导入 Word 文档（选择题自动解析）、上传图片识别文字</div>
+    <div style="margin-bottom:10px;">
+      <input class="input" id="svlc-title" placeholder="问卷标题（可空，默认取第一题）" style="width:100%;box-sizing:border-box;">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;max-height:38vh;overflow:auto;margin-bottom:10px;" id="svlc-list"></div>
+    <button class="btn block" id="svlc-addq" style="padding:10px;">＋ 添加一道题</button>
+    <button class="btn block" id="svlc-addchoice" style="padding:10px;margin-top:8px;">⊕ 添加选择题（最多 5 个选项）</button>
+    <label class="btn block" for="svlc-docx" style="padding:10px;cursor:pointer;margin-top:8px;">📄 导入 Word 文档（.docx）</label>
+    <input type="file" id="svlc-docx" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
+    <label class="btn block" for="svlc-img" style="padding:10px;cursor:pointer;margin-top:8px;">🖼️ 上传图片识别文字（AI 已配置时生效）</label>
+    <input type="file" id="svlc-img" accept="image/*" style="display:none;">
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn" style="flex:1;" id="svlc-cancel">返回</button>
+      <button class="btn primary" style="flex:1;" id="svlc-save">存入问卷库</button>
+    </div>
+  `);
+
+  let qs = [];
+  const renderQList = () => {
+    $('#svlc-list').innerHTML = qs.map((q, i) => `
+      <div style="background:var(--bg-elevated-2);border-radius:12px;padding:10px 12px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">${i + 1}.</span>
+          <input class="input" data-qidx="${i}" data-qf="text" value="${escapeHtml(q.text)}" placeholder="${q.type === 'choice' ? '问题内容' : '题目内容'}" style="flex:1;">
+          <button class="icon-btn" data-qdel="${i}">✕</button>
+        </div>
+        ${q.type === 'choice' ? `
+          <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
+            ${(q.options || []).map((opt, oi) => `
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;width:16px;text-align:center;">${String.fromCharCode(65 + oi)}</span>
+                <input class="input" data-qidx="${i}" data-oidx="${oi}" data-of="opt" value="${escapeHtml(opt)}" placeholder="选项 ${String.fromCharCode(65 + oi)}" style="flex:1;">
+                <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项">✕</button>
+              </div>`).join('')}
+            ${(q.options || []).length < 5 ? `<button class="btn" data-oadd="${i}" style="padding:7px 0;font-size:12.5px;">＋ 添加选项（${(q.options || []).length}/5）</button>` : `<div style="font-size:11.5px;color:var(--text-tertiary);text-align:center;">选项最多 5 个</div>`}
+          </div>` : ''}
+      </div>
+    `).join('') || `<div style="text-align:center;color:var(--text-tertiary);font-size:13px;padding:16px;">还没有题目，点下方添加或导入</div>`;
+
+    document.querySelectorAll('[data-qf="text"]').forEach(inp => { inp.oninput = () => { qs[+inp.dataset.qidx].text = inp.value; }; });
+    document.querySelectorAll('[data-of="opt"]').forEach(inp => { inp.oninput = () => { qs[+inp.dataset.qidx].options[+inp.dataset.oidx] = inp.value; }; });
+    document.querySelectorAll('[data-oadd]').forEach(btn => { btn.onclick = () => { qs[+btn.dataset.oadd].options.push(''); renderQList(); }; });
+    document.querySelectorAll('[data-odel]').forEach(btn => {
+      btn.onclick = () => { const [qi, oi] = btn.dataset.odel.split(':').map(Number); qs[qi].options.splice(oi, 1); renderQList(); };
+    });
+    document.querySelectorAll('[data-qdel]').forEach(btn => { btn.onclick = () => { qs.splice(+btn.dataset.qdel, 1); renderQList(); }; });
+  };
+
+  $('#svlc-close').onclick = () => showSurveyLibrary();
+  $('#svlc-cancel').onclick = () => showSurveyLibrary();
+  $('#svlc-addq').onclick = () => { qs.push({ text: '', type: 'text', options: [] }); renderQList(); };
+  $('#svlc-addchoice').onclick = () => { qs.push({ text: '', type: 'choice', options: ['', ''] }); renderQList(); };
+
+  // Word 导入（复用现有 docx 解析）
+  $('#svlc-docx').onchange = async () => {
+    const f = $('#svlc-docx').files[0];
+    $('#svlc-docx').value = '';
+    if (!f) return;
+    if (!/\.(docx|doc)$/i.test(f.name)) { miniToast('请选择 .docx / .doc 文件'); return; }
+    try {
+      const buf = await f.arrayBuffer();
+      const { doc } = await _readDocxTextFromZip(buf);
+      const paras = _extractDocxParagraphs(doc);
+      if (!paras.length) { miniToast('未从文档中解析到题目'); return; }
+      const parsed = _parseDocxQuestions(paras);
+      qs = qs.concat(parsed);
+      renderQList();
+      miniToast(`已解析 ${parsed.length} 道题（${parsed.filter(p => p.type === 'choice').length} 道选择题）`);
+    } catch (e) { miniToast('Word 解析失败：' + (e && e.message ? e.message : '未知错误')); }
+  };
+
+  // 图片识别文字（AI vision；未配 AI 时提示）
+  $('#svlc-img').onchange = async () => {
+    const f = $('#svlc-img').files[0];
+    $('#svlc-img').value = '';
+    if (!f) return;
+    try {
+      const cfg = await loadAIConfig();
+      if (!(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim())) { miniToast('未配置 AI 接口，无法识别图片文字（可在「API 接入」配置后重试）'); return; }
+      miniToast('正在识别图片文字…');
+      const dataUrl = await blobToDataURL(f);
+      const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+        { role: 'system', content: '你是问卷题目识别助手。请把图片里的所有题目识别出来，按下面的规则逐行输出，只输出题目和选项，不要任何解释、编号或多余文字：\n1. 普通题：题目文字单独一行。\n2. 选择题：先输出题干一行，紧接着每个选项单独一行，选项行以「A. 」「B. 」「C. 」「D. 」这样的字母加点开头。\n3. 若图片里有多道题，请按顺序连续输出，不要把不同题混在一起。' },
+        { role: 'user', content: [{ type: 'text', text: '识别这张图片里的问卷题目：' }, { type: 'image_url', image_url: { url: dataUrl } }] },
+      ], { temperature: 0.2 });
+      if (r.ok && r.text) {
+        const paras = r.text.split('\n').map(s => s.trim()).filter(Boolean);
+        const parsed = _parseDocxQuestions(paras); // 复用统一的选择题解析（题干+选项分行 / 同行多选项 两种形式）
+        qs = qs.concat(parsed);
+        renderQList();
+        const choiceN = parsed.filter(p => p.type === 'choice').length;
+        miniToast(`已识别 ${parsed.length} 道题${choiceN ? `（${choiceN} 道选择题）` : ''}`);
+      } else {
+        miniToast('图片识别失败，请确认图片清晰或改用 Word 导入');
+      }
+    } catch (e) { miniToast('图片识别出错：' + (e && e.message ? e.message : '未知错误')); }
+  };
+
+  // 存入问卷库
+  $('#svlc-save').onclick = async () => {
+    const valid = qs.filter(q => q.text && q.text.trim());
+    if (!valid.length) { miniToast('请先添加至少一道题'); return; }
+    for (const q of valid) {
+      q.text = q.text.trim();
+      if (q.type === 'choice') { q.options = (q.options || []).map(s => String(s).trim()).filter(Boolean); if (q.options.length < 2) { miniToast('选择题至少需要 2 个选项'); return; } }
+    }
+    const title = ($('#svlc-title').value || '').trim() || valid[0].text.slice(0, 20);
+    const item = {
+      id: uid('svlib'),
+      owner,
+      charId: owner === 'char' ? charId : '',
+      title,
+      questions: valid.map(q => ({ text: q.text, type: q.type, options: q.options || [] })),
+      folderId: '',
+      createdAt: Date.now(),
+    };
+    await idbPut('surveyLibrary', item);
+    miniToast('已存入问卷库');
+    showSurveyLibrary();
+  };
+
+  renderQList();
 }
 
 /* 20260929be：群聊问卷——多选成员发起 + 右上角「查看问卷」（与单聊问卷中心同套功能） */
@@ -23029,21 +25049,28 @@ function _extractDocxParagraphs(docXml) {
   return paras;
 }
 
-/* 解析段落为题目：选择题识别（选项以 A./B./C./D. 或 ①②③④ 开头，独立成段或同段） */
+/* 解析段落为题目：选择题识别（选项以 A./B./C./D./E. 或 ①②③④⑤ 开头，独立成段或同段；
+   题号支持 1. / 1、 / 1） / (1) / ① 等形式） */
 function _parseDocxQuestions(paras) {
   const out = [];
   // 单个段落是否像一个选项（A.xxx / ①xxx / 1.xxx 开头且较短）
-  const isOption = (s) => /^[A-Da-d][\.、．)）:：]\s*\S/.test(s) || /^[①②③④]/.test(s);
+  const isOption = (s) => /^[A-Ea-e][\.、．)）:：]\s*\S/.test(s) || /^[①②③④⑤]/.test(s);
+  // 去掉题干前的题号（1. / 1、 / 1） / (1) / ① 等）
+  const stripStemNo = (s) => s
+    .replace(/^[0-9]+[\.、．)）:：]\s*/, '')
+    .replace(/^[（(][0-9]+[)）]\s*/, '')
+    .replace(/^[①②③④⑤⑩⑨⑧⑦⑥]\s*/, '')
+    .trim();
   for (let i = 0; i < paras.length; i++) {
     const p = paras[i].trim();
     if (!p) continue;
     // 情况1：下一段是选项开头 → 当前段是题干，收集后续连续选项段
     if (i + 1 < paras.length && isOption(paras[i + 1].trim())) {
-      const stem = p.replace(/^[0-9]+[\.、．)）:：]\s*/, '').trim() || p;
+      const stem = stripStemNo(p) || p;
       const opts = [];
       let j = i + 1;
       while (j < paras.length && isOption(paras[j].trim())) {
-        opts.push(paras[j].trim().replace(/^[A-Da-d][\.、．)）:：]\s*|^[①②③④]\s*/, '').trim());
+        opts.push(paras[j].trim().replace(/^[A-Ea-e][\.、．)）:：]\s*|^[①②③④⑤]\s*/, '').trim());
         j++;
       }
       out.push({ text: stem, type: 'choice', options: opts });
@@ -23051,17 +25078,17 @@ function _parseDocxQuestions(paras) {
       continue;
     }
     // 情况2：同一段内含多个选项标记（A. B. C. D. 分散，前面可以是空格/标点/开头）
-    const optMarks = p.match(/(?:^|[^\u3400-\u9FFFa-zA-Z0-9])[A-Da-d][\.、．)）]/g);
+    const optMarks = p.match(/(?:^|[^\u3400-\u9FFFa-zA-Z0-9])[A-Ea-e][\.、．)）]/g);
     if (optMarks && optMarks.length >= 2) {
-      const firstOpt = p.search(/[A-Da-d][\.、．)）]/);
-      const stem = firstOpt > 0 ? p.slice(0, firstOpt).replace(/^[0-9]+[\.、．)）:：]\s*/, '').replace(/[：:？?]\s*$/, '').trim() : p;
+      const firstOpt = p.search(/[A-Ea-e][\.、．)）]/);
+      const stem = firstOpt > 0 ? stripStemNo(p.slice(0, firstOpt)).replace(/[：:？?]\s*$/, '').trim() : p;
       const optsPart = p.slice(firstOpt);
-      const opts = optsPart.split(/(?=[A-Da-d][\.、．)）])/).map(s => s.replace(/^[A-Da-d][\.、．)）]\s*/, '').trim()).filter(Boolean);
+      const opts = optsPart.split(/(?=[A-Ea-e][\.、．)）])/).map(s => s.replace(/^[A-Ea-e][\.、．)）]\s*/, '').trim()).filter(Boolean);
       out.push({ text: stem || p, type: 'choice', options: opts });
       continue;
     }
     // 普通题
-    out.push({ text: p, type: 'text', options: [] });
+    out.push({ text: stripStemNo(p), type: 'text', options: [] });
   }
   return out;
 }
@@ -23070,20 +25097,23 @@ function _parseDocxQuestions(paras) {
 let _svlBatchMode = false;   // 批量管理模式开关
 const _svlSel = new Set();   // 批量选中问卷 id
 let _svlAll = [];            // 20260930cc：当前列表数据镜像（批量点选就地更新时间戳用）
+let _svlFrom = 'all';        // 20261028：发出方 tab 'all' | 'me'（玩家发出） | 'them'（角色发出）
 async function showSurveyList() {
   const all = (await idbGetAll('surveys')).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  _svlAll = all;
+  const shown = _svlFrom === 'all' ? all : all.filter(sv => sv.from === _svlFrom);
+  _svlAll = shown;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:18px;font-weight:600;">📖 查看问卷</div>
+      <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('listview', 20)} 查看问卷</div>
       <button class="icon-btn" id="svl-close">✕</button>
     </div>
+    <div class="svl-fromtabs" id="svl-fromtabs" style="display:flex;gap:6px;margin-bottom:10px;"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-      <div style="font-size:12.5px;color:var(--text-tertiary);" id="svl-count">共 ${all.length} 份问卷 · ${_svlBatchMode ? '点选要删除的问卷' : '点条目查看详情'}</div>
-      ${all.length ? `<button class="btn" id="svl-batch" style="padding:6px 12px;font-size:12px;${_svlBatchMode ? 'background:var(--danger);color:#fff;' : ''}">${_svlBatchMode ? '删除选中' : '批量管理'}</button>` : ''}
+      <div style="font-size:12.5px;color:var(--text-tertiary);" id="svl-count">共 ${shown.length} 份问卷 · ${_svlBatchMode ? '点选要删除的问卷' : '点条目查看详情'}</div>
+      ${shown.length ? `<button class="btn" id="svl-batch" style="padding:6px 12px;font-size:12px;${_svlBatchMode ? 'background:var(--danger);color:#fff;' : ''}">${_svlBatchMode ? '删除选中' : '批量管理'}</button>` : ''}
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;" id="svl-list">
-      ${all.map(sv => {
+      ${shown.map(sv => {
         const c = characters.find(x => x.id === sv.charId);
         const done = _surveyDone(sv);
         const answered = _surveyAnswered(sv);
@@ -23101,7 +25131,23 @@ async function showSurveyList() {
       }).join('') || `<div style="text-align:center;color:var(--text-tertiary);font-size:13px;padding:24px;">还没有问卷</div>`}
     </div>
   `);
-  $('#svl-close').onclick = () => { _svlBatchMode = false; _svlSel.clear(); showSurveyHub(); };
+  // 20261028：发出方 tab（玩家发出 / 角色发出），切换后重渲染列表；tab 权限高于批量管理
+  const ftEl = $('#svl-fromtabs');
+  const svlFromDefs = [
+    { k: 'all', name: '全部' },
+    { k: 'me', name: '我发出的' },
+    { k: 'them', name: 'TA 发出的' },
+  ];
+  ftEl.innerHTML = svlFromDefs.map(d => `<button class="btn svl-ftab${_svlFrom === d.k ? ' on' : ''}" data-from="${d.k}" style="flex:1;padding:6px 4px;font-size:12.5px;">${d.name}</button>`).join('');
+  ftEl.querySelectorAll('.svl-ftab').forEach(b => {
+    b.onclick = () => {
+      _svlFrom = b.dataset.from;
+      _svlBatchMode = false;
+      _svlSel.clear();
+      showSurveyList();
+    };
+  });
+  $('#svl-close').onclick = () => { _svlBatchMode = false; _svlSel.clear(); _svlFrom = 'all'; showSurveyHub(); };
   // 点条目：批量模式下切换选中（20260930cc：就地更新不重渲染，滚动位置不跳顶），否则看详情
   document.querySelectorAll('[data-svid]').forEach(el => {
     el.onclick = () => {
