@@ -403,6 +403,7 @@ input, textarea { user-select: text; }
      84vh 会让长弹窗底部（按钮）被裁掉——叠加 mask 相对值 94% 取更小者兜底 */
   max-height: min(84vh, 94%);
   overflow-y: auto;
+  overflow-x: hidden; /* 20261027：弹窗内长内容（如自定义 CSS 不换行）不横向撑出滚动条 */
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain; /* 弹窗内滚动不穿透到背景页 */
   background: var(--bg-elevated);
@@ -560,6 +561,61 @@ select.input option:checked { color: #fff; }
   padding: 26px 24px;
   box-shadow: 0 8px 40px var(--purple-glow);
 }
+
+/* ============ 20261028：入梦签「动画节气版」排版（dream-fx-*）============
+   当天命中节日/节气时，入梦签用 Canvas 动画作背景氛围层，文字浮上层。
+   样式与「节日动画样品.html」定稿的 dm-* 一致；文字深色阴影保证任何动画背景下可读。 */
+.festival-card {
+  background: linear-gradient(160deg, #221a42 0%, #191330 55%, #241a4a 100%);
+  border: 1px solid rgba(201, 184, 255, .22);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+.festival-card .dream-fx-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; display: block; }
+.festival-card .dream-fx-inner { position: relative; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 26px 32px; text-align: center; }
+.dream-fx-head { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; margin-bottom: 16px; padding-right: 80px; }
+.dream-fx-avatar { width: 46px; height: 46px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #6b5bd6, #3b2f6b); border: 2px solid rgba(167,139,250,.55); box-shadow: 0 0 18px rgba(167,139,250,.35); display: flex; align-items: center; justify-content: center; font-size: 23px; flex-shrink: 0; overflow: hidden; }
+.dream-fx-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.dream-fx-name { font-size: 17px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px rgba(10,8,24,.9), 0 1px 12px rgba(10,8,24,.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.dream-fx-date { font-size: 11px; letter-spacing: 2px; color: rgba(214,201,255,.8); margin-top: 4px; text-shadow: 0 1px 3px rgba(10,8,24,.9); }
+.dream-fx-badges { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 100%; margin-bottom: 18px; }
+.dream-fx-badge { display: flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 7px 13px; border-radius: 999px; text-shadow: 0 1px 3px rgba(10,8,24,.85); }
+.dream-fx-badge.anniv { background: rgba(244,170,60,.16); border: 1px solid rgba(244,170,60,.5); color: #ffd98a; }
+.dream-fx-badge.care { background: rgba(244,114,182,.16); border: 1px solid rgba(244,114,182,.5); color: #ffb6d8; }
+.dream-fx-term { font-size: 12.5px; letter-spacing: 9px; text-indent: 9px; color: rgba(214,201,255,.88); margin-bottom: 14px; text-shadow: 0 1px 3px rgba(10,8,24,.9); }
+.dream-fx-title { font-size: 29px; font-weight: 700; letter-spacing: 5px; text-indent: 5px; margin-bottom: 18px; color: #fff; text-shadow: 0 2px 26px rgba(139,111,232,.7), 0 1px 3px rgba(10,8,24,.85); }
+.dream-fx-msg { font-size: 13.5px; line-height: 2.05; color: rgba(255,255,255,.96); max-width: 240px; text-shadow: 0 1px 3px rgba(10,8,24,.92), 0 1px 14px rgba(10,8,24,.65); }
+.dream-fx-from { margin-top: 20px; font-size: 11.5px; color: rgba(214,201,255,.76); letter-spacing: 2px; text-shadow: 0 1px 3px rgba(10,8,24,.9), 0 1px 10px rgba(10,8,24,.55); }
+/* 20261028：装饰留白区——寄语(from)与按钮(btn)之间留出紧凑的装饰带，
+   底部定点装饰（荷花/炭炉/水面/河灯/嫩芽/露珠/麦浪等）画在此处，不被按钮遮挡。 */
+.dream-fx-btn { margin-top: 52px; width: 78%; max-width: 230px; border-radius: 999px; }
+.dream-fx-from.hidden, .dream-fx-badges.hidden { display: none; }
+/* 20261028：国庆（山河 flag）河流蜿蜒画在卡片下部，按钮会压住河流——单独加长此卡，
+   让河流完整露在按钮下方，其余节气/节日不受影响。 */
+.festival-card.fx-flag .dream-fx-btn { margin-top: 96px; }
+
+/* 20261028：入梦签节气/节日调试器（开发者模式专属）选择器 */
+.fx-debug-scroll { max-height: 52vh; overflow-y: auto; padding-right: 4px; }
+.fx-debug-group { margin-bottom: 14px; }
+.fx-debug-gtitle { font-size: 12px; letter-spacing: 3px; color: var(--text-tertiary); margin-bottom: 8px; padding-left: 2px; }
+.fx-debug-item {
+  display: inline-block; font-size: 13px; color: var(--text-primary);
+  padding: 7px 14px; margin: 0 6px 8px 0; border-radius: 999px; cursor: pointer;
+  background: var(--bg-elevated-2); border: 1px solid var(--border, rgba(255,255,255,.08));
+  transition: all .15s; user-select: none; -webkit-user-select: none;
+}
+.fx-debug-item:hover { border-color: var(--purple); color: var(--purple); background: rgba(167,139,250,.1); }
+.fx-debug-item:active { transform: scale(.96); }
+
+/* 20261028：聊天设置 tab 分类（点 tab 显隐对应功能面板）+ 记事簿列表添加类型按钮的激活态 */
+.cs-panel { display: none; }
+.btn.cs-tab.on { background: var(--purple); color: #141019; font-weight: 600; }
+.btn.note-type-btn.on { background: var(--purple); color: #141019; font-weight: 600; }
+/* 20261028：织梦点 tab 分类（同聊天设置 tab 交互） */
+.dt-panel { display: none; }
+.btn.dt-tab.on { background: var(--purple); color: #141019; font-weight: 600; }
+/* 20261028：查看问卷发出方 tab 激活态 */
+.btn.svl-ftab.on { background: var(--purple); color: #141019; font-weight: 600; }
+
 
 /* 闪烁星光（轻微魔法元素）：垫在页面背景图之上、UI 卡片之下——
    黑色透明玻璃卡片能"透出星星点点"，卡片间隙也能看到星点闪烁 */
@@ -1586,9 +1642,63 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
   border: 1px solid var(--border);
   border-radius: 16px;
 }
-.diary-ic { font-size: 22px; }
-.diary-label { flex: 1; font-size: 14px; color: var(--text-secondary); }
-.diary-val { font-size: 15px; font-weight: 700; color: var(--purple-soft); }
+.diary-ic { font-size: 22px; flex-shrink: 0; }
+.diary-label { flex: 1; min-width: 0; font-size: 14px; color: var(--text-secondary); }
+/* 20261027：值右对齐单行不换行——通话时长「X小时Y分Z秒（N次）」较长，
+   换行会撑高该行导致三行统计卡高度不一（凸出不对称）；nowrap+右对齐统一观感 */
+.diary-val { font-size: 15px; font-weight: 700; color: var(--purple-soft); text-align: right; white-space: nowrap; }
+/* 20261027：日记高频词 Tab + 词条（紫色玻璃风） */
+.diary-word-tabs { display: inline-flex; gap: 6px; padding: 4px; border-radius: 12px; background: var(--bg-elevated-2); }
+.diary-word-tab {
+  border: none; background: transparent; cursor: pointer;
+  padding: 7px 16px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  color: var(--text-tertiary); transition: background .18s, color .18s;
+}
+.diary-word-tab.on { background: var(--purple-soft); color: #fff; }
+.diary-word-panel { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+/* 20261027 改版：Top1~3 竖排榜单——「TOP N」金黄高亮，词与次数普通灰 */
+.diary-word-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 14px; border-radius: 12px;
+  background: var(--bg-elevated-2); border: 1px solid var(--border);
+}
+.diary-top-tag {
+  font-size: 11.5px; font-weight: 800; letter-spacing: .5px;
+  color: #eab308; flex-shrink: 0; min-width: 46px;
+}
+.diary-word-txt { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diary-word-ct { font-size: 12px; color: var(--text-tertiary); flex-shrink: 0; }
+.diary-word-empty { font-size: 12.5px; color: var(--text-tertiary); padding: 6px 2px; }
+
+/* 20261027：纪念日日历视图 */
+.ac-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+.ac-week {
+  text-align: center; font-size: 10.5px; letter-spacing: 1px;
+  color: var(--text-tertiary); padding: 3px 0;
+}
+.ac-day {
+  min-width: 0; min-height: 42px; border: 1px solid var(--border);
+  border-radius: 9px; background: var(--card);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; padding: 2px 0; cursor: pointer; font-family: inherit;
+}
+.ac-day .ac-num { font-size: 12.5px; color: var(--text); line-height: 1; }
+.ac-day .ac-marks { font-size: 8px; line-height: 1; display: flex; align-items: center; gap: 2px; min-height: 9px; }
+.ac-day.today { border-color: var(--purple); background: var(--purple-dim); }
+.ac-day.today .ac-num { color: var(--purple-soft); font-weight: 700; }
+.ac-day.sel { outline: 2px solid var(--purple); outline-offset: -1px; }
+.ac-dot {
+  display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--purple-soft);
+}
+.ac-dot.p { background: #e8a13c; }
+.ac-dot.m { background: #f06a9a; }              /* 经期中 */
+.ac-dot.m2 { background: transparent; border: 1.5px solid #f06a9a; box-sizing: border-box; } /* 潮汐将近 */
+.ac-dot.s { background: #a78bfa; }              /* 行程（紫，区别于待办橙） */
 
 /* ============================================================
    通话悬浮窗（5.8：正方形→圆角长条，可拖拽，互不干扰聊天）
@@ -3025,6 +3135,8 @@ body.low-end *::after {
 }
 .lr-fchip .fx { font-size: 11px; opacity: 0.65; padding: 0 2px; }
 .lr-fchip .fx:hover { opacity: 1; color: var(--danger); }
+/* 20261028：信箱发出方 tab（我发出的 / TA 发出的）激活态 */
+.btn.lr-ftab.on { background: var(--purple); color: #141019; font-weight: 600; }
 
 /* —— 新建文件夹行 —— */
 .lr-newrow { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -3702,6 +3814,10 @@ body.glass-ui #view-moments .topbar.scrolled {
   text-align: center; font-size: 10.5px; letter-spacing: 2px;
   color: rgba(213,200,255,.45); margin-top: 8px; user-select: none;
 }
+/* 20261027：独立查看模式——保留堆叠外观，仅锁定手势（拖拽/点按不翻卡，翻卡靠箭头）。
+   前景卡光标从 grab 改回 default，提示「不可拖动」 */
+.pal-deck-stage.focus .pal-dcard { cursor: default; }
+.pal-deck-stage.focus .pal-dcard:active { cursor: default; }
 
 
 /* —— 20260929z：数据管理导航图标第二版（icons.js 细线 SVG，统一淡紫，与主页宫格 .grid-icon 同语言） —— */
@@ -4684,9 +4800,9 @@ body.theme-light {
 /* 各浅色预设：背景色调 + 强调色（文字色沿用基底深色，保证对比度） */
 body.theme-light.tl-lilac  { --bg: #f2eef9; --bg-elevated-2: #ede8f6; }
 body.theme-light.tl-sakura { --bg: #faf0f4; --bg-elevated-2: #f6ecf1; --purple: #d6568d; --purple-soft: #bb4377; --purple-dim: rgba(214,86,141,.10); --purple-glow: rgba(214,86,141,.20); }
-body.theme-light.tl-sky    { --bg: #eef4fb; --bg-elevated-2: #e9f1f9; --purple: #3b7fd4; --purple-soft: #2f6cbd; --purple-dim: rgba(59,127,212,.10); --purple-glow: rgba(59,127,212,.20); }
-body.theme-light.tl-mint   { --bg: #edf8f1; --bg-elevated-2: #e7f3ec; --purple: #279d6e; --purple-soft: #1e8259; --purple-dim: rgba(39,157,110,.10); --purple-glow: rgba(39,157,110,.20); }
-body.theme-light.tl-cream  { --bg: #faf5ec; --bg-elevated-2: #f4eee2; --purple: #c98a2d; --purple-soft: #a76f1e; --purple-dim: rgba(201,138,45,.10); --purple-glow: rgba(201,138,45,.20); }
+body.theme-light.tl-sky    { --bg: #eff5fb; --bg-elevated-2: #e7eff8; --purple: #a5c8e8; --purple-soft: #8fb2d6; --purple-dim: rgba(165,200,232,.14); --purple-glow: rgba(165,200,232,.24); } /* 20261027：马卡龙雾蓝系（粉嫩低饱和） */
+body.theme-light.tl-mint   { --bg: #eff8f3; --bg-elevated-2: #e6f3ec; --purple: #a5d6c0; --purple-soft: #86bfa6; --purple-dim: rgba(165,214,192,.14); --purple-glow: rgba(165,214,192,.26); } /* 20261027：马卡龙薄荷绿系（粉嫩低饱和） */
+body.theme-light.tl-cream  { --bg: #faf6ec; --bg-elevated-2: #f5efdf; --purple: #eaa92e; --purple-soft: #c78a12; --purple-dim: rgba(240,178,50,.14); --purple-glow: rgba(240,178,50,.26); } /* 20261027：暖阳杏黄系（参考 柔亮橘黄 #FFC232 / 大麦黄 #F0D264） */
 body.theme-light.tl-mist   { --bg: #f1f2f4; --bg-elevated-2: #eaecef; --purple: #5b6270; --purple-soft: #454c59; --purple-dim: rgba(91,98,112,.10); --purple-glow: rgba(91,98,112,.20); }
 
 /* —— 深色硬编码界面 → 浅色 —— */
@@ -4703,6 +4819,9 @@ body.theme-light .letter-card .lc-title { color: #f5f4f7; }
 body.theme-light .letter-card .lc-preview { color: rgba(245, 244, 247, 0.62); }
 body.theme-light .letter-card .lc-flap { background: linear-gradient(180deg, rgba(196,181,253,.20), transparent); }
 body.theme-light .daily-card { background: linear-gradient(160deg, #ffffff 0%, #f6f2fc 60%, #eee8f9 100%); }
+/* 20261028：节日/节气入梦签（动画节气版）不跟全局色彩——无论深浅色主题，
+   背景永远锁定暗夜紫深色主题（与 .festival-card 深色渐变一致），保证文字白字可读、装饰不跑色。 */
+body.theme-light .daily-card.festival-card { background: linear-gradient(160deg, #221a42 0%, #191330 55%, #241a4a 100%); }
 body.theme-light #btn-daily-open { background: rgba(255, 255, 255, 0.86); border-color: rgba(46,36,84,.14); }
 body.theme-light .modal-mask { background: rgba(40, 32, 64, 0.40); }
 body.theme-light #app { box-shadow: 0 0 60px rgba(40, 30, 80, 0.18); }

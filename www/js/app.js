@@ -940,12 +940,8 @@ function buildFestivalCardHtml(d, btnId, fx) {
   const displayName = noChar ? '访客' : (d.charName || '梦角');
   const fallbackLetter = noChar ? '梦' : ((d.charName || '梦')[0]);
   const hasBadges = !!(d.annivText || d.careText);
-  // 20261028：有底部装饰的 fx——这些动画在卡片底部画荷叶/荷花/水面/河灯/嫩芽/炭炉等，
-  // 需在寄语与按钮之间留出装饰区（拉长卡片、按钮下移）。其余 fx 不加。
-  const BOTDEC_FX = ['lotus','apricot','wave','flag','sprout','rainripple','riverlamp','dew','geese','hearth','pear'];
-  const botdec = BOTDEC_FX.indexOf(fx) >= 0 ? ' fx-botdec' : '';
   return `
-    <div class="daily-card festival-card fade-in${botdec}" style="position:relative;overflow:hidden;padding:0;">
+    <div class="daily-card festival-card fx-${fx} fade-in" style="position:relative;overflow:hidden;padding:0;">
       <canvas class="dream-fx-canvas" id="dream-fx-canvas"></canvas>
       <div class="dream-fx-inner">
         <div class="dream-fx-head">
@@ -992,10 +988,15 @@ let _fxDebugCare = false;
 let _fxDebugScrollTop = 0;
 /* 20261028：玩家「入梦签效果查看」模式——仅能打开节气/节日调试器，其余开发者功能一律禁用。
    与 developerMode 完全隔离：玩家模式下 chatSettings.developerMode 仍为 false，故不会命中任何开发者命令/日志分支。 */
-let _playerFxView = false;
+let _playerFxView = false;   // 内存态（本会话内立即生效）；同时 kv 持久化，刷新/重启后无需重输密码
+const PLAYER_FX_VIEW_KV = 'playerFxViewUnlocked';   // 20261028：玩家输过一次查看密码即解锁，落库记住
 
-function showDreamFxDebugModal() {
+async function showDreamFxDebugModal() {
   // 20261028：允许两种进入方式——完整开发者模式，或「玩家效果查看」密码（只进调试器）
+  if (!chatSettings.developerMode && !_playerFxView) {
+    // 冷启动时内存态尚未从 kv 恢复——await 读一次，命中即放行（玩家已解锁过，无需重输密码）
+    try { const v = await getSetting(PLAYER_FX_VIEW_KV, false); if (v) _playerFxView = true; } catch (e) {}
+  }
   if (!chatSettings.developerMode && !_playerFxView) { miniToast('需先开启开发者模式或输入查看密码'); return; }
   // 先恢复上次的占位勾选记忆，再渲染（记忆为空则用默认 false）
   _fxDebugRestoreState();
@@ -1064,6 +1065,9 @@ function renderFxDebug() {
   // 绑定点击：选中某项 → 打开对应动画卡片（「我收到啦」回到本选择页）
   document.querySelectorAll('.fx-debug-item').forEach(el => {
     el.onclick = () => {
+      // 20261028：离开列表前记录滚动位（此时 .fx-debug-scroll 还在 DOM，能读到真实 scrollTop）
+      const _list = document.querySelector('.fx-debug-scroll');
+      if (_list) _fxDebugScrollTop = _list.scrollTop;
       const key = el.getAttribute('data-key');
       const name = el.getAttribute('data-name');
       const title = el.getAttribute('data-title');
@@ -14135,7 +14139,10 @@ async function showSettingsModal() {
   // 不能使用任何其他开发者功能（不写入 developerMode，开发者命令/日志分支全部不命中）。
   const btnPlayerFxView = $('#btn-player-fx-view');
   if (btnPlayerFxView) {
-    btnPlayerFxView.onclick = () => {
+    btnPlayerFxView.onclick = async () => {
+      // 20261028：已解锁（输过密码）则直接进调试器，不再重复弹密码框
+      if (!_playerFxView) { try { const v = await getSetting(PLAYER_FX_VIEW_KV, false); if (v) _playerFxView = true; } catch (e) {} }
+      if (_playerFxView) { showDreamFxDebugModal(); return; }
       openModal(`
         <div style="font-size:17px;font-weight:600;margin-bottom:6px;">入梦签效果查看</div>
         <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:16px;line-height:1.6;">输入密码后仅能浏览入梦签的节气/节日效果展示，不开放任何其他开发者功能。</div>
@@ -14153,7 +14160,8 @@ async function showSettingsModal() {
         // 玩家密码 geziwo：只比对哈希，代码不存明文；与开发者密码完全独立
         if (_devPwdHash(v) === PLAYER_FX_PWD_HASH && v.length === PLAYER_FX_PWD_LEN) {
           closeModal();
-          _playerFxView = true;   // 内存态，仅本次会话生效，下次需重输
+          _playerFxView = true;   // 内存态立即生效
+          try { setSetting(PLAYER_FX_VIEW_KV, true); } catch (e) {}   // 落库记住：刷新/重启后无需重输
           miniToast('已进入入梦签效果查看');
           showDreamFxDebugModal();
         } else {
@@ -24686,7 +24694,7 @@ async function showSurveyLibrary() {
       <div style="font-size:12.5px;color:var(--text-tertiary);" id="svlib-count"></div>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto;" id="svlib-list"></div>
-    <button class="btn primary block" id="svlib-add" style="padding:13px;margin-top:12px;">＋ 添加问卷（可导入 Word / 图片识别）</button>
+    <button class="btn primary block" id="svlib-add" style="padding:13px;margin-top:12px;">＋ 添加问卷（可导入 Word）</button>
   `);
 
   $('#svlib-close').onclick = () => showSurveyHub();
@@ -24730,7 +24738,7 @@ async function openSurveyLibraryDetail(id) {
   $('#svld-close').onclick = closeModal;
 }
 
-/* 问卷库添加/编辑界面：复用题目编辑交互（手动/Word/图片识别），保存到问卷库 */
+/* 问卷库添加/编辑界面：复用题目编辑交互（手动/Word），保存到问卷库 */
 function showSurveyLibraryCompose(owner, charId) {
   const c = owner === 'char' ? characters.find(x => x.id === charId) : null;
   const whoLabel = owner === 'player' ? '存入「玩家问卷库」' : `存入「${c ? c.name : '该角色'}」的角色问卷库`;
@@ -24739,7 +24747,7 @@ function showSurveyLibraryCompose(owner, charId) {
       <div style="font-size:17px;font-weight:600;">添加问卷到问卷库</div>
       <button class="icon-btn" id="svlc-close">✕</button>
     </div>
-    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">${escapeHtml(whoLabel)} · 手动输入题目，或导入 Word 文档（选择题自动解析）、上传图片识别文字</div>
+    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">${escapeHtml(whoLabel)} · 手动输入题目，或导入 Word 文档（选择题自动解析）</div>
     <div style="margin-bottom:10px;">
       <input class="input" id="svlc-title" placeholder="问卷标题（可空，默认取第一题）" style="width:100%;box-sizing:border-box;">
     </div>
@@ -24748,8 +24756,6 @@ function showSurveyLibraryCompose(owner, charId) {
     <button class="btn block" id="svlc-addchoice" style="padding:10px;margin-top:8px;">⊕ 添加选择题（最多 5 个选项）</button>
     <label class="btn block" for="svlc-docx" style="padding:10px;cursor:pointer;margin-top:8px;">📄 导入 Word 文档（.docx）</label>
     <input type="file" id="svlc-docx" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
-    <label class="btn block" for="svlc-img" style="padding:10px;cursor:pointer;margin-top:8px;">🖼️ 上传图片识别文字（AI 已配置时生效）</label>
-    <input type="file" id="svlc-img" accept="image/*" style="display:none;">
     <div style="display:flex;gap:10px;margin-top:14px;">
       <button class="btn" style="flex:1;" id="svlc-cancel">返回</button>
       <button class="btn primary" style="flex:1;" id="svlc-save">存入问卷库</button>
@@ -24808,33 +24814,6 @@ function showSurveyLibraryCompose(owner, charId) {
       renderQList();
       miniToast(`已解析 ${parsed.length} 道题（${parsed.filter(p => p.type === 'choice').length} 道选择题）`);
     } catch (e) { miniToast('Word 解析失败：' + (e && e.message ? e.message : '未知错误')); }
-  };
-
-  // 图片识别文字（AI vision；未配 AI 时提示）
-  $('#svlc-img').onchange = async () => {
-    const f = $('#svlc-img').files[0];
-    $('#svlc-img').value = '';
-    if (!f) return;
-    try {
-      const cfg = await loadAIConfig();
-      if (!(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim())) { miniToast('未配置 AI 接口，无法识别图片文字（可在「API 接入」配置后重试）'); return; }
-      miniToast('正在识别图片文字…');
-      const dataUrl = await blobToDataURL(f);
-      const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
-        { role: 'system', content: '你是问卷题目识别助手。请把图片里的所有题目识别出来，按下面的规则逐行输出，只输出题目和选项，不要任何解释、编号或多余文字：\n1. 普通题：题目文字单独一行。\n2. 选择题：先输出题干一行，紧接着每个选项单独一行，选项行以「A. 」「B. 」「C. 」「D. 」这样的字母加点开头。\n3. 若图片里有多道题，请按顺序连续输出，不要把不同题混在一起。' },
-        { role: 'user', content: [{ type: 'text', text: '识别这张图片里的问卷题目：' }, { type: 'image_url', image_url: { url: dataUrl } }] },
-      ], { temperature: 0.2 });
-      if (r.ok && r.text) {
-        const paras = r.text.split('\n').map(s => s.trim()).filter(Boolean);
-        const parsed = _parseDocxQuestions(paras); // 复用统一的选择题解析（题干+选项分行 / 同行多选项 两种形式）
-        qs = qs.concat(parsed);
-        renderQList();
-        const choiceN = parsed.filter(p => p.type === 'choice').length;
-        miniToast(`已识别 ${parsed.length} 道题${choiceN ? `（${choiceN} 道选择题）` : ''}`);
-      } else {
-        miniToast('图片识别失败，请确认图片清晰或改用 Word 导入');
-      }
-    } catch (e) { miniToast('图片识别出错：' + (e && e.message ? e.message : '未知错误')); }
   };
 
   // 存入问卷库
