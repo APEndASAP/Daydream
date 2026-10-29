@@ -120,6 +120,12 @@ function newBurstGlobal(x, y, fxKind){
   for (let i=0;i<n;i++){ const a = TAU*i/n, v = (1.4+R()*1.6)*dpr; arr.push({x, y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, life:1, hue:hue+R()*20-10}); }
   return { burst:arr };
 }
+/* 惊蛰点击落雷：待注入的闪电落点（画布坐标），thunder 每次出雷时优先消费 */
+const FXBOLTS = [];
+function strikeBoltGlobal(x, y){
+  FXBOLTS.push({ x, y });
+  if (FXBOLTS.length > 4) FXBOLTS.shift();
+}
 const FX_AUDIO = {
   firework:'firework_1689.wav', national:'firework_1689.wav',       // 烟花类 → 烟花多响连爆
   lantern:null, candle:'fire_campfire_crackles.wav',                 // 元宵花灯 → 静音；烛火 → 篝火噼啪
@@ -1055,8 +1061,13 @@ function runFx(kind, canvas) {
       e.next -= dt;
       if (e.next <= 0) {
         e.flash = 1; e.next = 1.6 + R()*2.6;
-        const bx = W*(0.25+R()*0.5); const seg=[]; let by=0;
-        while (by < H*0.55){ seg.push([bx + (R()-0.5)*40*devicePixelRatio, by]); by += H*0.07; }
+        // 点击落雷优先：手指/鼠标点哪，闪电就落哪
+        let bx, by, strikeTo;
+        if (FXBOLTS.length) { const s = FXBOLTS.shift(); bx = s.x; strikeTo = s.y; }
+        else { bx = W*(0.25+R()*0.5); strikeTo = H*0.55; }
+        const seg=[]; by=0;
+        while (by < strikeTo){ seg.push([bx + (R()-0.5)*40*devicePixelRatio, by]); by += Math.max(6, strikeTo/8); }
+        seg.push([bx, strikeTo]);
         e.bolt = seg;
       }
       if (e.flash > 0) {
@@ -1306,6 +1317,8 @@ global.FX_AUDIO = FX_AUDIO;
 global.FXWIND = FXWIND;
 global.FXBURSTS = FXBURSTS;
 global.newBurstGlobal = newBurstGlobal;
+global.FXBOLTS = FXBOLTS;
+global.strikeBoltGlobal = strikeBoltGlobal;
 global.stopFx = stopFx;
 global.runFx = runFx;
 global.ChimeAudio = ChimeAudio;

@@ -1199,6 +1199,12 @@ function mountDreamCardFx(d) {
     // 20261028：pointerdown 是浏览器认可的用户激活手势——首次按下时解锁音频自动播放权限，
     // 之后滑动拨露珠（pointermove）的叮铃声才能被放行（根因：自动播放策略拦截 pointermove 的 play）
     window.ChimeAudio && window.ChimeAudio.unlock && window.ChimeAudio.unlock();
+    // 20261029：惊蛰点击落雷——手指/鼠标点到哪，闪电就落到哪
+    if (_dreamFxKind === 'thunder') {
+      const rect = card.getBoundingClientRect();
+      const px = (p.x - rect.left) * dpr, py = (p.y - rect.top) * dpr;
+      window.strikeBoltGlobal && window.strikeBoltGlobal(px, py);
+    }
     // 按下位置同步到露珠检测（点中露珠也能响）
     {
       const rect = card.getBoundingClientRect();
