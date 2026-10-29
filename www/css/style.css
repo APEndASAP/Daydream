@@ -1568,14 +1568,25 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
   margin-bottom: 12px;
 }
 .emoji-tab {
+  /* 20261030：tab 统一为等宽等高按钮——固定高度 + 统一最小宽度（按「表情包」tab 尺寸）+ 不换行 + 防压缩，
+     解决「Emoji 库/戳一戳」被 flex 挤成换行/竖排、以及「＋添加」与 tab 高度不一致的问题 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bg-elevated-2);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   border-radius: 16px;
-  padding: 6px 16px;
+  height: 34px;
+  min-width: 84px;
+  box-sizing: border-box;
+  padding: 0 16px;
   font-size: 13px;
+  line-height: 1;
   font-family: var(--font);
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .emoji-tab.active { background: var(--purple); color: #141019; border-color: var(--purple); font-weight: 600; }
 .emoji-grid {

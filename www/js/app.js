@@ -260,6 +260,7 @@ async function init() {
     // 20261011：启动时补齐所有 AI 角色的当天日常时间表（规则4，含遗忘曲线清理）
     try { ensureAllCharSchedules().catch(() => {}); } catch (e) {}
     startMomentsTick();    // 9 朋友圈：访客随机发帖 + 互动补算（每 45 秒）
+    try { await nbMigrateLegacySchedules(); } catch (e) {} // 20261030：记事蒲/系统日历拆分，历史数据按来源迁移
     startNotebookTimer();  // 记事簿：到点提醒（30 秒一查）
     startLetterTimer();    // 书信：梦角随机来信（30 分钟一查，频率完全随机）
     startLetterReplyWatcher(); // 书信：待回信队列补投（20260925i，修复刷新后回信丢失）
@@ -2358,8 +2359,9 @@ async function renderGroupMessages(groupId) {
   scrollToBottom();
 }
 
-function appendGroupMessage(m, scroll = true) {
+function appendGroupMessage(m, scroll = true, container = null) {
   const scrollEl = $('#chat-scroll');
+  const mount = container || scrollEl;  // 20261030：虚拟滚动批量补载时传入 fragment，避免逐条 reflow
   // 虚拟滚动：新消息同步进窗口数据源（初始渲染/补载时 suspend 挂起，避免重复）
   if (_chatWin && !_chatWin.suspend && _chatWin.mode === 'group') _chatWin.all.push(m);
   const emptyEl = scrollEl.querySelector('.empty');
@@ -2386,7 +2388,7 @@ function appendGroupMessage(m, scroll = true) {
     const nameTag = `<div class="group-speaker-name">${escapeHtml(groupMemberName(g, m.charId))}</div>`;
     row.innerHTML = `${av}<div class="msg-body">${nameTag}${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>`;
   }
-  scrollEl.appendChild(row);
+  mount.appendChild(row);
   // az：群内互动卡片绑定
   const voteCard = row.querySelector('[data-vote-card]');
   if (voteCard) bindVoteCard(m, voteCard);
@@ -3099,7 +3101,8 @@ function ensureChatWindowHooks() {
   scroll._winHooked = true;
   scroll.addEventListener('scroll', () => {
     if (!_chatWin || _chatWin.busy || _chatWin.start <= 0) return;
-    if (scroll.scrollTop < 80) chatLoadOlder();
+    // 20261030：接近顶部即自动补载（阈值放宽到 200px），上翻更跟手；防抖靠 busy 锁避免重复触发
+    if (scroll.scrollTop < 200) chatLoadOlder();
   }, { passive: true });
   // 20261004：引用块点击跳转（事件委托，单聊/群聊共用；closest 兼容引用块内嵌元素点击）
   scroll.addEventListener('click', (e) => {
@@ -3113,7 +3116,8 @@ function ensureChatWindowHooks() {
   });
 }
 
-/* 上滑补载更早一批：先渲染再搬移到顶部，滚动位置用锚点元素稳定补偿 */
+/* 上滑补载更早一批：用 DocumentFragment 批量构建后一次性插入，避免逐条 reflow 卡顿。
+   20261030 优化：原来逐条 appendMessage + insertBefore，一次 60 条 = 60 次强制重排，上翻特别慢。 */
 function chatLoadOlder() {
   const scroll = $('#chat-scroll');
   const w = _chatWin;
@@ -3123,12 +3127,14 @@ function chatLoadOlder() {
   // 用「当前视口内第一条可见行」作为滚动锚点，避免 prepend 哨兵导致高度跳变
   const anchor = scroll.querySelector('#chat-loadmore') ? scroll.querySelector('#chat-loadmore').nextSibling : scroll.firstChild;
   w.suspend = true;
+  // 20261030：批量构建——appendMessage 第三参传 fragment，消息行先收集到内存，最后一次性插进锚点前
+  const frag = document.createDocumentFragment();
   for (let i = w.start - step; i < w.start; i++) {
-    if (w.mode === 'group') appendGroupMessage(w.all[i], false);
-    else appendMessage(w.all[i], false);
-    const row = scroll.lastChild; // 刚追加到末尾的行，搬到锚点前
-    if (row && anchor && row !== anchor) scroll.insertBefore(row, anchor);
+    if (w.mode === 'group') appendGroupMessage(w.all[i], false, frag);
+    else appendMessage(w.all[i], false, frag);
   }
+  if (anchor && anchor.parentNode === scroll) scroll.insertBefore(frag, anchor);
+  else scroll.appendChild(frag);
   w.suspend = false;
   w.start -= step;
   // 顶部清理：DOM 行数超上限时移除最旧一批（数据仍在 all 库里，start 索引不变，
@@ -3614,9 +3620,10 @@ function fixOnelineBubble(row) {
   });
 }
 
-function appendMessage(m, scroll = true) {
+function appendMessage(m, scroll = true, container = null) {
   const scrollEl = $('#chat-scroll');
   if (!scrollEl) return;
+  const mount = container || scrollEl;  // 20261030：虚拟滚动批量补载时传入 fragment，避免逐条 reflow
   // 虚拟滚动：新消息同步进窗口数据源（初始渲染/补载时 suspend 挂起，避免重复）
   if (_chatWin && !_chatWin.suspend && _chatWin.mode === 'single') _chatWin.all.push(m);
   const emptyEl = scrollEl.querySelector('.empty');
@@ -3644,7 +3651,7 @@ function appendMessage(m, scroll = true) {
     row.addEventListener('touchend', () => clearTimeout(pokePress));
     row.addEventListener('touchmove', () => clearTimeout(pokePress));
     row.addEventListener('touchcancel', () => clearTimeout(pokePress)); // 20261001ci
-    scrollEl.appendChild(row);
+    mount.appendChild(row);
     if (scroll) scrollToBottom();
     return;
   }
@@ -3672,7 +3679,7 @@ function appendMessage(m, scroll = true) {
   } else {
     row.innerHTML = `${avatarHtml(c && c.avatar, c && c.name)}<div class="msg-body">${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>${checkHtml}`;
   }
-  scrollEl.appendChild(row);
+  mount.appendChild(row);
   fixOnelineBubble(row); // 20261001cr：颜文字单行气泡超宽时缩字号/换行兜底，杜绝截断
 
   // 事件：撤回消息点击查看原文 / 图片点击放大 / 右键或长按操作菜单
@@ -4260,9 +4267,18 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
   //   「已到期未落库」的任务拉回补生成/补确认，消息绝不丢。taskId 唯一（含时间戳），
   //   与主动消息（proactive/summon）的固定键不冲突。
   const __bmReplyTaskId = charId + '|reply|' + __bmReplyDue;
+  let __bmReplyScheduled = false; // 是否真的排了后台任务（决定落库后要不要 confirm）
   // 只有延迟够长（>5s）才排后台任务——短延迟（查岗等）靠 JS setTimeout 即时回复，
   // 排了反而可能跟「已快速回复完」竞态。与 bmRegisterAlarm 内部 5s 阈值保持一致。
-  if (__bmReplyDue > Date.now() + 5000) {
+  // 20261030fix：仅当玩家「不在当前聊天页」或「已挂后台」时才排后台任务。玩家正与该角色
+  //   聊天（且前台）时，JS setTimeout 稳定执行、回复即时送达；此时若再排原生后台任务，60s
+  //   到点原生闹钟会另起 _bmProcessTask 生成一条「主动想起」的消息，与主线 setTimeout 的
+  //   回复双路竞争，造成「回复停滞很久、又突然冒出一条」的错觉（用户反馈）。后台任务只兜
+  //   「退出聊天页 / 挂后台被冻结、setTimeout 不执行」的场景，聊天页内前台不排。
+  //   注意：挂后台时 dataset.view 仍是 'chat'，单看 inThisChat 会误判为「在聊天页」，
+  //   所以必须并上 bmIsBg()（挂后台判定），否则挂后台兜底会失效。
+  if ((!inThisChat || bmIsBg()) && __bmReplyDue > Date.now() + 5000) {
+    __bmReplyScheduled = true;
     try { bmBackgroundSchedule(__bmReplyTaskId, charId, __bmReplyDue, c.name || '访客', 'reply'); } catch (e) {}
   }
 
@@ -4330,8 +4346,8 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
         if (i === 0 && finalQuote) replyMsg.quote = finalQuote;
         // 20261030：首条回复带上后台任务 taskId——若 App 在延迟期间被冻结、setTimeout 未执行，
         // 回前台 recoverDue 走 _bmProcessTask 时，靠消息上的 taskId 字段兜底查重（bmTaskMsgScanByField），
-        // 避免「已落库却再补发一条」的重复。
-        if (i === 0 && __bmReplyTaskId) replyMsg.taskId = __bmReplyTaskId;
+        // 避免「已落库却再补发一条」的重复。仅排了后台任务时才带（聊天页内不排则不带）。
+        if (i === 0 && __bmReplyScheduled && __bmReplyTaskId) replyMsg.taskId = __bmReplyTaskId;
         // 20261008：typing_card 消息附带 blocks（普通文字/字卡/表情的区分结构），
         // 供打字卡演出时按块驱动（text 逐字打、card/emoji 整块飞入）。不破坏消息结构。
         if (typecardBlocks && i === 0) {
@@ -4363,7 +4379,9 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
       bmClearAlarm(charId, 'msg', __bmReplyDue); // 20261002ca：消息已送达 → 撤预排闹钟（防止已读后再弹）
       // 20261030：回复已成功落库 → 记录 taskId→msgId 映射 + 确认后台任务完成（撤原生任务）。
       // 这样若之后回前台 recoverDue 拉到该任务，bmTaskMsgGet 命中映射会直接补 confirm、不重复生成。
-      if (__bmReplyTaskId && lastMsg) {
+      // 20261030fix：只在「真的排过后台任务」（__bmReplyScheduled）时才做 confirm。聊天页内
+      //   未排后台任务时跳过，避免对不存在的 taskId 做无意义原生调用、彻底不碰后台链路。
+      if (__bmReplyScheduled && __bmReplyTaskId && lastMsg) {
         try { await bmTaskMsgSet(__bmReplyTaskId, lastMsg.id); } catch (e) {}
         try { await bmBackgroundConfirm(__bmReplyTaskId); } catch (e) {}
       }
@@ -6357,7 +6375,45 @@ const BM_SCHED_NEG_RE = /(不用提醒|别提醒|不要提醒|不需要提醒|�
 const BM_SCHED_RECORD_RE = /(记录|记一下|记下来|记个|写下|写一下|写下来|添加|加上|存一下|存个|备注|备忘|待办|记事|记入|登记)/;
 /* 20261005dt：记录类否定词（「不用记/别记/不记录」等 → 不触发） */
 const BM_SCHED_RECORD_NEG_RE = /(不用记|别记|不要记|不记录|不用写|别写|不用存|别存|不记)/;
-const BM_SCHED_KV = 'bmScheduleReminders'; // kv 键：行程记录（防重 + 网页端到点调度）
+const BM_SCHED_KV = 'bmScheduleReminders'; // kv 键：系统闹钟/系统日历行程（聊天里「提醒我」触发，对接手机系统）
+
+/* ==================== 记事蒲独立存储（20261030 拆分） ====================
+   记事蒲是「App 内自带日历/行程」，与系统日历/系统闹钟完全无关，用独立 kv 键。
+   存：① 玩家自己记的行程（source='player'）；② 角色每天随机记录的行程（source='char'）。
+   字段：{ id, at, title, source, charId, charName } */
+const NB_SCHED_KV = 'notebookSchedules';
+async function nbLoadSchedules() {
+  try { const v = await getSetting(NB_SCHED_KV, []); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+async function nbSaveSchedules(list) {
+  try { await setSetting(NB_SCHED_KV, list); } catch (e) {}
+}
+
+/* 20261030：历史数据迁移——把之前混在 bmScheduleReminders 里的记事蒲行程
+   （source='char' / source='player'）一次性迁到 notebookSchedules，系统闹钟那套
+   （无 source 或 source 非 char/player，即聊天里「提醒我」创建的）保留原位。
+   幂等：迁移后立即清掉旧存储里的 char/player 项，重复调用不会重复迁移。 */
+async function nbMigrateLegacySchedules() {
+  try {
+    const legacy = await bmLoadSchedules();
+    if (!Array.isArray(legacy) || !legacy.length) return;
+    const nbList = await nbLoadSchedules();
+    const nbIds = new Set(nbList.map(x => x && x.id));
+    const toMove = legacy.filter(it => it && (it.source === 'char' || it.source === 'player'));
+    if (!toMove.length) return;
+    let added = 0;
+    for (const it of toMove) {
+      if (nbIds.has(it.id)) continue;   // 已迁过，跳过
+      nbList.push({ id: it.id, at: it.at, title: it.title, source: it.source, charId: it.charId || null, charName: it.charName || '' });
+      nbIds.add(it.id);
+      added++;
+    }
+    if (added > 0) await nbSaveSchedules(nbList);
+    // 旧存储里移除已迁出的 char/player 项，避免记事蒲日历再读到系统闹钟存储
+    const rest = legacy.filter(it => !(it && (it.source === 'char' || it.source === 'player')));
+    await bmSaveSchedules(rest);
+  } catch (e) { bmDiag('nb_migrate_fail', { err: String(e && e.message || e) }); }
+}
 
 async function bmLoadSchedules() {
   try { const v = await getSetting(BM_SCHED_KV, []); return Array.isArray(v) ? v : []; } catch (e) { return []; }
@@ -6650,21 +6706,58 @@ async function bmCancelScheduleByText(charId, text) {
       const hit = list.filter(it => String(it.title || '').indexOf(kw) >= 0 || kw.indexOf(String(it.title || '')) >= 0);
       if (hit.length) targets = hit;
     }
+    // 20261030：弹窗让玩家选取消哪一条（不再静默全删）
+    bmShowCancelScheduleModal(c, targets, kw);
+  } catch (e) { console.error('[取消行程闹钟]', e); }
+}
+
+/* 20261030：取消行程确认弹窗——列出可取消的行程，玩家勾选后确认；
+   确认后真删除：撤系统闹钟(LocalNotifications.cancel) + 删系统日历事件(deleteEventsById) + 标记取消。 */
+function bmShowCancelScheduleModal(c, targets, kw) {
+  if (!targets || !targets.length) return;
+  const name = c ? (c.name || '访客') : '访客';
+  const kwHint = kw ? `（匹配「${escapeHtml(kw)}」）` : '';
+  openModal(`
+    <div style="text-align:center;margin-bottom:10px;">
+      <div style="font-size:36px;margin-bottom:6px;">🗑️</div>
+      <div style="font-size:16px;font-weight:600;line-height:1.5;">取消「${escapeHtml(name)}」的行程闹钟</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">请勾选要取消的行程${kwHint}，确认后会同时删除系统闹钟和系统日历里的对应内容</div>
+    </div>
+    <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;" id="bm-cancel-list">
+      ${targets.map(it => `
+        <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;cursor:pointer;">
+          <input type="checkbox" class="bm-cancel-cb" data-id="${escapeHtml(it.id)}" style="width:18px;height:18px;accent-color:var(--purple);flex-shrink:0;">
+          <span style="flex:1;min-width:0;">
+            <span style="font-size:13.5px;">${escapeHtml(it.title || '行程')}</span>
+            <span style="display:block;font-size:11.5px;color:var(--text-tertiary);">${escapeHtml(bmFormatCNTime(it.at))}</span>
+          </span>
+        </label>`).join('')}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn" style="flex:1;" id="bm-cancel-cancel">算了</button>
+      <button class="btn primary" style="flex:1;" id="bm-cancel-ok">确认取消</button>
+    </div>
+  `);
+  $('#bm-cancel-cancel').onclick = closeModal;
+  $('#bm-cancel-ok').onclick = async () => {
+    const checked = [...document.querySelectorAll('.bm-cancel-cb')].filter(cb => cb.checked).map(cb => cb.dataset.id);
+    if (!checked.length) { miniToast('先勾选要取消的行程'); return; }
+    const chosen = targets.filter(it => checked.includes(it.id));
     const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
     const LN = PLG && PLG.LocalNotifications;
     const Cal = PLG && PLG.CapacitorCalendar;
-    for (const it of targets) {
+    for (const it of chosen) {
       if (LN && it.alarmNotifId != null) { try { await LN.cancel({ notifications: [{ id: it.alarmNotifId }] }); } catch (e) {} }
-      // 20261030：同步删除系统日历里对应的事件（玩家说「取消行程」时，日历事件也要删，不能只撤闹钟）
       if (Cal && it.calEventId && typeof Cal.deleteEventsById === 'function') {
         try { await Cal.deleteEventsById({ ids: [String(it.calEventId)] }); } catch (e) {}
       }
       it.cancelled = true;
     }
-    await bmSaveSchedules(list.map(x => (targets.some(t => t.id === x.id) ? { ...x, cancelled: true } : x)));
-    const n = targets.length;
-    miniToast(c ? `已取消「${c.name}」的 ${n} 条行程闹钟` : `已取消 ${n} 条行程闹钟`);
-  } catch (e) { console.error('[取消行程闹钟]', e); }
+    const list = await bmLoadSchedules();
+    await bmSaveSchedules(list.map(x => (chosen.some(t => t.id === x.id) ? { ...x, cancelled: true } : x)));
+    closeModal();
+    miniToast(`已取消 ${chosen.length} 条行程闹钟，并删除系统日历内容`);
+  };
 }
 
 /* 检测入口：sendMessage 单聊路径调用（字卡/AI 通用） */
@@ -12534,55 +12627,7 @@ function nextAnniversaryInfo() {
 function startOfToday() { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(); }
 function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
 
-/* ========== 20261027：纪念日「日历视图」+ 角色备忘日程（仅供观看，不提醒） ==========
-   角色备忘：像真人用日历——平时不记，某天有「值得记下来的事」才记 1~2 笔。
-   事件内容从角色内置时间表（charSchedule_<charId>，AI/字卡双模式，永不直接展示）里
-   挑时段，写成带时间点的备忘句。概率可调（kv charMemoProb，默认 0.4）。
-   存储：kv charMemo_<charId> = [{ day:'YYYY-MM-DD', items:['下午3点，xxx'] }]，滚动 60 天。 */
-let _annivView = 'list';       // 'list' | 'calendar'（跨开关记忆）
-let _annivCalY = 0, _annivCalM = 0, _annivSelDay = '';
 function annivDayKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
-function memoHourLabel(h) {
-  if (h === 0) return '午夜';
-  if (h < 6) return `凌晨${h}点`;
-  if (h < 12) return `上午${h}点`;
-  if (h === 12) return '中午12点';
-  if (h < 18) return `下午${h - 12}点`;
-  return `晚上${h - 12}点`;
-}
-/* 确保某角色某天的备忘条目存在（幂等 + 自持久化；只给今天及过去的日子生成） */
-async function ensureCharMemoForDay(charId, dayKey) {
-  const key = 'charMemo_' + charId;
-  const list = await getSetting(key, []);
-  let entry = list.find(e => e && e.day === dayKey);
-  if (entry) return entry;
-  const dayT = new Date(dayKey + 'T00:00:00').getTime();
-  if (dayT > startOfToday()) return { day: dayKey, items: [] };
-  const prob = Math.min(0.95, Math.max(0.05, Number(await getSetting('charMemoProb', 0.4)) || 0.4));
-  let items = [];
-  if (Math.random() < prob) {
-    const scheds = await charSchedules(charId);
-    const dayS = scheds.find(s => s && s.dayKey === dayKey);
-    if (dayS && Array.isArray(dayS.slots) && dayS.slots.length) {
-      const pool = dayS.slots.slice();
-      const n = 1 + (Math.random() < 0.5 ? 1 : 0);
-      for (let i = 0; i < n && pool.length; i++) {
-        const k = Math.floor(Math.random() * pool.length);
-        const s = pool.splice(k, 1)[0];
-        if (s && s.desc) items.push(`${memoHourLabel(s.h)}，${s.desc}`);
-      }
-    }
-  }
-  entry = { day: dayKey, items };
-  list.push(entry);
-  await charMemoSave(charId, list);
-  return entry;
-}
-async function charMemoSave(charId, memoList) {
-  const sorted = memoList.filter(Boolean).sort((a, b) => (a.day < b.day ? -1 : 1));
-  while (sorted.length > 60) sorted.shift();
-  await setSetting('charMemo_' + charId, sorted);
-}
 
 function showCharAnniversaryModal(charId) {
   const c = characters.find(x => x.id === charId);
@@ -12595,39 +12640,11 @@ function showCharAnniversaryModal(charId) {
       </div>
       <button class="icon-btn" id="anniv-list-close">✕</button>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:12px;" id="anniv-tabs">
-      <button class="btn" data-anniv-view="list" style="flex:1;padding:8px 0;">📋 列表</button>
-      <button class="btn" data-anniv-view="calendar" style="flex:1;padding:8px 0;">🗓 日历</button>
-    </div>
     <div id="anniv-body"></div>
   `);
   $('#anniv-list-close').onclick = closeModal;
   $('#anniv-back').onclick = () => showAnniversaryModal();
-  const paintTabs = () => {
-    document.querySelectorAll('[data-anniv-view]').forEach(b => {
-      const on = b.dataset.annivView === _annivView;
-      b.style.background = on ? 'var(--purple)' : '';
-      b.style.color = on ? '#141019' : '';
-    });
-  };
-  document.querySelectorAll('[data-anniv-view]').forEach(b => {
-    b.onclick = () => { _annivView = b.dataset.annivView; paintTabs(); renderAnnivBody(charId); };
-  });
-  paintTabs();
-  renderAnnivBody(charId);
-}
-
-/* 按当前视图渲染列表 / 日历 */
-async function renderAnnivBody(charId) {
-  const body = $('#anniv-body');
-  if (!body) return;
-  if (_annivView === 'calendar') {
-    if (!_annivCalY) { const n = new Date(); _annivCalY = n.getFullYear(); _annivCalM = n.getMonth(); }
-    body.innerHTML = '<div id="anniv-cal-wrap" style="min-height:200px;color:var(--text-tertiary);text-align:center;padding:30px 0;">加载中…</div>';
-    await renderAnnivCalendar(charId);
-  } else {
-    renderAnnivList(charId);
-  }
+  renderAnnivList(charId);
 }
 
 /* 列表视图（原列表原样保留） */
@@ -12667,119 +12684,6 @@ function renderAnnivList(charId) {
         await saveAnniversaries();
         renderAnnivList(charId);
       });
-    };
-  });
-}
-
-/* 日历视图：格子标记 🎉纪念日 · 🟣TA记下的 · 🟠玩家记的行程；点日子看当天详情 */
-async function renderAnnivCalendar(charId) {
-  const wrap = $('#anniv-cal-wrap');
-  if (!wrap) return;
-  const y = _annivCalY, m = _annivCalM;
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const lead = (new Date(y, m, 1).getDay() + 6) % 7;   // 周一开头
-  const todayDk = annivDayKey(new Date());
-  const annivs = anniversaries.filter(a => a.charId === charId);
-  let scheds = [];
-  try { scheds = await bmLoadSchedules(); } catch (e) {}
-  // 今天先确保时间表存在（幂等），备忘才有的挑
-  try { await ensureCharDaySchedule(charId); } catch (e) {}
-  let cells = '';
-  for (let i = 0; i < lead; i++) cells += '<div></div>';
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dk = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const hasAnniv = annivs.some(a => a.date === dk || a.date === dk.slice(5));
-    let memoItems = [];
-    if (dk <= todayDk) {
-      const e = await ensureCharMemoForDay(charId, dk);
-      if (e && e.items) memoItems = e.items;
-    }
-    const hasMemo = memoItems.length > 0;
-    const hasSched = scheds.some(it => it && it.charId === charId && annivDayKey(new Date(it.at)) === dk);
-    const isToday = dk === todayDk;
-    const sel = _annivSelDay === dk;
-    cells += `<button class="ac-day${isToday ? ' today' : ''}${sel ? ' sel' : ''}" data-ac-day="${dk}" style="position:relative;">
-      <span class="ac-num">${d}</span>
-      <span class="ac-marks">${hasAnniv ? '🎉' : ''}${hasMemo ? '<i class="ac-dot"></i>' : ''}${hasSched ? '<i class="ac-dot p"></i>' : ''}</span>
-    </button>`;
-  }
-  wrap.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <button class="icon-btn" id="ac-prev">‹</button>
-      <div style="font-size:15px;font-weight:600;">${y} 年 ${m + 1} 月</div>
-      <button class="icon-btn" id="ac-next">›</button>
-    </div>
-    <div class="ac-grid" style="margin-bottom:4px;">
-      ${['一', '二', '三', '四', '五', '六', '日'].map(w => `<div class="ac-week">${w}</div>`).join('')}
-    </div>
-    <div class="ac-grid">${cells}</div>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text-tertiary);margin:8px 2px 0;">
-      <span>🎉 纪念日</span><span><i class="ac-dot"></i> TA 记下的</span><span><i class="ac-dot p"></i> 你记的行程</span>
-    </div>
-    <div id="ac-detail" style="margin-top:10px;"></div>
-    <div style="display:flex;gap:10px;margin-top:14px;">
-      <button class="btn" style="flex:1;" id="ac-prob">⚙ 记录频率</button>
-      <button class="btn primary" style="flex:1;" id="ac-new-anniv">＋ 新建纪念日</button>
-    </div>
-  `;
-  $('#ac-prev').onclick = () => { _annivCalM--; if (_annivCalM < 0) { _annivCalM = 11; _annivCalY--; } _annivSelDay = ''; renderAnnivCalendar(charId); };
-  $('#ac-next').onclick = () => { _annivCalM++; if (_annivCalM > 11) { _annivCalM = 0; _annivCalY++; } _annivSelDay = ''; renderAnnivCalendar(charId); };
-  $('#ac-new-anniv').onclick = () => showNewAnniversaryModal(charId);
-  $('#ac-prob').onclick = () => showCharMemoProbModal(charId);
-  wrap.querySelectorAll('[data-ac-day]').forEach(btn => {
-    btn.onclick = () => { _annivSelDay = btn.dataset.acDay; renderAnnivCalendar(charId); };
-  });
-  if (_annivSelDay && _annivSelDay.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)) {
-    const detailMemo = await getSetting('charMemo_' + charId, []);
-    renderAnnivDayDetail(charId, _annivSelDay, detailMemo, scheds);
-  }
-}
-
-/* 某天详情：纪念日 + TA 记下的 + 玩家记的行程（全部仅供观看） */
-function renderAnnivDayDetail(charId, dk, memoList, scheds) {
-  const box = $('#ac-detail');
-  if (!box) return;
-  const annivs = anniversaries.filter(a => a.charId === charId && (a.date === dk || a.date === dk.slice(5)));
-  const e = memoList.find(x => x && x.day === dk);
-  const memoItems = (e && e.items) || [];
-  let schedLines = [];
-  try {
-    schedLines = (scheds || []).filter(it => it && it.charId === charId && annivDayKey(new Date(it.at)) === dk)
-      .map(it => `${bmFormatCNTime(it.at)} ${it.title || '日程'}`);
-  } catch (err) {}
-  const block = (title, arr, icon) => !arr.length ? '' : `
-    <div style="margin-bottom:10px;">
-      <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:5px;">${icon} ${title}</div>
-      ${arr.map(t => `<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">${escapeHtml(t)}</div>`).join('')}
-    </div>`;
-  const nothing = !annivs.length && !memoItems.length && !schedLines.length;
-  box.innerHTML = `
-    <div style="font-size:13px;font-weight:600;margin-bottom:8px;">📅 ${dk}${dk === annivDayKey(new Date()) ? '（今天）' : ''}</div>
-    ${nothing ? '<div style="font-size:12.5px;color:var(--text-tertiary);padding:6px 2px;">这一天没有记录</div>' : ''}
-    ${block('纪念日', annivs.map(a => a.reason || '纪念日'), '🎉')}
-    ${block('TA 记下的', memoItems, '✍️')}
-    ${block('你记的行程', schedLines, '⏰')}
-  `;
-}
-
-/* 备忘记录频率调节（全局，默认 40%） */
-function showCharMemoProbModal(charId) {
-  getSetting('charMemoProb', 0.4).then(v => {
-    openModal(`
-      <div style="font-size:17px;font-weight:600;margin-bottom:6px;">TA 记日历的频率</div>
-      <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">调低 = TA 更少往日历上记事；调高 = 几乎每天都记一笔。</div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-        <input type="range" id="acm-prob" min="5" max="90" step="5" value="${Math.round((Number(v) || 0.4) * 100)}" style="flex:1;">
-        <span id="acm-prob-val" style="font-size:14px;font-weight:700;color:var(--purple-soft);min-width:44px;text-align:right;">${Math.round((Number(v) || 0.4) * 100)}%</span>
-      </div>
-      <button class="btn primary block" id="acm-save" style="margin-top:14px;">保存</button>
-    `);
-    const rg = $('#acm-prob');
-    rg.oninput = () => { $('#acm-prob-val').textContent = rg.value + '%'; };
-    $('#acm-save').onclick = async () => {
-      await setSetting('charMemoProb', parseInt(rg.value, 10) / 100);
-      closeModal();
-      miniToast('已保存');
     };
   });
 }
@@ -19883,11 +19787,10 @@ async function renderNotebookList() {
       remindAt = new Date(y, mo - 1, d, hour, min).getTime();
     }
     if (_noteType === 'sched') {
-      // 行程：写入 bmScheduleReminders，source=player（玩家自己记的，不带 charName）
-      const list = await bmLoadSchedules();
-      list.push({ id: uid('sched'), at: remindAt || Date.now(), title: text, charId: null, charName: '', source: 'player', fired: false });
-      await bmSaveSchedules(list);
-      try { bmSchedulePageTimers(); } catch (e) {}
+      // 20261030：行程写入独立存储 notebookSchedules（纯 App 内，source=player 玩家自己记的）
+      const list = await nbLoadSchedules();
+      list.push({ id: uid('sched'), at: remindAt || Date.now(), title: text, charId: null, charName: '', source: 'player' });
+      await nbSaveSchedules(list);
       miniToast('已添加行程');
     } else {
       items2.push({ id: uid('note'), text, at: Date.now(), remindAt, done: false, reminded: false });
@@ -20061,7 +19964,10 @@ async function renderNotebookCalendar() {
   const items = await getSetting('notebookItems', []);
   const pinfo = await getPeriodInfo();
   let scheds = [];
-  try { scheds = await bmLoadSchedules(); } catch (e) {}
+  try { scheds = await nbLoadSchedules(); } catch (e) {}  // 20261030：记事蒲读自己的独立存储
+  // 20261030：显示过滤——玩家行程(source='player')互通全显示；角色行程(source='char')只显示当前聊天角色
+  const curCid = currentCharId;
+  scheds = scheds.filter(it => it && (it.source === 'player' || (it.source === 'char' && it.charId === curCid)));
   let cells = '';
   for (let i = 0; i < lead; i++) cells += '<div></div>';
   for (let d = 1; d <= daysInMonth; d++) {
@@ -20107,9 +20013,11 @@ async function renderNotebookCalendar() {
     if (pinfo && Array.isArray(pinfo.log) && pinfo.log.some(l => l.start === _nbSelDay)) bits.push('<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">🌸 你记录的经期开始日</div>');
     if (st && st.pre5) bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">🌊 潮汐将近（约 ${st.daysToNext} 天后到）</div>`);
     dayScheds.forEach(it => {
-      const isChar = it.source === 'char' || (it.source !== 'player' && it.charName);
+      const isChar = it.source === 'char';
       const who = isChar ? (it.charName ? `${it.charName} 记的` : 'TA 记的') : '你记的';
-      bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">⏰ ${escapeHtml(it.title || '行程')} <span style="color:var(--text-tertiary);font-size:11.5px;">${escapeHtml(bmFormatCNTime(it.at))} · ${escapeHtml(who)}</span></div>`);
+      // 20261030：玩家自己的行程（source='player'）可删除；角色行程只读不可删
+      const delBtn = isChar ? '' : `<button class="badge" data-nb-sched-del="${escapeHtml(it.id)}" style="cursor:pointer;color:var(--danger);margin-left:6px;flex-shrink:0;">删</button>`;
+      bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;gap:8px;"><div style="min-width:0;">${isChar ? '🕐' : '📌'} ${escapeHtml(it.title || '行程')} <span style="color:var(--text-tertiary);font-size:11.5px;">${escapeHtml(bmFormatCNTime(it.at))} · ${escapeHtml(who)}</span></div>${delBtn}</div>`);
     });
     dayNotes.forEach(it => bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">📝 ${escapeHtml(it.text)}${it.done ? '（已完成）' : ''}</div>`));
     box.innerHTML = `
@@ -20119,9 +20027,22 @@ async function renderNotebookCalendar() {
         <button class="btn" style="flex:1;" id="nbc-add-sched">⏰ 添加行程</button>
         <button class="btn primary" style="flex:1;" id="nbc-add-note">📝 添加记事</button>
       </div>
+      <button class="btn" style="width:100%;margin-top:8px;" id="nbc-manage-sched">🗂 管理我的行程</button>
     `;
     $('#nbc-add-note').onclick = () => showNotebookAddNoteModal(_nbSelDay);
     $('#nbc-add-sched').onclick = () => showNotebookAddSchedModal(_nbSelDay);
+    $('#nbc-manage-sched').onclick = () => showNotebookManageSchedModal();
+    // 20261030：玩家行程删除（只能删自己的，source='player'）
+    box.querySelectorAll('[data-nb-sched-del]').forEach(btn => {
+      btn.onclick = async () => {
+        const sid = btn.dataset.nbSchedDel;
+        let list = await nbLoadSchedules();
+        list = list.filter(x => !(x && x.id === sid));
+        await nbSaveSchedules(list);
+        miniToast('已删除这条行程');
+        renderNotebookCalendar();
+      };
+    });
   }
 }
 
@@ -20133,6 +20054,79 @@ async function reopenNotebookCalAt(dayKey) {
   }
   _nbView = 'calendar';
   await showNotebookModal();
+}
+
+/* 20261030：管理玩家自己的行程（source='player'）——编辑 / 删除 / 批量管理。
+   角色行程（source='char'）不在此列，玩家不能编辑删除角色行程。 */
+async function showNotebookManageSchedModal() {
+  const mine = (await nbLoadSchedules()).filter(it => it && it.source === 'player');
+  const fmt = (ts) => { const d = new Date(ts); return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  openModal(`
+    <div style="font-size:18px;font-weight:600;margin-bottom:6px;">🗂 管理我的行程</div>
+    <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;">这里只显示「你」自己记的行程（角色记的不在此列）</div>
+    <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;" id="nbm-list">
+      ${mine.length === 0 ? '<div style="color:var(--text-tertiary);text-align:center;padding:20px;">你还没有记过行程</div>'
+        : mine.map(it => `
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 10px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13.5px;">${escapeHtml(it.title)}</div>
+              <div style="font-size:11.5px;color:var(--text-tertiary);">${fmt(it.at)}</div>
+            </div>
+            <button class="badge" data-nbm-edit="${escapeHtml(it.id)}" style="cursor:pointer;">编辑</button>
+            <button class="badge" data-nbm-del="${escapeHtml(it.id)}" style="cursor:pointer;color:var(--danger);">删</button>
+          </div>`).join('')}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn" style="flex:1;" id="nbm-close">返回日历</button>
+    </div>
+  `);
+  $('#nbm-close').onclick = () => { _nbView = 'calendar'; showNotebookModal(); };
+  document.querySelectorAll('[data-nbm-del]').forEach(b => {
+    b.onclick = async () => {
+      const sid = b.dataset.nbmDel;
+      let list = await nbLoadSchedules();
+      list = list.filter(x => !(x && x.id === sid));
+      await nbSaveSchedules(list);
+      miniToast('已删除');
+      showNotebookManageSchedModal();
+    };
+  });
+  document.querySelectorAll('[data-nbm-edit]').forEach(b => {
+    b.onclick = async () => {
+      const sid = b.dataset.nbmEdit;
+      const list = await nbLoadSchedules();
+      const it = list.find(x => x && x.id === sid);
+      if (!it) return;
+      const d = new Date(it.at);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      openModal(`
+        <div style="font-size:18px;font-weight:600;margin-bottom:14px;">✏️ 编辑行程</div>
+        <div class="field"><input class="input" id="nbe-date" type="date" value="${dateStr}"></div>
+        <div class="field"><label>行程内容</label><input class="input" id="nbe-text" value="${escapeHtml(it.title)}"></div>
+        <div class="field"><label>时间</label><input class="input" id="nbe-time" type="time" value="${timeStr}"></div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn" style="flex:1;" id="nbe-cancel">取消</button>
+          <button class="btn primary" style="flex:1;" id="nbe-save">保存</button>
+        </div>
+      `);
+      $('#nbe-cancel').onclick = () => showNotebookManageSchedModal();
+      $('#nbe-save').onclick = async () => {
+        const title = $('#nbe-text').value.trim();
+        if (!title) { miniToast('先写行程内容吧'); return; }
+        const date = $('#nbe-date').value;
+        const tm = $('#nbe-time').value || '00:00';
+        const at = new Date(date + 'T' + tm).getTime();
+        if (isNaN(at)) { miniToast('请填日期'); return; }
+        const all = await nbLoadSchedules();
+        const t = all.find(x => x && x.id === sid);
+        if (t) { t.title = title; t.at = at; }
+        await nbSaveSchedules(all);
+        miniToast('已保存');
+        showNotebookManageSchedModal();
+      };
+    };
+  });
 }
 
 /* 日历日期 → 添加记事（写入 notebookItems，默认提醒日 = 选中日） */
@@ -20207,10 +20201,10 @@ function showNotebookAddSchedModal(dayKey) {
     let at = null;
     if (date) at = new Date(date + 'T' + tm).getTime();
     if (!at || isNaN(at)) { miniToast('请填日期'); return; }
-    const list = await bmLoadSchedules();
-    list.push({ id: uid('sched'), at, title, charId: null, charName: '', source: 'player', fired: false });
-    await bmSaveSchedules(list);
-    try { bmSchedulePageTimers(); } catch (e) {}
+    // 20261030：记事蒲行程写独立存储 notebookSchedules（纯 App 内，不碰系统日历/闹钟）
+    const list = await nbLoadSchedules();
+    list.push({ id: uid('sched'), at, title, charId: null, charName: '', source: 'player' });
+    await nbSaveSchedules(list);
     miniToast('已添加行程');
     reopenNotebookCalAt(date || dayKey);
   };
@@ -20254,7 +20248,7 @@ async function maybeRecordCharSchedule(c) {
   if (Math.random() >= 0.6) { await setSetting(flagKey, true); return false; }
   // 触发后：当天随机记 2~3 条（不同时刻、不同标签，模拟 TA 一天里的若干件事）
   const count = 2 + (Math.random() < 0.5 ? 1 : 0);
-  const list = await bmLoadSchedules();
+  const list = await nbLoadSchedules();  // 20261030：角色行程写记事蒲独立存储
   const dayKey = today;
   const usedTitles = new Set();
   let written = 0;
@@ -20289,13 +20283,12 @@ async function maybeRecordCharSchedule(c) {
     // 防重：同一天同角色同标题不再重复写
     const exists = list.some(it => it.source === 'char' && it.charId === c.id && it.title === title && it.at && annivDayKey(new Date(it.at)) === dayKey);
     if (!exists) {
-      list.push({ id: uid('sched'), at, title, charId: c.id, charName: c.name || 'TA', source: 'char', fired: false });
+      list.push({ id: uid('sched'), at, title, charId: c.id, charName: c.name || 'TA', source: 'char' });
       written++;
     }
   }
   if (written > 0) {
-    await bmSaveSchedules(list);
-    try { bmSchedulePageTimers(); } catch (e) {}
+    await nbSaveSchedules(list);  // 20261030：角色行程写记事蒲独立存储
   }
   await setSetting(flagKey, true);
   return written > 0;
