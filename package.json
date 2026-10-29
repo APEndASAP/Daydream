@@ -10,11 +10,11 @@
     "android:open": "npx cap open android"
   },
   "dependencies": {
-    "@capacitor/android": "^6.2.0",
-    "@capacitor/app": "^6.0.2",
-    "@capacitor/core": "^6.2.0",
-    "@capacitor/filesystem": "^6.0.2",
-    "@capacitor/local-notifications": "^6.1.1",
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/filesystem": "^7.1.9",
+    "@capacitor/local-notifications": "^7.0.7",
     "@ebarooni/capacitor-calendar": "7.5.0",
     "bm-overlay": "file:./bm-overlay",
     "bm-conversation-notify": "file:./bm-conversation-notify",
@@ -22,7 +22,7 @@
     "capacitor-overlay": "7.0.3"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.2.0",
+    "@capacitor/cli": "^7.6.9",
     "@capacitor/assets": "^3.0.5"
   }
 }
