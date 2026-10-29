@@ -3089,13 +3089,13 @@ function chatLoadOlder() {
   }
   w.suspend = false;
   w.start -= step;
-  // 顶部清理：DOM 行数超上限时移除最旧一批
+  // 顶部清理：DOM 行数超上限时移除最旧一批（数据仍在 all 库里，start 索引不变，
+  // 上滑仍能继续补载更早消息——不能 w.start += excess，否则 start 回弹导致翻不到头）
   let rendered = scroll.querySelectorAll('.msg-row').length;
   if (rendered > CHAT_MAX_DOM) {
     const rows = scroll.querySelectorAll('.msg-row');
     const excess = rendered - CHAT_MAX_DOM;
     for (let i = 0; i < excess; i++) rows[i].remove();
-    w.start += excess;
   }
   // 哨兵重插：先记当前锚点 scrollTop，prepend 后按哨兵高度回补，保持视觉位置不跳
   const beforeH = scroll.scrollHeight;
@@ -3770,6 +3770,11 @@ function showMsgMenu(m, x, y) {
   const menu = $('#ctx-menu');
   const items = [];
   items.push({ icon: 'quote', label: '引用该条消息', act: () => startQuote(m) });
+  items.push({ icon: 'copy', label: '复制', act: async () => {
+    const t = msgBodyText(m);
+    await bmDiagCopy(t);
+    miniToast('已复制');
+  } });
   items.push({ icon: 'forward', label: '转发该条消息', act: () => showForwardModal(m) });
   // 记忆宫殿（20260929w 全量落地：以这条消息为基准点，前后各截 50 条存入访客文件夹）
   items.push({ icon: 'memory', label: '存入记忆宫殿', act: () => palCaptureMenu(m) });
@@ -3811,6 +3816,11 @@ function showGroupMsgMenu(g, m, x, y) {
   const menu = $('#ctx-menu');
   const items = [];
   items.push({ icon: 'quote', label: '引用该条消息', act: () => startQuote(m) });
+  items.push({ icon: 'copy', label: '复制', act: async () => {
+    const t = msgBodyText(m);
+    await bmDiagCopy(t);
+    miniToast('已复制');
+  } });
   items.push({ icon: 'forward', label: '转发该条消息', act: () => showForwardModal(m) });
   if (m.from === 'me' && chatSettings.allowRecall) {
     // 20261008 与单聊同步：玩家的每条消息都可以撤回（不限字卡/表情包）
