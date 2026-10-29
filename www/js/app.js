@@ -1148,8 +1148,9 @@ function mountDreamCardFx(d) {
   const card = cv.closest('.festival-card');
   if (!card) return;
   const dpr = window.devicePixelRatio || 1;
+  const ptOf = (e) => (e.touches && e.touches.length ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY });
   const onMove = (e) => {
-    const cur = { x: e.clientX, y: e.clientY };
+    const cur = ptOf(e);
     if (_dreamFxLastPt) {
       const dx = cur.x - _dreamFxLastPt.x, dy = cur.y - _dreamFxLastPt.y;
       const len = Math.hypot(dx, dy);
@@ -1193,23 +1194,25 @@ function mountDreamCardFx(d) {
   };
   const onLeave = () => { _dreamFxLastPt = null; };
   const onDown = (e) => {
-    _dreamFxDown = { x: e.clientX, y: e.clientY, moved: false };
+    const p = ptOf(e);
+    _dreamFxDown = { x: p.x, y: p.y, moved: false };
     // 20261028：pointerdown 是浏览器认可的用户激活手势——首次按下时解锁音频自动播放权限，
     // 之后滑动拨露珠（pointermove）的叮铃声才能被放行（根因：自动播放策略拦截 pointermove 的 play）
     window.ChimeAudio && window.ChimeAudio.unlock && window.ChimeAudio.unlock();
     // 按下位置同步到露珠检测（点中露珠也能响）
     {
       const rect = card.getBoundingClientRect();
-      window.DreamFxMouse && window.DreamFxMouse.set((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+      window.DreamFxMouse && window.DreamFxMouse.set((p.x - rect.left) / rect.width, (p.y - rect.top) / rect.height);
       _dewChimeAt();
     }
   };
   const onUp = (e) => {
+    const p = ptOf(e);
     if (_dreamFxDown && !_dreamFxDown.moved) {
       // 点击注入烟花（仅烟花类）
       if (_dreamFxKind === 'firework' || _dreamFxKind === 'national') {
         const rect = card.getBoundingClientRect();
-        const px = (e.clientX - rect.left) * dpr, py = (e.clientY - rect.top) * dpr;
+        const px = (p.x - rect.left) * dpr, py = (p.y - rect.top) * dpr;
         window.FXBURSTS.push(window.newBurstGlobal(px, py, _dreamFxKind));
       }
     }
@@ -1219,6 +1222,12 @@ function mountDreamCardFx(d) {
   card.addEventListener('pointerleave', onLeave);
   card.addEventListener('pointerdown', onDown);
   card.addEventListener('pointerup', onUp);
+  // 20261029：真机 WebView 对 pointer 触摸序列支持不稳定（只发 touch 不发 pointer），
+  // 补 touch 事件链，保证滑动风场/露珠叮铃/烟花在手机端与电脑端一致触发
+  card.addEventListener('touchmove', onMove, { passive: false });
+  card.addEventListener('touchstart', onDown, { passive: true });
+  card.addEventListener('touchend', onUp);
+  card.addEventListener('touchcancel', onLeave);
   card._dreamFxHandlers = { onMove, onLeave, onDown, onUp };
 }
 /* 清理动画 + 解绑交互（关闭弹窗时调用；下次打开重新 mount 恢复） */
@@ -1233,6 +1242,10 @@ function unmountDreamCardFx() {
       card.removeEventListener('pointerleave', h.onLeave);
       card.removeEventListener('pointerdown', h.onDown);
       card.removeEventListener('pointerup', h.onUp);
+      card.removeEventListener('touchmove', h.onMove);
+      card.removeEventListener('touchstart', h.onDown);
+      card.removeEventListener('touchend', h.onUp);
+      card.removeEventListener('touchcancel', h.onLeave);
       card._dreamFxHandlers = null;
     }
   }
@@ -3058,14 +3071,14 @@ function ensureChatWindowHooks() {
   });
 }
 
-/* 上滑补载更早一批：先渲染再搬移到顶部，滚动位置用高度差补偿 */
+/* 上滑补载更早一批：先渲染再搬移到顶部，滚动位置用锚点元素稳定补偿 */
 function chatLoadOlder() {
   const scroll = $('#chat-scroll');
   const w = _chatWin;
   if (!w || w.busy || w.start <= 0) return;
   w.busy = true;
   const step = Math.min(CHAT_LOAD_STEP, w.start);
-  const prevH = scroll.scrollHeight, prevTop = scroll.scrollTop;
+  // 用「当前视口内第一条可见行」作为滚动锚点，避免 prepend 哨兵导致高度跳变
   const anchor = scroll.querySelector('#chat-loadmore') ? scroll.querySelector('#chat-loadmore').nextSibling : scroll.firstChild;
   w.suspend = true;
   for (let i = w.start - step; i < w.start; i++) {
@@ -3081,20 +3094,14 @@ function chatLoadOlder() {
   if (rendered > CHAT_MAX_DOM) {
     const rows = scroll.querySelectorAll('.msg-row');
     const excess = rendered - CHAT_MAX_DOM;
-    let removedH = 0;
-    for (let i = 0; i < excess; i++) {
-      removedH += rows[i].offsetHeight;
-      rows[i].remove();
-    }
+    for (let i = 0; i < excess; i++) rows[i].remove();
     w.start += excess;
-    scroll.scrollTop = prevTop + (scroll.scrollHeight - prevH) - removedH;
-  } else {
-    scroll.scrollTop = prevTop + (scroll.scrollHeight - prevH);
   }
+  // 哨兵重插：先记当前锚点 scrollTop，prepend 后按哨兵高度回补，保持视觉位置不跳
+  const beforeH = scroll.scrollHeight;
   chatRenderSentinel(scroll);
-  // 防连环自动触发：清理+补偿后若仍贴顶，轻推回哨兵可见位——
-  // 否则「加载→清理→scrollTop 补偿→仍<80→再加载」会一口气循环载完全部历史
-  if (w.start > 0 && scroll.scrollTop < 60) scroll.scrollTop = 80;
+  const delta = scroll.scrollHeight - beforeH;
+  if (delta > 0) scroll.scrollTop = scroll.scrollTop + delta;
   w.busy = false;
 }
 
@@ -11334,7 +11341,9 @@ function showCardImportModal() {
 
 /* ---------- 聊天美化（玩家主页入口：气泡颜色 + 自定义CSS；背景图在访客主页单独设置） ---------- */
 const BUBBLE_ME_COLORS = ['#8b5cf6', '#c084fc', '#f472b6', '#60a5fa', '#34d399', '#fbbf24', '#f87171', '#e5e7eb'];
-const BUBBLE_THEM_COLORS = ['#26232e', '#312b40', '#1f2937', '#2d2a24', '#242f2b', '#33262a', '#252833', '#3a3a3a'];
+// 20261029：角色（对方）气泡颜色从深灰系改为与「我的气泡」一致的彩色系（紫/浅紫/粉/蓝/青绿/黄/珊瑚红/白），
+// 让角色气泡也能切换这几种彩色预设，不再只有深色。
+const BUBBLE_THEM_COLORS = ['#8b5cf6', '#c084fc', '#f472b6', '#60a5fa', '#34d399', '#fbbf24', '#f87171', '#e5e7eb'];
 /* 20261028：马卡龙色系（浅色柔和系）——玩家气泡与角色气泡各一组。
    浅底必须配深字（浅色文字在浅色气泡上不可读），故用 data-text 标注文字色。
    玩家气泡默认白字、角色气泡默认浅字，马卡龙色统一用深色字 #4a3b3b。 */
