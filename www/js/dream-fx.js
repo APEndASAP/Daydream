@@ -92,7 +92,7 @@ let _mousePt = { x: 0.5, y: 0.5 };                   // 鼠标在 stage 内的�
 const ChimeAudio = (function(){
   let el = null;
   function ensure(){
-    if (!el) { el = new Audio('audio/glasses_clinking.wav'); el.preload = 'auto'; el.loop = false; }
+    if (!el) { el = new Audio('audio/glasses_clinking.ogg'); el.preload = 'auto'; el.loop = false; }
     return el;
   }
   /* 首次用户交互时预加载/预解锁（在玩家第一次点击网站时调用一次即可） */
@@ -127,23 +127,23 @@ function strikeBoltGlobal(x, y){
   FXSTRIKE_NOW.x = x; FXSTRIKE_NOW.y = y; FXSTRIKE_NOW.hit = true;
 }
 const FX_AUDIO = {
-  firework:'firework_1689.wav', national:'firework_1689.wav',       // 烟花类 → 烟花多响连爆
-  lantern:null, candle:'fire_campfire_crackles.wav',                 // 元宵花灯 → 静音；烛火 → 篝火噼啪
-  rainripple:'rain_splashing.wav', plumrain:'rain_splashing.wav',    // 雨类 → 雨水溅落哗啦
-  apricot:'rain_splashing.wav', pear:'rain_splashing.wav',           // 清明雨
-  thunder:'thunder_big_rumble.wav',                                  // 惊蛰 → 惊雷轰隆
-  firefly:'night_crickets_loop.wav',                                 // 立夏 → 夏夜虫鸣（流萤）
-  snow:'snow_winter_wind.wav', heavysnow:'snow_winter_wind.wav', icecrystal:['snow_winter_wind.wav', 0.35],// 大雪/大寒 雪类（大寒音量调小）
+  firework:'firework_1689.ogg', national:'firework_1689.ogg',       // 烟花类 → 烟花多响连爆
+  lantern:null, candle:'fire_campfire_crackles.ogg',                 // 元宵花灯 → 静音；烛火 → 篝火噼啪
+  rainripple:'rain_splashing.ogg', plumrain:'rain_splashing.ogg',    // 雨类 → 雨水溅落哗啦
+  apricot:'rain_splashing.ogg', pear:'rain_splashing.ogg',           // 清明雨
+  thunder:'thunder_big_rumble.ogg',                                  // 惊蛰 → 惊雷轰隆
+  firefly:'night_crickets_loop.ogg',                                 // 立夏 → 夏夜虫鸣（流萤）
+  snow:'snow_winter_wind.ogg', heavysnow:'snow_winter_wind.ogg', icecrystal:['snow_winter_wind.ogg', 0.35],// 大雪/大寒 雪类（大寒音量调小）
   lightsnow:null,                                                    // 小雪 → 静音（初雪将至，不配冬风）
-  leaves:'leaves_breeze_2427.wav', leaf:'leaves_breeze_2427.wav', frost:'leaves_breeze_2427.wav', geese:'glasses_clinking.wav',// 秋风/落叶类；寒露 → 酒杯碰撞音
+  leaves:'leaves_breeze_2427.ogg', leaf:'leaves_breeze_2427.ogg', frost:'leaves_breeze_2427.ogg', geese:'glasses_clinking.ogg',// 秋风/落叶类；寒露 → 酒杯碰撞音
   moon:null, stars:null, sunburst:null,                              // 中秋/七夕/夏至 → 静音
-  heatwave:'summer_cicada_heat.wav',                                // 大暑 → 夏日蝉鸣热浪腾腾
-  wave:'water_flowing_ambience.wav', riverlamp:'water_flowing_ambience.wav', dew:'rain_splashing.wav',// 端午/处暑 → 流水潺潺；白露 → 雨
-  flag:'water_flowing_ambience.wav', tea:'leaves_breeze_2427.wav', osmanthus:'leaves_breeze_2427.wav', chrysanth:'leaves_breeze_2427.wav',// 国庆 → 流水潺潺；草木类
-  wheat:null, swallows:null, sprout:null, lotus:['leaves_breeze_2427.wav', 0.35],  // 小满/春分/立春 → 静音；小暑 → 风声(低音量)
-  plum:null, hearth:'fire_campfire_crackles.wav', warmwindow:'fire_burning_crackles.wav',// 冬至红梅 → 静音；小寒 → 篝火；立冬 → 燃烧
-  balloon:null, choco:null, peony:'rain_splashing.wav',              // 六一/白色情人节 → 静音
-  default:'leaves_breeze_2427.wav',
+  heatwave:'summer_cicada_heat.ogg',                                // 大暑 → 夏日蝉鸣热浪腾腾
+  wave:'water_flowing_ambience.ogg', riverlamp:'water_flowing_ambience.ogg', dew:'rain_splashing.ogg',// 端午/处暑 → 流水潺潺；白露 → 雨
+  flag:'water_flowing_ambience.ogg', tea:'leaves_breeze_2427.ogg', osmanthus:'leaves_breeze_2427.ogg', chrysanth:'leaves_breeze_2427.ogg',// 国庆 → 流水潺潺；草木类
+  wheat:null, swallows:null, sprout:null, lotus:['leaves_breeze_2427.ogg', 0.35],  // 小满/春分/立春 → 静音；小暑 → 风声(低音量)
+  plum:null, hearth:'fire_campfire_crackles.ogg', warmwindow:'fire_campfire_crackles.ogg',// 冬至红梅 → 静音；小寒 → 篝火；立冬 → 燃烧
+  balloon:null, choco:null, peony:'rain_splashing.ogg',              // 六一/白色情人节 → 静音
+  default:'leaves_breeze_2427.ogg',
 };
 let _raf = null, _fxTimer = null;
 function stopFx(){ if (_raf) cancelAnimationFrame(_raf); _raf = null; if (_fxTimer) { clearInterval(_fxTimer); _fxTimer = null; } }
