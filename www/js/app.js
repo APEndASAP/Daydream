@@ -6383,15 +6383,15 @@ function bmExtractScheduleDate(text, now) {
   let hasDate = false, rollMode = '';   // rollMode: 'month'=单「X号」已过滚下月 / 'year'=「X月X日」已过滚明年
   let dateText = '';
   let m;
-  if ((m = s.match(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/))) {
+  if ((m = s.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/))) {
     y = +m[1]; mo = +m[2] - 1; day = +m[3]; hasDate = true; dateText = m[0];
-  } else if ((m = s.match(/(\d{1,2})月(\d{1,2})[日号]/))) {
+  } else if ((m = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/))) {
     mo = +m[1] - 1; day = +m[2]; hasDate = true; rollMode = 'year'; dateText = m[0];
   } else if ((m = s.match(/大后天|后天|明天|明早|明晚|明儿|今晚|今早|今天|今日/))) {
     hasDate = true; dateText = m[0];
   } else if ((m = s.match(/(下下|下|这|本)?个?(?:周|星期)([一二三四五六日天])/))) {
     hasDate = true; dateText = m[0];
-  } else if ((m = s.match(/(\d{1,2})[日号](?!\d)/))) {
+  } else if ((m = s.match(/(\d{1,2})\s*[日号](?!\d)/))) {
     day = +m[1]; hasDate = true; rollMode = 'month'; dateText = m[0];
   }
   if (!hasDate) return null;
@@ -6407,7 +6407,7 @@ function bmBuildScheduleAt(dateInfo, text, now) {
   let { y, mo, day, hasDate, rollMode, dateText } = dateInfo;
   // 相对日期（明天/后天/下周三等）→ 复用 bmParseCNDateTime 的日期偏移逻辑：先算出基准日
   let dateOff = 0;
-  if (!/(\d{1,2})月|(\d{4})年|(\d{1,2})[日号]/.test(dateText)) {
+  if (!/(\d{1,2})\s*月|(\d{4})\s*年|(\d{1,2})\s*[日号]/.test(dateText)) {
     if (/大后天/.test(dateText)) dateOff = 3;
     else if (/后天/.test(dateText)) dateOff = 2;
     else if (/明天|明早|明晚|明儿/.test(dateText)) dateOff = 1;
@@ -6454,12 +6454,12 @@ function bmBuildScheduleAt(dateInfo, text, now) {
   else if (seg === '半夜') { if (h === 12) h = 0; }
   if (h > 23 || mi > 59) return null;
   let at;
-  if (hasDate && /(\d{1,2})月|(\d{4})年|(\d{1,2})[日号]/.test(dateText)) {
+  if (hasDate && /(\d{1,2})\s*月|(\d{4})\s*年|(\d{1,2})\s*[日号]/.test(dateText)) {
     const dd = new Date(y, mo, day);
     if (dd.getDate() !== day) mo += 1;
     at = new Date(y, mo, day, h, mi, 0, 0).getTime();
     if (rollMode === 'month' && at <= now) { mo += 1; at = new Date(y, mo, day, h, mi, 0, 0).getTime(); }
-    if (rollMode === 'year' && at <= now) { y += 1; at = new Date(y, mo, day, h, mi, 0, 0).getTime(); }
+    // 20261029：去掉「X月X日」的滚年逻辑——不提年份就默认当年，不自动滚到明年
   } else {
     at = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, mi, 0, 0).getTime() + dateOff * 864e5;
   }
@@ -6475,9 +6475,9 @@ function bmParseCNDateTime(text, now) {
   /* --- 日期 --- */
   let y = base.getFullYear(), mo = base.getMonth(), day = base.getDate();
   let hasDate = false, dateOff = 0, rollMode = '';   // rollMode: 'month'=单「X号」已过滚下月 / 'year'=「X月X日」已过滚明年
-  if ((m = s.match(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/))) {
+  if ((m = s.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/))) {
     y = +m[1]; mo = +m[2] - 1; day = +m[3]; hasDate = true;
-  } else if ((m = s.match(/(\d{1,2})月(\d{1,2})[日号]/))) {
+  } else if ((m = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/))) {
     mo = +m[1] - 1; day = +m[2]; hasDate = true; rollMode = 'year';
   } else if ((m = s.match(/大后天|后天|明天|明早|明晚|明儿|今晚|今早|今天|今日/))) {
     const w = m[0];
@@ -6496,7 +6496,7 @@ function bmParseCNDateTime(text, now) {
       let off = (want - base.getDay() + 7) % 7; if (off === 0) off = 7;
       dateOff = off;
     }
-  } else if ((m = s.match(/(\d{1,2})[日号](?!\d)/))) {
+  } else if ((m = s.match(/(\d{1,2})\s*[日号](?!\d)/))) {
     // 单独的「15号 / 15日」（前面没有「X月」）——本月已过则滚动到下月同日
     day = +m[1]; hasDate = true; rollMode = 'month';
   }
@@ -6531,7 +6531,7 @@ function bmParseCNDateTime(text, now) {
     if (dd.getDate() !== day) { mo += 1; }  // day 超出当月天数（如 9 月说 31 号）→ 顺延到下月
     at = new Date(y, mo, day, h, mi, 0, 0).getTime();
     if (rollMode === 'month' && at <= now) { mo += 1; at = new Date(y, mo, day, h, mi, 0, 0).getTime(); }
-    if (rollMode === 'year' && at <= now) { y += 1; at = new Date(y, mo, day, h, mi, 0, 0).getTime(); }
+    // 20261029：去掉「X月X日」的滚年逻辑——不提年份就默认当年，不自动滚到明年
     if (at <= now) return null;             // 指定了已过去的日期 → 不触发
   } else {
     at = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, mi, 0, 0).getTime() + dateOff * 864e5;
@@ -6542,9 +6542,9 @@ function bmParseCNDateTime(text, now) {
   let title = s
     .replace(/[，,。.!！？?~～、；;：:\s]+/g, ' ')
     .replace(/凌晨|清晨|清早|今晚|今早|早上|早晨|上午|中午|午后|下午|傍晚|黄昏|晚上|夜里|深夜|半夜/g, ' ')
-    .replace(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/g, ' ')
-    .replace(/(\d{1,2})月(\d{1,2})[日号]/g, ' ')
-    .replace(/(\d{1,2})[日号](?!\d)/g, ' ')
+    .replace(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, ' ')
+    .replace(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, ' ')
+    .replace(/(\d{1,2})\s*[日号](?!\d)/g, ' ')
     .replace(/大后天|后天|明天|明早|明晚|明儿|今晚|今早|今天|今日/g, ' ')
     .replace(/(下下|下|这|本)?个?(周|星期)([一二三四五六日天])/g, ' ')
     .replace(BM_SCHED_TIME_RE, ' ')
@@ -6653,10 +6653,8 @@ async function maybeDetectScheduleReminder(charId, text) {
     if (!parsed) return;
     const c = characters.find(x => x.id === charId);
     if (!c) return;
-    // 防重：同访客 + 同时刻 + 同事项已有未触发记录 → 不再弹
-    const list = await bmLoadSchedules();
-    const key = charId + '|' + parsed.at + '|' + parsed.title;
-    if (list.some(it => it && !it.fired && (it.charId + '|' + it.at + '|' + it.title) === key)) return;
+    // 防重：同访客 + 同时刻 + 同事项已有未触发记录 → 弹「已记录/补记」反馈（不再静默）
+    if (await bmScheduleDupHandle(charId, parsed.at, parsed.title, c.name)) return;
     setTimeout(() => { try { showScheduleRecordModal({ charId, charName: c.name, at: parsed.at, title: parsed.title }, c); } catch (e) {} }, 700);
   } catch (e) { console.error('[日程检测]', e); }
 }
@@ -6691,9 +6689,9 @@ async function maybeDetectScheduleRecord(charId, text) {
     let title = String(text)
       .replace(/[，,。.!！？?~～、；;：:\s]+/g, ' ')
       .replace(/凌晨|清晨|清早|今晚|今早|早上|早晨|上午|中午|午后|下午|傍晚|黄昏|晚上|夜里|深夜|半夜/g, ' ')
-      .replace(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]/g, ' ')
-      .replace(/(\d{1,2})月(\d{1,2})[日号]/g, ' ')
-      .replace(/(\d{1,2})[日号](?!\d)/g, ' ')
+      .replace(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, ' ')
+      .replace(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, ' ')
+      .replace(/(\d{1,2})\s*[日号](?!\d)/g, ' ')
       .replace(/大后天|后天|明天|明早|明晚|明儿|今晚|今早|今天|今日/g, ' ')
       .replace(/(下下|下|这|本)?个?(周|星期)([一二三四五六日天])/g, ' ')
       .replace(BM_SCHED_TIME_RE, ' ')
@@ -6719,8 +6717,8 @@ async function maybeDetectScheduleRecord(charId, text) {
       }
       // 没找到可改的记录 → 当作新增
     }
-    // 防重：同访客 + 同标题未触发记录已存在 → 不重复
-    if (list.some(it => it && !it.fired && it.charId === charId && it.title === title)) return;
+    // 防重：同访客 + 同标题未触发记录已存在 → 弹「已记录/补记」反馈（不再静默）
+    if (await bmScheduleDupHandle(charId, built.at, title, c.name)) return;
     setTimeout(() => {
       try {
         showScheduleRecordModal({ charId, charName: c.name, at: built.at, title, timeEstimated: built.timeEstimated }, c);
@@ -6729,7 +6727,68 @@ async function maybeDetectScheduleRecord(charId, text) {
   } catch (e) { console.error('[日程记录检测]', e); }
 }
 
-/* 弹窗①：「xx访客正在记录你的重要行程」（展示解析结果，确认后写入系统） */
+/* 20261029：防重统一处理——找到「同角色+同时刻+同标题」的未触发记录后，按记录状态给反馈：
+   - 两项（日程+闹钟）都记过 → 弹「该行程已记录过」（仅提示）
+   - 只记过一项 → 弹「要不要补另一项」，用户确认后只补缺的那项
+   - 取消/没点同意 → 不算记录，下次正常触发
+   返回 true 表示「已命中防重并已弹窗」，调用方应 return 不再弹新窗。 */
+function bmScheduleDupHandle(charId, at, title, charName) {
+  return bmLoadSchedules().then(list => {
+    const hit = list.find(it => it && !it.fired && it.charId === charId && it.at === at && it.title === title);
+    if (!hit) return false;
+    const hasSchedule = hit.withSchedule !== false; // 旧记录无 withSchedule 字段 → 视为已记日程（兼容）
+    const hasAlarm = hit.withAlarm === true;
+    if (hasSchedule && hasAlarm) {
+      // 两项都记过 → 仅提示
+      openModal(`
+        <div style="text-align:center;margin-bottom:10px;">
+          <div style="font-size:40px;margin-bottom:8px;">ℹ️</div>
+          <div style="font-size:16.5px;font-weight:600;line-height:1.55;">这条行程已经记录过了</div>
+        </div>
+        <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
+          <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(at)}</div>
+          <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(title)}</div>
+          <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">日程和闹钟都已记录，无需重复。</div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:16px;">
+          <button class="btn primary" style="flex:1;" id="bm-dup-done">知道了</button>
+        </div>`);
+      $('#bm-dup-done').onclick = closeModal;
+      return true;
+    }
+    // 只缺一项 → 问要不要补
+    const missAlarm = hasSchedule && !hasAlarm;
+    const missSchedule = !hasSchedule && hasAlarm;
+    const missLabel = missAlarm ? '闹钟' : '日程';
+    const missHint = missAlarm ? '到点响铃提醒' : '写入系统日历';
+    openModal(`
+      <div style="text-align:center;margin-bottom:10px;">
+        <div style="font-size:40px;margin-bottom:8px;">⏰</div>
+        <div style="font-size:16.5px;font-weight:600;line-height:1.55;">这条行程已经记录过${missAlarm ? '日程' : '闹钟'}</div>
+      </div>
+      <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
+        <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(at)}</div>
+        <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(title)}</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">要不要再补一个「${missLabel}」？（${missHint}）</div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px;">
+        <button class="btn" style="flex:1;" id="bm-dup-no">不用了</button>
+        <button class="btn primary" style="flex:1;" id="bm-dup-yes">补${missLabel}</button>
+      </div>`);
+    $('#bm-dup-no').onclick = closeModal;
+    $('#bm-dup-yes').onclick = () => {
+      closeModal();
+      // 只补缺的那一项：复用 bmCommitScheduleReminder，但明确 withSchedule/withAlarm
+      const item = { charId, charName: charName || '', at, title, withSchedule: missSchedule, withAlarm: missAlarm, _remindConfirmed: false };
+      bmCommitScheduleReminder(item);
+    };
+    return true;
+  });
+}
+
+/* 弹窗①：「xx访客正在记录你的重要行程」（展示解析结果，确认后写入系统）。
+   20261029：改为「记录日程 / 记录闹钟」两个可多选 checkbox，可单独勾也可都勾；
+   默认两项都勾（第一次触发时常见「既要日历又要闹钟」）。点「同意」才按勾选执行。 */
 function showScheduleRecordModal(item, c) {
   openModal(`
     <div style="text-align:center;margin-bottom:10px;">
@@ -6741,45 +6800,66 @@ function showScheduleRecordModal(item, c) {
       <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}${item.timeEstimated ? '<span style="font-size:11px;color:var(--warn,#fbbf24);margin-left:6px;">（系统推测，可修改）</span>' : ''}</div>
       <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
     </div>
-    <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">安装版将写入<b>系统日历（日程提醒）</b>，并可在到点前 1 分钟弹出<b>提醒通知</b>（锁屏可见）；网页版在白日梦页面打开时到点提醒。如识别有误可取消。</div>
-    <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding:11px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
-      <span style="font-size:13.5px;">🔔 同时创建闹钟<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">到点以系统闹钟方式提醒（需授予「闹钟和提醒」权限，可自动增加/取消闹钟）</small></span>
+    <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">请选择要记录的方式（可多选）：</div>
+    <label style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding:11px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
+      <span style="font-size:13.5px;">📅 记录日程<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">写入系统日历（日程本身，纯记录）</small></span>
+      <input type="checkbox" id="bm-sched-schedule" checked style="width:18px;height:18px;accent-color:var(--purple);">
+    </label>
+    <label style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding:11px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
+      <span style="font-size:13.5px;">🔔 记录闹钟<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">到点以系统闹钟方式响铃提醒（需授予「闹钟和提醒」权限）</small></span>
       <input type="checkbox" id="bm-sched-alarm" checked style="width:18px;height:18px;accent-color:var(--purple);">
     </label>
     <div style="display:flex;gap:10px;margin-top:16px;">
       <button class="btn" style="flex:1;" id="bm-sched-cancel">取消</button>
-      <button class="btn primary" style="flex:1;" id="bm-sched-ok">确认记录</button>
+      <button class="btn primary" style="flex:1;" id="bm-sched-ok">同意</button>
     </div>`);
   $('#bm-sched-cancel').onclick = closeModal;
-  $('#bm-sched-ok').onclick = () => { const aEl = $('#bm-sched-alarm'); item.withAlarm = !aEl || aEl.checked; bmCommitScheduleReminder(item); };
+  $('#bm-sched-ok').onclick = () => {
+    const sEl = $('#bm-sched-schedule');
+    const aEl = $('#bm-sched-alarm');
+    const withSchedule = !sEl || sEl.checked;
+    const withAlarm = !aEl || aEl.checked;
+    if (!withSchedule && !withAlarm) { miniToast('请至少勾选一项（记录日程 / 记录闹钟）'); return; }
+    item.withSchedule = withSchedule;
+    item.withAlarm = withAlarm;
+    // 20261029：只选了「日程」（没选闹钟）→ 写完后问要不要给日程设提醒（响铃）
+    if (withSchedule && !withAlarm) { bmAskScheduleRemind(item); return; }
+    // 其余情况（只选闹钟 / 两个都选）→ 直接执行
+    bmCommitScheduleReminder(item);
+  };
+}
+
+/* 20261029：「只选了日程」时，写入前弹二级确认——要不要给这个日程设置提醒（到点响铃）。
+   点「是」→ 补到点提醒通知（item._remindConfirmed=true）再写入；点「否」→ 纯记录日历。 */
+function bmAskScheduleRemind(item) {
+  openModal(`
+    <div style="text-align:center;margin-bottom:10px;">
+      <div style="font-size:40px;margin-bottom:8px;">🔔</div>
+      <div style="font-size:16.5px;font-weight:600;line-height:1.55;">要不要给这个日程设置提醒？</div>
+    </div>
+    <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
+      <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}</div>
+      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
+    </div>
+    <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">设置后，到点会响铃提醒（锁屏可见）；不设置则只记录到日历，不响铃。</div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn" style="flex:1;" id="bm-sched-remind-no">不用了</button>
+      <button class="btn primary" style="flex:1;" id="bm-sched-remind-yes">设置提醒</button>
+    </div>`);
+  $('#bm-sched-remind-no').onclick = () => { item._remindConfirmed = false; bmCommitScheduleReminder(item); };
+  $('#bm-sched-remind-yes').onclick = () => { item._remindConfirmed = true; bmCommitScheduleReminder(item); };
 }
 
 /* 写入系统：APK=精确通知+系统日历；网页=通知授权+页面内调度。成功后弹窗② */
 async function bmCommitScheduleReminder(item) {
   const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
   const results = [];
+  // 20261029：兼容旧调用（无 withSchedule/withAlarm 时默认两者都做，保持历史行为）
+  const withSchedule = item.withSchedule !== false;
+  const withAlarm = item.withAlarm === true;
   if (PLG) {
-    /* ① 到点精确提醒通知（提前 1 分钟；USE_EXACT_ALARM 下 AlarmManager 精确调度） */
-    try {
-      const LN = PLG.LocalNotifications;
-      if (LN && typeof LN.schedule === 'function') {
-        try { await LN.createChannel({ id: 'bm-schedule', name: '行程提醒', description: '访客为你记录的日程到点提醒', importance: 5, visibility: 'PUBLIC' }); } catch (e) {}
-        try { if (typeof LN.requestPermissions === 'function') await LN.requestPermissions(); } catch (e) {}
-        await LN.schedule({
-          notifications: [{
-            id: Math.abs(Math.floor(item.at % 2147483000)),
-            title: '⏰ 访客 提醒你',
-            body: item.title,
-            channelId: 'bm-schedule',
-            smallIcon: 'ic_launcher',
-            schedule: { at: new Date(item.at - 60 * 1000), allowWhileIdle: true },
-          }],
-        });
-        results.push('到点提醒通知');
-      }
-    } catch (e) { console.error('[行程通知写入]', e); }
-    /* ② 行程闹钟（用户勾选「创建闹钟」时）：以系统闹钟方式到点提醒 + 申请闹钟权限 */
-    if (item.withAlarm !== false) {
+    /* ① 行程闹钟（用户勾选「记录闹钟」时）：以系统闹钟方式到点响铃 + 申请闹钟权限 */
+    if (withAlarm) {
       try {
         const LN = PLG.LocalNotifications;
         if (LN && typeof LN.schedule === 'function') {
@@ -6804,24 +6884,49 @@ async function bmCommitScheduleReminder(item) {
         }
       } catch (e) { console.error('[行程闹钟写入]', e); }
     }
-    /* ③ 系统日历事件（日程提醒；插件自带 READ/WRITE_CALENDAR 运行时申请） */
-    try {
-      const Cal = PLG.CapacitorCalendar;
-      if (Cal && typeof Cal.createEvent === 'function') {
-        try {
-          const perm = await Cal.checkAllPermissions();
-          if (!perm || perm.writeCalendar !== 'granted' || perm.readCalendar !== 'granted') await Cal.requestFullCalendarAccess();
-        } catch (e) {}
-        await Cal.createEvent({
-          title: '【白日梦】' + item.title,
-          startDate: item.at,
-          endDate: item.at + 30 * 60 * 1000,
-          description: '由访客在聊天中记录',
-          alerts: [0],
-        });
-        results.push('系统日历日程');
-      }
-    } catch (e) { console.error('[行程日历写入]', e); }
+    /* ② 系统日历事件（用户勾选「记录日程」时）：写入日程本身 + 到点提醒。
+       20261029：升 @ebarooni/capacitor-calendar 6.7.2→7.5.0 后 alerts 字段生效，
+       补回 alerts:[0]（准时提醒），让日历 App 里该事件「提醒」栏真正显示「准时」。 */
+    if (withSchedule) {
+      try {
+        const Cal = PLG.CapacitorCalendar;
+        if (Cal && typeof Cal.createEvent === 'function') {
+          try {
+            const perm = await Cal.checkAllPermissions();
+            if (!perm || perm.writeCalendar !== 'granted' || perm.readCalendar !== 'granted') await Cal.requestFullCalendarAccess();
+          } catch (e) {}
+          await Cal.createEvent({
+            title: '【白日梦】' + item.title,
+            startDate: item.at,
+            endDate: item.at + 30 * 60 * 1000,
+            description: '由访客在聊天中记录',
+            alerts: [0],
+          });
+          results.push('系统日历日程');
+        }
+      } catch (e) { console.error('[行程日历写入]', e); }
+    }
+    /* ③ 到点精确提醒通知（仅「只选日程」时补的响铃，见下方 bmAskScheduleRemind；
+       这里保留作为「两个都选」时的统一到点通知兜底，提前 1 分钟提醒） */
+    if (withSchedule && withAlarm === false && item._remindConfirmed) {
+      try {
+        const LN = PLG.LocalNotifications;
+        if (LN && typeof LN.schedule === 'function') {
+          try { if (typeof LN.requestPermissions === 'function') await LN.requestPermissions(); } catch (e) {}
+          await LN.schedule({
+            notifications: [{
+              id: Math.abs(Math.floor(item.at % 2147483000)),
+              title: '⏰ 访客 提醒你',
+              body: item.title,
+              channelId: 'bm-schedule',
+              smallIcon: 'ic_launcher',
+              schedule: { at: new Date(item.at - 60 * 1000), allowWhileIdle: true },
+            }],
+          });
+          results.push('到点提醒通知');
+        }
+      } catch (e) { console.error('[行程提醒通知写入]', e); }
+    }
   } else {
     /* 网页端：授权系统通知 + 存档由页面调度 */
     try { if (typeof Notification !== 'undefined' && Notification.permission === 'default') requestNotificationPermission(); } catch (e) {}
@@ -6830,7 +6935,7 @@ async function bmCommitScheduleReminder(item) {
   /* 存档（防重 + 网页端调度；同时清 7 天前的已触发记录） */
   try {
     const list = await bmLoadSchedules();
-    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, timeEstimated: !!item.timeEstimated, withAlarm: item.withAlarm !== false, alarmNotifId: item.alarmNotifId || null, createdAt: Date.now(), fired: false, cancelled: false });
+    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, timeEstimated: !!item.timeEstimated, withSchedule: withSchedule, withAlarm: withAlarm, alarmNotifId: item.alarmNotifId || null, createdAt: Date.now(), fired: false, cancelled: false });
     await bmSaveSchedules(list.filter(it => !it || (!it.fired || Date.now() - it.at < 7 * 864e5)).slice(-200));
   } catch (e) {}
   closeModal();
@@ -24000,9 +24105,8 @@ async function aiScheduleFromTag(charId, raw) {
       }
     }
     if (!at || isNaN(at) || at <= Date.now() + 60000) return; // 无效或已过（<1分钟）不触发
-    // 去重：同角色 + 同 at + 同 title 已有未触发记录 → 不重复弹
-    const list = await bmLoadSchedules();
-    if (list.some(it => it && !it.fired && it.charId === charId && it.at === at && it.title === titleRaw)) return;
+    // 去重：同角色 + 同 at + 同 title 已有未触发记录 → 弹「已记录/补记」反馈（不再静默）
+    if (await bmScheduleDupHandle(charId, at, titleRaw, c.name)) return;
     setTimeout(() => {
       try { showScheduleRecordModal({ charId, charName: c.name, at, title: titleRaw }, c); } catch (e) {}
     }, 600);
