@@ -13389,6 +13389,14 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">20261002cb：默认关闭——TA 发表情包只用 TA 自己的专属表情包库（TA 主页里上传的那套）；开启后，TA 也会随机使用你（玩家）上传的表情包库（TA 自己的库优先）。总设置对所有访客生效，访客主页的聊天设置可单独覆盖</div>
     </div>
+
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>⏰ 聊天日程+闹钟自动检测</span>
+        <input type="checkbox" id="cs-bm-sched" ${(chatSettings.bmSchedDetect !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">在聊天里对该访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统自动识别并弹窗确认，写入系统日历/闹钟提醒。字卡与 AI 模式通用。此项为全局开关（对所有访客生效），关闭后不再自动检测。</div>
+    </div>
     </section>
 
     <section class="cs-panel" data-cs-panel="打字卡">
@@ -13886,6 +13894,8 @@ function bindChatSettings(s, onSave, tcChar) {
     const ncvEl = $('#cs-notify-conversation');
     if (ncvEl) s.notifyConversationEnabled = ncvEl.checked;
     s.allowRecall = $('#cs-recall').checked;
+    const bmSchedEl = $('#cs-bm-sched');
+    if (bmSchedEl) { chatSettings.bmSchedDetect = bmSchedEl.checked; await setSetting('chatSettings', chatSettings); } // 20261029：日程自动检测（全局开关，个人设置入口同步读写全局值）
     const cueEl = $('#cs-char-emoji-lib');
     if (cueEl) s.charUsePlayerEmojis = cueEl.checked; // 20261002cb：允许角色使用玩家表情包库
     const pokeEl = $('#cs-poke-mode');
