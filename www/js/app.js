@@ -4254,6 +4254,17 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
   // 20261002ca：预排原生精确闹钟——App 挂后台被冻结时，系统到点自行弹「发来消息」通知（不唤醒网页）
   const __bmReplyDue = Date.now() + delay;
   bmRegisterAlarm(c, 'msg', __bmReplyDue);
+  // 20261030：额外排「原生后台任务」——玩家发消息后若在延迟期间退出聊天窗口（App 被冻结、
+  //   setTimeout 不执行），回复消息会永久丢失（只弹了「发来消息」通知、聊天记录里却没有）。
+  //   现在同步排 bmBackgroundSchedule 后台任务：原生闹钟到点 + 回前台 recoverDue 会把
+  //   「已到期未落库」的任务拉回补生成/补确认，消息绝不丢。taskId 唯一（含时间戳），
+  //   与主动消息（proactive/summon）的固定键不冲突。
+  const __bmReplyTaskId = charId + '|reply|' + __bmReplyDue;
+  // 只有延迟够长（>5s）才排后台任务——短延迟（查岗等）靠 JS setTimeout 即时回复，
+  // 排了反而可能跟「已快速回复完」竞态。与 bmRegisterAlarm 内部 5s 阈值保持一致。
+  if (__bmReplyDue > Date.now() + 5000) {
+    try { bmBackgroundSchedule(__bmReplyTaskId, charId, __bmReplyDue, c.name || '访客', 'reply'); } catch (e) {}
+  }
 
   // 4. 延迟后回复字卡（访客禁词 + 全局字卡禁词过滤 + 关系语气倾向）
   return new Promise((resolve) => {
@@ -4317,6 +4328,10 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
         }
         const replyMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: parts[i], time: Date.now() };
         if (i === 0 && finalQuote) replyMsg.quote = finalQuote;
+        // 20261030：首条回复带上后台任务 taskId——若 App 在延迟期间被冻结、setTimeout 未执行，
+        // 回前台 recoverDue 走 _bmProcessTask 时，靠消息上的 taskId 字段兜底查重（bmTaskMsgScanByField），
+        // 避免「已落库却再补发一条」的重复。
+        if (i === 0 && __bmReplyTaskId) replyMsg.taskId = __bmReplyTaskId;
         // 20261008：typing_card 消息附带 blocks（普通文字/字卡/表情的区分结构），
         // 供打字卡演出时按块驱动（text 逐字打、card/emoji 整块飞入）。不破坏消息结构。
         if (typecardBlocks && i === 0) {
@@ -4346,6 +4361,12 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
       if (shouldDingFor(curChar)) playDing();
       notifyIncoming(curChar, lastMsg ? lastMsg.content : parts[0]); // 20260929bi：后台系统通知
       bmClearAlarm(charId, 'msg', __bmReplyDue); // 20261002ca：消息已送达 → 撤预排闹钟（防止已读后再弹）
+      // 20261030：回复已成功落库 → 记录 taskId→msgId 映射 + 确认后台任务完成（撤原生任务）。
+      // 这样若之后回前台 recoverDue 拉到该任务，bmTaskMsgGet 命中映射会直接补 confirm、不重复生成。
+      if (__bmReplyTaskId && lastMsg) {
+        try { await bmTaskMsgSet(__bmReplyTaskId, lastMsg.id); } catch (e) {}
+        try { await bmBackgroundConfirm(__bmReplyTaskId); } catch (e) {}
+      }
       // 角色概率撤回（5.3：撤回后仍可查看；只对最后一条生效，避免连环撤回刷屏）
       if (lastMsg && cs.allowRecall && Math.random() < 0.12) {
         setTimeout(async () => {
