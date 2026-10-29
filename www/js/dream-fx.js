@@ -159,18 +159,18 @@ function runFx(kind, canvas) {
   const init = {
     firework(){ parts = []; for (let i=0;i<3;i++) parts.push(newBurst(W*(0.25+0.25*i)+R()*40, H*(0.22+R()*0.15))); _fxTimer = setInterval(()=>{ if(_raf!==null) parts.push(newBurst(W*(0.2+R()*0.6), H*(0.15+R()*0.3))); }, 1400); },
     national(){ parts = []; for (let i=0;i<3;i++) parts.push(newBurst(W*(0.25+0.25*i)+R()*40, H*(0.22+R()*0.15))); _fxTimer = setInterval(()=>{ if(_raf!==null) parts.push(newBurst(W*(0.2+R()*0.6), H*(0.15+R()*0.3))); }, 1300); },
-    lantern(){ parts = []; for (let i=0;i<7;i++) parts.push({x:R()*W, y:H+R()*H*0.5, s:20+R()*26, v:0.4+R()*0.7, sw:R()*TAU}); },
+    lantern(){ parts = []; for (let i=0;i<7;i++) parts.push({x:R()*W, y:H+R()*H*0.5, s:32+R()*38, v:0.4+R()*0.7, sw:R()*TAU}); },
     candle(){ parts = []; for (let i=0;i<6;i++) parts.push({x:R()*W, y:H+R()*H*0.6, s:18+R()*20, v:0.3+R()*0.5, sw:R()*TAU}); },
     /* 雨水：细雨 + 底部水面涟漪 */
     rainripple(){ parts = []; for (let i=0;i<55;i++) parts.push({x:R()*W, y:R()*H, v:2.2+R()*2.5, l:7+R()*11}); extra = { ripples:[] }; },
     /* 春分：双燕绕飞 + 柳絮白点 */
     swallows(){ parts = []; for (let i=0;i<22;i++) parts.push({x:R()*W, y:R()*H*0.8, r:0.8+R()*1.4, v:0.25+R()*0.4, tw:R()*TAU}); extra = [ {y:H*0.22, ph:0, sp:0.9, amp:H*0.05, s:26}, {y:H*0.38, ph:2.4, sp:0.75, amp:H*0.06, s:21}, {y:H*0.15, ph:4.6, sp:1.05, amp:H*0.04, s:18} ]; },
     /* 清明（节气/节日共用）：杏花微雨——大雨丝为主 + 少量花瓣 */
-    apricot(){ parts = []; for (let i=0;i<14;i++) parts.push({x:R()*W, y:R()*-H, s:4+R()*6, v:0.5+R()*0.6, sw:R()*TAU, rot:R()*TAU, ph:R()*TAU});
+    apricot(){ parts = []; for (let i=0;i<14;i++) parts.push({x:R()*W, y:R()*-H, s:7+R()*9, v:0.5+R()*0.6, sw:R()*TAU, rot:R()*TAU, ph:R()*TAU});
       extra = { rain:[], ripples:[] };
       for (let i=0;i<60;i++) extra.rain.push({x:R()*W, y:R()*H, v:3.4+R()*2.2, l:12+R()*12}); },
     /* 谷雨：大朵牡丹花瓣缓落 */
-    peony(){ parts = []; for (let i=0;i<12;i++) parts.push({x:R()*W, y:R()*-H, s:9+R()*10, v:0.35+R()*0.5, sw:R()*TAU, rot:R()*TAU, hue:335+R()*25}); },
+    peony(){ parts = []; for (let i=0;i<12;i++) parts.push({x:R()*W, y:R()*-H, s:14+R()*14, v:0.35+R()*0.5, sw:R()*TAU, rot:R()*TAU, hue:335+R()*25}); },
     /* 小满：金色麦浪 + 麦穗光点 */
     wheat(){ parts = []; for (let i=0;i<14;i++) parts.push({x:R()*W, y:H*0.55+R()*H*0.4, tw:R()*TAU, v:0.01+R()*0.02}); },
     /* 芒种：青梅细雨 + 青梅果 */
@@ -185,14 +185,14 @@ function runFx(kind, canvas) {
     /* 大暑：橙黄热浪光晕升腾 */
     heatwave(){ parts = []; for (let i=0;i<16;i++) parts.push({x:R()*W, y:H+R()*H, r:(20+R()*36)*S, v:0.35+R()*0.55, a:0.10+R()*0.14}); },
     /* 立秋：落叶 */
-    leaf(){ parts = []; for (let i=0;i<22;i++) parts.push({x:R()*W, y:R()*-H, s:6+R()*9, v:0.5+R()*0.8, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.06}); },
+    leaf(){ parts = []; for (let i=0;i<22;i++) parts.push({x:R()*W, y:R()*-H, s:10+R()*14, v:0.5+R()*0.8, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.06}); },
     /* 处暑：河灯漂过水面 */
-    riverlamp(){ parts = []; for (let i=0;i<6;i++) parts.push({x:-R()*W*0.4, y:H*(0.68+R()*0.10), s:9+R()*7, v:0.3+R()*0.35, bob:R()*TAU}); },
+    riverlamp(){ parts = []; for (let i=0;i<6;i++) parts.push({x:-R()*W*0.4, y:H*(0.68+R()*0.10), s:18+R()*14, v:0.3+R()*0.35, bob:R()*TAU}); },
     /* 白露：草叶大露珠 + 微光尘 */
     dew(){ parts = []; for (let i=0;i<24;i++) parts.push({x:R()*W, y:R()*H, r:0.7+R()*1.3, tw:R()*TAU, v:0.01+R()*0.025});
       extra = Array.from({length:5},(_,i)=>({x:W*(0.14+0.18*i)+(R()-0.5)*14, y:H*(0.70+R()*0.08), r:(4+R()*4)*S, ph:R()*TAU})); },
     /* 秋分：圆月 + 桂花花瓣飘落（金色四瓣花瓣，不要枝条、不要点点） */
-    osmanthus(){ parts = []; for (let i=0;i<30;i++) parts.push({x:R()*W, y:R()*-H, r:(3.2+R()*3.4)*S, v:0.45+R()*0.6, sw:R()*TAU, rot:R()*TAU, spin:0.3+R()*0.4, tw:R()*TAU});
+    osmanthus(){ parts = []; for (let i=0;i<30;i++) parts.push({x:R()*W, y:R()*-H, r:(5.5+R()*5.5)*S, v:0.45+R()*0.6, sw:R()*TAU, rot:R()*TAU, spin:0.3+R()*0.4, tw:R()*TAU});
       extra = {};
     },
     /* 寒露：人字雁阵 + 淡月 */
@@ -213,7 +213,11 @@ function runFx(kind, canvas) {
       }
     },
     /* 清明（节气）：梨花花瓣慢慢飘落 + 下方水面泛涟漪 + 微雨（去枝条、去高速旋转梨花） */
-    pear(){ parts = []; for (let i=0;i<40;i++) parts.push({x:R()*W, y:R()*-H, v:0.9+R()*0.9, sw:R()*TAU, rot:R()*TAU, spin:0.15+R()*0.2, r:(4.5+R()*3.5)*S, water:0, landed:false, fadeIn:0});
+    pear(){ parts = []; for (let i=0;i<40;i++) parts.push({x:R()*W, y:R()*-H, v:0.9+R()*0.9, sw:R()*TAU, rot:R()*TAU, spin:0.15+R()*0.2, r:(6.5+R()*4.5)*S, water:0, landed:false, fadeIn:0,
+        // 花蕊位置 init 时一次性固定（避免每帧随机导致花心高速跳动）
+        stamens: Array.from({length:4},()=>({a:R()*TAU, rr:R()*0.3})),
+        // 层次：前层亮白(deep=0)，后层带透明阴影(deep=1)，保证每轮都有明暗两种
+        deep: (i % 3 === 0) ? 1 : 0});
       extra = { rain:[], ripples:[] };
       // 雨丝（斜落，明显）
       for (let i=0;i<48;i++) extra.rain.push({x:R()*W, y:R()*H, v:2.6+R()*2.6, l:12+R()*14});
@@ -228,7 +232,7 @@ function runFx(kind, canvas) {
     /* 大雪：鹅毛大片雪花（六角） */
     heavysnow(){ parts = []; for (let i=0;i<40;i++) parts.push({x:R()*W, y:R()*H, r:2.2+R()*3.4, v:0.4+R()*0.7, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.04}); },
     /* 冬至：梅枝 + 梅瓣飘落 */
-    plum(){ parts = []; for (let i=0;i<18;i++) parts.push({x:R()*W, y:R()*-H, s:4+R()*6, v:0.35+R()*0.55, sw:R()*TAU, rot:R()*TAU});
+    plum(){ parts = []; for (let i=0;i<18;i++) parts.push({x:R()*W, y:R()*-H, s:7+R()*9, v:0.35+R()*0.55, sw:R()*TAU, rot:R()*TAU});
       // 红梅枝条：短小一枝，从右边框伸入，贴右上角；花蕾沿枝分布
       // 花朵位置用相对坐标在 init 时一次性随机固定，渲染时不再每帧随机 → 消除高频颤动
       extra = { bx:W*0.86, by:H*0.24, buds:Array.from({length:7},()=>({bx:R(), by:R(), r:(1.6+R()*2.2)*S})) };
@@ -237,7 +241,7 @@ function runFx(kind, canvas) {
     hearth(){ parts = []; for (let i=0;i<14;i++) parts.push({x:W*0.5+(R()-0.5)*30*S, y:H*0.69, r:0.7+R()*1.3, v:0.4+R()*0.7, tw:R()*TAU, drift:R()*TAU});
       extra = []; for (let i=0;i<12;i++) extra.push({x:R()*W, y:R()*H, r:0.7+R()*1.3, v:0.3+R()*0.5, sw:R()*TAU}); },
     /* 谷雨：采茶——茶叶飘落（去茶树，只留飘落的嫩茶叶 + 微雨） */
-    tea(){ parts = []; for (let i=0;i<18;i++) parts.push({x:R()*W, y:R()*-H, s:8+R()*9, v:0.35+R()*0.5, sw:R()*TAU, rot:R()*TAU, hue:105+R()*25});
+    tea(){ parts = []; for (let i=0;i<18;i++) parts.push({x:R()*W, y:R()*-H, s:13+R()*12, v:0.35+R()*0.5, sw:R()*TAU, rot:R()*TAU, hue:105+R()*25});
       extra = { rain:[] };
       // 微雨丝（谷雨时节润物细无声）
       for (let i=0;i<30;i++) extra.rain.push({x:R()*W, y:R()*H, v:2.2+R()*2.2, l:9+R()*10});
@@ -284,9 +288,9 @@ function runFx(kind, canvas) {
       extra = []; for (let i=0;i<8;i++) extra.push({x:R()*W, y:R()*-H, s:5+R()*7, v:0.4+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.06}); },
     /* 白色情人节：包装巧克力 + 缎带糖果 + 白羽毛 */
     choco(){ parts = []; const wraps=['#e8a0b4','#a0c4e8','#c0aee8','#f0c98a','#a8d8c0'];
-      for (let i=0;i<14;i++) parts.push({x:R()*W, y:R()*-H, s:7+R()*8, v:0.4+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.05, kind:'choco', c:wraps[i%wraps.length]});
-      for (let i=0;i<8;i++) parts.push({x:R()*W, y:R()*-H, s:5+R()*5, v:0.45+R()*0.55, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.045, kind:'candy', c:wraps[(i+2)%wraps.length]});
-      for (let i=0;i<5;i++) parts.push({x:R()*W, y:R()*-H, s:5+R()*6, v:0.35+R()*0.5, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.03, kind:'feather', c:''}); },
+      for (let i=0;i<14;i++) parts.push({x:R()*W, y:R()*-H, s:11+R()*11, v:0.4+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.05, kind:'choco', c:wraps[i%wraps.length]});
+      for (let i=0;i<8;i++) parts.push({x:R()*W, y:R()*-H, s:8+R()*7, v:0.45+R()*0.55, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.045, kind:'candy', c:wraps[(i+2)%wraps.length]});
+      for (let i=0;i<5;i++) parts.push({x:R()*W, y:R()*-H, s:8+R()*8, v:0.35+R()*0.5, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.03, kind:'feather', c:''}); },
   }[kind] || (()=>{});
   init();
 
@@ -701,7 +705,9 @@ function runFx(kind, canvas) {
         ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x-3*devicePixelRatio, p.y+p.l*devicePixelRatio); ctx.stroke(); }
       // ③ 梨花花瓣慢慢飘落（五瓣白花+紫红花蕊，缓慢旋转），落水淡出、顶部淡入重生（无断裂）
       for (const p of parts){
-        p.y += p.v*devicePixelRatio; p.sw += 0.012; p.rot += p.spin*dt;
+        p.y += p.v*devicePixelRatio; p.sw += 0.012;
+        // 未落水才持续缓慢旋转；落水后停止旋转，只随波轻微摆动（消除落水瞬间的旋转跳变）
+        if (!p.landed) p.rot += p.spin*dt;
         const x = p.x + Math.sin(p.sw)*14*devicePixelRatio;
         // 花瓣落水：到达水面线就「落」在水面上，泛涟漪后淡出
         if (p.y >= wl - 2) {
@@ -724,14 +730,16 @@ function runFx(kind, canvas) {
           if (p.y < -8 && p.fadeIn < 1) p.fadeIn += dt*3;
           ctx.globalAlpha = Math.min(1, p.fadeIn || 0.3);
         }
-        // 白五瓣（倒卵圆）
-        ctx.fillStyle='rgba(255,255,255,.9)';
+        // 白五瓣（倒卵圆）：前层亮白、后层带透明阴影（层次感，每轮明暗皆有）
+        const whiteA = p.deep ? 0.45 : 0.9;
+        const whiteC = p.deep ? 'rgba(220,228,242,'+whiteA+')' : 'rgba(255,255,255,'+whiteA+')';
+        ctx.fillStyle = whiteC;
         for (let k=0;k<5;k++){ const pa=-Math.PI/2 + k*TAU/5;
           ctx.beginPath(); ctx.ellipse(Math.cos(pa)*p.r*0.55, Math.sin(pa)*p.r*0.55, p.r*0.5, p.r*0.34, pa, 0, TAU); ctx.fill(); }
-        // 紫红花蕊（点状）
-        ctx.fillStyle='rgba(175,80,120,.85)';
-        for (let k=0;k<4;k++){ const pa=R()*TAU, rr=R()*p.r*0.3;
-          ctx.beginPath(); ctx.arc(Math.cos(pa)*rr, Math.sin(pa)*rr, p.r*0.1, 0, TAU); ctx.fill(); }
+        // 紫红花蕊（点状，位置 init 固定，不每帧随机 → 消除花心高速跳动）；后层花蕊也减淡
+        ctx.fillStyle = p.deep ? 'rgba(175,80,120,.4)' : 'rgba(175,80,120,.85)';
+        for (let k=0;k<4;k++){ const st = p.stamens[k];
+          ctx.beginPath(); ctx.arc(Math.cos(st.a)*st.rr*p.r, Math.sin(st.a)*st.rr*p.r, p.r*0.1, 0, TAU); ctx.fill(); }
         ctx.globalAlpha = 1;
         ctx.restore();
       }
