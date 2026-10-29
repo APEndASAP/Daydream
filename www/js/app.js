@@ -1161,7 +1161,7 @@ function mountDreamCardFx(d) {
         W.life = Math.min(1.6, W.life + len * 0.03);
         W.strength = Math.min(1, 0.6 + len * 0.06);
         const rect = card.getBoundingClientRect();
-        const sx = (e.clientX - rect.left) * dpr, sy = (e.clientY - rect.top) * dpr;
+        const sx = (cur.x - rect.left) * dpr, sy = (cur.y - rect.top) * dpr;
         W.cx = sx; W.radius = rect.width * dpr * 0.42;
         if (Math.random() < 0.75) {
           W.streak.push({ x: sx + (Math.random() - 0.5) * 40 * dpr, y: sy + (Math.random() - 0.5) * 60 * dpr, vx: nx * 13, vy: ny * 13, a: 0.5 });
@@ -1171,7 +1171,7 @@ function mountDreamCardFx(d) {
     // 更新鼠标归一化位置（寒露露珠磁吸跟随）
     {
       const rect = card.getBoundingClientRect();
-      window.DreamFxMouse && window.DreamFxMouse.set((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+      window.DreamFxMouse && window.DreamFxMouse.set((cur.x - rect.left) / rect.width, (cur.y - rect.top) / rect.height);
     }
     // 寒露露珠叮铃（防抖 260ms）——滑动拨到露珠即响
     _dewChimeAt(card);
@@ -1196,6 +1196,7 @@ function mountDreamCardFx(d) {
   const onDown = (e) => {
     const p = ptOf(e);
     _dreamFxDown = { x: p.x, y: p.y, moved: false };
+    _dreamFxLastPt = p;   // 按下即重置轨迹，避免与上次终点产生首帧跳变
     // 20261028：pointerdown 是浏览器认可的用户激活手势——首次按下时解锁音频自动播放权限，
     // 之后滑动拨露珠（pointermove）的叮铃声才能被放行（根因：自动播放策略拦截 pointermove 的 play）
     window.ChimeAudio && window.ChimeAudio.unlock && window.ChimeAudio.unlock();
