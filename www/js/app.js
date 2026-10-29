@@ -6575,12 +6575,44 @@ async function maybeDetectImportantDate(charId, text) {
   } catch (e) {}
 }
 
+/* 20261029：玩家说「取消闹钟/取消提醒/别提醒了」→ 自动取消该角色未触发的日程闹钟。
+   匹配策略：① 文本里带了具体事项词 → 匹配 title 含该词的记录；② 无事项词 → 取消该角色
+   所有未触发日程。取消 = 撤原生闹钟通知 + 标记 cancelled（不再到点提醒）。 */
+async function bmCancelScheduleByText(charId, text) {
+  try {
+    const c = characters.find(x => x.id === charId);
+    const list = (await bmLoadSchedules()).filter(it => it && it.charId === charId && !it.fired && !it.cancelled);
+    if (!list.length) return;                       // 无可取消的日程 → 静默
+    // 提取取消语句里的「事项」关键词（去掉语气词后剩余文本），用于精确定位
+    let kw = String(text || '')
+      .replace(BM_SCHED_NEG_RE, ' ')
+      .replace(/[，,。.!！？?~～、；;：:\s]+/g, ' ')
+      .replace(/闹钟|提醒|取消|帮我|给我|把|那个|一下|吧|了|啊|呀/g, ' ')
+      .replace(/\s+/g, ' ').trim();
+    let targets = list;
+    if (kw && kw.length >= 1) {
+      const hit = list.filter(it => String(it.title || '').indexOf(kw) >= 0 || kw.indexOf(String(it.title || '')) >= 0);
+      if (hit.length) targets = hit;
+    }
+    const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
+    const LN = PLG && PLG.LocalNotifications;
+    for (const it of targets) {
+      if (LN && it.alarmNotifId != null) { try { await LN.cancel({ notifications: [{ id: it.alarmNotifId }] }); } catch (e) {} }
+      it.cancelled = true;
+    }
+    await bmSaveSchedules(list.map(x => (targets.some(t => t.id === x.id) ? { ...x, cancelled: true } : x)));
+    const n = targets.length;
+    miniToast(c ? `已取消「${c.name}」的 ${n} 条行程闹钟` : `已取消 ${n} 条行程闹钟`);
+  } catch (e) { console.error('[取消行程闹钟]', e); }
+}
+
 /* 检测入口：sendMessage 单聊路径调用（字卡/AI 通用） */
 async function maybeDetectScheduleReminder(charId, text) {
   try {
     if (!charId || !text) return;
     if (chatSettings.bmSchedDetect === false) return; // 20261001cq：总设置开关（默认开）
-    if (BM_SCHED_NEG_RE.test(text)) return;           // 明确说不用提醒 → 不触发
+    // 20261029：玩家说「取消闹钟/取消提醒」→ 自动取消该角色的未触发日程闹钟（而非直接忽略）
+    if (BM_SCHED_NEG_RE.test(text)) { await bmCancelScheduleByText(charId, text); return; }
     if (!BM_SCHED_INTENT_RE.test(text)) return;       // 没有提醒/闹钟语气 → 不触发
     const parsed = bmParseCNDateTime(text);
     if (!parsed) return;
@@ -6674,13 +6706,17 @@ function showScheduleRecordModal(item, c) {
       <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}${item.timeEstimated ? '<span style="font-size:11px;color:var(--warn,#fbbf24);margin-left:6px;">（系统推测，可修改）</span>' : ''}</div>
       <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
     </div>
-    <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">安装版将写入<b>系统日历（日程提醒）</b>并在到点前 1 分钟弹出<b>提醒通知</b>（锁屏可见）；网页版在白日梦页面打开时到点提醒。如识别有误可取消。</div>
+    <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">安装版将写入<b>系统日历（日程提醒）</b>，并可在到点前 1 分钟弹出<b>提醒通知</b>（锁屏可见）；网页版在白日梦页面打开时到点提醒。如识别有误可取消。</div>
+    <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding:11px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
+      <span style="font-size:13.5px;">🔔 同时创建闹钟<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">到点以系统闹钟方式提醒（需授予「闹钟和提醒」权限，可自动增加/取消闹钟）</small></span>
+      <input type="checkbox" id="bm-sched-alarm" checked style="width:18px;height:18px;accent-color:var(--purple);">
+    </label>
     <div style="display:flex;gap:10px;margin-top:16px;">
       <button class="btn" style="flex:1;" id="bm-sched-cancel">取消</button>
       <button class="btn primary" style="flex:1;" id="bm-sched-ok">确认记录</button>
     </div>`);
   $('#bm-sched-cancel').onclick = closeModal;
-  $('#bm-sched-ok').onclick = () => { bmCommitScheduleReminder(item); };
+  $('#bm-sched-ok').onclick = () => { const aEl = $('#bm-sched-alarm'); item.withAlarm = !aEl || aEl.checked; bmCommitScheduleReminder(item); };
 }
 
 /* 写入系统：APK=精确通知+系统日历；网页=通知授权+页面内调度。成功后弹窗② */
@@ -6707,7 +6743,33 @@ async function bmCommitScheduleReminder(item) {
         results.push('到点提醒通知');
       }
     } catch (e) { console.error('[行程通知写入]', e); }
-    /* ② 系统日历事件（日程提醒；插件自带 READ/WRITE_CALENDAR 运行时申请） */
+    /* ② 行程闹钟（用户勾选「创建闹钟」时）：以系统闹钟方式到点提醒 + 申请闹钟权限 */
+    if (item.withAlarm !== false) {
+      try {
+        const LN = PLG.LocalNotifications;
+        if (LN && typeof LN.schedule === 'function') {
+          // 20261029：申请「闹钟和提醒」精确闹钟权限（Android 12+ SCHEDULE_EXACT_ALARM）。
+          // 插件 manifest 已声明 USE_EXACT_ALARM/SCHEDULE_EXACT_ALARM；此处尝试运行时请求，
+          // 若系统不支持则静默降级为普通提醒通知（不影响日历写入）。
+          try { if (typeof LN.requestPermissions === 'function') await LN.requestPermissions(); } catch (e) {}
+          const schedId = Math.abs(Math.floor(item.at % 2147483000) * 7 + 13) % 2147483000;
+          try { await LN.createChannel({ id: 'bm-alarm', name: '行程闹钟', description: '访客记录的日程到点闹钟提醒', importance: 5, visibility: 'PUBLIC' }); } catch (e) {}
+          await LN.schedule({
+            notifications: [{
+              id: schedId,
+              title: '⏰ ' + item.charName + ' 的闹钟',
+              body: item.title,
+              channelId: 'bm-alarm',
+              smallIcon: 'ic_launcher',
+              schedule: { at: new Date(item.at), allowWhileIdle: true },
+            }],
+          });
+          item.alarmNotifId = schedId;
+          results.push('闹钟');
+        }
+      } catch (e) { console.error('[行程闹钟写入]', e); }
+    }
+    /* ③ 系统日历事件（日程提醒；插件自带 READ/WRITE_CALENDAR 运行时申请） */
     try {
       const Cal = PLG.CapacitorCalendar;
       if (Cal && typeof Cal.createEvent === 'function') {
@@ -6733,7 +6795,7 @@ async function bmCommitScheduleReminder(item) {
   /* 存档（防重 + 网页端调度；同时清 7 天前的已触发记录） */
   try {
     const list = await bmLoadSchedules();
-    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, timeEstimated: !!item.timeEstimated, createdAt: Date.now(), fired: false });
+    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, timeEstimated: !!item.timeEstimated, withAlarm: item.withAlarm !== false, alarmNotifId: item.alarmNotifId || null, createdAt: Date.now(), fired: false, cancelled: false });
     await bmSaveSchedules(list.filter(it => !it || (!it.fired || Date.now() - it.at < 7 * 864e5)).slice(-200));
   } catch (e) {}
   closeModal();
