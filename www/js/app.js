@@ -6330,7 +6330,7 @@ try {
    网页版=页面打开期间到点应用内弹窗+系统通知。成功后弹「访客已经成功记录你的行程」。 */
 
 const BM_SCHED_INTENT_RE = /(提醒我|提醒一下|提醒我一下|叫醒我|叫我|喊我|喊醒我|定个?闹钟|设个?闹钟|上个?闹钟|闹铃|闹钟提醒|别让我忘|别忘了|记得提醒|记得叫我)/;
-const BM_SCHED_NEG_RE = /(不用提醒|别提醒|不要提醒|不需要提醒|不用叫|别叫我|不用闹钟|取消提醒|取消闹钟|别设闹钟|不用定闹钟)/;
+const BM_SCHED_NEG_RE = /(不用提醒|别提醒|不要提醒|不需要提醒|不用叫|别叫我|不用闹钟|取消提醒|取消闹钟|别设闹钟|不用定闹钟|取消行程|取消日程|取消这个行程|取消这个日程|取消这个|撤销行程|撤销日程|取消安排|行程取消|不用记了|别记了)/;
 /* 20261005dt：日程「记录类」意图（旁路，不复用提醒语气词）。记录动作词——「记录/记一下/记下来/写下/写一下/
    添加/加上/存一下/记个」等明确「动作」，单独出现不构成触发，必须叠加日期信息 + 记录动作双闸门。 */
 const BM_SCHED_RECORD_RE = /(记录|记一下|记下来|记个|写下|写一下|写下来|添加|加上|存一下|存个|备注|备忘|待办|记事|记入|登记)/;
@@ -6631,8 +6631,13 @@ async function bmCancelScheduleByText(charId, text) {
     }
     const PLG = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
     const LN = PLG && PLG.LocalNotifications;
+    const Cal = PLG && PLG.CapacitorCalendar;
     for (const it of targets) {
       if (LN && it.alarmNotifId != null) { try { await LN.cancel({ notifications: [{ id: it.alarmNotifId }] }); } catch (e) {} }
+      // 20261030：同步删除系统日历里对应的事件（玩家说「取消行程」时，日历事件也要删，不能只撤闹钟）
+      if (Cal && it.calEventId && typeof Cal.deleteEventsById === 'function') {
+        try { await Cal.deleteEventsById({ ids: [String(it.calEventId)] }); } catch (e) {}
+      }
       it.cancelled = true;
     }
     await bmSaveSchedules(list.map(x => (targets.some(t => t.id === x.id) ? { ...x, cancelled: true } : x)));
@@ -6884,9 +6889,10 @@ async function bmCommitScheduleReminder(item) {
         }
       } catch (e) { console.error('[行程闹钟写入]', e); }
     }
-    /* ② 系统日历事件（用户勾选「记录日程」时）：写入日程本身 + 到点提醒。
-       20261029：升 @ebarooni/capacitor-calendar 6.7.2→7.5.0 后 alerts 字段生效，
-       补回 alerts:[0]（准时提醒），让日历 App 里该事件「提醒」栏真正显示「准时」。 */
+    /* ② 系统日历事件（用户勾选「记录日程」时）：写入日程本身。
+       20261030：回退 Capacitor 6 + 日历插件 6.7.2（alerts 字段 7.1.0 才引入，6.7.2 不支持），
+       去掉 alerts，日历纯记录日程；响铃改由「闹钟」通道保证（见下）。
+       记录 createEvent 返回的 id 到 calEventId，供「取消行程」时 deleteEventsById 删除。 */
     if (withSchedule) {
       try {
         const Cal = PLG.CapacitorCalendar;
@@ -6895,13 +6901,13 @@ async function bmCommitScheduleReminder(item) {
             const perm = await Cal.checkAllPermissions();
             if (!perm || perm.writeCalendar !== 'granted' || perm.readCalendar !== 'granted') await Cal.requestFullCalendarAccess();
           } catch (e) {}
-          await Cal.createEvent({
+          const created = await Cal.createEvent({
             title: '【白日梦】' + item.title,
             startDate: item.at,
             endDate: item.at + 30 * 60 * 1000,
             description: '由访客在聊天中记录',
-            alerts: [0],
           });
+          try { if (created && created.id) item.calEventId = String(created.id); } catch (e) {}
           results.push('系统日历日程');
         }
       } catch (e) { console.error('[行程日历写入]', e); }
@@ -6935,7 +6941,7 @@ async function bmCommitScheduleReminder(item) {
   /* 存档（防重 + 网页端调度；同时清 7 天前的已触发记录） */
   try {
     const list = await bmLoadSchedules();
-    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, timeEstimated: !!item.timeEstimated, withSchedule: withSchedule, withAlarm: withAlarm, alarmNotifId: item.alarmNotifId || null, createdAt: Date.now(), fired: false, cancelled: false });
+    list.push({ id: 'sc' + Date.now(), charId: item.charId, charName: item.charName, at: item.at, title: item.title, timeEstimated: !!item.timeEstimated, withSchedule: withSchedule, withAlarm: withAlarm, alarmNotifId: item.alarmNotifId || null, calEventId: item.calEventId || null, createdAt: Date.now(), fired: false, cancelled: false });
     await bmSaveSchedules(list.filter(it => !it || (!it.fired || Date.now() - it.at < 7 * 864e5)).slice(-200));
   } catch (e) {}
   closeModal();
@@ -6954,6 +6960,27 @@ async function bmCommitScheduleReminder(item) {
       <button class="btn primary" style="flex:1;" id="bm-sched-done">好的</button>
     </div>`);
   $('#bm-sched-done').onclick = closeModal;
+  // 20261030：用户勾选了「记录闹钟」时，结果弹窗额外给一个「添加到系统时钟」入口——
+  // 点击后跳系统时钟 App 的新建闹钟页（时间+备注已预填），用户点保存即建成系统级闹钟。
+  // 默认的 APP 内到点闹钟（上面的 LocalNotifications）已经自动排好，这个是可选的系统级补充。
+  if (withAlarm && PLG && PLG.BmBackground && typeof PLG.BmBackground.setAlarmClock === 'function') {
+    try {
+      const d = new Date(item.at);
+      const hh = d.getHours(), mm = d.getMinutes();
+      const addBtn = document.createElement('button');
+      addBtn.className = 'btn';
+      addBtn.style.cssText = 'flex:1;';
+      addBtn.textContent = '添加到系统时钟';
+      addBtn.onclick = () => {
+        try {
+          PLG.BmBackground.setAlarmClock({ hour: hh, minute: mm, message: item.title });
+          miniToast('已打开系统时钟，点「保存」即建成闹钟');
+        } catch (e) { miniToast('系统时钟打开失败'); }
+      };
+      const row = $('#bm-sched-done');
+      if (row && row.parentNode) row.parentNode.insertBefore(addBtn, row);
+    } catch (e) {}
+  }
 }
 
 /* 网页端到点调度：启动/写入后调用；APK 端系统层已保证，直接跳过 */
@@ -7404,6 +7431,12 @@ function forceCloseModal() {
 $('#modal-mask').addEventListener('click', (e) => {
   if (e.target !== $('#modal-mask')) return;
   if (_noticeGate) return; // 声明未同意：遮罩点击不关闭，只能点同意按钮
+  // 20261030：开屏「跳过」点击穿透保护——开屏动画结束后 600ms 内，忽略遮罩点击，
+  // 避免点「跳过」的手指 click 穿透到入梦签等弹窗的透明遮罩、误触「点遮罩关闭」把弹窗关掉。
+  try {
+    const t = window.__bmSplashEndAt;
+    if (t && (Date.now() - t) < 600) return;
+  } catch (e) {}
   closeModal();
 });
 

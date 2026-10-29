@@ -22,6 +22,11 @@ export interface BmBackgroundRecoverResult {
   dueTasks: BmBackgroundTask[];
 }
 
+export interface BmSetAlarmClockResult {
+  ok: boolean;
+  reason?: string;
+}
+
 export interface BmBackgroundPlugin {
   /** JS 启动/回前台时调用，把到期未完成任务推回 JS（recoverDue 同此） */
   recoverDue(): Promise<BmBackgroundRecoverResult>;
@@ -31,4 +36,6 @@ export interface BmBackgroundPlugin {
   cancel(options: { taskId: string }): Promise<BmBackgroundScheduleResult>;
   /** 消息已成功落库后调用，标记任务完成并撤闹钟 */
   confirm(options: { taskId: string }): Promise<BmBackgroundScheduleResult>;
+  /** 打开系统时钟 App 的「新建闹钟」界面（AlarmClock.ACTION_SET_ALARM），预填小时/分钟/备注=标题 */
+  setAlarmClock(options: { hour: number; minute: number; message: string }): Promise<BmSetAlarmClockResult>;
 }

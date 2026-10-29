@@ -27,11 +27,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: 安装 Java 21
+      - name: 安装 Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
       # 注：GitHub ubuntu-latest runner 已预装 Android SDK（ANDROID_HOME 就绪），
       # 无需 android-actions/setup-android（它是常见故障点）。20260930cg 实测移除。
@@ -335,9 +335,18 @@ jobs:
             fs.writeFileSync(gp, g + '\nandroid.suppressUnsupportedCompileSdk=35\n');
             console.log('gradle.properties suppressUnsupportedCompileSdk=35');
           }
-          // 20261029：升 Capacitor 7 后，capacitor-android 核心模块官方要求 Java 21 编译，
-          // runner 已改为 Java 21（上方 setup-java），此处不再做任何 Java21->17 降级。
-          // 旧版降级逻辑（针对 capacitor-overlay）已随 JDK 升级移除。
+          // capacitor-overlay（cap7 插件）声明 Java 21 编译 → 降回 17（其代码仅两个方法，无 21 特性；runner Java 17）
+          const ovp = 'node_modules/capacitor-overlay/android/build.gradle';
+          if (fs.existsSync(ovp)) {
+            let os = fs.readFileSync(ovp, 'utf8');
+            const ob = os;
+            os = os.replace(/JavaVersion\.VERSION_21/g, 'JavaVersion.VERSION_17')
+                   .replace(/sourceCompatibility\s*=\s*["']?21["']?/g, "sourceCompatibility = '17'")
+                   .replace(/targetCompatibility\s*=\s*["']?21["']?/g, "targetCompatibility = '17'")
+                   .replace(/jvmTarget\s*=\s*["']?21["']?/g, "jvmTarget = '17'");
+            if (os !== ob) { fs.writeFileSync(ovp, os); console.log('capacitor-overlay Java21 -> 17 patched'); }
+            else console.log('capacitor-overlay gradle: no Java21 marker found');
+          } else console.log('capacitor-overlay gradle not found (skip patch)');
           NODE_EOF
           node /tmp/inject-perms.js
 

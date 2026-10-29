@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.AlarmClock;
 
 import com.getcapacitor.Bridge;
 import com.getcapacitor.JSArray;
@@ -177,6 +178,41 @@ public class BmBackgroundPlugin extends Plugin {
             }
             BmTaskStore.markDone(getContext(), taskId);
             cancelAlarm(getContext(), taskId);
+
+            JSObject ret = new JSObject();
+            ret.put("ok", true);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
+        }
+    }
+
+    /**
+     * 打开系统时钟 App 的「新建闹钟」界面（AlarmClock.ACTION_SET_ALARM）。
+     * 预填小时/分钟/备注（=日程标题），用户在该界面点「保存」后闹钟即建成。
+     * 这是 Android 唯一能「真正进系统时钟 App」的方式——系统不允许任何应用
+     * 不经用户确认就静默往系统时钟塞闹钟。
+     */
+    @PluginMethod
+    public void setAlarmClock(PluginCall call) {
+        try {
+            int hour = call.getInt("hour", -1);
+            int minute = call.getInt("minute", -1);
+            String message = call.getString("message", "");
+
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+                resolveErr(call, "invalid hour/minute");
+                return;
+            }
+
+            Intent intent = new Intent(AlarmClock.ACTION_SET_ALARM);
+            intent.putExtra(AlarmClock.EXTRA_HOUR, hour);
+            intent.putExtra(AlarmClock.EXTRA_MINUTES, minute);
+            if (message != null && !message.isEmpty()) {
+                intent.putExtra(AlarmClock.EXTRA_MESSAGE, message);
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
 
             JSObject ret = new JSObject();
             ret.put("ok", true);

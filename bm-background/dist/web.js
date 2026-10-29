@@ -12,4 +12,7 @@ export class BmBackgroundWeb extends WebPlugin {
     async confirm(_options) {
         return { ok: false, reason: 'web_not_supported' };
     }
+    async setAlarmClock(_options) {
+        return { ok: false, reason: 'web_not_supported' };
+    }
 }
