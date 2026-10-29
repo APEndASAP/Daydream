@@ -120,11 +120,11 @@ function newBurstGlobal(x, y, fxKind){
   for (let i=0;i<n;i++){ const a = TAU*i/n, v = (1.4+R()*1.6)*dpr; arr.push({x, y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, life:1, hue:hue+R()*20-10}); }
   return { burst:arr };
 }
-/* 惊蛰点击落雷：待注入的闪电落点（画布坐标），thunder 每次出雷时优先消费 */
-const FXBOLTS = [];
+/* 惊蛰点击落雷：立即落雷信号（画布坐标），thunder 每帧检测到就立刻出一雷 */
+const FXSTRIKE_NOW = { x: 0, y: 0, hit: false };
 function strikeBoltGlobal(x, y){
-  FXBOLTS.push({ x, y });
-  if (FXBOLTS.length > 4) FXBOLTS.shift();
+  // 立即落雷：直接置位，thunder 每帧检测到就立刻出一雷（不等 next 到期）
+  FXSTRIKE_NOW.x = x; FXSTRIKE_NOW.y = y; FXSTRIKE_NOW.hit = true;
 }
 const FX_AUDIO = {
   firework:'firework_1689.wav', national:'firework_1689.wav',       // 烟花类 → 烟花多响连爆
@@ -1059,13 +1059,20 @@ function runFx(kind, canvas) {
         ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x-2.5*devicePixelRatio, p.y+p.l*devicePixelRatio); ctx.stroke(); }
       const e = extra;
       e.next -= dt;
-      if (e.next <= 0) {
+      // 点击立即落雷：检测到落点信号就立刻出一雷，不等 next 到期
+      if (FXSTRIKE_NOW.hit) {
+        FXSTRIKE_NOW.hit = false;
         e.flash = 1; e.next = 1.6 + R()*2.6;
-        // 点击落雷优先：手指/鼠标点哪，闪电就落哪
-        let bx, by, strikeTo;
-        if (FXBOLTS.length) { const s = FXBOLTS.shift(); bx = s.x; strikeTo = s.y; }
-        else { bx = W*(0.25+R()*0.5); strikeTo = H*0.55; }
-        const seg=[]; by=0;
+        const bx = FXSTRIKE_NOW.x, strikeTo = Math.min(FXSTRIKE_NOW.y, H*0.9);
+        const seg=[]; let by=0;
+        while (by < strikeTo){ seg.push([bx + (R()-0.5)*40*devicePixelRatio, by]); by += Math.max(6, strikeTo/8); }
+        seg.push([bx, strikeTo]);
+        e.bolt = seg;
+      } else if (e.next <= 0) {
+        e.flash = 1; e.next = 1.6 + R()*2.6;
+        // 随机落雷：没点就随机落
+        const bx = W*(0.25+R()*0.5), strikeTo = H*0.55;
+        const seg=[]; let by=0;
         while (by < strikeTo){ seg.push([bx + (R()-0.5)*40*devicePixelRatio, by]); by += Math.max(6, strikeTo/8); }
         seg.push([bx, strikeTo]);
         e.bolt = seg;
@@ -1317,7 +1324,7 @@ global.FX_AUDIO = FX_AUDIO;
 global.FXWIND = FXWIND;
 global.FXBURSTS = FXBURSTS;
 global.newBurstGlobal = newBurstGlobal;
-global.FXBOLTS = FXBOLTS;
+global.FXSTRIKE_NOW = FXSTRIKE_NOW;
 global.strikeBoltGlobal = strikeBoltGlobal;
 global.stopFx = stopFx;
 global.runFx = runFx;
