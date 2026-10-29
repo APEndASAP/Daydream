@@ -17,6 +17,7 @@
 const BgAudio = (function(){
   let audio = null;      // 当前主音频
   let fading = null;     // 正在淡出的旧音频（交叉淡化用）
+  let layers = [];       // 叠加层音频（20261029：风声+流水等「多音叠加」场景，与主音频并行播）
   let session = 0, fadeTimer = null, fadeTimer2 = null;
   /* 硬停单个 audio（不淡出） */
   function pause(a){ if (a){ try { a.pause(); } catch(e){} } }
@@ -45,12 +46,32 @@ const BgAudio = (function(){
     fadeIn(fresh, vol, 1200, mySession);
     fadeOut(old, 900, mySession);
   }
+  /* 叠加播放多个音频（20261029）：list = [[file, vol], [file, vol], ...]，
+     每个独立 Audio 循环播、独立音量，与主音频并行（用于风声+流水等双音叠加场景）。
+     关闭时由 stop() 统一停掉。 */
+  function playLayer(list){
+    stopLayer();
+    if (!Array.isArray(list) || !list.length) return;
+    for (const item of list){
+      const file = Array.isArray(item) ? item[0] : item;
+      const vol = Array.isArray(item) ? (item[1] == null ? 1.0 : Math.min(1.0, Math.max(0, item[1]))) : 1.0;
+      const a = new Audio('audio/' + file);
+      a.loop = true;
+      a.volume = vol;
+      try { a.play().catch(()=>{}); } catch(e) {}
+      layers.push(a);
+    }
+  }
+  function stopLayer(){
+    while (layers.length){ const a = layers.pop(); pause(a); }
+  }
   /* 淡出并停止（签卡关闭时调用） */
   function stop(){
     if (!audio){ return; }
     const mySession = session;
     fadeOut(audio, 800, mySession);
     audio = null;
+    stopLayer();
   }
   /* 淡入到目标音量 */
   function fadeIn(a, target, ms, mySession){
@@ -74,7 +95,7 @@ const BgAudio = (function(){
       a.volume = Math.max(0.0001, startVol * (1 - el));
     }, 30);
   }
-  return { play, stop, get current(){ return audio; } };
+  return { play, playLayer, stop, get current(){ return audio; } };
 })();
 const FXWIND = { vx:0, vy:0, life:0, streak:[], cx:0, radius:0, strength:1 };   // 滑动风场（strength=风力强度）
 const FXBURSTS = [];                                 // 点击烟花待注入的 burst
@@ -140,7 +161,7 @@ const FX_AUDIO = {
   heatwave:'summer_cicada_heat.ogg',                                // 大暑 → 夏日蝉鸣热浪腾腾
   wave:'water_flowing_ambience.ogg', riverlamp:'water_flowing_ambience.ogg', dew:'rain_splashing.ogg',// 端午/处暑 → 流水潺潺；白露 → 雨
   flag:'water_flowing_ambience.ogg', tea:'leaves_breeze_2427.ogg', osmanthus:'leaves_breeze_2427.ogg', chrysanth:'leaves_breeze_2427.ogg',// 国庆 → 流水潺潺；草木类
-  wheat:null, swallows:null, sprout:null, lotus:['leaves_breeze_2427.ogg', 0.35],  // 小满/春分/立春 → 静音；小暑 → 风声(低音量)
+  wheat:null, swallows:null, sprout:null, lotus:['__LAYER__',['leaves_breeze_2427.ogg', 0.35],['water_flowing_ambience.ogg', 0.6]],  // 小满/春分/立春 → 静音；小暑 → 风声 + 流水潺潺（双音叠加）
   plum:null, hearth:'fire_campfire_crackles.ogg', warmwindow:'fire_campfire_crackles.ogg',// 冬至红梅 → 静音；小寒 → 篝火；立冬 → 燃烧
   balloon:null, choco:null, peony:'rain_splashing.ogg',              // 六一/白色情人节 → 静音
   default:'leaves_breeze_2427.ogg',
@@ -159,8 +180,8 @@ function runFx(kind, canvas) {
   const init = {
     firework(){ parts = []; for (let i=0;i<3;i++) parts.push(newBurst(W*(0.25+0.25*i)+R()*40, H*(0.22+R()*0.15))); _fxTimer = setInterval(()=>{ if(_raf!==null) parts.push(newBurst(W*(0.2+R()*0.6), H*(0.15+R()*0.3))); }, 1400); },
     national(){ parts = []; for (let i=0;i<3;i++) parts.push(newBurst(W*(0.25+0.25*i)+R()*40, H*(0.22+R()*0.15))); _fxTimer = setInterval(()=>{ if(_raf!==null) parts.push(newBurst(W*(0.2+R()*0.6), H*(0.15+R()*0.3))); }, 1300); },
-    lantern(){ parts = []; for (let i=0;i<7;i++) parts.push({x:R()*W, y:H+R()*H*0.5, s:32+R()*38, v:0.4+R()*0.7, sw:R()*TAU}); },
-    candle(){ parts = []; for (let i=0;i<6;i++) parts.push({x:R()*W, y:H+R()*H*0.6, s:18+R()*20, v:0.3+R()*0.5, sw:R()*TAU}); },
+    lantern(){ parts = []; for (let i=0;i<7;i++) parts.push({x:R()*W, y:H+R()*H*0.5, s:48+R()*50, v:0.4+R()*0.7, sw:R()*TAU}); },
+    candle(){ parts = []; for (let i=0;i<6;i++) parts.push({x:R()*W, y:H+R()*H*0.6, s:24+R()*26, v:0.3+R()*0.5, sw:R()*TAU}); },
     /* 雨水：细雨 + 底部水面涟漪 */
     rainripple(){ parts = []; for (let i=0;i<55;i++) parts.push({x:R()*W, y:R()*H, v:2.2+R()*2.5, l:7+R()*11}); extra = { ripples:[] }; },
     /* 春分：双燕绕飞 + 柳絮白点 */
@@ -213,7 +234,7 @@ function runFx(kind, canvas) {
       }
     },
     /* 清明（节气）：梨花花瓣慢慢飘落 + 下方水面泛涟漪 + 微雨（去枝条、去高速旋转梨花） */
-    pear(){ parts = []; for (let i=0;i<40;i++) parts.push({x:R()*W, y:R()*-H, v:0.9+R()*0.9, sw:R()*TAU, rot:R()*TAU, spin:0.15+R()*0.2, r:(6.5+R()*4.5)*S, water:0, landed:false, fadeIn:0,
+    pear(){ parts = []; for (let i=0;i<40;i++) parts.push({x:R()*W, y:-H + R()*(H*1.74), v:0.9+R()*0.9, sw:R()*TAU, rot:R()*TAU, spin:0.15+R()*0.2, r:(6.5+R()*4.5)*S, water:0, landed:false, fadeIn:1,
         // 花蕊位置 init 时一次性固定（避免每帧随机导致花心高速跳动）
         stamens: Array.from({length:4},()=>({a:R()*TAU, rr:R()*0.3})),
         // 层次：前层亮白(deep=0)，后层带透明阴影(deep=1)，保证每轮都有明暗两种
@@ -232,7 +253,7 @@ function runFx(kind, canvas) {
     /* 大雪：鹅毛大片雪花（六角） */
     heavysnow(){ parts = []; for (let i=0;i<40;i++) parts.push({x:R()*W, y:R()*H, r:2.2+R()*3.4, v:0.4+R()*0.7, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.04}); },
     /* 冬至：梅枝 + 梅瓣飘落 */
-    plum(){ parts = []; for (let i=0;i<18;i++) parts.push({x:R()*W, y:R()*-H, s:7+R()*9, v:0.35+R()*0.55, sw:R()*TAU, rot:R()*TAU});
+    plum(){ parts = []; for (let i=0;i<18;i++) parts.push({x:R()*W, y:R()*-H, s:9+R()*12, v:0.35+R()*0.55, sw:R()*TAU, rot:R()*TAU});
       // 红梅枝条：短小一枝，从右边框伸入，贴右上角；花蕾沿枝分布
       // 花朵位置用相对坐标在 init 时一次性随机固定，渲染时不再每帧随机 → 消除高频颤动
       extra = { bx:W*0.86, by:H*0.24, buds:Array.from({length:7},()=>({bx:R(), by:R(), r:(1.6+R()*2.2)*S})) };
@@ -349,7 +370,8 @@ function runFx(kind, canvas) {
     ctx.clearRect(0,0,W,H);
     /* ① 风场：鼠标/手指划过 = 一阵风（冲量式，不持续跟随）。
           划过时给下落物一次方向冲量 → 撞边界反弹一下 → 散开 → 自然下落。
-          排除：元宵灯(lantern)、小满金粒(wheat)、立夏萤火(firefly)、以及无下落速度的静止粒子。 */
+          排除：小满金粒(wheat)、立夏萤火(firefly)、以及无下落速度的静止粒子。
+          元宵灯(lantern)与除夕烛火(candle)不参与下落冲量，改走「随风摇曳」轻偏移（见下方专属分支）。 */
     if (FXWIND.life > 0) {
       FXWIND.life -= dt;
       if (FXWIND.life <= 0) { FXWIND.life = 0; FXWIND.vx = 0; FXWIND.vy = 0; }
@@ -405,8 +427,8 @@ function runFx(kind, canvas) {
           p.wvx = (p.wvx || 0) + (R()*2-1) * 60 * relax * dt;
         }
       }
-      // 除夕烛火（candle）随风摇曳（不吹飞，只轻微偏移）
-      if (kind === 'candle' && FXWIND.life > 0){
+      // 除夕烛火（candle）与元宵花灯（lantern）随风摇曳（不吹飞，只轻微偏移）
+      if ((kind === 'candle' || kind === 'lantern') && FXWIND.life > 0){
         for (const p of parts){
           if (p && typeof p.v === 'number'){
             p.wvx = (p.wvx || 0) + gx * force * 0.5 * dt;
@@ -723,12 +745,11 @@ function runFx(kind, canvas) {
           ctx.save(); ctx.translate(x, bob); ctx.rotate(Math.sin(t + p.sw)*0.2);
           ctx.globalAlpha = Math.max(0, 1 - p.water*0.85);
         } else {
-          if (p.y > H+24) { p.y = -24; p.x = R()*W; }
+          if (p.y > H+24) { p.y = -24; p.x = R()*W; p.fadeIn = 0; }
           ctx.save(); ctx.translate(x, p.y); ctx.rotate(p.rot);
-          // 顶部重生：刚重生时从透明渐入（避免硬跳断裂感）
-          p.fadeIn = (p.fadeIn == null) ? 0 : p.fadeIn;
-          if (p.y < -8 && p.fadeIn < 1) p.fadeIn += dt*3;
-          ctx.globalAlpha = Math.min(1, p.fadeIn || 0.3);
+          // 顶部重生：刚重生时从完全透明平滑渐入（消除硬跳/闪烁），进入屏幕后保持不透明
+          if (p.fadeIn < 1) { p.fadeIn += dt*4; if (p.fadeIn > 1) p.fadeIn = 1; }
+          ctx.globalAlpha = p.fadeIn;
         }
         // 白五瓣（倒卵圆）：前层亮白、后层带透明阴影（层次感，每轮明暗皆有）
         const whiteA = p.deep ? 0.45 : 0.9;

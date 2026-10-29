@@ -1029,6 +1029,9 @@ function renderFxDebug() {
       <button class="icon-btn" id="fx-debug-close">✕</button>
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.6;">点任意一项预览对应的入梦签动画卡片；点卡片「我收到啦」会回到这里继续选择。勾选状态会自动记住。</div>
+    <div id="fx-debug-dailychar" style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:12px;padding:8px 12px;background:var(--purple-dim);border-radius:10px;color:var(--purple-soft);">
+      <span>🎑 当前入梦签访客：<b id="fx-debug-dailychar-name">读取中…</b></span>
+    </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--bg-elevated-2);border-radius:10px;">
       <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;">
         <input type="checkbox" id="dbg-anniv" style="width:16px;height:16px;accent-color:var(--purple);"> 纪念日占位
@@ -1043,6 +1046,14 @@ function renderFxDebug() {
   if (_scrollEl && _fxDebugScrollTop > 0) {
     try { _scrollEl.scrollTop = _fxDebugScrollTop; } catch (e) {}
   }
+  // 20261029：调试器顶部显示「当前入梦签访客」——直接暴露 dailyCharId 实际绑定谁，
+  // 便于排查「入梦签显示的角色和玩家设置不一致」的问题（一眼看出是未设置还是设错了角色）。
+  try {
+    getDailyChar().then(dc => {
+      const el = document.getElementById('fx-debug-dailychar-name');
+      if (el) el.textContent = dc ? dc.name : '未设置（将回退到最新访客）';
+    }).catch(() => { const el = document.getElementById('fx-debug-dailychar-name'); if (el) el.textContent = '读取失败'; });
+  } catch (e) {}
   // 关闭按钮：回到总设置（复用 closeModal 的 _settingsActive 返回逻辑）
   const dbgClose = $('#fx-debug-close');
   if (dbgClose) dbgClose.onclick = closeModal;
@@ -1064,7 +1075,7 @@ function renderFxDebug() {
   } catch (e) {}
   // 绑定点击：选中某项 → 打开对应动画卡片（「我收到啦」回到本选择页）
   document.querySelectorAll('.fx-debug-item').forEach(el => {
-    el.onclick = () => {
+    el.onclick = async () => {
       // 20261028：离开列表前记录滚动位（此时 .fx-debug-scroll 还在 DOM，能读到真实 scrollTop）
       const _list = document.querySelector('.fx-debug-scroll');
       if (_list) _fxDebugScrollTop = _list.scrollTop;
@@ -1082,8 +1093,9 @@ function renderFxDebug() {
       // 读取当前勾选状态，注入占位文字以预览两行徽章同时出现的排版
       const annivText = (_anniv && _anniv.checked) ? '纪念日 · 今天' : '';
       const careText = (_care && _care.checked) ? '经期提醒 · 今天' : '';
-      // 构造入梦签数据并打开动画卡片（头像取当前入梦签角色，无则用占位）
-      const dc = (characters && characters.length) ? characters[0] : null;
+      // 20261029：调试预览的头像/昵称跟随玩家设置的「入梦签访客」（dailyCharId），
+      // 与真实入梦签一致；之前误用 characters[0]（最新创建的访客），多角色下预览会串角色。
+      const dc = await getDailyChar();
       const d = {
         charId: dc ? dc.id : null,
         charName: dc ? dc.name : '访客',
@@ -1122,9 +1134,24 @@ let _appBgmVolCache = 100;
 function _playDreamFxAudio(fx) {
   const audio = window.FX_AUDIO && window.FX_AUDIO[fx];
   if (!audio || !window.BgAudio) return;   // null = 静音，不播
+  // 20261029：叠加双音（['__LAYER__', [file,vol], [file,vol], ...]）→ 主音频 + 叠加层并行播
+  if (Array.isArray(audio) && audio[0] === '__LAYER__') {
+    const appVol = (typeof _appBgmVolCache === 'number') ? _appBgmVolCache : 100;
+    const g = Math.max(0, Math.min(200, appVol)) / 100;
+    const list = audio.slice(1).map(it => [it[0], (it[1] || 1) * 1.35 * g]);
+    try { window.BgAudio.playLayer(list); } catch (e) {}
+    return;
+  }
   let file, vol = 1.0;
   if (Array.isArray(audio)) { file = audio[0]; vol = audio[1]; }
   else { file = audio; }
+  // 20261029：手机端整体音量偏小——所有白噪音统一加基础增益；虫鸣类（夏夜虫鸣/夏日蝉鸣）
+  // 原始录音电平尤其低，单独再拉高一档，让虫鸣在真机上也清晰可闻。
+  const INSECT_FILES = ['night_crickets_loop.ogg', 'summer_cicada_heat.ogg'];
+  const BASE_GAIN = 1.35;
+  const INSECT_GAIN = 1.55;
+  const isInsect = INSECT_FILES.indexOf(file) !== -1;
+  vol = vol * (isInsect ? INSECT_GAIN : BASE_GAIN);
   // 20261028：入梦签白噪音音量跟随「软件内音乐音量」滑条（appBgmVol，百分数 0~200，默认 100）。
   // 在各自音效的固有音量基础上再乘软件内音乐音量，拖动滑条即生效（下次弹卡按最新值）。
   try {
@@ -1309,6 +1336,13 @@ async function getDailyChar() {
   const dailyCharId = await getSetting('dailyCharId', null);
   if (dailyCharId) {
     const c = characters.find(c => c.id === dailyCharId);
+    if (c) return c;
+  }
+  // 20261029：入梦签访客（dailyCharId）未设置/已失效时，回退到纪念日访客（dailyAnnivCharId），
+  // 避免玩家只在「设为纪念日访客」设置了角色、入梦签却显示默认第一个访客（多为测试角色）。
+  const annivCharId = await getSetting('dailyAnnivCharId', null);
+  if (annivCharId) {
+    const c = characters.find(c => c.id === annivCharId);
     if (c) return c;
   }
   return characters[0];
@@ -7696,7 +7730,7 @@ async function showCharProfile(charId = null) {
   if (!c) return;
   _charProfileActive = c;
   const isDaily = (await getSetting('dailyCharId', null)) === c.id;
-  // 心念角色 = 弹卡纪念日角色（dailyAnnivCharId）
+  // 纪念日角色 = 弹卡纪念日角色（dailyAnnivCharId）
   const isHeart = (await getSetting('dailyAnnivCharId', null)) === c.id;
   const banWords = c.banWords || [];
   const bannedGroups = (c.bannedGroups || []).length;
@@ -7706,7 +7740,7 @@ async function showCharProfile(charId = null) {
   const funcs = [
     { id: 'btn-edit-char', label: '编辑访客资料', arrow: true },
     { id: 'btn-set-daily', label: '设为入梦签访客', note: isDaily ? '✓ 已设置' : '' },
-    { id: 'btn-set-heart', label: '设为心念访客', note: isHeart ? '✓ 已设置' : '' },
+    { id: 'btn-set-heart', label: '设为纪念日访客', note: isHeart ? '✓ 已设置' : '' },
     { id: 'btn-set-relation', label: '设置关系网', note: relation },
     { id: 'btn-moments-settings', label: '朋友圈设置', note: `${remindMoments ? '提醒开' : '提醒关'} · 每日${charMomentLimit(c)}条`, arrow: true },
     { id: 'btn-char-theme', label: '聊天背景图', note: c.chatBg ? '已设置' : '' },
@@ -7771,7 +7805,7 @@ async function showCharProfile(charId = null) {
     showCharProfile();
   };
   $('#btn-set-heart').onclick = async () => {
-    // 心念角色 = 弹卡纪念日角色：点击即切换该访客为弹卡纪念日对象（再点取消）
+    // 纪念日角色 = 弹卡纪念日角色：点击即切换该访客为弹卡纪念日对象（再点取消）
     const cur = await getSetting('dailyAnnivCharId', null);
     heartCharId = (cur === c.id) ? null : c.id;
     await setSetting('heartCharId', heartCharId);
