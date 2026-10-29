@@ -52,6 +52,7 @@ let chatSettings = {
   typecardSummon: false,         // 20261008 晚（碎梦重拼召唤）：常驻悬浮窗+「生成一条消息」按钮，独立于 typecardOn 互不干涉；速度/通顺度跟随打字卡设置
   typecardSummonIntervalMin: 40,   // 20261009：召唤自动发消息随机区间下限（分钟）；上限 240 与查岗区间惯例一致，玩家可在召唤开关旁自设
   typecardSummonIntervalMax: 240,  // 20261009：召唤自动发消息随机区间上限（分钟）；每次触发后在 [min,max] 内随机取下一次间隔
+  bmSchedDetect: true,             // 20261029：聊天日程+闹钟自动检测总开关（默认开；全局开关，聊天设置里读写）
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -6733,7 +6734,7 @@ function showScheduleRecordModal(item, c) {
   openModal(`
     <div style="text-align:center;margin-bottom:10px;">
       <div style="font-size:40px;margin-bottom:8px;">⏰</div>
-      <div style="font-size:16.5px;font-weight:600;line-height:1.55;">「${escapeHtml(item.charName)}」访客正在记录你的重要行程</div>
+      <div style="font-size:16.5px;font-weight:600;line-height:1.55;">访客正在记录你的重要行程</div>
       <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:6px;">系统在聊天里检测到了日程与提醒请求</div>
     </div>
     <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
@@ -6767,7 +6768,7 @@ async function bmCommitScheduleReminder(item) {
         await LN.schedule({
           notifications: [{
             id: Math.abs(Math.floor(item.at % 2147483000)),
-            title: '⏰ ' + item.charName + ' 提醒你',
+            title: '⏰ 访客 提醒你',
             body: item.title,
             channelId: 'bm-schedule',
             smallIcon: 'ic_launcher',
@@ -6791,7 +6792,7 @@ async function bmCommitScheduleReminder(item) {
           await LN.schedule({
             notifications: [{
               id: schedId,
-              title: '⏰ ' + item.charName + ' 的闹钟',
+              title: '⏰ 访客 的闹钟',
               body: item.title,
               channelId: 'bm-alarm',
               smallIcon: 'ic_launcher',
@@ -6812,10 +6813,10 @@ async function bmCommitScheduleReminder(item) {
           if (!perm || perm.writeCalendar !== 'granted' || perm.readCalendar !== 'granted') await Cal.requestFullCalendarAccess();
         } catch (e) {}
         await Cal.createEvent({
-          title: '【白日梦】' + item.charName + '：' + item.title,
+          title: '【白日梦】' + item.title,
           startDate: item.at,
           endDate: item.at + 30 * 60 * 1000,
-          description: '由访客「' + item.charName + '」在聊天中记录',
+          description: '由访客在聊天中记录',
           alerts: [0],
         });
         results.push('系统日历日程');
@@ -6837,7 +6838,7 @@ async function bmCommitScheduleReminder(item) {
   openModal(`
     <div style="text-align:center;margin-bottom:10px;">
       <div style="font-size:40px;margin-bottom:8px;">✅</div>
-      <div style="font-size:16.5px;font-weight:600;line-height:1.55;">「${escapeHtml(item.charName)}」访客已经成功记录你的行程</div>
+      <div style="font-size:16.5px;font-weight:600;line-height:1.55;">访客已经成功记录你的行程</div>
     </div>
     <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
       <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}</div>
@@ -13247,7 +13248,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <button class="btn cs-tab" data-cs-tab="消息" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">消息</button>
       <button class="btn cs-tab" data-cs-tab="打字卡" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">打字卡</button>
       ${(isPerChar || s.overclockUnlocked) ? `<button class="btn cs-tab" data-cs-tab="超频" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">超频</button>` : ''}
-      ${isPerChar ? `<button class="btn cs-tab" data-cs-tab="行程" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">行程</button>` : ''}
+      <button class="btn cs-tab" data-cs-tab="行程" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">行程</button>
     </div>
 
     ${!isPerChar ? `
@@ -13485,14 +13486,6 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">20261002cb：默认关闭——TA 发表情包只用 TA 自己的专属表情包库（TA 主页里上传的那套）；开启后，TA 也会随机使用你（玩家）上传的表情包库（TA 自己的库优先）。总设置对所有访客生效，访客主页的聊天设置可单独覆盖</div>
     </div>
-
-    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>⏰ 聊天日程+闹钟自动检测</span>
-        <input type="checkbox" id="cs-bm-sched" ${(chatSettings.bmSchedDetect !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
-      </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">在聊天里对该访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统自动识别并弹窗确认，写入系统日历/闹钟提醒。字卡与 AI 模式通用。此项为全局开关（对所有访客生效），关闭后不再自动检测。</div>
-    </div>
     </section>
 
     <section class="cs-panel" data-cs-panel="打字卡">
@@ -13575,6 +13568,13 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </section>
 
     <section class="cs-panel" data-cs-panel="行程">
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>⏰ 聊天日程+闹钟自动检测</span>
+        <input type="checkbox" id="cs-bm-sched" ${(chatSettings.bmSchedDetect !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，你在聊天里对访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统会自动识别并弹窗确认，把行程写入系统日历/闹钟提醒。字卡模式与 AI 模式通用，关闭后不再自动检测。</div>
+    </div>
     ${isPerChar ? `
     <div class="field">
       <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">📌 TA 的日常行程标签</label>
@@ -13990,8 +13990,9 @@ function bindChatSettings(s, onSave, tcChar) {
     const ncvEl = $('#cs-notify-conversation');
     if (ncvEl) s.notifyConversationEnabled = ncvEl.checked;
     s.allowRecall = $('#cs-recall').checked;
+    // 20261029：聊天日程+闹钟自动检测（全局开关，读写全局 chatSettings，个人设置入口同步）
     const bmSchedEl = $('#cs-bm-sched');
-    if (bmSchedEl) { chatSettings.bmSchedDetect = bmSchedEl.checked; await setSetting('chatSettings', chatSettings); } // 20261029：日程自动检测（全局开关，个人设置入口同步读写全局值）
+    if (bmSchedEl) { chatSettings.bmSchedDetect = bmSchedEl.checked; await setSetting('chatSettings', chatSettings); }
     const cueEl = $('#cs-char-emoji-lib');
     if (cueEl) s.charUsePlayerEmojis = cueEl.checked; // 20261002cb：允许角色使用玩家表情包库
     const pokeEl = $('#cs-poke-mode');
@@ -14097,13 +14098,6 @@ async function showSettingsModal() {
     </button>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>⏰ 聊天日程+闹钟自动检测</span>
-        <input type="checkbox" id="gs-bm-sched" ${(chatSettings.bmSchedDetect !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
-      </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，你在聊天里对访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统会自动识别并弹窗确认，把行程写入系统日历/闹钟提醒。字卡模式与 AI 模式通用，关闭后不再自动检测。</div>
-    </div>
-    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
-      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>✨ 导入时重复触发超频/惊喜动画</span>
         <input type="checkbox" id="gs-import-replay-oc" ${chatSettings.importReplayOcAnim ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
@@ -14164,15 +14158,6 @@ async function showSettingsModal() {
     <div id="layout-check" style="text-align:center;font-size:11px;color:var(--text-tertiary);margin-top:4px;opacity:.85;"></div>
   `);
   $('#gs-close').onclick = closeModal;
-  // 20261001cq：聊天日程+闹钟自动检测开关（默认开）
-  {
-    const schedBox = $('#gs-bm-sched');
-    if (schedBox) schedBox.onchange = async () => {
-      chatSettings.bmSchedDetect = schedBox.checked;
-      await setSetting('chatSettings', chatSettings);
-      miniToast(schedBox.checked ? '日程自动检测已开启' : '日程自动检测已关闭');
-    };
-  }
   // 20261011 晚：导入时重复触发超频/惊喜动画开关（默认关=不重复触发）
   {
     const replayOc = $('#gs-import-replay-oc');
@@ -19843,7 +19828,6 @@ async function renderNotebookTide() {
   const info = (await getPeriodInfo()) || { enabled: false, lastStart: '', cycleDays: 28, periodDays: 5, log: [] };
   const log = Array.isArray(info.log) ? info.log : [];
   body.innerHTML = `
-    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">只记给你自己看：到点会在入梦签里收到 TA 的关心，临近 5 天和经期中每天提醒一次。</div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:14px;">
       <input type="checkbox" id="pm-on" ${info.enabled ? 'checked' : ''}> 开启经期潮汐
     </label>
@@ -23183,7 +23167,7 @@ async function generateCharReply(charId, opts = {}) {
     // 20261011：情绪感知与安慰准则（仅 AI 模式）——感知玩家情绪低落时及时安慰，
     // 但安慰方式必须由「角色性格+生平+世界书设定+与玩家的关系」共同决定，不能套模板。
     const emotionDirective = `\n行为准则（情绪）：留意玩家此刻流露的情绪。若察觉玩家情绪低落、难过、疲惫、受挫、生病、焦虑或明显消沉，请及时、自然地给予安慰，不要装作没看见、不要敷衍。但安慰的分寸与方式必须贴合你「这个人」——结合下方你的人设/生平、世界树设定，尤其是你们的关系来决定：\n· 关系是恋人/家人/挚友/朋友：真诚、温暖地安慰，可以主动关心、陪伴、给建议或帮忙。\n· 关系是陌生人或「无」：保持礼貌的关心与基本的善意，但不要过分亲昵、越界。\n· 关系是「厌恶」或「仇人」：不要说重话、不要落井下石，但也别演变成虚伪的亲密；以你人设允许的方式淡淡地缓和即可，甚至可以不置可否。\n· 关系是「宿敌」：这种时候反而可以挺 TA 一把——用你人设里那种「虽然是宿敌但此刻站你这边」的方式，给一点笨拙但真诚的支撑。\n· 若玩家并没有低落情绪，就正常聊天，不要强行说教或过度解读。`;
-    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${emotionDirective}${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:标识或编号]]（取自下方【朋友圈最新动态】每行的[标识:]，用标识最精确；编号#1 是最新一条，也兼容）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。\n4. 玩家在这段对话里提到了「和你们两个人有关的重要日期」（玩家的生日、你的生日、你们认识的纪念日、你或玩家生平里的某件大事的具体日期）时：另起一行输出 [[ANNIV:日期|原因]]，日期尽量写成「YYYY-MM-DD」或「MM-DD」格式（如 [[ANNIV:10-05|玩家生日]]），由系统存成你们的权重记忆。必须是与你俩关系相关的日期才输出，普通的日程/会议日期不要输出。\n5. 玩家让你给某条朋友圈「点赞并评论/回复」时：必须同时输出两行——[[LIKE:标识或编号]] 和 [[COMMENT:标识或编号:你想评论的话]]，两个动作缺一不可；找不到对应动态就省略并在回复里自然说明。${shareDirective}${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
+    const sysBase = (visionNote) => `你是角色扮演 AI。请完全以角色的身份、口吻回复，简短自然（1~3 句），不要跳出角色，不要提“AI”“模型”等字眼。${emotionDirective}${multiLine}${visionNote}\n隐藏指令（玩家看不到，单独成行放在回复最末尾，没有就整行省略）：\n1. 玩家让你发朋友圈/发动态时：另起一行输出 [[MOMENT:朋友圈正文]]，由系统代发；若你想同时给自己这条动态点赞，再另起一行输出 [[SELF_LIKE]]。\n2. 这段对话里有值得你永久记住的事（约定/秘密/重要事实）时：另起一行输出 [[MEMO:一句话记忆]]，由系统替你存进记忆宫殿。最多一条，宁缺毋滥。\n3. 玩家让你去朋友圈点赞/给某条动态点赞时：另起一行输出 [[LIKE:标识或编号]]（取自下方【朋友圈最新动态】每行的[标识:]，用标识最精确；编号#1 是最新一条，也兼容）；可同时输出多个点赞不同的动态；列表里没有或没有玩家要的动态就省略。\n4. 玩家在这段对话里提到了「和你们两个人有关的重要日期」（玩家的生日、你的生日、你们认识的纪念日、你或玩家生平里的某件大事的具体日期）时：另起一行输出 [[ANNIV:日期|原因]]，日期尽量写成「YYYY-MM-DD」或「MM-DD」格式（如 [[ANNIV:10-05|玩家生日]]），由系统存成你们的权重记忆。必须是与你俩关系相关的日期才输出，普通的日程/会议日期不要输出。\n5. 玩家让你给某条朋友圈「点赞并评论/回复」时：必须同时输出两行——[[LIKE:标识或编号]] 和 [[COMMENT:标识或编号:你想评论的话]]，两个动作缺一不可；找不到对应动态就省略并在回复里自然说明。\n6. 玩家在这段对话里提到了「自己要做的事/行程/要你帮忙记的日程」，且带有一个明确的时间（几点、或几月几号几点、或明天/后天几点）时：另起一行输出 [[SCHED:具体日期时间|行程内容]]，时间写成「YYYY-MM-DD HH:mm」或「MM-DD HH:mm」或「今天 HH:mm」格式（如 [[SCHED:2026-10-30 08:00|去医院复诊]]、[[SCHED:今天 22:00|睡觉]]），由系统帮玩家写进系统日历并定闹钟提醒。只有玩家确实表达了「要记下来/要提醒/要做某件事」且时间明确时才输出，普通闲聊不输出。${shareDirective}${momentBrief ? '\n\n' + momentBrief : ''}\n\n${ctx}`;
     const sysNoImg = sysBase('');
     const messages = [
       { role: 'system', content: imgs.length ? sysBase('\n【视觉输入】本条消息末尾附上了最近聊天里的图片/表情包（按时间顺序），你可以直接看到它们的内容。') : sysNoImg },
@@ -23206,6 +23190,7 @@ async function generateCharReply(charId, opts = {}) {
       const parsed = parseAITags(r.text);
       if (parsed.memo) await aiPalStoreMemo(charId, parsed.memo);
       if (parsed.anniv) await aiStoreAnnivMemo(charId, parsed.anniv); // 20261002ch：重要日期→权重记忆
+      if (parsed.sched) await aiScheduleFromTag(charId, parsed.sched); // 20261029：AI 主动记录行程+定闹钟
       if (parsed.moment) await aiPostMomentFromTag(charId, parsed.moment, { selfLike: parsed.selfLike });
       if (parsed.likes && parsed.likes.length) await aiLikeMomentByIndex(charId, parsed.likes);
       if (parsed.likeIds && parsed.likeIds.length) await aiLikeMomentById(charId, parsed.likeIds);
@@ -23876,7 +23861,7 @@ async function momentReplyText(char, relation, post = null, opts = {}) {
    字卡模式不注入这些指令，随机收藏仍走 palAutoCollectMaybe（聊天）/随机朋友圈收藏。
    ============================================================ */
 function parseAITags(text) {
-  const out = { clean: String(text || ''), memo: '', moment: '', likes: [], likeIds: [], comments: [], selfLike: false, anniv: null };
+  const out = { clean: String(text || ''), memo: '', moment: '', likes: [], likeIds: [], comments: [], selfLike: false, anniv: null, sched: null };
   out.clean = out.clean.replace(/\[\[\s*MOMENT\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.moment = v.trim(); return ''; });
   out.clean = out.clean.replace(/\[\[\s*MEMO\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.memo = v.trim(); return ''; });
   // 20261001ci：[[LIKE:编号]] 点赞朋友圈（可多个）；[[SELF_LIKE]] 给自己刚发的动态点赞
@@ -23895,6 +23880,8 @@ function parseAITags(text) {
   out.clean = out.clean.replace(/\[\[\s*SELF_LIKE\s*\]\]/gi, () => { out.selfLike = true; return ''; });
   // 20261002ch：[[ANNIV:日期|原因]] 玩家提到的与「玩家×角色关系相关」的重要日期（生日/纪念日/生平大事）
   out.clean = out.clean.replace(/\[\[\s*ANNIV\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.anniv = v.trim(); return ''; });
+  // 20261029：[[SCHED:日期时间|行程内容]] 玩家要记的行程/闹钟（AI 主动发起，与系统正则检测并行不冲突）
+  out.clean = out.clean.replace(/\[\[\s*SCHED\s*[:：]\s*([\s\S]*?)\]\]/gi, (_, v) => { out.sched = v.trim(); return ''; });
   out.clean = out.clean.replace(/\[\[\s*存忆\s*\]\]/g, '').trim();
   return out;
 }
@@ -23962,6 +23949,64 @@ async function aiStoreAnnivMemo(charId, annivRaw) {
     }
     miniToast('⭐ ' + (c ? c.name : 'TA') + ' 把你们的重要日子记成了权重记忆');
   } catch (e) {}
+}
+
+/* 20261029：AI 主动发起的行程记录（[[SCHED:日期时间|内容]]）→ 复用系统检测的确认弹窗。
+   raw 形如「2026-10-30 08:00|去医院复诊」或「今天 22:00|睡觉」。
+   解析出时间戳后走 showScheduleRecordModal（带「同时创建闹钟」勾选），
+   与系统本地正则检测（maybeDetectScheduleRecord）并行、互不冲突（两侧各自去重）。 */
+async function aiScheduleFromTag(charId, raw) {
+  try {
+    if (!charId || !raw) return;
+    const c = characters.find(x => x.id === charId);
+    if (!c) return;
+    // 拆分「时间|内容」
+    const parts = String(raw).split(/[|｜]/, 2);
+    let timeStr = (parts[0] || '').trim();
+    const titleRaw = (parts[1] || '').trim();
+    if (!timeStr || !titleRaw) return;
+    // 解析时间：优先复用 bmParseCNDateTime（支持中文日期+时刻）；再补 AI 输出的标准格式
+    let at = null;
+    const probeText = timeStr + ' ' + titleRaw;
+    let parsed = null;
+    try { parsed = bmParseCNDateTime(probeText); } catch (e) {}
+    if (parsed && parsed.at) {
+      at = parsed.at;
+    } else {
+      // 回退：标准「YYYY-MM-DD HH:mm」/「MM-DD HH:mm」/「今天 HH:mm」解析
+      let m = timeStr.match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})[日号]?\s+(\d{1,2})[:：](\d{1,2})/);
+      if (m) {
+        at = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime();
+      } else {
+        m = timeStr.match(/(\d{1,2})[-/月](\d{1,2})[日号]?\s+(\d{1,2})[:：](\d{1,2})/);
+        if (m) {
+          const n = new Date();
+          let y = n.getFullYear(), mo = +m[1] - 1, d = +m[2];
+          at = new Date(y, mo, d, +m[3], +m[4]).getTime();
+          if (at <= Date.now()) at = new Date(y + 1, mo, d, +m[3], +m[4]).getTime();
+        } else if (/今天/.test(timeStr)) {
+          m = timeStr.match(/(\d{1,2})[:：](\d{1,2})/);
+          if (m) {
+            const n = new Date();
+            at = new Date(n.getFullYear(), n.getMonth(), n.getDate(), +m[1], +m[2]).getTime();
+          }
+        } else if (/明天/.test(timeStr)) {
+          m = timeStr.match(/(\d{1,2})[:：](\d{1,2})/);
+          if (m) {
+            const n = new Date(Date.now() + 864e5);
+            at = new Date(n.getFullYear(), n.getMonth(), n.getDate(), +m[1], +m[2]).getTime();
+          }
+        }
+      }
+    }
+    if (!at || isNaN(at) || at <= Date.now() + 60000) return; // 无效或已过（<1分钟）不触发
+    // 去重：同角色 + 同 at + 同 title 已有未触发记录 → 不重复弹
+    const list = await bmLoadSchedules();
+    if (list.some(it => it && !it.fired && it.charId === charId && it.at === at && it.title === titleRaw)) return;
+    setTimeout(() => {
+      try { showScheduleRecordModal({ charId, charName: c.name, at, title: titleRaw }, c); } catch (e) {}
+    }, 600);
+  } catch (e) { console.error('[AI 行程标签]', e); }
 }
 
 /* AI 决定把一条朋友圈收进记忆宫殿（存进该访客的记忆文件夹） */
