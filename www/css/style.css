@@ -1587,12 +1587,15 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
 .emoji-tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 12px;
+  /* 20261031：横向溢出根治——tab 自适应均分宽度，不再用固定 min-width 撑出滚动条/截断 */
+  flex-wrap: nowrap;
+  width: 100%;
 }
 .emoji-tab {
-  /* 20261030：tab 统一为等宽等高按钮——固定高度 + 统一最小宽度（按「表情包」tab 尺寸）+ 不换行 + 防压缩，
-     解决「Emoji 库/戳一戳」被 flex 挤成换行/竖排、以及「＋添加」与 tab 高度不一致的问题 */
+  /* 20261031：去掉固定 min-width 与 flex-shrink:0，改为 flex:1 均分 + min-width:0 防溢出，
+     保证「表情包 / Emoji库 / 戳一戳 / ＋添加」在任何屏幕宽度下都装得下、不出现横向拖动条 */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1601,17 +1604,43 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
   color: var(--text-secondary);
   border-radius: 16px;
   height: 34px;
-  min-width: 84px;
+  flex: 1 1 0;
+  min-width: 0;
   box-sizing: border-box;
-  padding: 0 16px;
+  padding: 0 8px;
   font-size: 13px;
   line-height: 1;
   font-family: var(--font);
   cursor: pointer;
   white-space: nowrap;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .emoji-tab.active { background: var(--purple); color: #141019; border-color: var(--purple); font-weight: 600; }
+/* 20261031：字卡库模块 tab（回复字卡/访客戳一戳/玩家戳一戳/状态/寄语/表情/朋友圈预设）
+   独立 class，不再复用 .emoji-tab 的 flex:1 均分（那套是给表情栏 4 个短 tab 的）。
+   容器为 grid 3 列，7 个标签排成整齐的 3+3+1 网格，每个标签等宽、文字完整居中，不截断、不挤。 */
+.card-mod-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 16px;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  font-size: 13px;
+  line-height: 1;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-mod-tab.active { background: var(--purple); color: #141019; border-color: var(--purple); font-weight: 600; }
 .emoji-grid {
   display: grid;
   /* 20260929ax：格子全面缩小，列数随面板宽度自适应（手机 6~7 列 / PC 12+ 列） */
@@ -4075,6 +4104,41 @@ body.glass-ui .msg-row.me .bubble {
 }
 .oc-glitch-code { color: rgba(196,168,255,0.9); text-shadow: -2px 0 rgba(229,60,80,0.55); }
 .oc-glitch-code2 { color: rgba(150,220,255,0.9); text-shadow: 2px 0 rgba(80,220,180,0.4); transform: translate(2px, -2px); }
+/* 20261031：故障风增强——水平切片撕裂（红/青横条错位拉出，模拟信号行位移） */
+.oc-glitch-slice {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+/* 20261031：错落无序的局部故障块——每条切片宽度/位置/偏移随机，不横贯全屏，模仿真实乱码 */
+.oc-glitch-slice > div {
+  position: absolute;
+  mix-blend-mode: screen;
+  will-change: transform, opacity;
+  border-radius: 1px;
+}
+.oc-glitch-slice > div::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: inherit;
+  transform: translateX(8px);
+  opacity: 0.5;
+  filter: blur(0.5px);
+}
+/* 20261031：故障风增强——彩色噪点颗粒（品红/青/绿/黄小色块） */
+.oc-glitch-noise {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.oc-glitch-noise > span {
+  position: absolute;
+  mix-blend-mode: screen;
+  will-change: opacity;
+}
 .oc-scanline {
   position: absolute;
   left: 0; right: 0;
@@ -4377,8 +4441,8 @@ body.glass-ui .msg-row.me .bubble {
   border-radius: 0;
   text-align: center;
   background: linear-gradient(180deg, rgba(10,7,20,.96) 0%, rgba(16,10,32,.98) 100%);
-  border: 1px solid rgba(120,220,160,.22);
-  box-shadow: 0 0 0 1px rgba(229,72,77,.18), 0 18px 60px rgba(0,0,0,.6), inset 0 0 40px rgba(0,255,160,.05);
+  border: 1px solid rgba(167,139,250,.28);
+  box-shadow: 0 0 0 1px rgba(167,139,250,.20), 0 18px 60px rgba(0,0,0,.6), inset 0 0 40px rgba(167,139,250,.08);
   overflow: hidden;
 }
 /* 故障撕裂条带：贴着弹窗上/下边缘（边框与背景交界处），黑白错位闪烁 */
@@ -4442,9 +4506,24 @@ body.glass-ui .msg-row.me .bubble {
   animation: oc-glitch-sweep 2.4s linear infinite;
 }
 @keyframes oc-first-card-in { from { opacity: 0; transform: translateX(-50%) translateY(16px) scale(.94); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
-.oc-first-card .oc-first-glitch { font-family: 'Courier New', monospace; font-size: 12px; letter-spacing: 2px; color: #7ae0b0; text-shadow: 0 0 8px rgba(122,224,176,.6); margin-bottom: 10px; }
+.oc-first-card .oc-first-glitch { font-family: 'Courier New', monospace; font-size: 12px; letter-spacing: 2px; color: #a78bfa; text-shadow: 0 0 8px rgba(167,139,250,.7); margin-bottom: 10px; }
 .oc-first-card .oc-first-title { font-size: 15px; font-weight: 600; line-height: 1.6; color: rgba(241,234,255,.96); }
 .oc-first-wrap.gone { opacity: 0; transition: opacity .35s ease; pointer-events: none; }
+
+/* ── 20261031：故障弹窗装饰层（白框闪屏 + 彩色线条 + 随机乱码，紫色定稿）──
+   由 _ocInjectPopupGlitch 注入到弹窗容器，每 100ms 整体随机重建彩线/乱码。
+   白框条带（oc-glt-band/side）为静态 CSS 动画，彩线/乱码为 JS 定时重绘。 */
+.oc-pop-glitch {
+  position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: visible;
+}
+/* 彩色线条：红/青细横条，错落散布在弹窗四周 */
+.oc-pop-slice { position: absolute; height: 3px; pointer-events: none; mix-blend-mode: screen; }
+.oc-pop-slice.r { background: rgba(255,60,90,.7); }
+.oc-pop-slice.c { background: rgba(90,220,255,.6); }
+/* 随机乱码：日文片假名/符号，多色错位 */
+.oc-pop-glyph { position: absolute; pointer-events: none; font-family: 'Courier New', monospace;
+  line-height: 1; white-space: nowrap; mix-blend-mode: screen; user-select: none;
+  text-shadow: 1.5px 0 rgba(255,60,90,.6), -1.5px 0 rgba(90,220,255,.6); }
 
 /* ── 20260929bb：逐字打字（礼物寄语等）——每字出现时轻微上下弹动后静止 ── */
 .tw-bounce-ch { display: inline-block; animation: tw-bounce-in .42s cubic-bezier(.3,.9,.4,1.35) both; }
@@ -4765,8 +4844,8 @@ body.glass-ui .msg-row.me .bubble {
 .modal.modal-oc-glitch {
   border-radius: 0;
   background: linear-gradient(180deg, rgba(10,7,20,.96) 0%, rgba(16,10,32,.98) 100%);
-  border: 1px solid rgba(120,220,160,.22);
-  box-shadow: 0 0 0 1px rgba(229,72,77,.18), 0 18px 60px rgba(0,0,0,.7), inset 0 0 40px rgba(0,255,160,.05);
+  border: 1px solid rgba(167,139,250,.28);
+  box-shadow: 0 0 0 1px rgba(167,139,250,.20), 0 18px 60px rgba(0,0,0,.7), inset 0 0 40px rgba(167,139,250,.08);
   position: relative;
   overflow: hidden;
 }
@@ -4787,9 +4866,9 @@ body.glass-ui .msg-row.me .bubble {
 @keyframes oc-glitch-sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 .modal.modal-oc-glitch .glitch-title {
   font-family: 'Courier New', monospace;
-  color: #7ae0b0;
+  color: #a78bfa;
   letter-spacing: 2px;
-  text-shadow: 0 0 8px rgba(122,224,176,.6);
+  text-shadow: 0 0 8px rgba(167,139,250,.7);
 }
 .modal.modal-oc-glitch .glitch-body {
   color: rgba(230,240,235,.9);
@@ -4903,22 +4982,22 @@ body.theme-light.tl-mist   { --bg: #f1f2f4; --bg-elevated-2: #eaecef; --purple: 
 body.theme-light.tl-red    { --bg: #faf1f1; --bg-elevated: #fffdfd; --bg-elevated-2: #f4e7e7; --purple: #c0392b; --purple-soft: #a93226; --purple-dim: rgba(192,57,43,.10); --purple-glow: rgba(192,57,43,.20); } /* 浅绛暗红：浅底 + 暗红强调，浅色下可读 */
 /* 20261030：红浆果（浅色浆果系）——对调版：西瓜红底 + 粉白卡片 + 深樱桃红字/图标
    口述：背景=西瓜红 #DC565A、卡片(统计卡/功能行)=粉白 #F5D1C5、文字/图标=深樱桃红 #A80C19、昵称=白 */
-body.theme-light.tl-berry { --bg: #df7071; --bg-elevated: #e98a8a; --bg-elevated-2: #fadfd7; --card-solid: #fadfd7; --border: rgba(168,12,25,.30); --purple: #a80c19; --purple-soft: #a80c19; --purple-dim: rgba(168,12,25,.16); --purple-glow: rgba(168,12,25,.24); --text: #5b0e16; --text-secondary: rgba(91,14,22,.72); --text-tertiary: rgba(91,14,22,.55); }
-/* 红浆果卡片(深樱桃红底)内文字改白、图标底白半透明衬块、白图标（用户要求主页功能入口字改白） */
+body.theme-light.tl-berry { --bg: #EB9C9D; --bg-elevated: #e98a8a; --bg-elevated-2: #fadfd7; --card-solid: #fadfd7; --border: rgba(168,12,25,.30); --purple: #a80c19; --purple-soft: #a80c19; --purple-dim: rgba(168,12,25,.16); --purple-glow: rgba(168,12,25,.24); --text: #5b0e16; --text-secondary: rgba(91,14,22,.72); --text-tertiary: rgba(91,14,22,.55); }
+/* 红浆果卡片(深樱桃红底)内文字改白、图标白底红标（普通模式=白字+白底+红图标；玻璃态另设） */
 body.theme-light.tl-berry .stat-card,
-body.theme-light.tl-berry .func-row { background: #a80c19; border-color: rgba(255,255,255,.26); }
+body.theme-light.tl-berry .func-row { background: #BE273A; border-color: rgba(255,255,255,.26); }
 body.theme-light.tl-berry .func-label,
-body.theme-light.tl-berry .func-note { color: #2a2340; }
-body.theme-light.tl-berry .stat-num { color: #2a2340; }
+body.theme-light.tl-berry .func-note { color: #ffffff; }
+body.theme-light.tl-berry .stat-num { color: #ffffff; }
 body.theme-light.tl-berry .stat-label,
-body.theme-light.tl-berry .func-arrow { color: rgba(42, 35, 64, 0.66); }
-body.theme-light.tl-berry .func-ic { background: rgba(168,12,25,.22); color: #a80c19; }
+body.theme-light.tl-berry .func-arrow { color: rgba(255, 255, 255, 0.82); }
+body.theme-light.tl-berry .func-ic { background: #ffe5e5; color: #a80c19; }
 /* 深红背景上的顶栏昵称、芯片、导航栏改白/深红适配 */
 body.theme-light.tl-berry .player-name-lg { color: #ffffff; text-shadow: 0 1px 3px rgba(91,14,22,.55); }
 body.theme-light.tl-berry .tabbar { background: rgba(150,22,30,.96); border-top-color: rgba(255,255,255,.16); }
 body.theme-light.tl-berry .tab-item { color: #ffd9d5; }
 body.theme-light.tl-berry .tab-item .tab-icon { color: #ffd9d5; }
-body.theme-light.tl-berry .tab-item.active { color: #a80c19; }
+body.theme-light.tl-berry .tab-item.active { color: #ffffff; }
 body.theme-light.tl-berry .tab-item.active .tab-icon { color: #ffffff; background: #a80c19; }
 /* 浆果红：聊天页底部输入栏改亮粉色（不再白色） */
 body.theme-light.tl-berry .chat-input-bar { background: rgba(250, 223, 215, 0.96); border-top-color: rgba(168,12,25,.18); }
@@ -4931,7 +5010,7 @@ body.theme-light.tl-berry .moment-card {
   box-shadow: 0 5px 18px rgba(168, 12, 25, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 /* 20261030：蓝粉（蓝粉芭比系）——雾粉底 + 蓝色卡片 + 深粉图标(白底衬块) + 深蓝字 + 深蓝导航 */
-body.theme-light.tl-berryblue { --bg: #fbe2e7; --bg-elevated: #fdf0f2; --bg-elevated-2: #88b9e6; --sv-card: #b6d5f0; --card-solid: #88b9e6; --border: rgba(106,159,216,.30); --purple: #88b9e6; --purple-soft: #6a9fd8; --purple-dim: rgba(136,185,230,.22); --purple-glow: rgba(136,185,230,.30); --text: #35507a; --text-secondary: rgba(53,80,122,.72); --text-tertiary: rgba(53,80,122,.55); }
+body.theme-light.tl-berryblue { --bg: #FDD8EA; --bg-elevated: #fdf0f2; --bg-elevated-2: #88b9e6; --sv-card: #b6d5f0; --card-solid: #88b9e6; --border: rgba(106,159,216,.30); --purple: #88b9e6; --purple-soft: #6a9fd8; --purple-dim: rgba(136,185,230,.22); --purple-glow: rgba(136,185,230,.30); --text: #35507a; --text-secondary: rgba(53,80,122,.72); --text-tertiary: rgba(53,80,122,.55); }
 /* 蓝粉：卡片(蓝色)内文字白、图标白底衬块+深粉图标 */
 body.theme-light.tl-berryblue .stat-card,
 body.theme-light.tl-berryblue .func-row { border-color: rgba(255,255,255,.30); }

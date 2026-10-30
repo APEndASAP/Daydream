@@ -1202,14 +1202,15 @@ function mountDreamCardFx(d) {
       const rect = card.getBoundingClientRect();
       window.DreamFxMouse && window.DreamFxMouse.set((cur.x - rect.left) / rect.width, (cur.y - rect.top) / rect.height);
     }
-    // 寒露露珠叮铃（防抖 260ms）——滑动拨到露珠即响
-    _dewChimeAt(card);
+    // 寒露露珠叮铃（防抖 260ms）——滑动拨到露珠即响（白露露珠只在点击时响，move 不触发）
+    if (_dreamFxKind === 'geese') _dewChimeAt();
     _dreamFxLastPt = cur;
     if (_dreamFxDown) _dreamFxDown.moved = _dreamFxDown.moved || Math.hypot(cur.x - _dreamFxDown.x, cur.y - _dreamFxDown.y) > 6;
   };
   // 露珠叮铃检测：鼠标/手指拨到露珠附近即触发水晶声（move 与 down 共用）
   const _dewChimeAt = () => {
-    if (_dreamFxKind !== 'geese' || !window.DreamFxDew) return;
+    // 20261031：寒露(geese)滑动拨动露珠响；白露(dew)露珠点击响（down 时触发）
+    if ((_dreamFxKind !== 'geese' && _dreamFxKind !== 'dew') || !window.DreamFxDew) return;
     const pts = window.DreamFxDew.getPts();
     const mp = window.DreamFxMouse.get();
     for (const dd of pts) {
@@ -2350,7 +2351,7 @@ async function renderGroupMessages(groupId) {
     scroll.innerHTML = `<div class="empty"><div class="empty-icon">👥</div><div>群聊已开启，说点什么吧</div></div>`;
     return;
   }
-  _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), mode: 'group', busy: false, suspend: false };
+  _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), end: msgs.length, mode: 'group', busy: false, suspend: false };
   ensureChatWindowHooks();
   chatRenderSentinel(scroll);
   _chatWin.suspend = true;
@@ -2363,7 +2364,7 @@ function appendGroupMessage(m, scroll = true, container = null) {
   const scrollEl = $('#chat-scroll');
   const mount = container || scrollEl;  // 20261030：虚拟滚动批量补载时传入 fragment，避免逐条 reflow
   // 虚拟滚动：新消息同步进窗口数据源（初始渲染/补载时 suspend 挂起，避免重复）
-  if (_chatWin && !_chatWin.suspend && _chatWin.mode === 'group') _chatWin.all.push(m);
+  if (_chatWin && !_chatWin.suspend && _chatWin.mode === 'group') { _chatWin.all.push(m); if (_chatWin.end != null) _chatWin.end = _chatWin.all.length; }
   const emptyEl = scrollEl.querySelector('.empty');
   if (emptyEl) emptyEl.remove();
 
@@ -3100,9 +3101,11 @@ function ensureChatWindowHooks() {
   if (!scroll || scroll._winHooked) return;
   scroll._winHooked = true;
   scroll.addEventListener('scroll', () => {
-    if (!_chatWin || _chatWin.busy || _chatWin.start <= 0) return;
-    // 20261030：接近顶部即自动补载（阈值放宽到 200px），上翻更跟手；防抖靠 busy 锁避免重复触发
-    if (scroll.scrollTop < 200) chatLoadOlder();
+    if (!_chatWin || _chatWin.busy) return;
+    // 20261031：双向窗口——接近顶部补载更早（往上滚），接近底部补载更新（往下滚）；
+    // 不再靠 busy 锁单点防抖，改在 chatLoadOlder/Newer 内部用 rAF 节流，避免惯性滚动高频触发。
+    if (_chatWin.start > 0 && scroll.scrollTop < 200) chatLoadOlder();
+    else if (_chatWin.end < _chatWin.all.length && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 200) chatLoadNewer();
   }, { passive: true });
   // 20261004：引用块点击跳转（事件委托，单聊/群聊共用；closest 兼容引用块内嵌元素点击）
   scroll.addEventListener('click', (e) => {
@@ -3117,48 +3120,63 @@ function ensureChatWindowHooks() {
   bindChatPullGesture(scroll);
 }
 
-/* 20261030：QQ/微信式「顶部下拉」手势加载历史——在滚动容器顶部 overscroll 下拉，
-   下拉超过阈值（40px）松手即触发 chatLoadOlder；与 scrollTop<200 自动触发并存（PC 鼠标滚轮兜底）。
-   用 touch 事件手动实现（不动原生 overscroll-behavior，避免和系统回弹冲突）。 */
+/* 20261031 重写：QQ/微信式「顶部下拉」手势加载历史 + 弹性回弹。
+   修复：① 之前 touchstart 时 scrollTop>0 就把 pulling 锁死为 false——用户在列表中部开始上滑、
+   滑到顶部后继续下拉时，下拉手势完全不触发（这就是「下拉也滚不上去」的根因）；现在改为 touchmove
+   里动态判断「已到顶部且向下拖」才激活下拉。② 加视觉回弹：下拉时内容 translateY 阻尼下移、松手弹回。 */
 function bindChatPullGesture(scroll) {
   if (scroll._pullBound) return;
   scroll._pullBound = true;
-  let startY = 0, pulling = false, pullDy = 0;
-  const TH = 40;
+  let startY = 0, active = false, pullDy = 0, tracking = false;
+  const TH = 52;               // 触发加载阈值（px）
+  const MAX_PULL = 90;         // 最大下拉距离（px，越拉越阻尼）
   scroll.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
-    // 只在滚动容器已到顶部（scrollTop<=0）时才允许下拉手势
-    if (scroll.scrollTop > 0) { pulling = false; return; }
-    pulling = true;
+    tracking = true;
     startY = e.touches[0].clientY;
     pullDy = 0;
+    active = false;
   }, { passive: true });
   scroll.addEventListener('touchmove', (e) => {
-    if (!pulling) return;
+    if (!tracking) return;
     const dy = e.touches[0].clientY - startY;
-    pullDy = dy;
-    // 只在下拉（向下拖，dy>0）时做视觉反馈；不阻止默认（交给系统回弹）
-    if (dy > 0) {
-      const hint = scroll.querySelector('#chat-loadmore');
-      if (hint) {
-        const ready = dy >= TH;
-        hint.textContent = ready ? '松开加载更早的消息' : '下拉加载更早的消息';
-        hint.classList.toggle('pull-ready', ready);
-      }
+    // 仅当「已在顶部」且「向下拖（dy>0）」时进入下拉态；中途滑到顶部继续下拉也能激活
+    if (scroll.scrollTop <= 0 && dy > 0) {
+      if (!active) { active = true; pullDy = 0; startY = e.touches[0].clientY; }
+      else pullDy = dy;
+    } else if (scroll.scrollTop > 0) {
+      active = false; pullDy = 0;
+    }
+    if (!active) return;
+    // 阻尼回弹位移（越拉越慢），用 translateY 直接给内容下拉的视觉；不阻止默认交给系统回弹
+    const eased = Math.min(pullDy, MAX_PULL) * 0.45;
+    scroll.style.transform = `translateY(${eased}px)`;
+    scroll.style.transition = 'none';
+    const hint = scroll.querySelector('#chat-loadmore');
+    if (hint) {
+      const ready = pullDy >= TH;
+      hint.textContent = ready ? '松开加载更早的消息' : '下拉加载更早的消息';
+      hint.classList.toggle('pull-ready', ready);
     }
   }, { passive: true });
-  scroll.addEventListener('touchend', () => {
-    if (!pulling) return;
-    pulling = false;
-    if (pullDy >= TH) chatLoadOlder();
+  const settle = () => {
+    if (!tracking) return;
+    const shouldLoad = active && pullDy >= TH;
+    // 回弹：加 transition 弹回原位
+    scroll.style.transition = 'transform .22s cubic-bezier(.22,.61,.36,1)';
+    scroll.style.transform = '';
     const hint = scroll.querySelector('#chat-loadmore');
     if (hint) hint.classList.remove('pull-ready');
-    pullDy = 0;
-  }, { passive: true });
+    tracking = false; active = false; pullDy = 0;
+    if (shouldLoad) chatLoadOlder();
+  };
+  scroll.addEventListener('touchend', settle, { passive: true });
   scroll.addEventListener('touchcancel', () => {
-    pulling = false; pullDy = 0;
+    scroll.style.transition = 'transform .18s ease';
+    scroll.style.transform = '';
     const hint = scroll.querySelector('#chat-loadmore');
     if (hint) hint.classList.remove('pull-ready');
+    tracking = false; active = false; pullDy = 0;
   }, { passive: true });
 }
 
@@ -3175,48 +3193,106 @@ function chatLoadOlder() {
   const w = _chatWin;
   if (!w || w.busy || w.start <= 0) return;
   w.busy = true;
-  const step = Math.min(CHAT_LOAD_STEP, w.start);
-  // 锚点 = 视口内第一条消息行；找不到（刚进入/空）则用哨兵后第一条
-  // 锚点 = 视口内（或视口下方）第一条消息行——不能取 DOM 第一条（可能已滚到视口上方）
-  let anchor = null;
-  const rows = scroll.querySelectorAll('.msg-row');
-  for (const r of rows) {
-    const rect = r.getBoundingClientRect();
-    if (rect.bottom > 0) { anchor = r; break; } // 第一条还没完全滚出视口上方的行
-  }
-  if (!anchor) anchor = scroll.querySelector('#chat-loadmore');
-  // 锚定用 getBoundingClientRect（相对视口，不受 offsetParent 影响）+ 读一次 clientTop 强制 reflow
-  const anchorTopBefore = anchor ? anchor.getBoundingClientRect().top : 0;
-  w.suspend = true;
-  // 批量构建——appendMessage 第三参传 fragment，消息行先收集到内存，最后一次性插进锚点前
-  const frag = document.createDocumentFragment();
-  for (let i = w.start - step; i < w.start; i++) {
-    if (w.mode === 'group') appendGroupMessage(w.all[i], false, frag);
-    else appendMessage(w.all[i], false, frag);
-  }
-  if (anchor && anchor.parentNode === scroll) scroll.insertBefore(frag, anchor);
-  else scroll.appendChild(frag);
-  w.suspend = false;
-  w.start -= step;
-  // 顶部清理：DOM 行数超上限时移除最旧一批（数据仍在 all 库里，start 索引不变，
-  // 上滑仍能继续补载更早消息——不能 w.start += excess，否则 start 回弹导致翻不到头）
-  let rendered = scroll.querySelectorAll('.msg-row').length;
-  if (rendered > CHAT_MAX_DOM) {
+  // 20261031：try/finally 保证 busy 锁必定释放——真实设备 20000 条含图片/语音/问卷/转账等
+  // 复杂消息，某一条在 appendMessage 里抛异常会卡死 busy=true，导致后续上滑全部 return、彻底卡住。
+  try {
+    const step = Math.min(CHAT_LOAD_STEP, w.start);
+    // 锚点 = 视口内第一条消息行；找不到（刚进入/空）则用哨兵
+    let anchor = null;
     const rows = scroll.querySelectorAll('.msg-row');
-    const excess = rendered - CHAT_MAX_DOM;
-    for (let i = 0; i < excess; i++) rows[i].remove();
+    for (const r of rows) {
+      const rect = r.getBoundingClientRect();
+      if (rect.bottom > 0) { anchor = r; break; } // 第一条还没完全滚出视口上方的行
+    }
+    if (!anchor) anchor = scroll.querySelector('#chat-loadmore');
+    const anchorTopBefore = anchor ? anchor.getBoundingClientRect().top : 0;
+    w.suspend = true;
+    // 批量构建——单条消息渲染 try/catch 包裹，坏消息跳过不阻塞整批（数据仍在 all 库里）
+    const frag = document.createDocumentFragment();
+    for (let i = w.start - step; i < w.start; i++) {
+      try {
+        if (w.mode === 'group') appendGroupMessage(w.all[i], false, frag);
+        else appendMessage(w.all[i], false, frag);
+      } catch (err) {
+        // 单条渲染异常：跳过该条，继续后续（避免整批中断导致 busy 锁死）
+        console.warn('[chatLoadOlder] 跳过异常消息', w.all[i] && w.all[i].id, err);
+      }
+    }
+    if (anchor && anchor.parentNode === scroll) scroll.insertBefore(frag, anchor);
+    else scroll.appendChild(frag);
+    w.suspend = false;
+    w.start -= step;
+    // 顶部清理：DOM 行数超上限时，删「离当前视口最远」的旧行，保证补载的顶部旧消息不被误删。
+    // 20261031 修复根因：之前删 rows[0..excess-1]（DOM 最顶部），而上滑补载插入的恰好是顶部，
+    // 刚插入就被删 → 锚点净位移 0 → scrollTop 补偿 0 → 停在顶部 → scroll 事件高频重触发 → 补载风暴卡死。
+    // 正确做法：优先删「视口下方」的最新行（用户上滑看历史时已离开），不够再删「视口上方」已滚过的旧行；
+    // 锚点（视口内第一条）永不删，补偿后 scrollTop 远离顶部，自然停止触发。
+    const rendered = scroll.querySelectorAll('.msg-row').length;
+    if (rendered > CHAT_MAX_DOM) {
+      const r2 = scroll.querySelectorAll('.msg-row');
+      let toRemove = rendered - CHAT_MAX_DOM;
+      const vh = scroll.clientHeight || 1;
+      // 第一遍：删视口下方（rect.top >= vh，完全在底部外）
+      for (let i = r2.length - 1; i >= 0 && toRemove > 0; i--) {
+        if (r2[i] === anchor) continue;
+        if (r2[i].getBoundingClientRect().top >= vh) { r2[i].remove(); toRemove--; }
+      }
+      // 第二遍：还不够，删视口上方（rect.bottom <= 0，完全在顶部外）
+      for (let i = 0; i < r2.length && toRemove > 0; i++) {
+        if (!r2[i].parentNode) continue;
+        if (r2[i] === anchor) continue;
+        if (r2[i].getBoundingClientRect().bottom <= 0) { r2[i].remove(); toRemove--; }
+      }
+    }
+    // 锚点行仍存在则按视口坐标差值回补（视觉零跳动）；否则（极端情况被清理）回到底部
+    if (anchor && anchor.parentNode === scroll) {
+      void scroll.clientTop; // 强制 reflow
+      const anchorTopAfter = anchor.getBoundingClientRect().top;
+      scroll.scrollTop += (anchorTopAfter - anchorTopBefore);
+    } else {
+      scrollToBottom();
+    }
+    // 哨兵重插（在最顶，锚点其后，不影响上面的补偿）
+    chatRenderSentinel(scroll);
+  } finally {
+    w.busy = false;
   }
-  // 锚点行仍存在则按视口坐标差值回补（视觉零跳动）；否则（锚点被清理）回到底部
-  if (anchor && anchor.parentNode === scroll) {
-    void scroll.clientTop; // 强制 reflow，确保插入/清理后的布局已生效再读新坐标
-    const anchorTopAfter = anchor.getBoundingClientRect().top;
-    scroll.scrollTop += (anchorTopAfter - anchorTopBefore);
-  } else {
-    scrollToBottom();
+}
+
+/* 20261031：往下补载更新一批（滚回底部时）——清理会删视口下方的最新行，
+   滚到底部附近时按需把它们再载回来，保证「往上滚看历史」和「滚回底部看最新」双向都通。 */
+function chatLoadNewer() {
+  const scroll = $('#chat-scroll');
+  const w = _chatWin;
+  if (!w || w.busy || w.end >= w.all.length) return;
+  w.busy = true;
+  try {
+    const step = Math.min(CHAT_LOAD_STEP, w.all.length - w.end);
+    w.suspend = true;
+    const frag = document.createDocumentFragment();
+    for (let i = w.end; i < w.end + step; i++) {
+      try {
+        if (w.mode === 'group') appendGroupMessage(w.all[i], false, frag);
+        else appendMessage(w.all[i], false, frag);
+      } catch (err) {
+        console.warn('[chatLoadNewer] 跳过异常消息', w.all[i] && w.all[i].id, err);
+      }
+    }
+    scroll.appendChild(frag);
+    w.suspend = false;
+    w.end += step;
+    // 底部补载不改变顶部锚点，scrollTop 无需补偿；只做 DOM 上限清理（删视口上方已滚过的）
+    const rendered = scroll.querySelectorAll('.msg-row').length;
+    if (rendered > CHAT_MAX_DOM) {
+      const r2 = scroll.querySelectorAll('.msg-row');
+      let toRemove = rendered - CHAT_MAX_DOM;
+      for (let i = 0; i < r2.length && toRemove > 0; i++) {
+        if (r2[i].getBoundingClientRect().bottom <= 0) { r2[i].remove(); toRemove--; }
+      }
+    }
+  } finally {
+    w.busy = false;
   }
-  // 哨兵重插（在最顶，锚点其后，不影响上面的补偿）
-  chatRenderSentinel(scroll);
-  w.busy = false;
 }
 
 async function renderMessages(charId) {
@@ -3230,7 +3306,7 @@ async function renderMessages(charId) {
     scroll.innerHTML = `<div class="empty"><div class="empty-icon">💭</div><div>说点什么，开启你们的对话吧</div></div>`;
     return;
   }
-  _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), mode: 'single', busy: false, suspend: false };
+  _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), end: msgs.length, mode: 'single', busy: false, suspend: false };
   ensureChatWindowHooks();
   chatRenderSentinel(scroll);
   _chatWin.suspend = true;
@@ -3436,6 +3512,7 @@ function jumpToChatMessage(msgId) {
   // 目标消息放在窗口偏前位置，四周留出上下文
   _chatWin.start = Math.max(0, idx - 20);
   const end = Math.min(_chatWin.all.length, _chatWin.start + CHAT_WINDOW);
+  _chatWin.end = end; // 20261031：同步窗口终点，供双向补载使用
   // 复用现有窗口渲染语义：suspend 挂起避免 appendX 重复 push 进 all
   scroll.innerHTML = '';
   _chatWin.suspend = true;
@@ -3691,7 +3768,7 @@ function appendMessage(m, scroll = true, container = null) {
   if (!scrollEl) return;
   const mount = container || scrollEl;  // 20261030：虚拟滚动批量补载时传入 fragment，避免逐条 reflow
   // 虚拟滚动：新消息同步进窗口数据源（初始渲染/补载时 suspend 挂起，避免重复）
-  if (_chatWin && !_chatWin.suspend && _chatWin.mode === 'single') _chatWin.all.push(m);
+  if (_chatWin && !_chatWin.suspend && _chatWin.mode === 'single') { _chatWin.all.push(m); if (_chatWin.end != null) _chatWin.end = _chatWin.all.length; }
   const emptyEl = scrollEl.querySelector('.empty');
   if (emptyEl) emptyEl.remove();
 
@@ -7599,6 +7676,12 @@ function openModal(html, opts) {
 }
 function closeModal() {
   const wasOpen = $('#modal-mask').classList.contains('show');
+  // 20261031 白露音频残留修复：停动画+停背景音效必须放在所有 early return 之前——
+  // 否则从访客主页(_charProfileActive)/总设置(_settingsActive)进入入梦签后，关闭弹窗会
+  // 命中下方 early return 提前返回，unmountDreamCardFx 不执行，白噪音继续循环播放（与小暑同根）。
+  try { unmountDreamCardFx(); } catch (e) {}
+  // 20261031：清理故障弹窗装饰（白框闪屏+彩线+乱码的定时器）
+  if (_ocPopupGlitchCleanup) { try { _ocPopupGlitchCleanup(); } catch(e){} _ocPopupGlitchCleanup = null; }
   $('#modal-content').classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy', 'modal-gray-hall');
   $('#modal-mask').classList.remove('mask-oc', 'mask-oc-clear');
   $('#modal-mask').classList.remove('show');
@@ -7627,8 +7710,7 @@ function closeModal() {
   try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
   // 20261011 晚：弹窗真关闭时，若有后台进行中的导入/导出，隐藏进度面板（进程后台继续，重进恢复）
   if (isProgressActive()) setProgressPanelMode(false);
-  // 20261028：关闭入梦签动画节气版 → 停动画 + 停背景音效（下次打开重新 mount 恢复）
-  try { unmountDreamCardFx(); } catch (e) {}
+  // 20261031：停动画+停音效已提前到 closeModal 开头（见上方注释），此处不再重复调用
 }
 
 /* 访客主页子功能上下文标记（关闭后回到访客主页） */
@@ -7649,6 +7731,8 @@ function forceCloseModal() {
   if (isProgressActive()) setProgressPanelMode(false);
   // 20261028：关闭入梦签动画节气版 → 停动画 + 停背景音效
   try { unmountDreamCardFx(); } catch (e) {}
+  // 20261031：清理故障弹窗装饰定时器
+  if (_ocPopupGlitchCleanup) { try { _ocPopupGlitchCleanup(); } catch(e){} _ocPopupGlitchCleanup = null; }
 }
 
 // 点击遮罩空白处关闭弹窗
@@ -11226,8 +11310,8 @@ function showCardsModal() {
       </div>
     </div>
 
-    <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;align-items:center;" id="cards-mod-tabs">
-      ${CARD_MODULES.map(m => `<button class="emoji-tab ${m.key === tab ? 'active' : ''}" data-mod="${m.key}">${m.label}</button>`).join('')}
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;" id="cards-mod-tabs">
+      ${CARD_MODULES.map(m => `<button class="card-mod-tab ${m.key === tab ? 'active' : ''}" data-mod="${m.key}">${m.label}</button>`).join('')}
     </div>
 
     ${tab === 'replies' && !batch ? `
@@ -25959,7 +26043,9 @@ async function maybeTriggerOverclockIntro(force = false) {
 
   // 动画性能降级：低端机 或 跳过动画开关 → 直接弹简短提示
   // 20261007：skip 路径的 _ocIntroRunning 保持到确认弹窗点掉为止——书信照样排队，不得盖住提示弹窗
-  const skip = chatSettings.skipOverclockAnim || isLowEndDevice();
+  // 20261031：开发者命令 force=true（绝对重放）必须无视 skip，强制播放完整动画——否则「warning」命令
+  // 会因设备低端/跳过开关被静默跳过，只弹提示，用户看不到满屏 WARNING 动画（用户反馈「根本没触发」）
+  const skip = !force && (chatSettings.skipOverclockAnim || isLowEndDevice());
   if (skip) {
     await _ocGrantInitialGift();
     await buildPlusPanel();
@@ -25976,6 +26062,8 @@ async function maybeTriggerOverclockIntro(force = false) {
         <div class="glitch-body" style="font-size:15px;font-weight:600;line-height:1.6;">Ops！系统好像发生了一些异常，前方出现了一个维度裂隙，请问你要前往查看吗？</div>
         <button class="btn primary block" id="oc-go" style="margin-top:18px;">前往查看</button>
       </div>`, { glitch: true });
+    // 20261031：注入白框闪屏 + 彩色线条 + 随机乱码装饰
+    _ocInjectPopupGlitch($('#modal-content'));
     $('#oc-go').onclick = () => {
       closeModal();
       _ocShowRift(async () => {
@@ -26002,6 +26090,8 @@ async function maybeTriggerOverclockIntro(force = false) {
                 <div class="glitch-body" style="font-size:15px;font-weight:600;line-height:1.6;">聊天页面好像发生了什么变化</div>
                 <button class="btn primary block" id="oc-ack" style="margin-top:18px;">去看看</button>
               </div>`, { glitch: true });
+            // 20261031：注入白框闪屏 + 彩色线条 + 随机乱码装饰
+            _ocInjectPopupGlitch($('#modal-content'));
             $('#oc-ack').onclick = () => { closeModal(); _ocIntroRunning = false; };
           }
         }, 350);
@@ -26043,6 +26133,41 @@ function _ocPlayAlarm() {
       o.start(s); o.stop(s + 0.17);
     });
     setTimeout(() => { try { ctx.close(); } catch (e) {} }, 1800);
+  } catch (e) {}
+}
+
+/* 隧道吸入/吐出音效（20261031）：Web Audio 合成「嗖——」的隧道感——
+   白噪声经带通滤波，频率先下行（吸入）再上行（吐出），配合裂隙吞入/吐出动画。
+   日常礼物/惊喜触发时调用，不用于首次触发（首次已有警报音）。 */
+function _ocPlayTunnelSuck() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    if (ctx.state === 'suspended') { ctx.resume().catch(() => {}); }
+    const t0 = ctx.currentTime + 0.02;
+    // 噪声源
+    const len = Math.floor(ctx.sampleRate * 0.55);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    // 带通滤波，中心频率扫变：中→低（吸入）再低→中（吐出）
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 1.4;
+    bp.frequency.setValueAtTime(1200, t0);
+    bp.frequency.exponentialRampToValueAtTime(280, t0 + 0.28);   // 吸入：音调下行
+    bp.frequency.exponentialRampToValueAtTime(1400, t0 + 0.52);  // 吐出：音调上行
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.22, t0 + 0.08);
+    g.gain.setValueAtTime(0.22, t0 + 0.28);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.54);
+    src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+    src.start(t0); src.stop(t0 + 0.56);
+    setTimeout(() => { try { ctx.close(); } catch (e) {} }, 700);
   } catch (e) {}
 }
 
@@ -26111,7 +26236,8 @@ function _ocVortexSvg(size, dense) {
   </svg>`;
 }
 
-/* 故障动画层（20260929ap 重做）：满屏乱码矩阵 + RGB 撕裂 + 扫描线 + 屏幕震动 + 红色 Warning + 警报音 */
+/* 故障动画层（20260929ap 重做）：满屏乱码矩阵 + 红/青错落切片撕裂 + 彩色噪点 + 扫描线 + 屏幕震动 + 红色 Warning + 警报音
+   20261031：按 glitch_demo.html 定稿补回「红/青切片撕裂（错落无序、不横贯全屏）」与「彩色噪点颗粒」两项 */
 function _ocShowGlitch(done) {
   let layer = document.createElement('div');
   layer.id = 'oc-glitch';
@@ -26119,14 +26245,52 @@ function _ocShowGlitch(done) {
     <div class="oc-glitch-bg"></div>
     <div class="oc-glitch-code"></div>
     <div class="oc-glitch-code oc-glitch-code2"></div>
+    <div class="oc-glitch-slice"></div>
+    <div class="oc-glitch-slice"></div>
+    <div class="oc-glitch-noise"></div>
     <div class="oc-scanline"></div>
     <div class="oc-warning"><div class="oc-warn-tri">⚠</div><div class="oc-warn-txt">WARNING</div><div class="oc-warn-sub">SYSTEM ERROR · DIMENSION BREACH</div></div>`;
   document.body.appendChild(layer);
   // 满屏乱码（双层交替 + 随机刷新，双色错位营造 RGB 撕裂）
   const codeEl = layer.querySelector('.oc-glitch-code');
   const codeEl2 = layer.querySelector('.oc-glitch-code2');
+  // 红/青切片撕裂层（两个独立层，各带一条随机错落切片带）
+  const sliceR = layer.querySelectorAll('.oc-glitch-slice')[0];
+  const sliceC = layer.querySelectorAll('.oc-glitch-slice')[1];
+  const noise = layer.querySelector('.oc-glitch-noise');
   const glyphs = 'アイウエオカキクケコサシスセソ!@#$%^&*()_+-=[]{}|;:,.<>?/~ABCDEF0123456789ｦｧｨｩｪｫﾊﾋﾌﾍﾎ';
   const randStr = n => { let s = ''; for (let i = 0; i < n; i++) s += glyphs[Math.floor(Math.random() * glyphs.length)]; return s; };
+  // 红/青错落切片：宽度 18%~85%、位置随机、长短不一（细如扫描线错位、粗如画面撕裂块），不横贯全屏
+  const randSlices = (el, color) => {
+    const n = 8 + Math.floor(Math.random() * 6);
+    let parts = '';
+    for (let i = 0; i < n; i++) {
+      const top = Math.random() * 92;
+      const kind = Math.random();
+      const h = kind < 0.45 ? (1 + Math.random() * 3) : kind < 0.8 ? (4 + Math.random() * 6) : (10 + Math.random() * 12);
+      const w = 18 + Math.random() * 67;
+      const left = Math.random() * (100 - w);
+      const off = (Math.random() < 0.7) ? (Math.random() * 40 - 20) : (Math.random() * 120 - 60);
+      const op = 0.22 + Math.random() * 0.55;
+      const blur = h > 8 ? 'filter:blur(0.6px);' : '';
+      parts += '<div style="top:' + top.toFixed(1) + '%;left:' + left.toFixed(1) + '%;width:' + w.toFixed(1) + '%;height:' + h.toFixed(1) + 'px;transform:translateX(' + off.toFixed(0) + 'px);opacity:' + op.toFixed(2) + ';background:' + color + ';' + blur + '"></div>';
+    }
+    el.innerHTML = parts;
+  };
+  // 彩色噪点颗粒：品红/青/绿/黄/白/紫小色块
+  const randNoise = () => {
+    const n = 40 + Math.floor(Math.random() * 30);
+    const cols = ['255,80,160', '90,220,255', '90,255,180', '255,220,80', '255,255,255', '180,120,255'];
+    let parts = '';
+    for (let i = 0; i < n; i++) {
+      const x = Math.random() * 100, y = Math.random() * 100;
+      const w = 1 + Math.random() * 4, h = 1 + Math.random() * 3;
+      const c = cols[Math.floor(Math.random() * cols.length)];
+      const op = 0.15 + Math.random() * 0.7;
+      parts += '<span style="left:' + x.toFixed(1) + '%;top:' + y.toFixed(1) + '%;width:' + w.toFixed(1) + 'px;height:' + h.toFixed(1) + 'px;background:rgba(' + c + ',' + op.toFixed(2) + ');"></span>';
+    }
+    noise.innerHTML = parts;
+  };
   let flip = false;
   const iv = setInterval(() => {
     flip = !flip;
@@ -26134,13 +26298,106 @@ function _ocShowGlitch(done) {
     if (flip) { codeEl.textContent = s; codeEl.style.opacity = '0.9'; codeEl2.style.opacity = '0.3'; }
     else { codeEl2.textContent = s; codeEl.style.opacity = '0.3'; codeEl2.style.opacity = '0.9'; }
   }, 70);
+  // 切片/噪点定时刷新（与 glitch_demo.html 一致）
+  randSlices(sliceR, 'rgba(255,60,90,0.9)');
+  randSlices(sliceC, 'rgba(90,220,255,0.85)');
+  randNoise();
+  const ivSlice = setInterval(() => {
+    randSlices(sliceR, 'rgba(255,60,90,0.9)');
+    randSlices(sliceC, 'rgba(90,220,255,0.85)');
+  }, 120);
+  const ivNoise = setInterval(randNoise, 160);
   _ocPlayAlarm();
   // 约 2.6 秒后结束（比旧版多 0.8s，保证满屏乱码读得完一次警报）
   setTimeout(() => {
     clearInterval(iv);
+    clearInterval(ivSlice);
+    clearInterval(ivNoise);
     layer.remove();
     done();
   }, 2600);
+}
+
+/* ── 20261031：故障弹窗装饰注入（白框闪屏 + 彩色线条 + 随机乱码，紫色定稿）──
+   把已批准的动画效果注入到指定弹窗容器（container）内：
+   - 白框条带（oc-glt-band/side）为静态 CSS 动画，插入一次即可；
+   - 彩色线条 8 条 + 随机乱码 16 条，每 100ms 整体随机重建（位置/宽度/文字/颜色全换新）。
+   返回清理函数（弹窗关闭时调用，停定时器并移除装饰层）。 */
+let _ocPopupGlitchCleanup = null;   // 当前故障弹窗装饰的清理函数（closeModal 时统一调用）
+function _ocInjectPopupGlitch(container, skipBand) {
+  if (!container) return function(){};
+  // 已有装饰则先清掉（防重复注入）
+  if (_ocPopupGlitchCleanup) { try { _ocPopupGlitchCleanup(); } catch(e){} _ocPopupGlitchCleanup = null; }
+  const prev = container.querySelector('.oc-pop-glitch');
+  if (prev) prev.remove();
+  const glyphs = 'アイウエオカキクケコサシスセソ!@#$%^&*()_+-=[]{}|;:,.<>?/~ABCDEF0123456789ｦｧｨｩｪｫﾊﾋﾌﾍﾎ';
+  const gcols = ['#a78bfa','#ff5c8a','#5cd8ff','#ff7aff','#ffffff'];
+  const sliceCols = [['r','rgba(255,60,90,.7)'],['c','rgba(90,220,255,.6)']];
+  const randStr = n => { let s=''; for(let i=0;i<n;i++) s += glyphs[Math.floor(Math.random()*glyphs.length)]; return s; };
+  const SLICE_N = 8, GLYPH_N = 16;
+  // 装饰层（绝对定位，覆盖弹窗可视区）
+  const layer = document.createElement('div');
+  layer.className = 'oc-pop-glitch';
+  // 白框闪屏条带（上/下 + 左右碎条）——skipBand=true 时跳过（惊喜检测弹窗已有自己的白框条带）
+  if (!skipBand) {
+    const glt = (seed) => Array.from({length:4}, (_, i) => {
+      const w = 8 + ((seed*13 + i*29)%26);
+      const l = (seed*17 + i*31)%66;
+      return '<i style="left:'+l+'%;width:'+w+'%;animation-delay:'+(((seed+i)%5)*0.37).toFixed(2)+'s"></i>';
+    }).join('');
+    // 白框条带：贴容器边缘内侧（不伸出），适配 overflow:hidden 的弹窗本体（modal-oc-glitch / oc-first-card）
+    const bandHtml =
+      '<div class="oc-glt-band top" style="left:0;right:0;top:0;">'+glt(2)+'</div>'+
+      '<div class="oc-glt-band bot" style="left:0;right:0;bottom:0;">'+glt(5)+'</div>'+
+      '<i class="oc-glt-side oc-glt-l1" style="left:0;top:22%;"></i>'+
+      '<i class="oc-glt-side oc-glt-l2" style="left:0;bottom:18%;width:18px;"></i>'+
+      '<i class="oc-glt-side oc-glt-r1" style="right:0;top:34%;"></i>'+
+      '<i class="oc-glt-side oc-glt-r2" style="right:0;bottom:26%;width:18px;"></i>';
+    const band = document.createElement('div');
+    band.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:1;';
+    band.innerHTML = bandHtml;
+    layer.appendChild(band);
+  }
+  // 彩线层 + 乱码层
+  const sliceLayer = document.createElement('div');
+  sliceLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+  const glyphLayer = document.createElement('div');
+  glyphLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+  layer.appendChild(sliceLayer);
+  layer.appendChild(glyphLayer);
+  container.appendChild(layer);
+  const renderSlices = () => {
+    let html = '';
+    for (let i=0;i<SLICE_N;i++){
+      const c = sliceCols[Math.floor(Math.random()*sliceCols.length)];
+      const top = (Math.random()*88+2).toFixed(1);
+      const left = (Math.random()*40+4).toFixed(1);
+      const w = (Math.random()*55+15).toFixed(0);
+      const h = (1+Math.random()*2.5).toFixed(1);
+      const op = (0.35+Math.random()*0.55).toFixed(2);
+      html += '<div class="oc-pop-slice '+c[0]+'" style="top:'+top+'%;left:'+left+'%;width:'+w+'%;height:'+h+'px;opacity:'+op+';"></div>';
+    }
+    sliceLayer.innerHTML = html;
+  };
+  const renderGlyphs = () => {
+    let html = '';
+    for (let i=0;i<GLYPH_N;i++){
+      const x = (Math.random()*86+5).toFixed(1);
+      const y = (Math.random()*86+5).toFixed(1);
+      const fs = (11+Math.random()*7).toFixed(0);
+      const col = gcols[Math.floor(Math.random()*gcols.length)];
+      const op = (0.4+Math.random()*0.5).toFixed(2);
+      html += '<span class="oc-pop-glyph" style="left:'+x+'%;top:'+y+'%;font-size:'+fs+'px;color:'+col+';opacity:'+op+';">'+randStr(1+Math.floor(Math.random()*2))+'</span>';
+    }
+    glyphLayer.innerHTML = html;
+  };
+  renderSlices();
+  renderGlyphs();
+  const iv = setInterval(() => { renderSlices(); renderGlyphs(); }, 100);
+  // 清理：停定时器 + 移除装饰层
+  const cleanup = () => { clearInterval(iv); if (layer.parentNode) layer.parentNode.removeChild(layer); };
+  _ocPopupGlitchCleanup = cleanup;
+  return cleanup;
 }
 
 /* 斜切刀光路径（20260929as 公共）：从右上斜插到左下的主刃 + 碎玻璃飞溅，
@@ -26305,13 +26562,16 @@ function _ocShowGiftBurst(kind, opts = {}) {
     document.body.appendChild(layer);
     const subject = layer.querySelector('.oc-burst-subject');
     const box = layer.querySelector('.oc-burst-box');
+    // 20261031：播放隧道吸入/吐出音效（配合裂隙吞入/吐出动画）
+    _ocPlayTunnelSuck();
+    const _clearFx = () => {};
     // 20260930ca：动画下方「跳过动画」按钮——点击=快速完成本段动画（与自然结束同路径 resolve）：
     // keepAlive 段直接进 settle 悬停并交出 {layer,box,subject}（开箱场景照常接管）；
     // 非 keepAlive 段立即移层并 resolve（惊喜大字/后续弹窗照常弹出）
     let burstDone = false;
     const burstTimers = [];
     const burstLater = (fn, ms) => { const t = setTimeout(fn, ms); burstTimers.push(t); };
-    const burstClear = () => { burstTimers.forEach(t => clearTimeout(t)); };
+    const burstClear = () => { burstTimers.forEach(t => clearTimeout(t)); _clearFx(); };
     const skipBurst = layer.querySelector('.oc-skip-btn');
     if (skipBurst) skipBurst.onclick = (e) => {
       e.stopPropagation();
@@ -26327,12 +26587,12 @@ function _ocShowGiftBurst(kind, opts = {}) {
       // 20261001cp：settle 交棒时移除「跳过动画」按钮——开箱场景接管后该按钮已无动画可跳
       // （点击只会撞上 burstDone 直接 return，成了死按钮残留在「打开礼物」下方），立即移除
       burstLater(() => { const _sb = layer.querySelector('.oc-skip-btn'); if (_sb) _sb.remove(); layer.classList.add('oc-burst-settle'); }, 1950);
-      burstLater(() => { if (!burstDone) { burstDone = true; resolve({ layer, box, subject }); } }, 2350);
+      burstLater(() => { if (!burstDone) { burstDone = true; _clearFx(); resolve({ layer, box, subject }); } }, 2350);
       return;
     }
     // 主体跳出并停驻后整层淡出，再交由调用方弹窗/大字
     burstLater(() => layer.classList.add('oc-burst-fade'), 2000);
-    burstLater(() => { layer.remove(); if (!burstDone) { burstDone = true; resolve(isSurprise ? { layer, subject } : null); } }, 2480);
+    burstLater(() => { layer.remove(); if (!burstDone) { burstDone = true; _clearFx(); resolve(isSurprise ? { layer, subject } : null); } }, 2480);
   });
 }
 
@@ -27372,12 +27632,16 @@ async function _ocShowFirstSurpriseFlow(c, s) {
         <button class="btn primary block" id="oc-first-detect" style="margin-top:16px;">交由系统检测</button>
       </div>`;
     layer.appendChild(wrap);
+    // 20261031：给惊喜检测弹窗注入彩色线条 + 随机乱码（白框闪屏 oc-glt-band 已内联在 wrap 里，skipBand 跳过）
+    const _popCleanup = _ocInjectPopupGlitch(wrap, true);
     $('#oc-first-detect').onclick = () => {
-      // 3) 检测阶段：弹窗淡出，问号+漩涡继续滚动一小段
+      // 3) 检测阶段：弹窗淡出（彩线+乱码随 wrap 一起渐隐，不提前移除），问号+漩涡继续滚动一小段
       wrap.classList.add('gone');
       setTimeout(() => {
         layer.classList.add('oc-burst-fade');
         setTimeout(() => {
+          // 装饰层随 layer 一起 remove，这里仅停定时器，保证淡出衔接不硬切
+          if (_popCleanup) { try { _popCleanup(); } catch(e){} }
           layer.remove();
           // 4) 大字卡片（最上行「你收到了一条消息」），关闭时落库+轻送达
           _ocShowSurpriseBigText(s, { head: '你收到了一条消息', onClose: landMessage });

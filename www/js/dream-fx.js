@@ -18,14 +18,15 @@ const BgAudio = (function(){
   let audio = null;      // 当前主音频
   let fading = null;     // 正在淡出的旧音频（交叉淡化用）
   let layers = [];       // 叠加层音频（20261029：风声+流水等「多音叠加」场景，与主音频并行播）
-  let session = 0, fadeTimer = null, fadeTimer2 = null;
+  let session = 0, fadeTimer = null;
   /* 硬停单个 audio（不淡出） */
   function pause(a){ if (a){ try { a.pause(); } catch(e){} } }
-  function clearTimers(){ if (fadeTimer){ clearInterval(fadeTimer); fadeTimer = null; } if (fadeTimer2){ clearInterval(fadeTimer2); fadeTimer2 = null; } }
   /* 播放指定真实录音：交叉淡化（旧音淡出 + 新音淡入，无缝衔接） */
   function play(file, vol){
     vol = (vol == null) ? 1.0 : Math.min(1.0, Math.max(0, vol));
     const mySession = ++session;
+    // 20261031 修复：切到普通单音时停掉残留的叠加层（否则小暑荷塘双音会与后续音效混播）
+    stopLayer();
     // 若当前无音频，直接播新音（无交叉）
     if (!audio){
       audio = new Audio('audio/' + file);
@@ -51,6 +52,8 @@ const BgAudio = (function(){
      关闭时由 stop() 统一停掉。 */
   function playLayer(list){
     stopLayer();
+    // 20261031 修复：切到双音叠加时停掉残留的主音频（否则上一个节气的主音会与小暑荷塘双音混播）
+    if (audio){ fadeOut(audio, 800, session); audio = null; }
     if (!Array.isArray(list) || !list.length) return;
     for (const item of list){
       const file = Array.isArray(item) ? item[0] : item;
@@ -63,14 +66,15 @@ const BgAudio = (function(){
     }
   }
   function stopLayer(){
-    while (layers.length){ const a = layers.pop(); pause(a); }
+    // 20261031 修复：叠加层（小暑风声+流水等 __LAYER__ 场景）关闭时也要淡出，不能硬停
+    while (layers.length){ const a = layers.pop(); fadeOut(a, 800, session); }
   }
   /* 淡出并停止（签卡关闭时调用） */
   function stop(){
-    if (!audio){ return; }
+    // 20261031 修复：主音频为 null（纯 __LAYER__ 叠加层场景）时也要停叠加层——
+    // 之前 `if (!audio) return` 直接返回，小暑的流水声+风声（layers）根本没被停，继续播放。
     const mySession = session;
-    fadeOut(audio, 800, mySession);
-    audio = null;
+    if (audio){ fadeOut(audio, 800, mySession); audio = null; }
     stopLayer();
   }
   /* 淡入到目标音量 */
@@ -84,16 +88,22 @@ const BgAudio = (function(){
       a.volume = Math.max(0.0001, Math.min(1.0, startVol + (target - startVol) * el));
     }, 30);
   }
-  /* 淡出到 0 并暂停 */
+  /* 淡出到 0 并暂停：每个音频独立淡出（用 WeakMap 存各自的定时器），
+     修复 20261031 小暑 bug——之前共用 fadeTimer2，多音同时淡出时后一个 clear 前一个，
+     导致风声（第一个叠加层）的淡出被中断、永远残留播放。 */
+  const _fadeMap = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
   function fadeOut(a, ms, mySession){
-    if (fadeTimer2){ clearInterval(fadeTimer2); fadeTimer2 = null; }
+    if (!a) return;
+    // 若该音频已有淡出在跑，先清掉旧的
+    if (_fadeMap && _fadeMap.has(a)){ clearInterval(_fadeMap.get(a)); _fadeMap.delete(a); }
     const startVol = a.volume, start = performance.now();
-    fadeTimer2 = setInterval(() => {
-      if (mySession !== session){ clearInterval(fadeTimer2); fadeTimer2 = null; pause(a); return; }
+    const timer = setInterval(() => {
+      if (mySession !== session){ clearInterval(timer); if (_fadeMap) _fadeMap.delete(a); pause(a); return; }
       const el = (performance.now() - start) / ms;
-      if (el >= 1){ clearInterval(fadeTimer2); fadeTimer2 = null; pause(a); return; }
+      if (el >= 1){ clearInterval(timer); if (_fadeMap) _fadeMap.delete(a); pause(a); return; }
       a.volume = Math.max(0.0001, startVol * (1 - el));
     }, 30);
+    if (_fadeMap) _fadeMap.set(a, timer);
   }
   return { play, playLayer, stop, get current(){ return audio; } };
 })();
@@ -113,7 +123,7 @@ let _mousePt = { x: 0.5, y: 0.5 };                   // 鼠标在 stage 内的�
 const ChimeAudio = (function(){
   let el = null;
   function ensure(){
-    if (!el) { el = new Audio('audio/glasses_clinking.ogg'); el.preload = 'auto'; el.loop = false; }
+    if (!el) { el = new Audio('audio/bsb_chime_butterfly1.mp3'); el.preload = 'auto'; el.loop = false; }
     return el;
   }
   /* 首次用户交互时预加载/预解锁（在玩家第一次点击网站时调用一次即可） */
@@ -126,7 +136,7 @@ const ChimeAudio = (function(){
     const a = ensure();
     try {
       try { a.currentTime = 0; } catch(e) {}
-      a.volume = 0.7;
+      a.volume = 1.0;   // 20261031 用户要求：蝴蝶铃叮铃声调大（原 0.7 偏小）
       const p = a.play();
       if (p && p.then) p.catch(()=>{});
     } catch(e) {}
@@ -156,14 +166,14 @@ const FX_AUDIO = {
   firefly:'night_crickets_loop.ogg',                                 // 立夏 → 夏夜虫鸣（流萤）
   snow:'snow_winter_wind.ogg', heavysnow:'snow_winter_wind.ogg', icecrystal:['snow_winter_wind.ogg', 0.35],// 大雪/大寒 雪类（大寒音量调小）
   lightsnow:null,                                                    // 小雪 → 静音（初雪将至，不配冬风）
-  leaves:'leaves_breeze_2427.ogg', leaf:'leaves_breeze_2427.ogg', frost:'leaves_breeze_2427.ogg', geese:'glasses_clinking.ogg',// 秋风/落叶类；寒露 → 酒杯碰撞音
-  moon:null, stars:null, sunburst:null,                              // 中秋/七夕/夏至 → 静音
+  leaves:'leaves_breeze_2427.ogg', leaf:'leaves_breeze_2427.ogg', frost:'leaves_breeze_2427.ogg', geese:'bsb_soft_wind.mp3',// 秋风/落叶类；寒露 → 微风（20261031 用户拍板 soft_wind）
+  moon:'bsb_field_cricket_1020.mp3', stars:['__LAYER__',['bsb_3487.mp3', 0.7],['magpie_sound.mp3', 0.45]], sunburst:'bsb_forest_stream2.mp3',// 中秋 → 田野蟋蟀；七夕 → 欧洲黑鸟 + 喜鹊（喜鹊音量调小）；夏至 → 森林流水 #2
   heatwave:'summer_cicada_heat.ogg',                                // 大暑 → 夏日蝉鸣热浪腾腾
   wave:'water_flowing_ambience.ogg', riverlamp:'water_flowing_ambience.ogg', dew:'rain_splashing.ogg',// 端午/处暑 → 流水潺潺；白露 → 雨
   flag:'water_flowing_ambience.ogg', tea:'leaves_breeze_2427.ogg', osmanthus:'leaves_breeze_2427.ogg', chrysanth:'leaves_breeze_2427.ogg',// 国庆 → 流水潺潺；草木类
-  wheat:null, swallows:null, sprout:null, lotus:['__LAYER__',['leaves_breeze_2427.ogg', 0.35],['water_flowing_ambience.ogg', 0.6]],  // 小满/春分/立春 → 静音；小暑 → 风声 + 流水潺潺（双音叠加）
+  wheat:['bsb_wind_grass_908.mp3', 1.6], swallows:'bsb_forest_stream2.mp3', sprout:'bsb_birds_waking4_1906.mp3', lotus:['__LAYER__',['leaves_breeze_2427.ogg', 0.35],['water_flowing_ambience.ogg', 0.6]],  // 小满/劳动节 → 麦浪风（原始电平低，音量调大 1.6）；立春 → 春天清晨鸟鸣；春分 → 森林流水 #2；小暑 → 风声 + 流水潺潺（双音叠加）
   plum:null, hearth:'fire_campfire_crackles.ogg', warmwindow:'fire_campfire_crackles.ogg',// 冬至红梅 → 静音；小寒 → 篝火；立冬 → 燃烧
-  balloon:null, choco:null, peony:'rain_splashing.ogg',              // 六一/白色情人节 → 静音
+  balloon:null, choco:'bsb_chime_dream1.mp3', peony:'rain_splashing.ogg',              // 六一 → 静音；白色情人节 → 梦幻铃 #1（20261031 用户拍板）
   default:'leaves_breeze_2427.ogg',
 };
 let _raf = null, _fxTimer = null;
@@ -194,8 +204,8 @@ function runFx(kind, canvas) {
     peony(){ parts = []; for (let i=0;i<12;i++) parts.push({x:R()*W, y:R()*-H, s:14+R()*14, v:0.35+R()*0.5, sw:R()*TAU, rot:R()*TAU, hue:335+R()*25}); },
     /* 小满：金色麦浪 + 麦穗光点 */
     wheat(){ parts = []; for (let i=0;i<14;i++) parts.push({x:R()*W, y:H*0.55+R()*H*0.4, tw:R()*TAU, v:0.01+R()*0.02}); },
-    /* 芒种：青梅细雨 + 青梅果 */
-    plumrain(){ parts = []; for (let i=0;i<45;i++) parts.push({x:R()*W, y:R()*H, v:2.2+R()*2.4, l:7+R()*10}); extra = []; for (let i=0;i<6;i++) extra.push({x:R()*W, y:R()*-H, s:5+R()*4, v:0.4+R()*0.5, sw:R()*TAU, rot:R()*TAU}); },
+    /* 芒种：青梅细雨 + 青梅果（20261031：雨丝标 w:'static' 不受风、青梅果 s 调大 + 受风场） */
+    plumrain(){ parts = []; for (let i=0;i<45;i++) parts.push({x:R()*W, y:R()*H, v:2.2+R()*2.4, l:7+R()*10, w:'static'}); extra = []; for (let i=0;i<9;i++) extra.push({x:R()*W, y:R()*-H, s:7+R()*6, v:0.4+R()*0.5, sw:R()*TAU, rot:R()*TAU}); },
     /* 夏至：白日太阳 + 放射光芒 + 光尘 */
     sunburst(){ parts = []; for (let i=0;i<26;i++) parts.push({x:R()*W, y:R()*H, r:0.8+R()*1.6, tw:R()*TAU, v:0.015+R()*0.03}); },
     /* 小暑：荷塘——荷叶荷花剪影 + 涟漪 + 蜻蜓（装饰锚定在寄语与按钮之间的留白带） */
@@ -245,7 +255,7 @@ function runFx(kind, canvas) {
     },
     /* 霜降：六角霜花浮现 + 红叶 */
     frost(){ parts = []; for (let i=0;i<9;i++) parts.push({x:W*(0.1+R()*0.8), y:H*(0.1+R()*0.7), r:(6+R()*10)*S, ph:R()*3, tw:R()*TAU});
-      extra = []; for (let i=0;i<14;i++) extra.push({x:R()*W, y:R()*-H, s:6+R()*8, v:0.45+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.06}); },
+      extra = []; for (let i=0;i<14;i++) extra.push({x:R()*W, y:R()*-H, s:12+R()*16, v:0.45+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.06}); },
     /* 立冬：暖窗 + 稀疏雪 */
     warmwindow(){ parts = []; for (let i=0;i<24;i++) parts.push({x:R()*W, y:R()*H, r:0.8+R()*1.6, v:0.4+R()*0.6, sw:R()*TAU}); extra = { wx:W*0.5, wy:H*0.62, ww:74*S, wh:56*S }; },
     /* 小雪：细疏雪粒 */
@@ -305,7 +315,7 @@ function runFx(kind, canvas) {
     /* 儿童节：气球 */
     balloon(){ parts = []; for (let i=0;i<9;i++) parts.push({x:R()*W, y:H+R()*H*0.6, s:16+R()*18, v:0.5+R()*0.8, sw:R()*TAU, c:`hsl(${330+R()*60},70%,${72+R()*12}%)`}); },
     /* 重阳：秋菊绽放 */
-    chrysanth(){ parts = []; for (let i=0;i<8;i++) parts.push({x:W*(0.12+R()*0.76), y:H*(0.2+R()*0.6), r:(7+R()*9)*S, ph:R()*3, petals:9+((i%3)*2), hue:38+R()*14});
+    chrysanth(){ parts = []; for (let i=0;i<8;i++) parts.push({x:W*(0.12+R()*0.76), y:H*(0.2+R()*0.6), r:(14+R()*18)*S, ph:R()*3, petals:9+((i%3)*2), hue:38+R()*14});
       extra = []; for (let i=0;i<8;i++) extra.push({x:R()*W, y:R()*-H, s:5+R()*7, v:0.4+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.06}); },
     /* 白色情人节：包装巧克力 + 缎带糖果 + 白羽毛 */
     choco(){ parts = []; const wraps=['#e8a0b4','#a0c4e8','#c0aee8','#f0c98a','#a8d8c0'];
@@ -381,7 +391,7 @@ function runFx(kind, canvas) {
       const str = FXWIND.strength;
       const force = 5200 * str * gust;        // 推力（稍弱一点，避免过猛）
       // 仅对「真正下落物」作用
-      const FALL_KINDS = ['leaf','leaves','osmanthus','peony','pear','apricot','plum','tea','choco','frost','chrysanth','snow','heavysnow','lightsnow','warmwindow'];
+      const FALL_KINDS = ['leaf','leaves','osmanthus','peony','pear','apricot','plum','tea','choco','frost','chrysanth','snow','heavysnow','lightsnow','warmwindow','plumrain'];
       const allowFall = FALL_KINDS.indexOf(kind) >= 0;
       // 对单个下落物施加风（冲量 + 边界反弹 + 个体散开）
       // 每个粒子用自身 sw 相位作随机种子，受风时个体有差异 → 避免整齐挤成一条线
@@ -673,6 +683,8 @@ function runFx(kind, canvas) {
       for (const p of parts){ p.tw += p.v; ctx.globalAlpha = 0.25+0.4*Math.abs(Math.sin(p.tw));
         ctx.fillStyle='rgba(220,240,255,.9)'; ctx.beginPath(); ctx.arc(p.x, p.y, p.r*devicePixelRatio, 0, TAU); ctx.fill(); }
       ctx.globalAlpha = 1;
+      // 20261031：白露草叶露珠——记录归一化坐标，供 app.js 点击检测触发蝴蝶铃
+      _dewPts = [];
       for (const d of extra){
         const tw = 0.65+0.35*Math.sin(t*1.2 + d.ph);
         const g = ctx.createRadialGradient(d.x-d.r*0.35, d.y-d.r*0.35, d.r*0.1, d.x, d.y, d.r);
@@ -680,6 +692,7 @@ function runFx(kind, canvas) {
         ctx.fillStyle=g; ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, TAU); ctx.fill();
         ctx.fillStyle=`rgba(255,255,255,${tw*0.9})`;
         ctx.beginPath(); ctx.arc(d.x-d.r*0.35, d.y-d.r*0.4, d.r*0.24, 0, TAU); ctx.fill();
+        _dewPts.push({ nx: d.x / W, ny: d.y / H, r: d.r / W });
       }
     }
     if (kind === 'osmanthus') {
