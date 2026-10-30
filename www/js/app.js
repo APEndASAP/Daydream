@@ -3089,8 +3089,8 @@ function chatRenderSentinel(scroll) {
   if (!_chatWin || _chatWin.start <= 0) return;
   const s = document.createElement('div');
   s.id = 'chat-loadmore';
-  s.style.cssText = 'text-align:center;font-size:12px;color:var(--text-tertiary);padding:10px 0 6px;cursor:pointer;';
-  s.textContent = `⬆ 上滑或点这里加载更早的消息（还有 ${_chatWin.start} 条）`;
+  s.className = 'chat-loadmore';
+  s.textContent = `⬆ 上滑或下拉加载更早的消息（还有 ${_chatWin.start} 条）`;
   s.onclick = () => chatLoadOlder();
   scroll.prepend(s);
 }
@@ -3114,20 +3114,81 @@ function ensureChatWindowHooks() {
       }
     } catch (err) {}
   });
+  bindChatPullGesture(scroll);
+}
+
+/* 20261030：QQ/微信式「顶部下拉」手势加载历史——在滚动容器顶部 overscroll 下拉，
+   下拉超过阈值（40px）松手即触发 chatLoadOlder；与 scrollTop<200 自动触发并存（PC 鼠标滚轮兜底）。
+   用 touch 事件手动实现（不动原生 overscroll-behavior，避免和系统回弹冲突）。 */
+function bindChatPullGesture(scroll) {
+  if (scroll._pullBound) return;
+  scroll._pullBound = true;
+  let startY = 0, pulling = false, pullDy = 0;
+  const TH = 40;
+  scroll.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    // 只在滚动容器已到顶部（scrollTop<=0）时才允许下拉手势
+    if (scroll.scrollTop > 0) { pulling = false; return; }
+    pulling = true;
+    startY = e.touches[0].clientY;
+    pullDy = 0;
+  }, { passive: true });
+  scroll.addEventListener('touchmove', (e) => {
+    if (!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    pullDy = dy;
+    // 只在下拉（向下拖，dy>0）时做视觉反馈；不阻止默认（交给系统回弹）
+    if (dy > 0) {
+      const hint = scroll.querySelector('#chat-loadmore');
+      if (hint) {
+        const ready = dy >= TH;
+        hint.textContent = ready ? '松开加载更早的消息' : '下拉加载更早的消息';
+        hint.classList.toggle('pull-ready', ready);
+      }
+    }
+  }, { passive: true });
+  scroll.addEventListener('touchend', () => {
+    if (!pulling) return;
+    pulling = false;
+    if (pullDy >= TH) chatLoadOlder();
+    const hint = scroll.querySelector('#chat-loadmore');
+    if (hint) hint.classList.remove('pull-ready');
+    pullDy = 0;
+  }, { passive: true });
+  scroll.addEventListener('touchcancel', () => {
+    pulling = false; pullDy = 0;
+    const hint = scroll.querySelector('#chat-loadmore');
+    if (hint) hint.classList.remove('pull-ready');
+  }, { passive: true });
 }
 
 /* 上滑补载更早一批：用 DocumentFragment 批量构建后一次性插入，避免逐条 reflow 卡顿。
-   20261030 优化：原来逐条 appendMessage + insertBefore，一次 60 条 = 60 次强制重排，上翻特别慢。 */
+   20261030 重写：用「锚点行 offsetTop 差值」精确补偿 scrollTop（flex column 布局下的
+   哨兵高度回补法会失准导致跳一下/卡住）。步骤：
+   ① 记锚点（视口内第一条 .msg-row）的 offsetTop；
+   ② 批量构建 fragment 插到锚点前；
+   ③ 顶部清理超限旧行；
+   ④ 用「锚点新 offsetTop - 旧 offsetTop」回补 scrollTop，视觉零跳动；
+   ⑤ 重插哨兵（不影响已算好的补偿，因为哨兵插在最顶、锚点在其后）。 */
 function chatLoadOlder() {
   const scroll = $('#chat-scroll');
   const w = _chatWin;
   if (!w || w.busy || w.start <= 0) return;
   w.busy = true;
   const step = Math.min(CHAT_LOAD_STEP, w.start);
-  // 用「当前视口内第一条可见行」作为滚动锚点，避免 prepend 哨兵导致高度跳变
-  const anchor = scroll.querySelector('#chat-loadmore') ? scroll.querySelector('#chat-loadmore').nextSibling : scroll.firstChild;
+  // 锚点 = 视口内第一条消息行；找不到（刚进入/空）则用哨兵后第一条
+  // 锚点 = 视口内（或视口下方）第一条消息行——不能取 DOM 第一条（可能已滚到视口上方）
+  let anchor = null;
+  const rows = scroll.querySelectorAll('.msg-row');
+  for (const r of rows) {
+    const rect = r.getBoundingClientRect();
+    if (rect.bottom > 0) { anchor = r; break; } // 第一条还没完全滚出视口上方的行
+  }
+  if (!anchor) anchor = scroll.querySelector('#chat-loadmore');
+  // 锚定用 getBoundingClientRect（相对视口，不受 offsetParent 影响）+ 读一次 clientTop 强制 reflow
+  const anchorTopBefore = anchor ? anchor.getBoundingClientRect().top : 0;
   w.suspend = true;
-  // 20261030：批量构建——appendMessage 第三参传 fragment，消息行先收集到内存，最后一次性插进锚点前
+  // 批量构建——appendMessage 第三参传 fragment，消息行先收集到内存，最后一次性插进锚点前
   const frag = document.createDocumentFragment();
   for (let i = w.start - step; i < w.start; i++) {
     if (w.mode === 'group') appendGroupMessage(w.all[i], false, frag);
@@ -3145,11 +3206,16 @@ function chatLoadOlder() {
     const excess = rendered - CHAT_MAX_DOM;
     for (let i = 0; i < excess; i++) rows[i].remove();
   }
-  // 哨兵重插：先记当前锚点 scrollTop，prepend 后按哨兵高度回补，保持视觉位置不跳
-  const beforeH = scroll.scrollHeight;
+  // 锚点行仍存在则按视口坐标差值回补（视觉零跳动）；否则（锚点被清理）回到底部
+  if (anchor && anchor.parentNode === scroll) {
+    void scroll.clientTop; // 强制 reflow，确保插入/清理后的布局已生效再读新坐标
+    const anchorTopAfter = anchor.getBoundingClientRect().top;
+    scroll.scrollTop += (anchorTopAfter - anchorTopBefore);
+  } else {
+    scrollToBottom();
+  }
+  // 哨兵重插（在最顶，锚点其后，不影响上面的补偿）
   chatRenderSentinel(scroll);
-  const delta = scroll.scrollHeight - beforeH;
-  if (delta > 0) scroll.scrollTop = scroll.scrollTop + delta;
   w.busy = false;
 }
 
@@ -3651,6 +3717,37 @@ function appendMessage(m, scroll = true, container = null) {
     row.addEventListener('touchend', () => clearTimeout(pokePress));
     row.addEventListener('touchmove', () => clearTimeout(pokePress));
     row.addEventListener('touchcancel', () => clearTimeout(pokePress)); // 20261001ci
+    mount.appendChild(row);
+    if (scroll) scrollToBottom();
+    return;
+  }
+
+  /* 20261030：通话挂断通知（角色主动挂断）——类似戳一戳的小圆垫片，但非戳一戳：
+     无手指图标（用挂断电话图标）、中性灰蓝配色，文案「对方已挂断通话」。 */
+  if (m.type === 'callEnd') {
+    const pc = characters.find(x => x.id === m.charId);
+    const who = pc ? pc.name : '梦角';
+    const row = document.createElement('div');
+    row.className = 'msg-row callend-row';
+    row.dataset.msgid = m.id;
+    // 有 reason（AI 判定挂断给出的理由）则另起一行用更淡的小字展示，最多展示 40 字
+    const reasonHtml = (m.reason && String(m.reason).trim())
+      ? `<div class="callend-reason">${escapeHtml(String(m.reason).trim().slice(0, 40))}</div>`
+      : '';
+    row.innerHTML = `<div class="callend-msg"><div class="callend-body"><span class="callend-who">${escapeHtml(who)}</span> ${escapeHtml(m.content || '已挂断通话')}${reasonHtml}</div></div>`;
+    let cePress = null;
+    const delCe = () => showConfirm('删除这条通话记录吗？', async () => {
+      await idbDelete('messages', m.id);
+      row.remove();
+    });
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); delCe(); });
+    row.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) return;
+      cePress = setTimeout(() => delCe(), 550);
+    });
+    row.addEventListener('touchend', () => clearTimeout(cePress));
+    row.addEventListener('touchmove', () => clearTimeout(cePress));
+    row.addEventListener('touchcancel', () => clearTimeout(cePress));
     mount.appendChild(row);
     if (scroll) scrollToBottom();
     return;
@@ -7241,6 +7338,22 @@ function bmOverlayBindEvents() {
       } catch (e) {}
     });
   } catch (e) {}
+  // 20261030：双击系统悬浮窗进入软件——通话不能断，恢复软件内通话界面。
+  // 原生侧 bringAppToFront 会 fireJsEvent("onEnterApp") 并移除原生窗；
+  // 这里 hide 原生窗 + 重建软件内 DOM 浮窗（通话本体 _callActive 内存态不丢，计时继续）。
+  try {
+    BO.addListener('onEnterApp', () => {
+      try {
+        if (!_callActive) return;
+        const c = _callActive.c, kind = _callActive.kind, sec = _callActive.sec || 0;
+        // 原生窗已被原生侧移除 → 同步清标记，再重建软件内浮窗（通话继续）
+        _bmOverlayShown = false;
+        if (!document.getElementById('call-float') && c) {
+          try { buildCallFloat(c, kind, sec); } catch (e) {}
+        }
+      } catch (e) {}
+    });
+  } catch (e) {}
 }
 
 /* 更新副标题（通话时长跳动）；静默失败不阻塞计时 */
@@ -9398,6 +9511,93 @@ if (!window.__callDelegationBound) {
 }
 
 /* 打开通话界面（全屏弹窗），支持缩小成悬浮窗 */
+
+/* 20261030：角色主动挂断调度——通话接通后随机一段时间角色主动挂断，
+   模拟真实通话中对方有事挂断。挂断走 charHangup（通知玩家）。
+   定时器挂在 _callActive.charHangupTimer 上，任何一方挂断/新通话都清理，绝不重复触发。
+   20261030 二改：①时长从 20~90 秒改为 30 分钟左右随机（randInt 27~33 分钟）；
+   ②AI 模式下不再随机挂断，改为「每 8 分钟问一次 AI 是否该挂断」——AI 根据角色卡的人设
+   + 生活轨迹（charScheduleAIContext）判定此刻是否「有更重要的事必须去办、无法继续通话」，
+   若是则挂断并给出理由；③非 AI 模式（字卡模式）仍走 30 分钟随机挂断。 */
+function clearCharAutoHangup() {
+  if (_callActive && _callActive.charHangupTimer) {
+    clearTimeout(_callActive.charHangupTimer);
+    _callActive.charHangupTimer = null;
+  }
+}
+function scheduleCharAutoHangup() {
+  if (!_callActive || _callActive.group) return; // 群通话不角色挂断（多方，由玩家控制）
+  if (!_callActive.answered) return;              // 未接通不调度
+  clearCharAutoHangup();
+  const ca = _callActive;
+  // 用「绝对截止时间」+「每 8 分钟检查一次」的方式，避免单次超长 setTimeout 在后台被冻结后
+  // 墙钟追平时逻辑错乱；AI 判定是异步的，不能在到点后直接挂断，须轮询判定
+  const deadline = Date.now() + randInt(27, 33) * 60 * 1000; // 30 分钟左右的随机挂断窗口
+  ca.charHangupDeadline = deadline;
+  ca.charHangupAiBusy = false;
+  const tick = async () => {
+    try {
+      if (_callActive !== ca || !ca.answered || ca.charHangupDone) return; // 已挂断/已结束则停
+      const now = Date.now();
+      // ① 先查 AI 模式：每轮问一次 AI「现在是否该挂断」，AI 判定要挂 → 带原因挂断
+      if (await isAIMode()) {
+        if (!ca.charHangupAiBusy) {
+          ca.charHangupAiBusy = true;
+          try {
+            const verdict = await aiDecideHangup(ca);
+            if (_callActive === ca && verdict && verdict.hangup) {
+              await ca.charHangup(verdict.reason || '');
+              return;
+            }
+          } catch (e) {} finally { ca.charHangupAiBusy = false; }
+        }
+      }
+      // ② 超过随机截止时间仍未挂断 → 非 AI 模式的随机兜底（AI 模式也保底，避免 AI 一直不挂）
+      if (now >= (ca.charHangupDeadline || deadline)) {
+        await ca.charHangup('');
+        return;
+      }
+      // ③ 未到点，继续每 8 分钟检查
+      ca.charHangupTimer = setTimeout(tick, 8 * 60 * 1000);
+    } catch (e) {
+      // 出错也继续轮询（不中断调度链）
+      try { ca.charHangupTimer = setTimeout(tick, 8 * 60 * 1000); } catch (e2) {}
+    }
+  };
+  // 首轮立即检查一次（AI 模式下第一问）；非 AI 模式直接等 30 分钟随机挂断
+  ca.charHangupTimer = setTimeout(tick, 1000);
+}
+
+/* AI 判定「是否该挂断」：根据角色卡人设 + 生活轨迹，判断此刻是否「有更重要的事必须去办、
+   无法继续和玩家通话」。返回 { hangup:boolean, reason:string }。 */
+async function aiDecideHangup(ca) {
+  try {
+    const c = ca.c;
+    if (!c) return { hangup: false, reason: '' };
+    const cfg = await loadAIConfig();
+    const recent = await idbGetMessagesByChar(c.id, 8);
+    const ctx = await buildCharAIContext(c.id, recent);
+    const sec = ca.sec || 0;
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const sys = `你正在「白日梦」App 里扮演角色「${c.name}」，此刻正与玩家进行通话中（已通话约 ${Math.floor(sec / 60)} 分钟，当前时间 ${timeStr}）。\n\n你需要判断：按你的人设和你自己的日常生活轨迹（你的日程安排），此刻你是否有一个「更重要、无法一边打电话一边处理」的事情必须去做？\n\n判断规则：\n· 如果你现在有正当且紧急/重要的日程（比如工作、学习、出门、做饭、睡觉、赴约、重要会议等），这件事需要你挂断电话才能去做，则判定「挂断」。\n· 如果现在你没有必须立刻去办的事，或者虽然有事但可以继续边打电话边做，则判定「不挂断」，继续陪玩家聊。\n· 请结合当前时间（${timeStr}）和你今天/近期的日程来判断，比如饭点、睡前、工作时间等自然生活节奏。\n\n只输出一行 JSON，格式严格如下（不要输出任何其他文字）：\n{"hangup":true,"reason":"（挂断时对玩家说的自然理由，一句人话，体现你的人设，例如：我这边约了人得赶紧出门啦，晚点再打给你）"}\n或\n{"hangup":false,"reason":""}`;
+    const user = `【当前通话对象】玩家（${playerProfile && playerProfile.name ? playerProfile.name : '玩家'}）\n\n【你的角色卡与生活轨迹】\n${ctx}`;
+    const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+      { role: 'system', content: sys },
+      { role: 'user', content: user },
+    ], { temperature: 0.6, maxTokens: 200, timeout: 30000 });
+    if (!r.ok) return { hangup: false, reason: '' };
+    const txt = (r.text || '').trim();
+    const m = txt.match(/\{[\s\S]*\}/);
+    if (!m) return { hangup: false, reason: '' };
+    const obj = JSON.parse(m[0]);
+    if (obj && obj.hangup === true) return { hangup: true, reason: String(obj.reason || '').trim() };
+    return { hangup: false, reason: '' };
+  } catch (e) {
+    return { hangup: false, reason: '' };
+  }
+}
+
 function openCallScreen(c, kind, duration, msg, opts = {}) {
   const incoming = opts.incoming || false;
   // 20260929bk：软件声明未同意期间，抑制来电等打断弹窗（声明必须排最前）
@@ -9449,6 +9649,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
 
   const endCall = async (missed) => {
     clearInterval(timer);
+    clearCharAutoHangup(); // 20261030：任何一方挂断都取消角色主动挂断定时器（防止挂断后再触发）
     if (answered) {
       msg.content.duration = sec;
       msg.content.ended = true;
@@ -9465,7 +9666,30 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
     try { await idbPut('messages', msg); } catch (e) {}
   };
 
-  _callActive = { c, kind, msg, sec, timer, answered, incoming, endCall };
+  // 20261030：角色主动挂断——挂断 + 聊天页发「对方已挂断」小圆垫片 + 系统通知。
+  // 与玩家手动挂断的区别：只有角色主动挂断才通知玩家（玩家自己挂断无需通知自己）。
+  // reason：AI 模式判定挂断时带的原因（角色对玩家说的自然理由）；非 AI 随机挂断则为空。
+  const charHangup = async (reason) => {
+    clearCharAutoHangup();
+    const cRef = c, secRef = sec;
+    await endCall(false);
+    // 挂断通知消息（小圆垫片，非戳一戳）；有 reason 则附上角色说的理由
+    const hhmm = `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`;
+    const base = `在 ${hhmm} 挂断了通话（通话时长 ${formatDuration(secRef)}）`;
+    // 20261030：挂断原因小字只在 AI 模式下生成（AI 根据人设判定挂断才会给理由）；
+    // 字卡模式是随机兜底挂断，没有「理由」可言，不生成这行小字。
+    let aiMode = false;
+    try { aiMode = await isAIMode(); } catch (e) {}
+    const reasonTxt = (aiMode && reason && String(reason).trim()) ? String(reason).trim() : '';
+    const cm = { id: uid('msg'), charId: cRef.id, from: 'them', type: 'callEnd', content: base, reason: reasonTxt, time: Date.now() };
+    await idbPut('messages', cm);
+    if (currentCharId === cRef.id && document.body.dataset.view === 'chat') appendMessage(cm);
+    else renderChatList();
+    // 软件外系统通知（带原因）
+    notifyIncoming(cRef, `${cRef.name} 已挂断通话（通话时长 ${formatDuration(secRef)}）${reasonTxt ? '，TA 说：' + reasonTxt : ''}`, cRef.name + ' 挂断了通话', 'call');
+  };
+
+  _callActive = { c, kind, msg, sec, timer, answered, incoming, endCall, charHangup, charHangupTimer: null, charHangupDeadline: 0, charHangupAiBusy: false, charHangupDone: false };
   // 20261004df：恢复上次更换的通话背景——_callActive.bg 是纯内存字段，挂断即随对象清空，
   // 背景从未落库导致每通电话都要重新上传（用户反馈"很麻烦"）。这里从 kv 异步补挂：
   // 用户本次没手动换过背景（_callActive.bg 为空）且 kv 有记录才生效；视频通话界面已渲染时
@@ -9491,6 +9715,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
     // 接听后用完整通话界面（含视频背景上传 + 玻璃态）
     document.getElementById('call-box').innerHTML = renderFullCallBody(c, kind, 0);
     rebindFullCall(c, kind, msg, { answered: true, incoming });
+    scheduleCharAutoHangup(); // 20261030：接听后调度角色主动挂断
   };
   const doReject = async () => {
     if (acted) return;
@@ -9507,6 +9732,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
 
   if (!incoming || answered) {
     rebindFullCall(c, kind, msg, { answered, incoming });
+    scheduleCharAutoHangup(); // 20261030：呼出即接通（answered=true）→ 调度角色主动挂断
   }
 }
 
@@ -10064,6 +10290,7 @@ async function applyCallFloatMode() {
 function closeCall(silent = false) {
   if (_callActive) {
     clearInterval(_callActive.timer);
+    clearCharAutoHangup(); // 20261030：强制结束也清角色主动挂断定时器
     const msg = _callActive.msg;
     msg.content.duration = _callActive.sec || 0;
     msg.content.ended = true;
@@ -10191,9 +10418,12 @@ function openGroupCallScreen(g, members, kind, msg) {
 
 /* 访客随机来电（5.8：随机接收视频/语音通话，可接听/拒绝/未接听）；kind 可强制指定 'video'/'voice'（开发者命令用） */
 async function triggerIncomingCall(c, kind) {
-  // 20261027：并行通话拦截——玩家正与别人通话时，这位访客的来电不再弹来电界面，
-  // 而是在 TA 的聊天页生成「戳一戳」样式的小消息（未接通来电）+ 发一条系统通知
+  // 20261030：通话中同角色再次来电——通话已存在，直接忽略（不可能同时跟同一人开两通电话）。
   if (_callActive) {
+    // 单聊通话中，且来电的正是当前通话的这位角色 → 忽略（不弹、不生成消息、不通知）
+    if (_callActive.c && _callActive.c.id === c.id) return;
+    // 20261027：并行通话拦截——玩家正与别人通话（不同角色/群通话）时，这位访客的来电
+    // 不再弹来电界面，而是在 TA 的聊天页生成小消息（未接通来电）+ 发一条系统通知
     const t = new Date();
     const hhmm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
     const m = { id: uid('msg'), charId: c.id, from: 'them', type: 'poke', content: `在[${hhmm}]给你打了一通电话，但信号未能接通`, time: Date.now() };
@@ -13274,6 +13504,13 @@ const GLOBAL_THEMES = {
   mint:   { name: '薄荷青绿',       cls: 'tl-mint',   dot: 'linear-gradient(135deg,#eff8f3,#cdeedf)', accent: '#a5d6c0' },
   cream:  { name: '暖阳杏黄',       cls: 'tl-cream',  dot: 'linear-gradient(135deg,#faf6ee,#ffe3a0)', accent: '#eaa92e' },
   mist:   { name: '云雾灰',         cls: 'tl-mist',   dot: 'linear-gradient(135deg,#f2f3f5,#e4e6ea)', accent: '#5b6270' },
+  blackred: { name: '暗夜黑红',     cls: 'td-blackred', dot: 'linear-gradient(135deg,#2a080b,#571217)', accent: '#a01828' },
+  choco:  { name: '黑苦巧',         cls: 'td-choco',    dot: 'linear-gradient(135deg,#28241f,#423c36)', accent: '#9a9590' },
+  pumpkin: { name: '南瓜拿铁',      cls: 'td-pumpkin',  dot: 'linear-gradient(135deg,#231610,#4a2a1a)', accent: '#c98a5e' },
+  gray:   { name: '系统灰',         cls: 'td-gray',     dot: 'linear-gradient(135deg,#29292b,#3a3a3c)', accent: '#a8a8ad' },
+  red:    { name: '浅绛暗红',       cls: 'tl-red',      dot: 'linear-gradient(135deg,#faf1f1,#f0d9d9)', accent: '#c0392b' },
+  berry:  { name: '红浆果', cls: 'tl-berry', dot: 'linear-gradient(135deg,#f5d1c5,#dc565a)', accent: '#a80c19' },
+  berryBlue: { name: '蓝粉', cls: 'tl-berryblue', dot: 'linear-gradient(135deg,#f5afbb,#88b9e6)', accent: '#88b9e6' },
 };
 let _globalThemeId = 'dark';
 /* 启动时从 kv 载入用户选择的全局色彩 */
@@ -13282,12 +13519,15 @@ async function loadGlobalTheme() {
   if (!GLOBAL_THEMES[_globalThemeId]) _globalThemeId = 'dark';
   applyGlobalThemeNow();
 }
-/* 同步 body class（浅色=theme-light + tl-<id>；深色=全部摘除） */
+/* 同步 body class（浅色=theme-light + tl-<id>；深色=td-<id>；dark=全部摘除） */
 function applyGlobalThemeNow() {
   const conf = GLOBAL_THEMES[_globalThemeId] || GLOBAL_THEMES.dark;
   const cl = document.body.classList;
-  cl.remove('theme-light', 'tl-lilac', 'tl-sakura', 'tl-sky', 'tl-mint', 'tl-cream', 'tl-mist');
-  if (conf.cls) { cl.add('theme-light'); cl.add(conf.cls); }
+  cl.remove('theme-light', 'tl-lilac', 'tl-sakura', 'tl-sky', 'tl-mint', 'tl-cream', 'tl-mist', 'tl-red', 'tl-berry', 'tl-berryblue', 'td-blackred', 'td-choco', 'td-pumpkin', 'td-gray', 'td-berry');
+  if (conf.cls) {
+    cl.add(conf.cls);
+    if (conf.cls.indexOf('tl-') === 0) cl.add('theme-light');
+  }
 }
 
 /* ---------- 聊天设置（5.3：回复节奏/主动消息/提示音/撤回）
@@ -17975,7 +18215,7 @@ async function graySectionDetail(gh, sec, idx) {
           <div style="background:rgba(255,255,255,.05);border-radius:12px;padding:12px;margin-bottom:8px;">
             <div style="font-size:13.5px;font-weight:600;margin-bottom:5px;">${i + 1}. ${escapeHtml(q.text)}</div>
             ${q.type === 'choice' && q.options && q.options.length ? `<div style="font-size:11.5px;color:var(--text-tertiary);margin-bottom:5px;">选项：${q.options.map(o => escapeHtml(o)).join(' / ')}</div>` : ''}
-            ${q.answer && String(q.answer).trim() ? `<div style="font-size:13px;line-height:1.6;padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;">${escapeHtml(q.answer)}</div>` : `<div style="font-size:11.5px;color:var(--text-tertiary);font-style:italic;">（未回答）</div>`}
+            ${q.answer && String(q.answer).trim() ? `<div style="font-size:13px;line-height:1.6;padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;">${q.type === 'choice' ? '<span style="color:var(--purple-soft);font-weight:600;">已选：</span>' : ''}${escapeHtml(q.answer)}</div>` : `<div style="font-size:11.5px;color:var(--text-tertiary);font-style:italic;">（未回答）</div>`}
           </div>`).join('')}
         ${it.readBack ? `<div style="background:rgba(255,255,255,.05);border-radius:12px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:4px;">💬 ${cname} 的读后感</div><div style="font-size:13px;line-height:1.6;">${escapeHtml(it.readBack)}</div></div>` : ''}`;
     }
@@ -24413,6 +24653,50 @@ async function _answerSurvey(sv) {
     const qs = cur.questions || [];
     for (const q of qs) {
       if (q.answer && q.answer.trim()) continue; // 已答跳过
+      // 20261030：选择题 = 角色选选项（写进 answer + pick）；AI 模式下让 AI 自己选，否则随机；绝不当问答题抽字卡
+      if (q.type === 'choice' && Array.isArray(q.options) && q.options.length) {
+        const opts = q.options.map(s => String(s).trim()).filter(Boolean);
+        if (opts.length) {
+          let pickedIdx = null; // AI 选中的选项索引数组
+          // AI 模式：让 AI 以角色口吻从选项里选（单选选1个，多选让AI自己决定选几个）
+          if (aiOn) {
+            try {
+              const cfg = await loadAIConfig();
+              if (cfg.chatApi && cfg.chatApi.url) {
+                const ctx = await buildCharAIContext(cur.charId, []);
+                const letters = opts.map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`).join('\n');
+                const mode = q.multi ? '这是一道【多选题】，你可以选一个或多个选项' : '这是一道【单选题】，只能选一个选项';
+                const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+                  { role: 'system', content: `你是角色扮演 AI。请以角色的身份、口吻回答这道选择题。\n${mode}。\n只输出所选选项的字母（如"B"或"A、C、D"），不要输出任何其他文字。\n\n${ctx}` },
+                  { role: 'user', content: `题目：${q.text}\n选项：\n${letters}` },
+                ], { temperature: 0.7, maxTokens: 30 });
+                if (r.ok && r.text) {
+                  const got = [...r.text.toUpperCase().matchAll(/[A-E]/g)].map(m => m[0]).filter(ch => ch.charCodeAt(0) - 65 < opts.length);
+                  if (got.length) pickedIdx = [...new Set(got)].sort().map(ch => ch.charCodeAt(0) - 65);
+                  // 单选：AI 若误给多个，只取第一个
+                  if (!q.multi && pickedIdx && pickedIdx.length > 1) pickedIdx = [pickedIdx[0]];
+                }
+              }
+            } catch (e) {}
+          }
+          // AI 未选（关闭/失败/返回异常）→ 随机回退
+          if (!pickedIdx) {
+            if (q.multi) {
+              // 多选：随机选 1 ~ min(5, 选项总数) 个选项
+              const maxPick = Math.min(5, opts.length);
+              const k = randInt(1, maxPick);
+              pickedIdx = [...Array(opts.length).keys()].sort(() => Math.random() - 0.5).slice(0, k).sort((a, b) => a - b);
+            } else {
+              pickedIdx = [randInt(0, opts.length - 1)];
+            }
+          }
+          q.picks = pickedIdx;
+          q.pick = pickedIdx[0];
+          q.answer = pickedIdx.map(pi => opts[pi]).join('、');
+          q.answeredAt = Date.now();
+          continue;
+        }
+      }
       let ans = '';
       if (aiOn) {
         // AI 模式：AI 按角色口吻回答该问题
@@ -24525,7 +24809,7 @@ async function sendSurveyToChar(charId, questions, isChoice, opts = {}) {
     title,
     questions: questions.map(q => ({
       id: uid('q'), text: q.text, type: q.type || 'text',
-      options: q.options || [], answer: '', answeredAt: 0,
+      options: q.options || [], multi: !!q.multi, answer: '', answeredAt: 0,
     })),
     state: 'pending',
     // 20260929an：≤3条 → 20 分钟内答完（随机 15~20 分钟，贴近 20 分钟上限）；>3条：1小时内（随机 10~60 分钟）
@@ -25093,7 +25377,7 @@ function showSurveyLibraryCompose(owner, charId) {
   let qs = [];
   const renderQList = () => {
     $('#svlc-list').innerHTML = qs.map((q, i) => `
-      <div style="background:var(--bg-elevated-2);border-radius:12px;padding:10px 12px;">
+      <div style="background:var(--sv-card, var(--bg-elevated-2));border-radius:12px;padding:10px 12px;">
         <div style="display:flex;align-items:center;gap:8px;">
           <span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">${i + 1}.</span>
           <input class="input" data-qidx="${i}" data-qf="text" value="${escapeHtml(q.text)}" placeholder="${q.type === 'choice' ? '问题内容' : '题目内容'}" style="flex:1;">
@@ -25107,7 +25391,14 @@ function showSurveyLibraryCompose(owner, charId) {
                 <input class="input" data-qidx="${i}" data-oidx="${oi}" data-of="opt" value="${escapeHtml(opt)}" placeholder="选项 ${String.fromCharCode(65 + oi)}" style="flex:1;">
                 <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项">✕</button>
               </div>`).join('')}
-            ${(q.options || []).length < 5 ? `<button class="btn" data-oadd="${i}" style="padding:7px 0;font-size:12.5px;">＋ 添加选项（${(q.options || []).length}/5）</button>` : `<div style="font-size:11.5px;color:var(--text-tertiary);text-align:center;">选项最多 5 个</div>`}
+            <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
+              ${(q.options || []).length < 5 ? `<button class="btn" data-oadd="${i}" style="padding:5px 10px;font-size:12px;flex-shrink:0;">＋ 添加选项（${(q.options || []).length}/5）</button>` : `<span style="font-size:11px;color:var(--text-tertiary);flex-shrink:0;">选项最多 5 个</span>`}
+              <div style="flex:1;"></div>
+              <div style="display:flex;align-items:center;background:var(--bg);border-radius:999px;padding:2px;flex-shrink:0;">
+                <button type="button" data-qidx="${i}" data-mode="single" style="padding:3px 12px;font-size:11.5px;border-radius:999px;border:none;cursor:pointer;${q.multi ? 'color:var(--text-secondary);background:transparent;' : 'color:#ffffff;background:var(--purple-soft);'}">单选</button>
+                <button type="button" data-qidx="${i}" data-mode="multi" style="padding:3px 12px;font-size:11.5px;border-radius:999px;border:none;cursor:pointer;${q.multi ? 'color:#ffffff;background:var(--purple-soft);' : 'color:var(--text-secondary);background:transparent;'}">多选</button>
+              </div>
+            </div>
           </div>` : ''}
       </div>
     `).join('') || `<div style="text-align:center;color:var(--text-tertiary);font-size:13px;padding:16px;">还没有题目，点下方添加或导入</div>`;
@@ -25115,6 +25406,7 @@ function showSurveyLibraryCompose(owner, charId) {
     document.querySelectorAll('[data-qf="text"]').forEach(inp => { inp.oninput = () => { qs[+inp.dataset.qidx].text = inp.value; }; });
     document.querySelectorAll('[data-of="opt"]').forEach(inp => { inp.oninput = () => { qs[+inp.dataset.qidx].options[+inp.dataset.oidx] = inp.value; }; });
     document.querySelectorAll('[data-oadd]').forEach(btn => { btn.onclick = () => { qs[+btn.dataset.oadd].options.push(''); renderQList(); }; });
+    document.querySelectorAll('[data-mode]').forEach(btn => { btn.onclick = () => { qs[+btn.dataset.qidx].multi = (btn.dataset.mode === 'multi'); renderQList(); }; });
     document.querySelectorAll('[data-odel]').forEach(btn => {
       btn.onclick = () => { const [qi, oi] = btn.dataset.odel.split(':').map(Number); qs[qi].options.splice(oi, 1); renderQList(); };
     });
@@ -25158,7 +25450,7 @@ function showSurveyLibraryCompose(owner, charId) {
       owner,
       charId: owner === 'char' ? charId : '',
       title,
-      questions: valid.map(q => ({ text: q.text, type: q.type, options: q.options || [] })),
+      questions: valid.map(q => ({ text: q.text, type: q.type, options: q.options || [], multi: !!q.multi })),
       folderId: '',
       createdAt: Date.now(),
     };
@@ -25249,7 +25541,7 @@ function showSurveyCompose(charIds, opts = {}) {
   let qs = []; // 内存题目列表 [{text,type,options}]
   const renderQList = () => {
     $('#svc-list').innerHTML = qs.map((q, i) => `
-      <div style="background:var(--bg-elevated-2);border-radius:12px;padding:10px 12px;">
+      <div style="background:var(--sv-card, var(--bg-elevated-2));border-radius:12px;padding:10px 12px;">
         <div style="display:flex;align-items:center;gap:8px;">
           <span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">${i + 1}.</span>
           <input class="input" data-qidx="${i}" data-qf="text" value="${escapeHtml(q.text)}" placeholder="${q.type === 'choice' ? '问题内容' : '题目内容'}" style="flex:1;">
@@ -25263,9 +25555,16 @@ function showSurveyCompose(charIds, opts = {}) {
                 <input class="input" data-qidx="${i}" data-oidx="${oi}" data-of="opt" value="${escapeHtml(opt)}" placeholder="选项 ${String.fromCharCode(65 + oi)}" style="flex:1;">
                 <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项">✕</button>
               </div>`).join('')}
-            ${(q.options || []).length < 5
-              ? `<button class="btn" data-oadd="${i}" style="padding:7px 0;font-size:12.5px;">＋ 添加选项（${(q.options || []).length}/5）</button>`
-              : `<div style="font-size:11.5px;color:var(--text-tertiary);text-align:center;">选项最多 5 个</div>`}
+            <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
+              ${(q.options || []).length < 5
+                ? `<button class="btn" data-oadd="${i}" style="padding:5px 10px;font-size:12px;flex-shrink:0;">＋ 添加选项（${(q.options || []).length}/5）</button>`
+                : `<span style="font-size:11px;color:var(--text-tertiary);flex-shrink:0;">选项最多 5 个</span>`}
+              <div style="flex:1;"></div>
+              <div style="display:flex;align-items:center;background:var(--bg);border-radius:999px;padding:2px;flex-shrink:0;">
+                <button type="button" data-qidx="${i}" data-mode="single" style="padding:3px 12px;font-size:11.5px;border-radius:999px;border:none;cursor:pointer;${q.multi ? 'color:var(--text-secondary);background:transparent;' : 'color:#ffffff;background:var(--purple-soft);'}">单选</button>
+                <button type="button" data-qidx="${i}" data-mode="multi" style="padding:3px 12px;font-size:11.5px;border-radius:999px;border:none;cursor:pointer;${q.multi ? 'color:#ffffff;background:var(--purple-soft);' : 'color:var(--text-secondary);background:transparent;'}">多选</button>
+              </div>
+            </div>
           </div>` : ''}
       </div>
     `).join('') || `<div style="text-align:center;color:var(--text-tertiary);font-size:13px;padding:16px;">还没有题目，点下方「添加一道题」「添加选择题」或导入 Word</div>`;
@@ -25284,6 +25583,9 @@ function showSurveyCompose(charIds, opts = {}) {
         q.options.push('');
         renderQList();
       };
+    });
+    document.querySelectorAll('[data-mode]').forEach(btn => {
+      btn.onclick = () => { qs[+btn.dataset.qidx].multi = (btn.dataset.mode === 'multi'); renderQList(); };
     });
     document.querySelectorAll('[data-odel]').forEach(btn => {
       btn.onclick = () => {
@@ -25315,7 +25617,7 @@ function showSurveyCompose(charIds, opts = {}) {
     const isChoice = valid.some(q => q.type === 'choice');
     // 20260929be：多角色 = 同一份问卷分别发给每位成员（群聊时卡片发到群里）
     for (let i = 0; i < recipients.length; i++) {
-      await sendSurveyToChar(recipients[i], valid.map(q => ({ text: q.text.trim(), type: q.type, options: q.options })), isChoice, { groupId, quiet: i > 0 });
+      await sendSurveyToChar(recipients[i], valid.map(q => ({ text: q.text.trim(), type: q.type, options: q.options, multi: !!q.multi })), isChoice, { groupId, quiet: i > 0 });
     }
     if (recipients.length > 1) miniToast(`问卷已发给 ${recipients.length} 位成员，TA 们会陆续作答`);
     closeModal(); // 发完直接回聊天页（问卷卡片已发出）
