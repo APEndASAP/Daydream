@@ -15985,24 +15985,22 @@ function showImportChatModal(back = null) {
     const f = $('#ich-file').files[0];
     if (!f) { miniToast('请先选择文件'); return; }
     try {
-      // 20261031：容器格式兼容——先读前 4MB 找分隔符，有则切 JSON 头 + 逐张图还原
-      const size = f.size || 0;
-      const headProbe = await f.slice(0, Math.min(4 * 1024 * 1024, size)).text();
-      const sepIdx = headProbe.indexOf(BM_CONTAINER_SEP);
+      // 20261031：容器格式兼容——probeContainerHead 分块探测分隔符（修复旧 4MB 窗口太小，
+      //   大数据量 JSON 头 >4MB 时误判老格式 → 整读 → JSON.parse 抛异常 → 导入无反应/失败）
+      const probed = await probeContainerHead(f);
       let data;
-      if (sepIdx !== -1) {
-        data = JSON.parse(headProbe.slice(0, sepIdx));
-        // 分隔符前是 JSON 头文本，其「字节数」= UTF-8 编码长度（含中文时 > 字符数）；
+      if (probed.sepFound) {
+        data = JSON.parse(probed.headStr);
+        // containerStart 已由 probeContainerHead 用「UTF-8 字节数」算好（含中文时 > 字符数）；
         // file.slice 的 offset 是字节偏移，必须用字节数，否则含中文的 JSON 头会导致图片块错位。
-        const headBytes = new TextEncoder().encode(headProbe.slice(0, sepIdx)).length;
-        const containerStart = headBytes + new TextEncoder().encode(BM_CONTAINER_SEP).length;
+        const containerStart = probed.containerStart;
         const readImageV4 = async (offset, len, mime) => {
           const buf = await f.slice(containerStart + offset, containerStart + offset + len).arrayBuffer();
           return new Blob([buf], { type: (mime || 'image/png') });
         };
         data = await restoreImagesV4(data, readImageV4);
       } else {
-        data = JSON.parse(await f.text());
+        data = JSON.parse(probed.headStr);
       }
       const msgs = data.messages || data;
       if (!Array.isArray(msgs)) { miniToast('文件里没有聊天记录'); return; }
@@ -16291,42 +16289,28 @@ function showImportModal(back = null) {
       setProgressPanelMode(true);
       // 阶段0：读文件。20261031 容器格式——只把「JSON 头」读进内存解析，图片块按 offset/len
       //   在还原阶段用 file.slice 逐张读，绝不把 700MB 图片块聚合成超长字符串（爆 512MB 上限）。
-      //   先读前 4MB 找分隔符 \nBMIMG\n；找不到则整个文件是老格式（纯 JSON），整读。
-      const size = file.size || 0;
-      const headProbe = await file.slice(0, Math.min(4 * 1024 * 1024, size)).text();
-      const sepIdx = headProbe.indexOf(BM_CONTAINER_SEP);
+      //   20261031 修复：改用 probeContainerHead 分块递增探测分隔符（旧 4MB 固定窗口太小，
+      //   大数据量 JSON 头 >4MB 时误判老格式 → 整读 700MB → JSON.parse 抛异常 →「文件解析失败」）。
+      setStageProgress(0, 1, 1);
+      const probed = await probeContainerHead(file);
       let data;
       let containerFile = null; // 容器格式时保留 file + 图片块起点，供逐张读图
       let containerStart = 0;
-      if (sepIdx !== -1) {
+      if (probed.sepFound) {
         // 容器格式：JSON 头在分隔符之前
-        const headStr = headProbe.slice(0, sepIdx);
         try {
-          data = JSON.parse(headStr);
+          data = JSON.parse(probed.headStr);
         } catch (e) {
           closeProgressPanel();
           showToast('文件解析失败，请确认是有效的《白日梦》备份');
           return;
         }
         containerFile = file;
-        // 分隔符前的 JSON 头文本 → 其 UTF-8 字节数（含中文时 > 字符数）；file.slice 是字节偏移
-        containerStart = new TextEncoder().encode(headStr).length + new TextEncoder().encode(BM_CONTAINER_SEP).length;
-        setStageProgress(0, 1, 1);
+        containerStart = probed.containerStart;
       } else {
-        // 老格式：整文件是纯 JSON，分块读 + 拼接解析
-        const CHUNK = 4 * 1024 * 1024;
-        const parts = [];
-        let off = 0;
-        while (off < size) {
-          const seg = await file.slice(off, Math.min(off + CHUNK, size)).text();
-          parts.push(seg);
-          off += CHUNK;
-          setStageProgress(0, off, size);
-          await new Promise(r => setTimeout(r, 0));
-        }
-        setStageProgress(0, 1, 1);
+        // 老格式：整文件是纯 JSON
         try {
-          data = JSON.parse(parts.join(''));
+          data = JSON.parse(probed.headStr);
         } catch (e) {
           closeProgressPanel();
           showToast('文件解析失败，请确认是有效的《白日梦》备份');
@@ -16556,6 +16540,36 @@ function b64ToByteLen(b64) {
   if (b64.endsWith('==')) pad = 2;
   else if (b64.endsWith('=')) pad = 1;
   return Math.floor(b64.length / 4) * 3 - pad;
+}
+
+/* 20261031 修复「文件解析失败」：探测容器分隔符。旧代码固定只读前 4MB 找 \nBMIMG\n，
+   JSON 头一旦超过 4MB（大数据量：2 万+消息时头可到 3.6MB+），分隔符落在窗口外被误判成
+   「老格式纯 JSON」→ 整读 700MB → JSON.parse 抛异常 → 报「文件解析失败」。
+   这里改为【分块递增探测】：从 4MB 起逐块往后读，直到找到分隔符或读完整文件，任何大小的
+   JSON 头都能正确识别容器格式。返回：
+     { sepFound:true,  headStr, containerStart }  容器格式（containerStart=图片块字节起点）
+     { sepFound:false, headStr }                   老格式（整文件纯 JSON，headStr=全文） */
+async function probeContainerHead(file) {
+  const size = file.size || 0;
+  const CHUNK = 4 * 1024 * 1024; // 每次读 4MB（与写端分块对齐，读起来快且不爆内存）
+  let acc = '';                 // 累积已读文本（JSON 头可能跨多个 chunk，必须完整保留到找到分隔符）
+  let off = 0;
+  while (off < size) {
+    const seg = await file.slice(off, Math.min(off + CHUNK, size)).text();
+    acc += seg;
+    const idx = acc.indexOf(BM_CONTAINER_SEP);
+    if (idx !== -1) {
+      // 找到分隔符：headStr 是分隔符前的 JSON 头；containerStart 是图片块字节起点
+      const headStr = acc.slice(0, idx);
+      const headBytes = new TextEncoder().encode(headStr).length;
+      const containerStart = headBytes + new TextEncoder().encode(BM_CONTAINER_SEP).length;
+      return { sepFound: true, headStr, containerStart };
+    }
+    // 未找到：继续累积（不能丢弃已读内容，否则跨块 JSON 头会丢失；JSON 头本身不大，累积安全）
+    off += CHUNK;
+  }
+  // 读完整文件都没找到分隔符 → 老格式纯 JSON，acc 即全文
+  return { sepFound: false, headStr: acc };
 }
 
 /* 抽取图片 → 生成容器结构。返回 { data, images:[{ref,mime,src,blob,dataURL,byteLen}] }。
