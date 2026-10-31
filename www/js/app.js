@@ -15996,9 +15996,13 @@ async function imgDescToExport(v) {
 
 const BM_CONTAINER_SEP = '\nBMIMG\n'; // 容器分隔符（JSON 头与图片块之间）
 
-/* 抽取图片 → 生成容器结构。返回 { data, images:[{ref,mime,base64}] }。
+/* 抽取图片 → 生成容器结构。返回 { data, images:[{ref,mime,src,blob,dataURL,b64Len}] }。
    收集两类图片：① {blob:Blob} 描述符（正常新数据）；② {__img:1, data:dataURL} 老格式内嵌。
-   统一替换成 {__img:4, ref, mime, offset, len}（offset/len 在 packContainerFile 阶段回填）。 */
+   统一替换成 {__img:4, ref, mime, offset, len}（offset/len 在 packContainerFile 阶段回填）。
+   20261031 流式化：此处只收集 Blob 引用 + 预计算 base64 长度（4*ceil(size/3)，实测精确），
+   【不转码、不累积 base64 字符串】——真机 1999 张图（主图 290MB + 缩略图 237MB）若在此一次性
+   blobToDataURL 转码，会累积 ~700MB base64 字符串进 JS 堆，直接 OOM 崩溃（真机实测 pid died IMPF）。
+   转码放到 writeContainerFile 里逐张进行（内存只保留单张，转完立即 append 写盘并释放）。 */
 async function collectImagesV4(node, onProgress = null) {
   if (!node || typeof node !== 'object') return { data: node, images: [] };
   const found = [];
@@ -16017,38 +16021,43 @@ async function collectImagesV4(node, onProgress = null) {
   let seq = 0;
   for (const it of found) {
     const n = it.n;
-    let mime = 'image/png', mainB64 = '', thumbB64 = '', thumbMime = 'image/jpeg';
+    let mime = 'image/png', mainSrc = 'blob', mainBlob = null, mainDataURL = '', mainB64Len = 0;
+    let thumbMime = 'image/jpeg', thumbSrc = 'blob', thumbBlob = null, thumbDataURL = '', thumbB64Len = 0, hasThumb = false;
     if (it.kind === 'blob') {
       mime = (n.blob && n.blob.type) || 'image/png';
-      // blobToDataURL 返回 dataURL，剥前缀只留纯 base64 正文（还原端会按 mime 重拼前缀）
-      const md = await blobToDataURL(n.blob);
-      mainB64 = (md.indexOf(',') !== -1 ? md.slice(md.indexOf(',') + 1) : md);
+      mainBlob = n.blob;
+      mainB64Len = 4 * Math.ceil((n.blob ? n.blob.size : 0) / 3); // base64 长度精确公式（已验证）
       if (n.thumb instanceof Blob) {
-        const td = await blobToDataURL(n.thumb);
-        thumbB64 = (td.indexOf(',') !== -1 ? td.slice(td.indexOf(',') + 1) : td);
         thumbMime = (n.thumb.type) || 'image/jpeg';
+        thumbBlob = n.thumb;
+        thumbB64Len = 4 * Math.ceil(n.thumb.size / 3);
+        hasThumb = true;
       }
-    } else { // img1 老格式：data/thumb 已是 dataURL
+    } else { // img1 老格式：data/thumb 已是 dataURL（数据本来就在内存里，剥前缀取纯 base64 正文）
       const dm = /^data:([^;,]+)?(;base64)?,/.exec(n.data || '');
       mime = (dm && dm[1]) || 'image/png';
-      // 剥掉 dataURL 前缀，只留纯 base64 正文
       const cIdx = (n.data || '').indexOf(',');
-      mainB64 = (cIdx !== -1 ? (n.data || '').slice(cIdx + 1) : (n.data || ''));
+      mainDataURL = (cIdx !== -1 ? (n.data || '').slice(cIdx + 1) : (n.data || ''));
+      mainSrc = 'dataURL';
+      mainB64Len = mainDataURL.length;
       if (typeof n.thumb === 'string' && n.thumb) {
         const tdm = /^data:([^;,]+)?(;base64)?,/.exec(n.thumb);
         thumbMime = (tdm && tdm[1]) || 'image/jpeg';
         const tIdx = n.thumb.indexOf(',');
-        thumbB64 = (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb);
+        thumbDataURL = (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb);
+        thumbSrc = 'dataURL';
+        thumbB64Len = thumbDataURL.length;
+        hasThumb = true;
       }
     }
     const ref = 'img-' + String(++seq).padStart(6, '0');
     const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
-    images.push({ ref, mime, b64: mainB64 });
-    if (thumbB64) {
+    images.push({ ref, mime, src: mainSrc, blob: mainBlob, dataURL: mainDataURL, b64Len: mainB64Len });
+    if (hasThumb) {
       const tref = 'thm-' + String(seq).padStart(6, '0');
       out.thumbRef = tref;
       out.thumbMime = thumbMime;
-      images.push({ ref: tref, mime: thumbMime, b64: thumbB64 });
+      images.push({ ref: tref, mime: thumbMime, src: thumbSrc, blob: thumbBlob, dataURL: thumbDataURL, b64Len: thumbB64Len });
     }
     if (it.parent) it.parent[it.key] = out;
     if (onProgress) onProgress(found.length, found.length);
@@ -16061,7 +16070,7 @@ async function collectImagesV4(node, onProgress = null) {
 function packContainerFile(data, images) {
   const imgMap = {};
   let cursor = 0;
-  for (const im of images) { imgMap[im.ref] = { offset: cursor, len: im.b64.length, mime: im.mime }; cursor += im.b64.length; }
+  for (const im of images) { imgMap[im.ref] = { offset: cursor, len: im.b64Len, mime: im.mime }; cursor += im.b64Len; }
   // 回填 offset/len 到 data 里的 {__img:4} 引用（含 thumbOffset/thumbLen）
   const seen = new WeakSet();
   (function walk(n) {
@@ -16076,9 +16085,10 @@ function packContainerFile(data, images) {
   return head + BM_CONTAINER_SEP;
 }
 
-/* 容器式单文件写盘：JSON 头（小）首块 writeFile，图片逐块 appendFile。
-   全程不聚合出超长字符串（图片块单张最大 ~5.8MB，分块后更小），
-   根治「一次性 writeFile 传 700MB base64 过 Bridge → OOM / 超长字符串爆 512MB」。 */
+/* 容器式单文件写盘：JSON 头（小）首块 writeFile，图片逐张【流式转码】后 appendFile。
+   20261031 流式化：collectImagesV4 已不再累积 base64，这里逐张 blobToDataURL 转码 →
+   立即 append 写盘 → 释放该张引用，JS 堆任何时刻只保留单张 base64（最大 ~5.8MB）。
+   根治「一次性把 1999 张图（~700MB）全转成 base64 累积进 JS 堆 → OOM 崩溃（真机 pid died IMPF）」。 */
 async function writeContainerFile(path, data, images, directory, onProgress = null) {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!FS || typeof FS.writeFile !== 'function') throw new Error('文件系统不可用');
@@ -16092,15 +16102,21 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     r.readAsDataURL(new Blob([head], { type: 'application/json' }));
   });
   await writeSingleFileChunked(path, headB64, directory, onProgress);
-  // ② 逐张图片 base64 分块 append（每张图单独 append，单次 bridge payload 小）
+  // ② 逐张图片【流式】转 base64 并分块 append（每张转完立即写盘、释放，内存只留单张）
   let totalBytes = headB64.length;
   for (const im of images) {
-    totalBytes += im.b64.length;
+    totalBytes += im.b64Len;
   }
   let written = headB64.length;
-  for (const im of images) {
-    const pad = (4 - (im.b64.length % 4)) % 4;
-    const seg = im.b64 + '='.repeat(pad);
+  for (let i = 0; i < images.length; i++) {
+    const im = images[i];
+    let seg;
+    if (im.src === 'blob' && im.blob) {
+      const du = await blobToDataURL(im.blob); // 单张转码（最大 ~5.8MB base64）
+      seg = (du.indexOf(',') !== -1 ? du.slice(du.indexOf(',') + 1) : du);
+    } else {
+      seg = im.dataURL || ''; // 老格式 dataURL 剥前缀后的纯 base64 正文
+    }
     for (let off = 0; off < seg.length; off += CHUNK) {
       const part = seg.slice(off, off + CHUNK);
       if (typeof FS.appendFile === 'function') {
@@ -16112,6 +16128,11 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
       written += part.length;
       if (onProgress) onProgress(written, totalBytes);
     }
+    // 释放该张引用，帮助 GC（转码出的 seg 不再被引用）
+    seg = null;
+    im.blob = null;
+    im.dataURL = null;
+    images[i] = null;
   }
   return true;
 }
