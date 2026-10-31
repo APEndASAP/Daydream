@@ -16002,67 +16002,70 @@ const BM_CONTAINER_SEP = '\nBMIMG\n'; // 容器分隔符（JSON 头与图片块�
    20261031 流式化：此处只收集 Blob 引用 + 预计算 base64 长度（4*ceil(size/3)，实测精确），
    【不转码、不累积 base64 字符串】——真机 1999 张图（主图 290MB + 缩略图 237MB）若在此一次性
    blobToDataURL 转码，会累积 ~700MB base64 字符串进 JS 堆，直接 OOM 崩溃（真机实测 pid died IMPF）。
-   转码放到 writeContainerFile 里逐张进行（内存只保留单张，转完立即 append 写盘并释放）。 */
+   转码放到 writeContainerFile 里逐张进行（内存只保留单张，转完立即 append 写盘并释放）。
+   20261031 非侵入：改用「深拷贝」返回全新对象树，绝不 in-place 修改入参 node。
+   入参常是 idbGetAll('messages') 返回的 _messagesCache 同一引用——若原地把 {blob} 替换成
+   {__img:4}，会直接污染缓存，导致导出后聊天列表图片全部变成 {__img:4} 引用而无法渲染
+   （真机实测：缓存 2004 张被改成 {__img:4}，库里 2005 张 Blob 完好）。 */
 async function collectImagesV4(node, onProgress = null) {
   if (!node || typeof node !== 'object') return { data: node, images: [] };
-  const found = [];
-  const seen = new WeakSet(); // 循环引用保护
-  (function collect(n, parent, key) {
-    if (!n || typeof n !== 'object') return;
-    if (seen.has(n)) return; seen.add(n);
-    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
-    // 图片描述符：{blob:Blob} 或 {__img:1, data:string} 老格式
-    if (n.blob instanceof Blob) { found.push({ parent, key, n, kind: 'blob' }); return; }
-    if (n.__img === 1 && typeof n.data === 'string') { found.push({ parent, key, n, kind: 'img1' }); return; }
-    for (const k of Object.keys(n)) collect(n[k], n, k);
-  })(node, null, null);
-
   const images = [];
   let seq = 0;
-  for (const it of found) {
-    const n = it.n;
-    let mime = 'image/png', mainSrc = 'blob', mainBlob = null, mainDataURL = '', mainB64Len = 0;
-    let thumbMime = 'image/jpeg', thumbSrc = 'blob', thumbBlob = null, thumbDataURL = '', thumbB64Len = 0, hasThumb = false;
-    if (it.kind === 'blob') {
-      mime = (n.blob && n.blob.type) || 'image/png';
-      mainBlob = n.blob;
-      mainB64Len = 4 * Math.ceil((n.blob ? n.blob.size : 0) / 3); // base64 长度精确公式（已验证）
+  const total = 0; // 占位（进度在下方按 found 计）
+  // 深拷贝：图片描述符抽离成 {__img:4}，其余结构原样复制；Blob 保留引用（不可变，共享安全）。
+  function clone(n, seen) {
+    if (!n || typeof n !== 'object') return n;
+    if (n instanceof Blob) return n; // Blob 不可变，直接共享引用
+    if (seen.has(n)) return seen.get(n); // 循环引用：指向已克隆的对象
+    if (Array.isArray(n)) {
+      const arr = [];
+      seen.set(n, arr);
+      for (let i = 0; i < n.length; i++) arr[i] = clone(n[i], seen);
+      return arr;
+    }
+    // 图片描述符 {blob:Blob}
+    if (n.blob instanceof Blob) {
+      const mime = (n.blob.type) || 'image/png';
+      const ref = 'img-' + String(++seq).padStart(6, '0');
+      const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
+      images.push({ ref, mime, src: 'blob', blob: n.blob, dataURL: '', b64Len: 4 * Math.ceil(n.blob.size / 3) });
       if (n.thumb instanceof Blob) {
-        thumbMime = (n.thumb.type) || 'image/jpeg';
-        thumbBlob = n.thumb;
-        thumbB64Len = 4 * Math.ceil(n.thumb.size / 3);
-        hasThumb = true;
+        const tref = 'thm-' + String(seq).padStart(6, '0');
+        out.thumbRef = tref;
+        out.thumbMime = (n.thumb.type) || 'image/jpeg';
+        images.push({ ref: tref, mime: out.thumbMime, src: 'blob', blob: n.thumb, dataURL: '', b64Len: 4 * Math.ceil(n.thumb.size / 3) });
       }
-    } else { // img1 老格式：data/thumb 已是 dataURL（数据本来就在内存里，剥前缀取纯 base64 正文）
+      return out;
+    }
+    // 老格式 {__img:1, data:dataURL}
+    if (n.__img === 1 && typeof n.data === 'string') {
       const dm = /^data:([^;,]+)?(;base64)?,/.exec(n.data || '');
-      mime = (dm && dm[1]) || 'image/png';
+      const mime = (dm && dm[1]) || 'image/png';
       const cIdx = (n.data || '').indexOf(',');
-      mainDataURL = (cIdx !== -1 ? (n.data || '').slice(cIdx + 1) : (n.data || ''));
-      mainSrc = 'dataURL';
-      mainB64Len = mainDataURL.length;
+      const mainDataURL = (cIdx !== -1 ? (n.data || '').slice(cIdx + 1) : (n.data || ''));
+      const ref = 'img-' + String(++seq).padStart(6, '0');
+      const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
+      images.push({ ref, mime, src: 'dataURL', blob: null, dataURL: mainDataURL, b64Len: mainDataURL.length });
       if (typeof n.thumb === 'string' && n.thumb) {
         const tdm = /^data:([^;,]+)?(;base64)?,/.exec(n.thumb);
-        thumbMime = (tdm && tdm[1]) || 'image/jpeg';
+        const thumbMime = (tdm && tdm[1]) || 'image/jpeg';
         const tIdx = n.thumb.indexOf(',');
-        thumbDataURL = (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb);
-        thumbSrc = 'dataURL';
-        thumbB64Len = thumbDataURL.length;
-        hasThumb = true;
+        const tref = 'thm-' + String(seq).padStart(6, '0');
+        out.thumbRef = tref;
+        out.thumbMime = thumbMime;
+        images.push({ ref: tref, mime: thumbMime, src: 'dataURL', blob: null, dataURL: (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb), b64Len: (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb).length });
       }
+      return out;
     }
-    const ref = 'img-' + String(++seq).padStart(6, '0');
-    const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
-    images.push({ ref, mime, src: mainSrc, blob: mainBlob, dataURL: mainDataURL, b64Len: mainB64Len });
-    if (hasThumb) {
-      const tref = 'thm-' + String(seq).padStart(6, '0');
-      out.thumbRef = tref;
-      out.thumbMime = thumbMime;
-      images.push({ ref: tref, mime: thumbMime, src: thumbSrc, blob: thumbBlob, dataURL: thumbDataURL, b64Len: thumbB64Len });
-    }
-    if (it.parent) it.parent[it.key] = out;
-    if (onProgress) onProgress(found.length, found.length);
+    // 普通对象：浅拷贝键值 + 递归
+    const obj = {};
+    seen.set(n, obj);
+    for (const k of Object.keys(n)) obj[k] = clone(n[k], seen);
+    return obj;
   }
-  return { data: node, images };
+  const data = clone(node, new WeakMap());
+  if (onProgress) onProgress(images.length, images.length);
+  return { data, images };
 }
 
 /* 计算每张图在图片块里的 offset/len，并回填到 data 里的 {__img:4} 引用；返回 JSON 头字符串
