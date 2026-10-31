@@ -89,25 +89,33 @@ async function idbGet(store, key) {
   });
 }
 
-/* 20261031 提速：单事务批量写入。导入 2 万+ 条消息时，逐条 idbPut 每次 openDB + 单事务，
-   开销极大（openDB 是 async 且每事务一次 IPC）；批量写把所有值塞进一个事务，速度提升数十倍。
-   messages 同步维护 _messagesCache 镜像（与 idbPut 一致）。 */
-async function idbBulkPut(store, values) {
+/* 20261031 提速：批量写入。导入 2 万+ 条消息时，逐条 idbPut 每次 openDB + 单事务，
+   开销极大（openDB 是 async 且每事务一次 IPC）；批量写把所有值塞进事务，速度提升数十倍。
+   messages 同步维护 _messagesCache 镜像（与 idbPut 一致）。
+   20261101 修复「导入卡死」：单事务塞 2 万+ 条【含 Blob 图片】的消息（图片块 ~727MB）会
+   让 IndexedDB 单事务过大 → 卡死/配额超限。改为【分批写】：每批 BATCH=1000 条一个事务，
+   批间让出主线程（await），避免长同步循环阻塞 UI + 单事务膨胀。onProgress(done,total) 可选。 */
+async function idbBulkPut(store, values, onProgress = null) {
   if (!Array.isArray(values) || !values.length) return;
+  const BATCH = 1000; // 每批条数（含 Blob 时更小更稳；纯文本也可用此值）
   const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(store, 'readwrite');
-    const os = tx.objectStore(store);
-    for (const v of values) os.put(v);
-    tx.oncomplete = () => {
-      if (store === 'messages' && _messagesCache) {
-        // 直接替换缓存（导入是整批覆盖场景；缓存可能为 null 时跳过，下次 getAll 重建）
-        _messagesCache = values.slice();
-      }
-      resolve();
-    };
-    tx.onerror = (e) => reject(e.target.error);
-  });
+  let done = 0;
+  for (let s = 0; s < values.length; s += BATCH) {
+    const slice = values.slice(s, s + BATCH);
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite');
+      const os = tx.objectStore(store);
+      for (const v of slice) os.put(v);
+      tx.oncomplete = () => resolve();
+      tx.onerror = (e) => reject(e.target.error);
+      tx.onabort = (e) => reject(e.target.error);
+    });
+    done += slice.length;
+    if (onProgress) { try { onProgress(done, values.length); } catch (e) {} }
+    // 批间让出主线程，避免长时间阻塞 UI（进度条/动画得以刷新）
+    await new Promise(r => setTimeout(r, 0));
+  }
+  if (store === 'messages') _messagesCache = values.slice();
 }
 
 async function idbDelete(store, key) {

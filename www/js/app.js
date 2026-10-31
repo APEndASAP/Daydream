@@ -16410,7 +16410,7 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
   try {
     // 20261031：容器格式（{__img:4} 引用 + 图片块）——用 readImageV4 逐张还原
     if (readImageV4) {
-      data = await restoreImagesV4(data, readImageV4);
+      data = await restoreImagesV4(data, readImageV4, (done, total) => _stage(2, done, total));
     } else if (data && data.version === '3.0' && data.imagesDir) {
       // 20261005ea：3.0 自动备份（图片独立文件）——图片是 {__img:3, ref} 引用，需 FS.readFile 读回；
       // 2.2 及旧备份（图片 base64 内嵌）走原 deepImagesFromExport 逻辑不变。
@@ -16450,13 +16450,22 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
     const srvs = Array.isArray(data.surveys) ? data.surveys : []; // 问卷（20260929al）
     const gifts = Array.isArray(data.gifts) ? data.gifts : []; // 超频礼物柜（20260929ao）
     const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length || 1;
+    let wDone = 0;
     _stage(3, 0, wTotal);
-    if (chars.length) await idbBulkPut('characters', chars);
-    if (msgs.length) await idbBulkPut('messages', msgs);
-    if (emos.length) await idbBulkPut('emojis', emos);
-    if (pals.length) await idbBulkPut('palace', pals);
-    if (srvs.length) await idbBulkPut('surveys', srvs);
-    if (gifts.length) await idbBulkPut('gifts', gifts);
+    const bulkWithProg = async (store, arr) => {
+      if (!arr.length) return;
+      await idbBulkPut(store, arr, (done) => {
+        _stage(3, wDone + done, wTotal);
+      });
+      wDone += arr.length;
+      _stage(3, wDone, wTotal);
+    };
+    await bulkWithProg('characters', chars);
+    await bulkWithProg('messages', msgs);
+    await bulkWithProg('emojis', emos);
+    await bulkWithProg('palace', pals);
+    await bulkWithProg('surveys', srvs);
+    await bulkWithProg('gifts', gifts);
     _stage(3, wTotal, wTotal);
     if (data.cards) {
       if (mode === 'merge') {
@@ -16768,8 +16777,10 @@ function unpackContainerFile(text) {
 }
 
 /* 还原 {__img:4} 引用 → {blob:Blob, thumb, w, h}。
-   readImage(offset, len, mime) 由调用方提供（容器格式用 file.slice 逐张读图，避免超长字符串）。 */
-async function restoreImagesV4(node, readImage) {
+   readImage(offset, len, mime) 由调用方提供（容器格式用 file.slice 逐张读图，避免超长字符串）。
+   onProgress(done, total)：20261031 补进度回调——导入时还原 2844 张图（727MB）无进度反馈，
+   进度条卡在「解析完成」不动，像假死。加回调后每还原 8 张刷新一次进度。 */
+async function restoreImagesV4(node, readImage, onProgress = null) {
   if (!node || typeof node !== 'object') return node;
   const found = [];
   const seen = new WeakSet();
@@ -16780,7 +16791,7 @@ async function restoreImagesV4(node, readImage) {
     if (n.__img === 4 && typeof n.ref === 'string') { found.push({ parent, key, n }); return; }
     for (const k of Object.keys(n)) collect(n[k], n, k);
   })(node, null, null);
-  if (!found.length) return node;
+  if (!found.length) { if (onProgress) onProgress(0, 0); return node; }
   // 20261031 提速：8 路并发还原（与 deepImagesFromExport 同模型）。旧写法逐张串行 readImage，
   //   2833 张图串行 file.slice 读盘很慢；并发后大幅缩短导入时间。单张失败不影响整体。
   const total = found.length;
@@ -16801,6 +16812,7 @@ async function restoreImagesV4(node, readImage) {
       } catch (e) { /* 单张图还原失败不影响整体，保留 {__img:4} 原样，渲染按缺失处理 */ }
       done++;
       if (total > 8 && (done % 8 === 0 || done === total)) {
+        if (onProgress) { try { onProgress(done, total); } catch (e) {} }
         exportProgress(true, `⬇️ 正在还原图片 ${done}/${total}…`);
       }
     }
