@@ -15981,11 +15981,35 @@ async function exportChatRecords() {
       return;
     }
   }
-  // 网页端（非 APK）：无分块 append 能力，图片量一般不大，走原 deepImagesToExport 内嵌 + <a download>
-  let safeData = data;
-  try { safeData = await deepImagesToExport(data, '正在打包聊天图片', null); } catch (e) {}
-  const blob = new Blob([jsonSafeStringify(safeData)], { type: 'application/json' });
-  await finishExport(save, blob, '已导出 ' + messages.length + ' 条聊天记录');
+  // 网页端（非 APK）：20261101 修复——与 exportAll 一致改用容器格式流式导出，根治
+  //   图片内嵌 base64 超上限导致的 Invalid string length（静默失败，被 try/catch 吞掉，
+  //   表现为「点了只转一下、不弹下载」）。图片二进制直接拼 Blob，全程不累积超长字符串。
+  try {
+    const { data: headData, images } = await collectImagesV4(data, null);
+    headData.version = '2.2';
+    const headStr = packContainerFile(headData, images);
+    const headBytes = new TextEncoder().encode(headStr);
+    const parts = [headBytes];
+    for (const im of images) {
+      let bytes;
+      if (im.src === 'blob' && im.blob) {
+        bytes = new Uint8Array(await im.blob.arrayBuffer());
+      } else if (im.dataURL) {
+        const bin = atob(im.dataURL);
+        bytes = new Uint8Array(bin.length);
+        for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+      } else {
+        bytes = new Uint8Array(0);
+      }
+      parts.push(bytes);
+    }
+    const blob = new Blob(parts, { type: 'application/octet-stream' });
+    await finishExport(save, blob, '已导出 ' + messages.length + ' 条聊天记录');
+  } catch (e) {
+    // 兜底：无图片或极简场景直接 JSON 导出（保证小数据量也一定能出文件）
+    const blob = new Blob([jsonSafeStringify(data)], { type: 'application/json' });
+    await finishExport(save, blob, '已导出 ' + messages.length + ' 条聊天记录');
+  }
 }
 
 /* ---------- 导入聊天记录（单独恢复 messages，按消息 ID 去重合并） ---------- */
@@ -16873,26 +16897,54 @@ function b64ToByteLen(b64) {
      { sepFound:true,  headStr, containerStart }  容器格式（containerStart=图片块字节起点）
      { sepFound:false, headStr }                   老格式（整文件纯 JSON，headStr=全文） */
 async function probeContainerHead(file) {
+  // 20261101 修复「大文件导入失败/图片全坏」根因：旧实现用 file.slice().text() 按 4MB
+  //   【字节】边界切块，再把切下的字节按 UTF-8 解码成字符串。JSON 头里的中文（UTF-8 每字
+  //   3 字节）一旦恰好跨越 4MB 边界，被切断的字符解码成 \uFFFD，导致 headStr 的字符数与
+  //   原始字节数对不上 → 用它重编码算出的 containerStart 比真实值小 → 之后所有图片的
+  //   file.slice(containerStart+offset) 全部错位 → 读到的不是图片数据 → 图片全坏/导入失败。
+  //   修复：改用 arrayBuffer() 读【原始字节】，在【字节层面】找分隔符 \nBMIMG\n（ASCII 7 字节，
+  //   不可能被 UTF-8 切断），containerStart 直接用字节数，全程不经过「切块再拼字符串」的中间态。
+  //   实现采用【从头递增读取】：每次从文件头 0 读到 off（off 按 2MB 递增），在整段字节里找
+  //   分隔符。这样 headBytes 永远是「文件头开始的完整字节」、必定落在 UTF-8 字符边界，
+  //   绝不产生跨块残留、绝不切坏中文。JSON 头通常 <10MB（实测大数据量约 4MB），从头读
+  //   少量 MB 的代价可忽略；即便极端超大 JSON 头，最多多读几次，正确性始终优先。
   const size = file.size || 0;
-  const CHUNK = 4 * 1024 * 1024; // 每次读 4MB（与写端分块对齐，读起来快且不爆内存）
-  let acc = '';                 // 累积已读文本（JSON 头可能跨多个 chunk，必须完整保留到找到分隔符）
-  let off = 0;
-  while (off < size) {
-    const seg = await file.slice(off, Math.min(off + CHUNK, size)).text();
-    acc += seg;
-    const idx = acc.indexOf(BM_CONTAINER_SEP);
+  const SEP_BYTES = new TextEncoder().encode(BM_CONTAINER_SEP); // \nBMIMG\n = 7 字节
+  const STEP = 2 * 1024 * 1024; // 每次增量 2MB（从头读）
+  let off = STEP;
+  while (true) {
+    const end = Math.min(off, size);
+    const buf = new Uint8Array(await file.slice(0, end).arrayBuffer());
+    const idx = indexOfBytes(buf, SEP_BYTES);
     if (idx !== -1) {
-      // 找到分隔符：headStr 是分隔符前的 JSON 头；containerStart 是图片块字节起点
-      const headStr = acc.slice(0, idx);
-      const headBytes = new TextEncoder().encode(headStr).length;
-      const containerStart = headBytes + new TextEncoder().encode(BM_CONTAINER_SEP).length;
+      // 找到分隔符：idx 即分隔符在【文件头起算】的绝对字节位置（因为每次都是从 0 读）
+      const headStr = new TextDecoder('utf-8').decode(buf.subarray(0, idx));
+      const containerStart = idx + SEP_BYTES.length;
       return { sepFound: true, headStr, containerStart };
     }
-    // 未找到：继续累积（不能丢弃已读内容，否则跨块 JSON 头会丢失；JSON 头本身不大，累积安全）
-    off += CHUNK;
+    if (end >= size) break; // 已读完整文件仍未找到 → 老格式纯 JSON
+    off += STEP;
   }
-  // 读完整文件都没找到分隔符 → 老格式纯 JSON，acc 即全文
-  return { sepFound: false, headStr: acc };
+  // 读完整文件都没找到分隔符 → 老格式纯 JSON，整文件解码
+  const full = new Uint8Array(await file.slice(0, size).arrayBuffer());
+  return { sepFound: false, headStr: new TextDecoder('utf-8').decode(full) };
+}
+
+/* 在字节数组 haystack 中查找 needle 首次出现的位置，返回索引（未找到返回 -1）。
+   等价于 String.indexOf 但工作在字节层面，避免任何 UTF-8 解码干扰。 */
+function indexOfBytes(haystack, needle) {
+  const n = haystack.length, m = needle.length;
+  if (m === 0) return 0;
+  if (m > n) return -1;
+  const first = needle[0];
+  outer: for (let i = 0; i <= n - m; i++) {
+    if (haystack[i] !== first) continue;
+    for (let j = 1; j < m; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
 }
 
 /* 抽取图片 → 生成容器结构。返回 { data, images:[{ref,mime,src,blob,dataURL,byteLen}] }。
@@ -17562,10 +17614,36 @@ async function exportAll() {
       miniToast('已导出单文件「' + expFile + '」到「文档/白日梦备份」，导入时选该文件即可');
       return;
     }
-    // 网页端（无 Capacitor）：仍走 2.2 单文件 <a download> 下载（不弹进度面板，网页端保持原样）
+    // 网页端（无 Capacitor）：20261101 修复「导出失败：Invalid string length」——
+    //   旧逻辑 buildBackupPayload() 把全部图片 Blob 转成 base64 内嵌进 JSON，再一次性
+    //   JSON.stringify 序列化。数据量大时（700MB+ / 数千张图）单字符串超过 JS 引擎上限
+    //   （约 512MB / 2^29 字符）→ Invalid string length → 导出失败。
+    //   这里改为与 APK 端一致的【容器格式流式导出】：collectImagesV4 抽图片成二进制块引用，
+    //   packContainerFile 回填 offset/len 生成小 JSON 头，图片二进制直接拼 Blob（不经 base64），
+    //   全程不累积超长字符串，任何数据量都能导出。产物仍是单文件 .ocdata（容器 2.2），
+    //   与 APK 端、导入端完全兼容。
     miniToast('正在打包全量数据，图库大时需要几秒…');
-    const safeData = await buildBackupPayload();
-    const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
+    const rawData = await buildBackupPayload('3.0'); // 拿含 {blob,thumb} 的原始 data（不做 base64 内嵌）
+    const { data: headData, images } = await collectImagesV4(rawData);
+    headData.version = '2.2';
+    const headStr = packContainerFile(headData, images); // JSON 头 + 分隔符（小）
+    const headBytes = new TextEncoder().encode(headStr);
+    // 图片块：逐张读二进制，直接按顺序拼 Blob（不转 base64，无超长字符串）
+    const parts = [headBytes];
+    for (const im of images) {
+      let bytes;
+      if (im.src === 'blob' && im.blob) {
+        bytes = new Uint8Array(await im.blob.arrayBuffer());
+      } else if (im.dataURL) {
+        const bin = atob(im.dataURL);
+        bytes = new Uint8Array(bin.length);
+        for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+      } else {
+        bytes = new Uint8Array(0);
+      }
+      parts.push(bytes);
+    }
+    const blob = new Blob(parts, { type: 'application/octet-stream' });
     await finishExport(save, blob, '全量备份已导出');
   } catch (e) {
     closeProgressPanel();
