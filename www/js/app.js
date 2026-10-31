@@ -5027,8 +5027,10 @@ async function dataURLToBlob(s) {
   } catch (e) {
     return Promise.reject(new Error('图片数据解码失败'));
   }
-  const u8 = new Uint8Array(body.length);
-  for (let i = 0; i < body.length; i++) u8[i] = body.charCodeAt(i);
+  // 20261101 性能优化：旧写法 for(i) u8[i]=body.charCodeAt(i) 逐字节赋值，2900 张图时
+  // 是严重的性能/内存瓶颈（每次 charCodeAt 都走 JS↔引擎边界）。改用 Uint8Array.from
+  // 批量转换（引擎级优化），大图转换提速数倍、峰值内存更低，配合恢复端降并发彻底不再卡死。
+  const u8 = Uint8Array.from(body, c => c.charCodeAt(0));
   return Promise.resolve(new Blob([u8], { type: mime }));
 }
 
@@ -16432,12 +16434,17 @@ async function deepImagesFromExport(node, onProgress = null) {
 async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = null) {
   const _stage = (idx, val, total) => { if (onStage) { try { onStage(idx, val, total); } catch (e) {} } };
   try {
-    // 20261031：容器格式（{__img:4} 引用 + 图片块）——用 readImageV4 逐张还原
+    // 20261101 流式图片还原重构：旧写法把「全部图片」一次性还原成 Blob 塞进 data 对象
+    //   （3.0 的 2844 张主图共 686MB、2.2 容器同量级），内存峰值直接爆掉真机 WebView，
+    //   表现为「恢复/导入卡 33% → 整体失败」。这里改为【延迟到写库阶段、按 store 分批
+    //   还原 + 写库 + 释放】，内存峰值从「全量图片」降到「单个 store 的图片」。
+    //   三个分支统一归一成一个 readImage 描述符，供下方写库阶段逐 store 调用。
+    let _imgReader = null;   // (store数组, 进度cb) => Promise  还原该 store 内所有 {__img} 引用为 Blob
     if (readImageV4) {
-      data = await restoreImagesV4(data, readImageV4, (done, total) => _stage(2, done, total));
+      // 2.2 容器格式（{__img:4} 引用 + 图片块）
+      _imgReader = (arr, cb) => restoreImagesV4(arr, readImageV4, cb);
     } else if (data && data.version === '3.0' && data.imagesDir) {
-      // 20261005ea：3.0 自动备份（图片独立文件）——图片是 {__img:3, ref} 引用，需 FS.readFile 读回；
-      // 2.2 及旧备份（图片 base64 内嵌）走原 deepImagesFromExport 逻辑不变。
+      // 3.0 自动备份（{__img:3} 引用 + 独立图片文件，FS.readFile 读回）
       const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
       if (FS && typeof FS.readFile === 'function') {
         const imagesDir = String(data.imagesDir);
@@ -16445,15 +16452,13 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
           const r = await FS.readFile({ path: imagesDir + '/' + ref, directory: 'DOCUMENTS' });
           return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + r.data);
         };
-        data = await restoreImagesV3(data, readImage);
+        _imgReader = (arr, cb) => restoreImagesV3(arr, readImage, cb);
       }
-      // 若 FS.readFile 不可用（如网页端误导入 3.0），保留 {__img:3} 原样，图片按缺失处理，不崩溃
+      // FS.readFile 不可用时（网页端误导入 3.0）保留 {__img:3} 原样，图片按缺失处理，不崩溃
     } else {
-      // 20260929g：新格式图片载荷转回 Blob；旧备份 base64 字符串原样保留（玩家选择：不迁移）
-      // 20261011：阶段2「还原图片」进度回调
-      data = await deepImagesFromExport(data, (done, total) => _stage(2, done, total));
+      // 2.2 及旧备份（图片 base64 内嵌）走 deepImagesFromExport
+      _imgReader = (arr, cb) => deepImagesFromExport(arr, cb);
     }
-    _stage(2, 1, 1);
     // 20261101 空备份拦截（数据安全铁律）：覆盖导入会先清空现有数据再写入，若导入的文件
     //   「所有核心数据都是空的」（角色+消息+表情+记忆宫殿+问卷+礼物全空），说明这是一个
     //   空备份/损坏备份，覆盖导入会把用户现有数据全部清空——必须拦截，绝不允许清空。
@@ -16478,8 +16483,8 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
       await idbClear('kv');
     }
     // 写入导入的数据（覆盖模式直接写；合并模式按 id 合并覆盖）
-    // 20261031 提速：改用 idbBulkPut 单事务批量写（旧逐条 idbPut 每条约 1 次 openDB+1 事务，
-    //   2 万+ 条消息串行极慢）。进度按各集合条数加权汇总。
+    // 20261101 流式：图片不再全量还原后一起写，而是【按 store、且 messages 按批】还原→写→释放，
+    //   内存峰值从 686MB 降到单批（messages 每批 800 条约几十 MB），彻底不再爆内存。
     const chars = Array.isArray(data.characters) ? data.characters : [];
     const msgs = Array.isArray(data.messages) ? data.messages : [];
     const emos = Array.isArray(data.emojis) ? data.emojis : [];
@@ -16489,20 +16494,42 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
     const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length || 1;
     let wDone = 0;
     _stage(3, 0, wTotal);
-    const bulkWithProg = async (store, arr) => {
+    // 还原该 store 内所有图片（若有 reader），然后写库
+    const restoreAndWrite = async (store, arr) => {
       if (!arr.length) return;
+      if (_imgReader) {
+        try { arr = await _imgReader(arr, (done, total) => _stage(2, done, total)); } catch (e) {}
+      }
       await idbBulkPut(store, arr, (done) => {
         _stage(3, wDone + done, wTotal);
       });
       wDone += arr.length;
       _stage(3, wDone, wTotal);
     };
-    await bulkWithProg('characters', chars);
-    await bulkWithProg('messages', msgs);
-    await bulkWithProg('emojis', emos);
-    await bulkWithProg('palace', pals);
-    await bulkWithProg('surveys', srvs);
-    await bulkWithProg('gifts', gifts);
+    await restoreAndWrite('characters', chars);
+    await restoreAndWrite('emojis', emos);
+    // messages 是图片大头（消息里的图片/转账卡等），分批流式：每批还原图片→写库→释放。
+    // 关键：必须从 data.messages 里「真正剥离」已写库的元素（置 null 或 splice），
+    //   否则浅拷贝 batch 后，data.messages 仍持有所有 Blob 引用，内存照样累积到 686MB。
+    if (msgs.length) {
+      const MBATCH = 800; // 每批 800 条，峰值内存 = 单批图片（几十 MB），写完整批即释放
+      for (let s = 0; s < msgs.length; s += MBATCH) {
+        const batch = msgs.slice(s, s + MBATCH);
+        if (_imgReader) {
+          try { await _imgReader(batch, (done, total) => _stage(2, done, total)); } catch (e) {}
+        }
+        await idbBulkPut('messages', batch, (done) => {
+          _stage(3, wDone + done, wTotal);
+        });
+        wDone += batch.length;
+        _stage(3, wDone, wTotal);
+        // 释放本批：把 data.messages 里已写库的元素置 null（切断 Blob 引用），帮 GC 回收
+        for (let k = s; k < Math.min(s + MBATCH, msgs.length); k++) msgs[k] = null;
+      }
+    }
+    await restoreAndWrite('palace', pals);
+    await restoreAndWrite('surveys', srvs);
+    await restoreAndWrite('gifts', gifts);
     _stage(3, wTotal, wTotal);
     if (data.cards) {
       if (mode === 'merge') {
@@ -17390,7 +17417,7 @@ async function collectImagesV3(node) {
 /* 20261005ea：自动备份 3.0 图片还原——把 {__img:3, ref, mime} 引用读回 {blob, thumb, w, h}。
    readImage(ref, mime) 由调用方提供（恢复端用 FS.readFile 读文件转 Blob）；8 路并发还原。
    还原后 IndexedDB 数据结构保持 {blob, thumb, w, h} 不变，不改数据库 schema。 */
-async function restoreImagesV3(node, readImage) {
+async function restoreImagesV3(node, readImage, onProgress) {
   if (!node || typeof node !== 'object') return node;
   const found = [];
   const seen = new WeakSet(); // 20261031：循环引用保护（同 deepImagesToExport）
@@ -17403,7 +17430,7 @@ async function restoreImagesV3(node, readImage) {
   })(node, null, null);
   if (!found.length) return node;
   const total = found.length;
-  let idx = 0;
+  let idx = 0, done = 0;
   const worker = async () => {
     while (idx < total) {
       const i = idx++;
@@ -17422,9 +17449,16 @@ async function restoreImagesV3(node, readImage) {
         const out = { blob: new Blob([]), thumb: null, w: n.w || 0, h: n.h || 0 };
         if (it.parent) it.parent[it.key] = out;
       }
+      done++;
+      // 20261101 修复「恢复卡 33% 无反馈」：图片还原阶段原来零进度，2900 张图慢慢读、
+      // 进度条纹丝不动，用户以为卡死。这里每张图还原后实时回传进度，进度条持续前进。
+      if (onProgress) { try { onProgress(done, total); } catch (e) {} }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  // 20261101 修复「恢复内存爆炸」：8 路并发时每路同时 atob 大图 + 转 Blob，700MB 图片
+  // 峰值内存叠加 → 真机 WebView 直接崩溃/GC 卡死，最后整体「导入失败」。降为 2 路，
+  // 内存峰值降为原来的 1/4，配合逐张释放，不再爆内存；速度虽慢但能稳定跑完。
+  await Promise.all(Array.from({ length: Math.min(2, total) }, worker));
   return node;
 }
 

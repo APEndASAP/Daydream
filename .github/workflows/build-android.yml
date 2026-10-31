@@ -364,7 +364,12 @@ jobs:
           const fs = require('fs');
           const p = 'android/app/build.gradle';
           let s = fs.readFileSync(p, 'utf8');
-          const vc = Math.floor(Date.now() / 60000); // 分钟级时间戳，单调递增且 < int 上限
+          // 20261101 修复「降级安装清空数据」：旧写法用【分钟级】时间戳 Math.floor(Date.now()/60000)，
+          //   两次构建若落在同一分钟、或 runner 时钟回拨，versionCode 会相同甚至更小，
+          //   安卓判定为「降级」→ 覆盖安装时清空 App 内 IndexedDB（用户数据全丢）。
+          //   改为【秒级】时间戳：~17.9 亿，恒大于历史所有分钟级版本(最大 ~3000 万)，
+          //   且只要时间前进就单调递增，彻底杜绝降级；< int 上限 21.47 亿，可安全用到 2038 年。
+          const vc = Math.floor(Date.now() / 1000);
           s = s.replace(/versionCode\s+\d+/, 'versionCode ' + vc);
           fs.writeFileSync(p, s);
           console.log('versionCode -> ' + vc);
