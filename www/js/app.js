@@ -15758,6 +15758,7 @@ async function showDataModal() {
   /* 20260929z：图标第二版——统一淡紫（与主页功能宫格 .grid-icon 同视觉语言），不再五颜六色 */
   const cats = [
     { id: 'migrate', ic: 'data',    name: '数据迁移', desc: '整包备份 / 恢复（.ocdata）· 清理冗余缓存' },
+    { id: 'chars',   ic: 'user',    name: '角色卡', desc: '角色 + TA 的专属表情包 + 角色设定（不含字卡）' },
     { id: 'chat',    ic: 'chatset', name: '聊天记录', desc: '单独导出 / 导入聊天记录 · 一键清空' },
     { id: 'letters', ic: 'letter',  name: '书信', desc: '往来书信与信箱文件夹（.letterdata）' },
     { id: 'world',   ic: 'tree',    name: '世界树', desc: '世界观设定库（.worlddata，原世界书）' },
@@ -15794,6 +15795,7 @@ function showDataCatModal(id) {
   const ti = (ic) => `<span style="display:inline-flex;vertical-align:-4px;margin-right:7px;color:var(--purple-soft);">${icon(ic, 18)}</span>`;
   const titles = {
     migrate: [`${ti('data')}数据迁移`, '把整个《白日梦》数据打包成单个 .ocdata 文件，或从备份恢复（覆盖/合并）'],
+    chars: [`${ti('user')}角色卡`, '导出/导入角色卡：角色 + TA 的专属表情包 + 角色设定（人设、关系、昵称等）。<b>不含字卡</b>、聊天记录、玩家表情库'],
     chat: [`${ti('chatset')}聊天记录`, '单独备份/恢复聊天记录，或一键清空（不影响访客、字卡、美化等）'],
     letters: [`${ti('letter')}书信`, '单独导出全部往来书信与信箱文件夹结构（.letterdata），或从备份导入（按 ID 合并去重）'],
     world: [`${ti('tree')}世界树`, '导出/导入世界观设定库（.worlddata，含文件夹、条目与草稿箱；导入会覆盖当前世界树）'],
@@ -15818,13 +15820,24 @@ function showDataCatModal(id) {
       ${btn('btn-export', '导出全局数据（.ocdata）', '⬇')}
       ${btn('btn-import', '导入全局数据（.ocdata）', '⬆')}
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
+      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">一键恢复：自动找到最近一次的<b>自动备份</b>并恢复（无需手动找文件）</div>
+      ${btn('btn-restore-auto', '恢复最近自动备份', '🔄')}
+      <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">维护：软件或浏览器更新后，清掉旧版本遗留的冗余缓存（只清缓存，<b>不影响</b>访客、聊天记录等正式数据）</div>
       ${btn('btn-clear-stale', '清除冗余缓存（旧版遗留）', '🧹')}`;
     $('#btn-export').onclick = exportAll;
     $('#btn-import').onclick = () => showImportModal(showDataModal);
+    $('#btn-restore-auto').onclick = restoreAutoBackup;
     $('#btn-clear-stale').onclick = clearStaleCache;
     // 20261011 晚：重进数据迁移页时，若有进行中的导入/导出任务，恢复完整进度面板继续显示
     if (isProgressActive()) setProgressPanelMode(true);
+  } else if (id === 'chars') {
+    body.innerHTML = `
+      ${btn('btn-export-chars', '导出角色卡（.chardata）', '⬇')}
+      ${btn('btn-import-chars', '导入角色卡（.chardata）', '⬆')}
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">角色卡包含：角色（名字/头像/人设）、TA 的专属表情包、角色设定（关系/昵称/称呼/禁词等）。<b>不包含</b>字卡、聊天记录、玩家表情库。</div>`;
+    $('#btn-export-chars').onclick = exportCharCards;
+    $('#btn-import-chars').onclick = () => showImportCharModal(showDataModal);
   } else if (id === 'chat') {
     body.innerHTML = `
       ${btn('btn-export-chat', '导出聊天记录', '⬇')}
@@ -16005,7 +16018,10 @@ function showImportChatModal(back = null) {
         const containerStart = probed.containerStart;
         const readImageV4 = async (offset, len, mime) => {
           const buf = await f.slice(containerStart + offset, containerStart + offset + len).arrayBuffer();
-          return new Blob([buf], { type: (mime || 'image/png') });
+          // 20261101 同全局导入：slice(0) 强制内存拷贝，杜绝 WebView file-backed blob backing 失效 → InvalidBlob
+          const copy = buf.slice(0);
+          if (len > 0 && copy.byteLength === 0) throw new Error('empty-blob');
+          return new Blob([copy], { type: (mime || 'image/png') });
         };
         data = await restoreImagesV4(data, readImageV4);
       } else {
@@ -16339,7 +16355,15 @@ function showImportModal(back = null) {
       const readImageV4 = containerFile
         ? async (offset, len, mime) => {
             const buf = await containerFile.slice(containerStart + offset, containerStart + offset + len).arrayBuffer();
-            return new Blob([buf], { type: (mime || 'image/png') });
+            // 20261101 修复「Failed to write blobs (InvalidBlob)」：Android WebView 里
+            //   file.slice().arrayBuffer() 返回的 ArrayBuffer 可能是 file-backed / 延迟加载，
+            //   8 路并发读 730MB 大文件时，某些 ArrayBuffer 的 backing 在 new Blob 后失效，
+            //   写入 IndexedDB 时被报 InvalidBlob（= 源 blob 不再可读）。
+            //   这里用 slice(0) 强制做一次【内存独立拷贝】，让 Blob 完全脱离文件句柄，
+            //   从源头杜绝 backing 失效。同时对空图做防御（len>0 但读回 0 字节 = offset 错位）。
+            const copy = buf.slice(0);
+            if (len > 0 && copy.byteLength === 0) throw new Error('empty-blob');
+            return new Blob([copy], { type: (mime || 'image/png') });
           }
         : null;
       await doImport(data, mode, (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), readImageV4);
@@ -16430,6 +16454,19 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
       data = await deepImagesFromExport(data, (done, total) => _stage(2, done, total));
     }
     _stage(2, 1, 1);
+    // 20261101 空备份拦截（数据安全铁律）：覆盖导入会先清空现有数据再写入，若导入的文件
+    //   「所有核心数据都是空的」（角色+消息+表情+记忆宫殿+问卷+礼物全空），说明这是一个
+    //   空备份/损坏备份，覆盖导入会把用户现有数据全部清空——必须拦截，绝不允许清空。
+    const isEmptyBackup = !(Array.isArray(data.characters) && data.characters.length)
+      && !(Array.isArray(data.messages) && data.messages.length)
+      && !(Array.isArray(data.emojis) && data.emojis.length)
+      && !(Array.isArray(data.palace) && data.palace.length)
+      && !(Array.isArray(data.surveys) && data.surveys.length)
+      && !(Array.isArray(data.gifts) && data.gifts.length);
+    if (mode === 'overwrite' && isEmptyBackup) {
+      showConfirm('⚠️ 这个备份文件是空的（没有任何角色/聊天记录/记忆宫殿数据）。\n\n覆盖导入会清空你当前的所有数据，因此已自动拦截，不会执行。\n\n请检查是否选错了文件，或先导出正确的备份再导入。', null);
+      throw new Error('空备份已拦截，未执行覆盖导入');
+    }
     if (mode === 'overwrite') {
       // 清空现有数据
       await idbClear('characters');
@@ -16515,6 +16552,270 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
   } catch (e) {
     miniToast('导入失败：' + (e && e.message ? e.message : '未知错误'));
   }
+}
+
+/* ---------- 20261101：一键恢复自动备份（数据安全兜底） ----------
+   用户此前丢失角色数据，根本原因是「空备份覆盖导入」清空了库，而普通玩家根本不知道
+   自动备份存在、更不知道它是个「文件夹」无法用文件选择器选。此功能解决：
+   · 系统自动扫描「文档/白日梦备份/auto-*」目录，找最近一份自动备份；
+   · 读它的 manifest.json（3.0 格式），走 doImport 的 3.0 路径（图片从 imagesDir 读回）；
+   · 全程进度面板，玩家只需点一下「恢复」，无需去任何文件夹手动找文件。
+   只做「恢复」，绝不改动现有导出/自动备份的写入流程。 */
+async function restoreAutoBackup() {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!FS || typeof FS.readdir !== 'function') {
+    showConfirm('当前环境不支持自动备份恢复（需在手机 App 内操作）。', null);
+    return;
+  }
+  let prog = null;
+  try {
+    // 阶段0：扫描自动备份目录
+    const r = await FS.readdir({ path: '白日梦备份', directory: 'DOCUMENTS' });
+    const names = (r.files || []).map(f => f.name).filter(n => n && n.indexOf('auto-') === 0);
+    if (!names.length) {
+      showConfirm('还没有任何自动备份。\n\n自动备份会在每次使用 App 后自动生成，等你用一段时间后再来恢复即可。', null);
+      return;
+    }
+    // 20261101 修复「恢复到残缺备份」：旧的「按时间戳取最新」会把恢复后残缺的自动备份
+    //   （图片被清空后重新自动备份出的只有几张图的目录）当成最新选走，导致图片永远补不回来。
+    //   改为：逐个检查各 auto-* 目录的 images 子目录里图片文件数量，选【图片最完整】的那份；
+    //   图片数并列时再按时间戳取最新。这样一定选到历史里图片最全的那次完整备份。
+    let bestSet = null, bestCount = -1, bestStamp = 0;
+    for (const n of names) {
+      try {
+        const imgR = await FS.readdir({ path: '白日梦备份/' + n + '/images', directory: 'DOCUMENTS' });
+        const cnt = (imgR.files || []).length;
+        const stamp = parseInt(n.slice(5), 10) || 0;
+        if (cnt > bestCount || (cnt === bestCount && stamp > bestStamp)) {
+          bestCount = cnt; bestStamp = stamp; bestSet = n;
+        }
+      } catch (e) { /* 该目录无 images，跳过 */ }
+    }
+    if (!bestSet || bestCount <= 0) {
+      showConfirm('没有找到包含图片的完整自动备份。', null);
+      return;
+    }
+    const latestSet = '白日梦备份/' + bestSet;
+
+    // 确认（覆盖导入会清空当前数据）
+    const go = await confirmAsync('已找到最完整的一份自动备份（含 ' + bestCount + ' 张图片）。\n\n将恢复到该时间点的完整数据（角色/聊天/表情包/头像/封面/字卡/世界树等，图片会一并还原）。\n\n⚠️ 覆盖导入会先清空当前所有数据，是否继续？', '恢复', '取消');
+    if (!go) return;
+
+    prog = startProgressPanel([
+      { label: '读取备份' },
+      { label: '还原图片' },
+      { label: '写入数据库' },
+    ], 0, 'import');
+    setProgressPanelMode(true);
+
+    // 阶段1：读 manifest.json
+    setStageProgress(0, 1, 1);
+    let data;
+    try {
+      const mr = await FS.readFile({ path: latestSet + '/manifest.json', directory: 'DOCUMENTS' });
+      const b64 = String(mr.data).replace(/[\r\n]/g, '');
+      const bin = atob(b64);
+      const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      data = JSON.parse(new TextDecoder('utf-8').decode(u8));
+    } catch (e) {
+      closeProgressPanel();
+      showConfirm('读取自动备份失败，可能备份不完整。', null);
+      return;
+    }
+    if (!data || data.app !== 'bairimeng') {
+      closeProgressPanel();
+      showConfirm('自动备份文件异常，无法恢复。', null);
+      return;
+    }
+    // 20261101 强制 imagesDir 指向扫描选中的那份（防 manifest 里的 imagesDir 指向别处导致图片读空）
+    data.imagesDir = latestSet + '/images';
+
+    // 阶段2+3：doImport 走 3.0 路径（图片从 imagesDir 读回，进度回调）
+    await doImport(data, 'overwrite', (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), null);
+    closeProgressPanel();
+  } catch (e) {
+    if (prog) closeProgressPanel();
+    miniToast('恢复失败：' + (e && e.message ? e.message : '未知错误'));
+  }
+}
+
+/* ---------- 20261101：角色卡独立导出/导入（用户点名需求） ----------
+   只含「角色 + TA 的专属表情包 + 角色设定」，不含字卡(cards)、聊天记录(messages)、
+   玩家表情库(emojis store)。角色对象本身就内嵌 emojis(专属表情包)、bio(人设)、
+   relation/peerRelations/banWords/playerNicknames(角色设定) 等全部字段，故直接整体
+   导出 characters store 即完整覆盖需求。图片(头像+表情包)走容器式单文件(2.2 同款)，
+   复用 collectImagesV4 + writeContainerFile，格式 .chardata。 */
+async function exportCharCards() {
+  let prog = null;
+  try {
+    const chars = await idbGetAll('characters');
+    if (!chars || !chars.length) { miniToast('还没有任何角色可以导出'); return; }
+    const _ts = (() => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; })();
+    const expFile = `白日梦角色卡备份_${_ts}.chardata`;
+
+    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    if (FS && FS.writeFile) {
+      // APK 端：容器式单文件（含头像/表情包图片块）
+      const fileGranted = await bmFilePermissionCheck();
+      if (!fileGranted) {
+        const go = await confirmAsync('导出需要「所有文件访问权限」才能写入「文档/白日梦备份」文件夹。\n是否现在去系统设置开启？', '去开启', '暂不导出');
+        if (go) { await bmFilePermissionRequest(); miniToast('请在系统设置里允许「白日梦」访问所有文件，开启后返回再点导出'); }
+        return;
+      }
+      prog = startProgressPanel([
+        { label: '整理角色' },
+        { label: '抽取图片' },
+        { label: '写入文件' },
+      ], 0, 'export');
+      setProgressPanelMode(true);
+      setStageProgress(0, 1, 1);
+      const payload = {
+        app: 'bairimeng',
+        format: 'chardata',
+        version: '2.2',
+        exportDate: new Date().toISOString(),
+        characters: chars,
+      };
+      const { data: headData, images } = await collectImagesV4(payload, (done, total) => setStageProgress(1, done, total));
+      setStageProgress(1, 1, 1);
+      await writeContainerFile('白日梦备份/' + expFile, headData, images, 'DOCUMENTS', (done, total) => setStageProgress(2, done, total));
+      setStageProgress(2, 1, 1);
+      closeProgressPanel();
+      miniToast('已导出角色卡「' + expFile + '」到「文档/白日梦备份」');
+      return;
+    }
+    // 网页端：单文件 <a download>（图片内嵌 base64）
+    miniToast('正在打包角色卡…');
+    const safeData = await buildCharCardsPayload(chars);
+    const blob = new Blob([JSON.stringify(safeData)], { type: 'application/octet-stream' });
+    await finishExport({ filename: expFile }, blob, '角色卡已导出');
+  } catch (e) {
+    closeProgressPanel();
+    miniToast('导出角色卡失败：' + (e && e.message ? e.message : '未知错误'));
+  }
+}
+
+/* 网页端角色卡导出：Blob → base64 内嵌（JSON 可序列化） */
+async function buildCharCardsPayload(chars) {
+  const payload = {
+    app: 'bairimeng',
+    format: 'chardata',
+    version: '2.2',
+    exportDate: new Date().toISOString(),
+    characters: chars,
+  };
+  return await deepImagesToExport(payload, '正在打包角色卡');
+}
+
+/* 角色卡导入弹窗（覆盖/合并） */
+function showImportCharModal(back = null) {
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:18px;font-weight:600;">导入角色卡</div>
+      <button class="icon-btn" id="imc-close">✕</button>
+    </div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
+      选择之前导出的「角色卡备份.chardata」文件。<br>
+      <span style="color:var(--danger);">⚠️ 覆盖导入会替换当前所有角色（不影响聊天记录、字卡等其它数据）。</span>
+    </div>
+    <div class="field">
+      <label>角色卡文件</label>
+      <input class="input" type="file" id="imc-file" accept=".chardata,.ocdata,.json,application/octet-stream,application/json,text/plain">
+    </div>
+    <div class="field">
+      <label>导入方式</label>
+      <div style="display:flex;gap:10px;">
+        <label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
+          <input type="radio" name="imc-mode" value="overwrite" checked style="accent-color:var(--purple);">
+          <span style="font-size:14px;">覆盖导入<span style="display:block;font-size:11px;color:var(--text-tertiary);">替换当前角色</span></span>
+        </label>
+        <label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
+          <input type="radio" name="imc-mode" value="merge" style="accent-color:var(--purple);">
+          <span style="font-size:14px;">合并导入<span style="display:block;font-size:11px;color:var(--text-tertiary);">保留现有，合并追加</span></span>
+        </label>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn" style="flex:1;" id="imc-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="imc-go">导入</button>
+    </div>
+  `);
+  if (isProgressActive()) setProgressPanelMode(true);
+  $('#imc-close').onclick = () => back ? back() : closeModal();
+  $('#imc-cancel').onclick = () => back ? back() : closeModal();
+  $('#imc-go').onclick = async () => {
+    const file = $('#imc-file').files[0];
+    if (!file) { showToast('请先选择角色卡文件'); return; }
+    const mode = (document.querySelector('input[name="imc-mode"]:checked') || {}).value || 'overwrite';
+    let prog = null;
+    try {
+      prog = startProgressPanel([
+        { label: '读取文件' },
+        { label: '解析数据' },
+        { label: '还原图片' },
+        { label: '写入数据库' },
+      ], 0, 'import');
+      setProgressPanelMode(true);
+      setStageProgress(0, 1, 1);
+      const probed = await probeContainerHead(file);
+      let data;
+      let containerFile = null;
+      let containerStart = 0;
+      if (probed.sepFound) {
+        data = JSON.parse(probed.headStr);
+        containerFile = file;
+        containerStart = probed.containerStart;
+      } else {
+        data = JSON.parse(probed.headStr);
+      }
+      setStageProgress(1, 1, 1);
+      const chars = Array.isArray(data.characters) ? data.characters : [];
+      if (!chars.length) {
+        closeProgressPanel();
+        showConfirm('这个文件里没有角色卡数据（角色列表为空）。', null);
+        return;
+      }
+      // 容器格式：逐张 file.slice 读图还原 {__img:4} → {blob,thumb}
+      if (containerFile) {
+        const readImage = async (offset, len, mime) => {
+          const buf = await containerFile.slice(containerStart + offset, containerStart + offset + len).arrayBuffer();
+          const copy = buf.slice(0);
+          if (len > 0 && copy.byteLength === 0) throw new Error('empty-blob');
+          return new Blob([copy], { type: (mime || 'image/png') });
+        };
+        const wrapped = await restoreImagesV4({ characters: chars }, readImage, (done, total) => setStageProgress(2, done, total));
+        data.characters = wrapped.characters;
+      } else {
+        data.characters = await deepImagesFromExport({ characters: chars }, (done, total) => setStageProgress(2, done, total));
+        data.characters = data.characters.characters;
+      }
+      setStageProgress(2, 1, 1);
+      await importCharCardsIntoDb(data.characters, mode, (done, total) => setStageProgress(3, done, total));
+      closeProgressPanel();
+    } catch (e) {
+      if (prog) closeProgressPanel();
+      miniToast('导入角色卡失败：' + (e && e.message ? e.message : '未知错误'));
+    }
+  };
+}
+
+/* 角色卡写入数据库：覆盖=清空 characters 再写；合并=按 id 覆盖/追加。只动 characters store。 */
+async function importCharCardsIntoDb(chars, mode, onStage = null) {
+  const stage = (idx, val, total) => { if (onStage) { try { onStage(idx, val, total); } catch (e) {} } };
+  if (mode === 'overwrite') {
+    // 覆盖：清空现有角色，再写入导入的角色
+    await idbClear('characters');
+  } else {
+    // 合并：现有角色保留，导入的角色按 id 覆盖（同名不同 id 会追加）
+  }
+  await idbBulkPut('characters', chars, (done) => stage(3, done, chars.length));
+  stage(3, chars.length, chars.length);
+  // 刷新内存缓存 + 界面
+  try { await refreshCharacters(); } catch (e) {}
+  closeModal();
+  miniToast('角色卡导入成功，正在重新载入…');
+  setTimeout(() => location.reload(), 800);
 }
 
 /* ---------- 导出全局数据（2.4：.ocdata 单文件备份格式，包含所有内容 + 图片资源内嵌）
@@ -16792,10 +17093,13 @@ async function restoreImagesV4(node, readImage, onProgress = null) {
     for (const k of Object.keys(n)) collect(n[k], n, k);
   })(node, null, null);
   if (!found.length) { if (onProgress) onProgress(0, 0); return node; }
-  // 20261031 提速：8 路并发还原（与 deepImagesFromExport 同模型）。旧写法逐张串行 readImage，
+  // 20261031 提速：并发还原（与 deepImagesFromExport 同模型）。旧写法逐张串行 readImage，
   //   2833 张图串行 file.slice 读盘很慢；并发后大幅缩短导入时间。单张失败不影响整体。
+  //   20261101：并发 8→3。真机 WebView 对 730MB 大文件 8 路并发 file.slice().arrayBuffer()
+  //   会触发 InvalidBlob（源 blob backing 失效）；降并发 + readImage 内 slice(0) 拷贝双保险。
   const total = found.length;
   let idx = 0, done = 0;
+  const CONC = 3;
   const worker = async () => {
     while (idx < total) {
       const i = idx++;
@@ -16817,7 +17121,7 @@ async function restoreImagesV4(node, readImage, onProgress = null) {
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  await Promise.all(Array.from({ length: Math.min(CONC, total) }, worker));
   exportProgress(false);
   return node;
 }
@@ -17105,11 +17409,19 @@ async function restoreImagesV3(node, readImage) {
       const i = idx++;
       const it = found[i];
       const n = it.n;
-      const blob = await readImage(n.ref, n.mime || 'image/png');
-      let thumb = null;
-      if (n.thumbRef) thumb = await readImage(n.thumbRef, n.thumbMime || 'image/jpeg');
-      const out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
-      if (it.parent) it.parent[it.key] = out;
+      try {
+        const blob = await readImage(n.ref, n.mime || 'image/png');
+        let thumb = null;
+        if (n.thumbRef) thumb = await readImage(n.thumbRef, n.thumbMime || 'image/jpeg');
+        const out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
+        if (it.parent) it.parent[it.key] = out;
+      } catch (e) {
+        // 20261101 缺失图容错：自动备份的 images 目录可能有少量文件缺失（历史清理/增量备份
+        // 导致的缺口），单张读失败若向上抛会让整个恢复中断（角色/消息全写不进去）。这里把
+        // 缺失的图降级为占位（空 Blob），其余图照常恢复，绝不让个别缺图拖垮整包导入。
+        const out = { blob: new Blob([]), thumb: null, w: n.w || 0, h: n.h || 0 };
+        if (it.parent) it.parent[it.key] = out;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
@@ -17199,7 +17511,11 @@ async function exportAll() {
   let save = null;
   let prog = null;
   try {
-    save = await beginExport('白日梦数据备份.ocdata'); // 先取保存句柄（点击激活期内），再慢慢打包图片
+    // 20261101 数据安全：文件名带时间戳，绝不覆盖旧备份。旧固定名「白日梦数据备份.ocdata」
+    //   每次导出会覆盖上一次的备份——用户一旦用「空备份」覆盖导入，旧备份也被覆盖丢失。
+    const _ts = (() => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; })();
+    const expFile = `白日梦数据备份_${_ts}.ocdata`;
+    save = await beginExport(expFile); // 先取保存句柄（点击激活期内），再慢慢打包图片
     if (save.cancelled) return;
     const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
     if (FS && FS.writeFile) {
@@ -17238,12 +17554,12 @@ async function exportAll() {
       headData.version = '2.2'; // 容器格式仍是 2.2 单文件（导入端靠分隔符识别，不靠 version）
       setStageProgress(1, 1, 1);
       // 阶段2：写入文件（writeContainerFile：JSON 头首块 writeFile + 图片逐块 appendFile，全程无超长字符串）
-      await writeContainerFile('白日梦备份/白日梦数据备份.ocdata', headData, images, 'DOCUMENTS', (done, total) => {
+      await writeContainerFile('白日梦备份/' + expFile, headData, images, 'DOCUMENTS', (done, total) => {
         setStageProgress(2, done, total);
       });
       setStageProgress(2, 1, 1);
       closeProgressPanel();
-      miniToast('已导出单文件「白日梦数据备份.ocdata」到「文档/白日梦备份」，导入时选该文件即可');
+      miniToast('已导出单文件「' + expFile + '」到「文档/白日梦备份」，导入时选该文件即可');
       return;
     }
     // 网页端（无 Capacitor）：仍走 2.2 单文件 <a download> 下载（不弹进度面板，网页端保持原样）
@@ -17258,8 +17574,8 @@ async function exportAll() {
     try {
       const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
       if (FS && FS.deleteFile) {
-        await FS.deleteFile({ path: '白日梦备份/白日梦数据备份.ocdata', directory: 'DOCUMENTS' });
-        await FS.deleteFile({ path: '白日梦备份/白日梦数据备份.ocdata', directory: 'DATA' });
+        await FS.deleteFile({ path: '白日梦备份/' + expFile, directory: 'DOCUMENTS' });
+        await FS.deleteFile({ path: '白日梦备份/' + expFile, directory: 'DATA' });
       }
     } catch (cleanErr) {}
     miniToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
