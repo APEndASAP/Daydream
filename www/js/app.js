@@ -15442,10 +15442,13 @@ function showImportChatModal(back = null) {
       let data;
       if (sepIdx !== -1) {
         data = JSON.parse(headProbe.slice(0, sepIdx));
-        const containerStart = sepIdx + BM_CONTAINER_SEP.length;
+        // 分隔符前是 JSON 头文本，其「字节数」= UTF-8 编码长度（含中文时 > 字符数）；
+        // file.slice 的 offset 是字节偏移，必须用字节数，否则含中文的 JSON 头会导致图片块错位。
+        const headBytes = new TextEncoder().encode(headProbe.slice(0, sepIdx)).length;
+        const containerStart = headBytes + new TextEncoder().encode(BM_CONTAINER_SEP).length;
         const readImageV4 = async (offset, len, mime) => {
-          const seg = await f.slice(containerStart + offset, containerStart + offset + len).text();
-          return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + seg);
+          const buf = await f.slice(containerStart + offset, containerStart + offset + len).arrayBuffer();
+          return new Blob([buf], { type: (mime || 'image/png') });
         };
         data = await restoreImagesV4(data, readImageV4);
       } else {
@@ -15756,7 +15759,8 @@ function showImportModal(back = null) {
           return;
         }
         containerFile = file;
-        containerStart = sepIdx + BM_CONTAINER_SEP.length;
+        // 分隔符前的 JSON 头文本 → 其 UTF-8 字节数（含中文时 > 字符数）；file.slice 是字节偏移
+        containerStart = new TextEncoder().encode(headStr).length + new TextEncoder().encode(BM_CONTAINER_SEP).length;
         setStageProgress(0, 1, 1);
       } else {
         // 老格式：整文件是纯 JSON，分块读 + 拼接解析
@@ -15788,8 +15792,8 @@ function showImportModal(back = null) {
       // 阶段2+3：还原图片 + 写入数据库。容器格式传 readImageV4（逐张 file.slice 读图）
       const readImageV4 = containerFile
         ? async (offset, len, mime) => {
-            const seg = await containerFile.slice(containerStart + offset, containerStart + offset + len).text();
-            return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + seg);
+            const buf = await containerFile.slice(containerStart + offset, containerStart + offset + len).arrayBuffer();
+            return new Blob([buf], { type: (mime || 'image/png') });
           }
         : null;
       await doImport(data, mode, (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), readImageV4);
@@ -15996,7 +16000,15 @@ async function imgDescToExport(v) {
 
 const BM_CONTAINER_SEP = '\nBMIMG\n'; // 容器分隔符（JSON 头与图片块之间）
 
-/* 抽取图片 → 生成容器结构。返回 { data, images:[{ref,mime,src,blob,dataURL,b64Len}] }。
+/* base64 正文 → 解码后二进制字节数（精确：L/4*3 减去末尾 padding 数；无换行、纯连续 base64）。 */
+function b64ToByteLen(b64) {
+  let pad = 0;
+  if (b64.endsWith('==')) pad = 2;
+  else if (b64.endsWith('=')) pad = 1;
+  return Math.floor(b64.length / 4) * 3 - pad;
+}
+
+/* 抽取图片 → 生成容器结构。返回 { data, images:[{ref,mime,src,blob,dataURL,byteLen}] }。
    收集两类图片：① {blob:Blob} 描述符（正常新数据）；② {__img:1, data:dataURL} 老格式内嵌。
    统一替换成 {__img:4, ref, mime, offset, len}（offset/len 在 packContainerFile 阶段回填）。
    20261031 流式化：此处只收集 Blob 引用 + 预计算 base64 长度（4*ceil(size/3)，实测精确），
@@ -16028,12 +16040,12 @@ async function collectImagesV4(node, onProgress = null) {
       const mime = (n.blob.type) || 'image/png';
       const ref = 'img-' + String(++seq).padStart(6, '0');
       const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
-      images.push({ ref, mime, src: 'blob', blob: n.blob, dataURL: '', b64Len: 4 * Math.ceil(n.blob.size / 3) });
+      images.push({ ref, mime, src: 'blob', blob: n.blob, dataURL: '', byteLen: n.blob.size });
       if (n.thumb instanceof Blob) {
         const tref = 'thm-' + String(seq).padStart(6, '0');
         out.thumbRef = tref;
         out.thumbMime = (n.thumb.type) || 'image/jpeg';
-        images.push({ ref: tref, mime: out.thumbMime, src: 'blob', blob: n.thumb, dataURL: '', b64Len: 4 * Math.ceil(n.thumb.size / 3) });
+        images.push({ ref: tref, mime: out.thumbMime, src: 'blob', blob: n.thumb, dataURL: '', byteLen: n.thumb.size });
       }
       return out;
     }
@@ -16045,15 +16057,16 @@ async function collectImagesV4(node, onProgress = null) {
       const mainDataURL = (cIdx !== -1 ? (n.data || '').slice(cIdx + 1) : (n.data || ''));
       const ref = 'img-' + String(++seq).padStart(6, '0');
       const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
-      images.push({ ref, mime, src: 'dataURL', blob: null, dataURL: mainDataURL, b64Len: mainDataURL.length });
+      images.push({ ref, mime, src: 'dataURL', blob: null, dataURL: mainDataURL, byteLen: b64ToByteLen(mainDataURL) });
       if (typeof n.thumb === 'string' && n.thumb) {
         const tdm = /^data:([^;,]+)?(;base64)?,/.exec(n.thumb);
         const thumbMime = (tdm && tdm[1]) || 'image/jpeg';
         const tIdx = n.thumb.indexOf(',');
+        const thumbDataURL = (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb);
         const tref = 'thm-' + String(seq).padStart(6, '0');
         out.thumbRef = tref;
         out.thumbMime = thumbMime;
-        images.push({ ref: tref, mime: thumbMime, src: 'dataURL', blob: null, dataURL: (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb), b64Len: (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb).length });
+        images.push({ ref: tref, mime: thumbMime, src: 'dataURL', blob: null, dataURL: thumbDataURL, byteLen: b64ToByteLen(thumbDataURL) });
       }
       return out;
     }
@@ -16073,7 +16086,7 @@ async function collectImagesV4(node, onProgress = null) {
 function packContainerFile(data, images) {
   const imgMap = {};
   let cursor = 0;
-  for (const im of images) { imgMap[im.ref] = { offset: cursor, len: im.b64Len, mime: im.mime }; cursor += im.b64Len; }
+  for (const im of images) { imgMap[im.ref] = { offset: cursor, len: im.byteLen, mime: im.mime }; cursor += im.byteLen; }
   // 回填 offset/len 到 data 里的 {__img:4} 引用（含 thumbOffset/thumbLen）
   const seen = new WeakSet();
   (function walk(n) {
@@ -16108,7 +16121,7 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
   // ② 逐张图片【流式】转 base64 并分块 append（每张转完立即写盘、释放，内存只留单张）
   let totalBytes = headB64.length;
   for (const im of images) {
-    totalBytes += im.b64Len;
+    totalBytes += im.byteLen;
   }
   let written = headB64.length;
   for (let i = 0; i < images.length; i++) {
@@ -16128,7 +16141,8 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
         // 无 appendFile：累加后再整体写（兜底，仅小数据场景）
         throw new Error('文件系统不支持追加写入');
       }
-      written += part.length;
+      // part 是 base64 正文，appendFile 解码成二进制写入；进度按二进制字节累加（= base64 长度*3/4）
+      written += (part.length / 4) * 3;
       if (onProgress) onProgress(written, totalBytes);
     }
     // 释放该张引用，帮助 GC（转码出的 seg 不再被引用）
