@@ -60,6 +60,8 @@ let chatSettings = {
   multiCardIntervalMax: 240,       // 20261031：多字卡组合独立随机固定间隔上限（分钟）
   charSchedCountMin: 2,            // 20261031：角色每天随机写入行程条数下限（默认2）
   charSchedCountMax: 3,            // 20261031：角色每天随机写入行程条数上限（默认3）
+  commentPickCountMin: 0,          // 20261031：行程留言/备注每次抽取字卡张数下限（默认0，0=可能不写）
+  commentPickCountMax: 2,          // 20261031：行程留言/备注每次抽取字卡张数上限（默认2）
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -8534,6 +8536,8 @@ function showBanWordsModal(c) {
   const bannedGroups = new Set(c.bannedGroups || []);
   const bannedGroupItems = { ...(c.bannedGroupItems || {}) };
   const fold = { ...(window._banFold || {}) };
+  // 当前 tab：replies=回复/寄语，pokes=戳一戳（默认 replies）
+  if (window._banTab !== 'pokes') window._banTab = 'replies';
 
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
@@ -8551,6 +8555,10 @@ function showBanWordsModal(c) {
     </div>
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">从字卡库禁用（文件夹形式：可展开收起 / 整组禁用 / 单条勾选）</div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px;" id="ban-tabs">
+      <button class="card-mod-tab active" data-bantab="replies">回复 / 寄语</button>
+      <button class="card-mod-tab" data-bantab="pokes">戳一戳</button>
+    </div>
     <div style="margin-bottom:16px;display:flex;flex-direction:column;gap:8px;" id="ban-groups"></div>
 
     <button class="btn primary block" id="ban-save">完成</button>
@@ -8583,16 +8591,34 @@ function showBanWordsModal(c) {
     { id: '__pool_replies__', name: '未分组回复', color: '#a78bfa', source: () => cards.customReplies || [] },
     { id: '__pool_mottos__', name: '寄语', color: '#f472b6', source: () => cards.customMottos || [] },
   ];
-  const allBanFolders = () => [
+  // 戳一戳 tab：访客戳一戳的分组 + 未分组戳一戳（伪文件夹 id __pool_pokes__）
+  const pokeRealGroups = () => (cards.customPokeGroups || []).filter(g => {
+    if (!g || typeof g !== 'object' || !g.id) return false;
+    const nameOk = typeof g.name === 'string' && g.name.trim() && !isLineJunkText(g.name);
+    return nameOk || (g.items || []).some(t => typeof t === 'string' && t.trim() && !isLineJunkText(t));
+  });
+  const POOL_POKE_FOLDERS = [
+    { id: '__pool_pokes__', name: '未分组戳一戳', color: '#a78bfa', source: () => cards.customPokes || [] },
+  ];
+  const pokeFolders = () => [
+    ...pokeRealGroups(),
+    ...POOL_POKE_FOLDERS.map(p => ({ id: p.id, name: p.name, color: p.color, items: p.source() })),
+  ];
+  // 根据当前 tab 返回禁用文件夹集合：replies=回复/寄语，pokes=戳一戳
+  const allBanFolders = () => (window._banTab === 'pokes' ? pokeFolders() : [
     ...realGroups(),
     ...POOL_FOLDERS.map(p => ({ id: p.id, name: p.name, color: p.color, items: p.source() })),
-  ];
+  ]);
   const findFolder = (gid) => allBanFolders().find(x => x.id === gid);
   function renderGroups() {
     const el = $('#ban-groups');
+    // 同步 tab 头部 active 状态（初始打开时若上次停在戳一戳 tab，需校正高亮）
+    document.querySelectorAll('[data-bantab]').forEach(t => {
+      t.classList.toggle('active', t.dataset.bantab === window._banTab);
+    });
     const folders = allBanFolders();
     if (folders.length === 0) {
-      el.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px;">字卡库还没有内容可禁用</div>';
+      el.innerHTML = `<div style="color:var(--text-tertiary);font-size:13px;">${window._banTab === 'pokes' ? '戳一戳库还没有内容可禁用' : '字卡库还没有内容可禁用'}</div>`;
       return;
     }
     el.innerHTML = folders.map(g => {
@@ -8655,6 +8681,15 @@ function showBanWordsModal(c) {
 
   renderList();
   renderGroups();
+
+  // tab 切换（回复/寄语 ↔ 戳一戳）
+  document.querySelectorAll('[data-bantab]').forEach(el => {
+    el.onclick = () => {
+      window._banTab = el.dataset.bantab;
+      document.querySelectorAll('[data-bantab]').forEach(t => t.classList.toggle('active', t === el));
+      renderGroups();
+    };
+  });
 
   // 关闭：把本地状态写回 c（点 ✕ 也保存，符合直觉）
   const commit = async (toast) => {
@@ -9187,10 +9222,24 @@ async function sendCharPoke(c) {
     }
   } catch (e) {}
   if (!text) {
-    const pool = (cards.customPokes || []).filter(t =>
-      !(getCharBanWords(c) || []).some(b => b && t.includes(b)));
-    if (!pool.length) return;
-    text = drawFrom(pool);
+    // 戳一戳抽取池：顶层未分组 + 未禁用分组（modulePool），再按访客禁词/单条禁用过滤。
+    // bannedGroups 里的分组 id 已由 modulePool 通过 g.disabled 之外的方式……此处额外处理：
+    // 整组禁用的戳一戳分组（customPokeGroups 的 id 在 c.bannedGroups 中）与单条禁用
+    // （c.bannedGroupItems）都要剔除。modulePool 只跳过 g.disabled，不感知 c.bannedGroups，
+    // 所以这里手拼「未分组 + 未被整组禁用的分组」池。
+    const bannedGroups = new Set((c && c.bannedGroups) || []);
+    const pool = [];
+    (cards.customPokes || []).forEach(t => pool.push(t));
+    (cards.customPokeGroups || []).forEach(g => {
+      if (g.disabled || bannedGroups.has(g.id)) return;
+      (g.items || []).forEach(t => pool.push(t));
+    });
+    const banWords = getCharBanWords(c);
+    const filtered = pool.filter(t =>
+      !(banWords || []).some(b => b && t.includes(b)));
+    const use = filtered.length ? filtered : pool;
+    if (!use.length) return;
+    text = drawFrom(use);
   }
   const m = { id: uid('msg'), charId: c.id, from: 'them', type: 'poke', content: text, time: Date.now() };
   await idbPut('messages', m);
@@ -11274,6 +11323,20 @@ const CARD_MODULES = [
   { key: 'emojis', label: '表情' },
   { key: 'momentPresets', label: '朋友圈预设' },
 ];
+// 各模块的扁平数组字段 与 分组字段 对应关系（用于非 replies 模块的分组/批量管理）
+// 注：只有「访客戳一戳(pokes)」需要分组；玩家戳一戳/状态/寄语/表情/朋友圈预设都不分组，
+//   只保留批量管理（勾选 + 删除）。
+const CARD_MODULE_FIELDS = {
+  pokes: { list: 'customPokes', groups: 'customPokeGroups' },
+};
+// 只做批量管理（不分组）的模块清单：扁平数组字段名
+const CARD_FLAT_MODULES = {
+  playerPokes: 'customPlayerPokes',
+  statuses: 'customStatuses',
+  mottos: 'customMottos',
+  emojis: 'customEmojis',
+  momentPresets: 'customMomentPresets',
+};
 
 function showCardsModal() {
   const tab = window._cardsTab || 'replies';
@@ -11355,35 +11418,99 @@ function showCardsModal() {
       }).join('')}
     `;
   } else {
-    // 其他模块（访客戳一戳/玩家戳一戳/状态/寄语/表情）：简单列表 + 添加/删除
-    const listKey = { pokes: 'customPokes', playerPokes: 'customPlayerPokes', statuses: 'customStatuses', mottos: 'customMottos', emojis: 'customEmojis', momentPresets: 'customMomentPresets' }[tab];
-    const list = cards[listKey] || [];
-    const pokeNote = tab === 'pokes'
-      ? '<div style="font-size:12px;color:var(--text-tertiary);margin:-6px 0 12px;">访客戳玩家时从这个库抽取，展示为「访客名 + 文案」，出现在聊天页面中间（不是气泡）</div>'
-      : (tab === 'playerPokes'
+    // 非 replies 模块分两类：
+    //   A. pokes（访客戳一戳）：分组 + 批量管理 + 移入分组 + 新建分组
+    //   B. 扁平模块（玩家戳一戳/状态/寄语/表情/朋友圈预设）：仅批量管理（勾选删除），不分组
+    const isPokes = (tab === 'pokes');
+    if (isPokes) {
+      const listKey = CARD_MODULE_FIELDS.pokes.list;
+      const groupsKey = CARD_MODULE_FIELDS.pokes.groups;
+      const list = cards[listKey] || [];
+      if (!cards[groupsKey]) cards[groupsKey] = [];
+      const groups = cards[groupsKey];
+      const totalN = list.length + groups.reduce((s, g) => s + (g.items || []).length, 0);
+      const pokeNote = '<div style="font-size:12px;color:var(--text-tertiary);margin:-6px 0 12px;">访客戳玩家时从这个库抽取，展示为「访客名 + 文案」，出现在聊天页面中间（不是气泡）</div>';
+      // 未分组
+      const ungroupHtml = `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;" data-mod-fold-ungroup>
+            <span style="display:flex;align-items:center;gap:6px;">
+              ${batch ? `<span class="bg-check" data-mod-folder-ungroup style="width:18px;height:18px;border-radius:6px;border:2px solid var(--text-tertiary);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#141019;flex-shrink:0;"></span>` : ''}
+              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#8b8b94;"></span>
+              未分组（${list.length}）
+            </span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 4px;max-height:180px;overflow-y:auto;" id="mod-ungrouped">
+            ${list.map((t, i) => batch
+              ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-sel-ungroup="${i}">${escapeHtml(cardBrief(t))}</span>`
+              : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-idx="${i}">${escapeHtml(cardBrief(t))} ✕</span>`
+            ).join('') || '<span style="color:var(--text-tertiary);font-size:12px;">（空）</span>'}
+          </div>
+        </div>`;
+      // 分组
+      const groupsHtml = groups.map((g, gi) => {
+        const collapsed = !!g._collapsed;
+        const gName = (typeof g.name === 'string' && g.name.trim() && !isLineJunkText(g.name)) ? g.name : '未命名分组';
+        return `
+          <div style="margin-bottom:16px;border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+            <div style="font-size:14px;font-weight:600;display:flex;align-items:center;justify-content:space-between;padding:11px 12px;cursor:pointer;background:var(--bg-elevated-2);" data-mod-fold-group="${gi}">
+              <span style="display:flex;align-items:center;gap:6px;">
+                ${batch ? `<span class="bg-check" data-mod-folder="${gi}" style="width:18px;height:18px;border-radius:6px;border:2px solid var(--text-tertiary);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#141019;flex-shrink:0;cursor:pointer;"></span>` : ''}
+                <span style="color:var(--text-tertiary);font-size:12px;transition:transform .15s;">${collapsed ? '▸' : '▾'}</span>
+                <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${g.color};"></span>
+                ${escapeHtml(gName)}（${g.items.length}）${g.disabled ? '<span style="color:var(--danger);font-size:11px;">已禁用</span>' : ''}
+              </span>
+              ${batch ? '' : `<span class="badge" style="cursor:pointer;color:var(--danger);" data-mod-delgroup="${gi}" title="删除分组">删</span>`}
+            </div>
+            <div style="display:${collapsed ? 'none' : 'flex'};flex-wrap:wrap;gap:6px;padding:12px;">
+              ${g.items.length === 0 ? '<span style="color:var(--text-tertiary);font-size:12px;">（空分组）</span>' : g.items.map((t, ii) => batch
+                ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-sel-group="${gi}" data-mod-sel-i="${ii}">${escapeHtml(cardBrief(t))}</span>`
+                : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-g="${gi}" data-mod-i="${ii}">${escapeHtml(cardBrief(t))} ✕</span>`
+              ).join('')}
+            </div>
+          </div>`;
+      }).join('');
+      body = `
+        <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">共 ${totalN} 条 · ${groups.length} 个分组${batch ? ' · <span style="color:var(--purple-soft);">批量模式：点击勾选，可整组勾选或移入分组</span>' : ''}</div>
+        ${pokeNote}
+        ${ungroupHtml}
+        ${groupsHtml}
+        <div style="display:flex;gap:8px;">
+          <input class="input" id="mod-add-input" placeholder="添加一条…" style="flex:1;">
+          <button class="btn primary" id="mod-add-btn">添加</button>
+        </div>
+        ${!batch ? `<div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn block" id="mod-new-group">＋ 新建分组</button>
+        </div>` : ''}
+      `;
+    } else {
+      // 扁平模块：仅批量管理（勾选删除），不分组
+      const flatKey = CARD_FLAT_MODULES[tab];
+      const list = cards[flatKey] || [];
+      const pokeNote = tab === 'playerPokes'
         ? '<div style="font-size:12px;color:var(--text-tertiary);margin:-6px 0 12px;">你在聊天页 + 面板里使用的戳一戳，展示为「你 + 文案」（可用 TA 指代访客），初始为空、与访客库分开</div>'
         : (tab === 'momentPresets'
-          ? '<div style="font-size:12px;color:var(--text-tertiary);margin:-6px 0 12px;">恋人关系专属：仅对与你（玩家）是「恋人」关系的角色生效。TA 发朋友圈时，25% 概率从这里抽、75% 从普通字卡库抽；非恋人角色不会用到这个库。</div>'
-          : ''));
-    body = `
-      <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">共 ${list.length} 条</div>
-      ${pokeNote}
-      <div style="max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
-        ${list.map((t, i) => `
-          <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:10px;">
-            <span style="flex:1;font-size:14px;word-break:break-word;">${escapeHtml(t)}</span>
-            <button class="badge" style="cursor:pointer;color:var(--danger);flex-shrink:0;" data-mod-del="${i}">删</button>
-          </div>`).join('') || '<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:24px 0;">还没有内容</div>'}
-      </div>
-      <div style="display:flex;gap:8px;">
-        <input class="input" id="mod-add-input" placeholder="添加一条…" style="flex:1;">
-        <button class="btn primary" id="mod-add-btn">添加</button>
-      </div>
-      ${tab === 'momentPresets' ? `
-      <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn block" id="mod-batch-import">⬆ 批量导入（每行一条）</button>
-      </div>` : ''}
-    `;
+          ? '<div style="font-size:12px;color:var(--text-tertiary);margin:-6px 0 12px;">恋人关系专属：仅对与你（玩家）是「恋人」关系的角色生效。TA 发朋友圈时从这里抽；非恋人角色不会用到这个库。</div>'
+          : '');
+      body = `
+        <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">共 ${list.length} 条${batch ? ' · <span style="color:var(--purple-soft);">批量模式：点击勾选</span>' : ''}</div>
+        ${pokeNote}
+        <div style="max-height:340px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">
+          ${list.map((t, i) => batch
+            ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-flat-sel="${i}">${escapeHtml(cardBrief(t))}</span>`
+            : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-flat-idx="${i}">${escapeHtml(cardBrief(t))} ✕</span>`
+          ).join('') || '<span style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:24px 0;">还没有内容</span>'}
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input class="input" id="mod-add-input" placeholder="添加一条…" style="flex:1;">
+          <button class="btn primary" id="mod-add-btn">添加</button>
+        </div>
+        ${tab === 'momentPresets' && !batch ? `
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn block" id="mod-batch-import">⬆ 批量导入（每行一条）</button>
+        </div>` : ''}
+      `;
+    }
   }
 
   openModal(`
@@ -11418,7 +11545,12 @@ function showCardsModal() {
       ${batch && tab === 'replies' ? `
         <button class="btn danger block" id="btn-cards-batchdel">删除所选字卡</button>
       ` : ''}
-      ${batch && tab !== 'replies' ? `<button class="btn block" id="btn-cards-batchnote">该模块暂不支持批量管理</button>` : ''}
+      ${batch && tab === 'pokes' ? `
+        <button class="btn block" id="btn-mod-movetogroup">📁 移入分组</button>
+        <button class="btn block" id="btn-mod-newgroup-batch">＋ 新建分组</button>
+        <button class="btn danger block" id="btn-cards-batchdel-mod">删除所选内容</button>
+      ` : ''}
+      ${batch && tab !== 'replies' && tab !== 'pokes' ? `<button class="btn danger block" id="btn-cards-batchdel-mod">删除所选内容</button>` : ''}
       ${!batch && tab === 'replies' ? `
         <div style="display:flex;gap:10px;">
           <button class="btn block" style="flex:1;" id="btn-cards-import">⬆ 导入字卡</button>
@@ -11467,43 +11599,300 @@ function showCardsModal() {
   });
   if (searchOn) return; // 搜索态只展示过滤结果，不渲染折叠/分组/批量等交互
 
-  // 非 replies 模块：添加/删除
+  // 非 replies 模块：pokes（访客戳一戳）走分组+批量+移入分组；其余扁平模块走批量勾选删除
   if (tab !== 'replies') {
-    const listKey = { pokes: 'customPokes', playerPokes: 'customPlayerPokes', statuses: 'customStatuses', mottos: 'customMottos', emojis: 'customEmojis', momentPresets: 'customMomentPresets' }[tab];
-    if (!cards[listKey]) cards[listKey] = [];
-    document.querySelectorAll('[data-mod-del]').forEach(el => {
+    const isPokes = (tab === 'pokes');
+
+    if (isPokes) {
+      const listKey = CARD_MODULE_FIELDS.pokes.list;
+      const groupsKey = CARD_MODULE_FIELDS.pokes.groups;
+      if (!cards[listKey]) cards[listKey] = [];
+      if (!cards[groupsKey]) cards[groupsKey] = [];
+      const groups = cards[groupsKey];
+
+      // 分组折叠/展开
+      document.querySelectorAll('[data-mod-fold-group]').forEach(el => {
+        el.onclick = (ev) => {
+          if (ev.target.closest('[data-mod-delgroup]')) return;
+          if (ev.target.closest('[data-mod-folder]')) return;
+          const gi = parseInt(el.dataset.modFoldGroup);
+          const g = groups[gi];
+          g._collapsed = !g._collapsed;
+          saveCards(cards).then(() => showCardsModal());
+        };
+      });
+
+      if (batch) {
+        // 批量模式：勾选（未分组 + 分组整组 + 分组内单条）
+        const selUngroup = new Set();
+        const selGroup = new Set(); // "gi:ii"
+        const applyHighlight = () => {
+          document.querySelectorAll('[data-mod-sel-ungroup]').forEach(el => {
+            const i = parseInt(el.dataset.modSelUngroup);
+            const on = selUngroup.has(i);
+            el.style.background = on ? 'var(--purple)' : '';
+            el.style.color = on ? '#141019' : '';
+          });
+          document.querySelectorAll('[data-mod-sel-group]').forEach(el => {
+            const key = el.dataset.modSelGroup + ':' + el.dataset.modSelI;
+            const on = selGroup.has(key);
+            el.style.background = on ? 'var(--purple)' : '';
+            el.style.color = on ? '#141019' : '';
+          });
+          document.querySelectorAll('[data-mod-folder]').forEach(el => {
+            const gi = parseInt(el.dataset.modFolder);
+            const g = groups[gi];
+            const all = (g.items || []).map((_, ii) => `${gi}:${ii}`);
+            const selCount = all.filter(k => selGroup.has(k)).length;
+            const full = all.length > 0 && selCount === all.length;
+            el.style.background = full ? 'var(--purple)' : '';
+            el.style.borderColor = full ? 'var(--purple)' : 'var(--text-tertiary)';
+            el.textContent = full ? '✓' : '';
+          });
+          const unCheck = document.querySelector('[data-mod-folder-ungroup]');
+          if (unCheck) {
+            const allN = cards[listKey].length;
+            const selN = allN > 0 ? cards[listKey].filter((_, i) => selUngroup.has(i)).length : 0;
+            const full = allN > 0 && selN === allN;
+            unCheck.style.background = full ? 'var(--purple)' : '';
+            unCheck.style.borderColor = full ? 'var(--purple)' : 'var(--text-tertiary)';
+            unCheck.textContent = full ? '✓' : '';
+          }
+        };
+        document.querySelectorAll('[data-mod-sel-ungroup]').forEach(el => {
+          el.onclick = () => { const i = parseInt(el.dataset.modSelUngroup); selUngroup.has(i) ? selUngroup.delete(i) : selUngroup.add(i); applyHighlight(); };
+        });
+        document.querySelectorAll('[data-mod-sel-group]').forEach(el => {
+          el.onclick = () => { const key = el.dataset.modSelGroup + ':' + el.dataset.modSelI; selGroup.has(key) ? selGroup.delete(key) : selGroup.add(key); applyHighlight(); };
+        });
+        document.querySelectorAll('[data-mod-folder]').forEach(el => {
+          el.onclick = () => {
+            const gi = parseInt(el.dataset.modFolder);
+            const g = groups[gi];
+            const keys = (g.items || []).map((_, ii) => `${gi}:${ii}`);
+            const allOn = keys.length > 0 && keys.every(k => selGroup.has(k));
+            keys.forEach(k => allOn ? selGroup.delete(k) : selGroup.add(k));
+            applyHighlight();
+          };
+        });
+        const unCheck = document.querySelector('[data-mod-folder-ungroup]');
+        if (unCheck) {
+          unCheck.onclick = () => {
+            const allN = cards[listKey].length;
+            const allOn = allN > 0 && cards[listKey].every((_, i) => selUngroup.has(i));
+            cards[listKey].forEach((_, i) => allOn ? selUngroup.delete(i) : selUngroup.add(i));
+            applyHighlight();
+          };
+        }
+
+        // 收集当前勾选的内容（用于移入分组/删除）
+        const collectSelection = () => {
+          const ungroupItems = [...selUngroup].sort((a, b) => b - a).map(i => ({ from: 'ungroup', idx: i, text: cards[listKey][i] }));
+          const groupItems = [];
+          const groupDel = {};
+          selGroup.forEach(k => {
+            const [g, i] = k.split(':').map(Number);
+            (groupDel[g] = groupDel[g] || []).push(i);
+          });
+          Object.keys(groupDel).forEach(g => {
+            groupDel[g].sort((a, b) => b - a).forEach(i => groupItems.push({ from: 'group', g: parseInt(g), idx: i, text: groups[g].items[i] }));
+          });
+          return { ungroupItems, groupItems, groupDel };
+        };
+
+        // 移入分组
+        const moveBtn = $('#btn-mod-movetogroup');
+        if (moveBtn) {
+          moveBtn.onclick = () => {
+            const { ungroupItems, groupItems } = collectSelection();
+            const totalSel = ungroupItems.length + groupItems.length;
+            if (totalSel === 0) { showToast('请先勾选要移动的内容'); return; }
+            showCardMoveModalForGroups(groups, (targetName) => {
+              let target = groups.find(g => g.name === targetName);
+              if (!target) {
+                target = { id: uid('group'), name: targetName, color: '#a78bfa', disabled: false, _collapsed: false, items: [] };
+                groups.push(target);
+              }
+              let moved = 0;
+              // 移入分组：分组内已勾选的（换个分组）+ 未分组勾选的
+              const groupDel = {};
+              selGroup.forEach(k => {
+                const [g, i] = k.split(':').map(Number);
+                (groupDel[g] = groupDel[g] || []).push(i);
+              });
+              Object.keys(groupDel).forEach(g => {
+                const idxs = groupDel[g].sort((a, b) => b - a);
+                idxs.forEach(i => { target.items.push(groups[g].items[i]); moved++; });
+                idxs.forEach(i => groups[g].items.splice(i, 1));
+              });
+              const ungroupIdx = [...selUngroup].sort((a, b) => b - a);
+              ungroupIdx.forEach(i => { target.items.push(cards[listKey][i]); moved++; });
+              ungroupIdx.forEach(i => cards[listKey].splice(i, 1));
+              saveCards(cards).then(() => {
+                miniToast(`已移动 ${moved} 条到「${targetName}」`);
+                window._cardsBatch = false;
+                showCardsModal();
+              });
+            });
+          };
+        }
+
+        // 批量模式下新建分组（勾选内容直接移入新分组）
+        const newGroupBatchBtn = $('#btn-mod-newgroup-batch');
+        if (newGroupBatchBtn) {
+          newGroupBatchBtn.onclick = () => {
+            const { ungroupItems, groupItems } = collectSelection();
+            const totalSel = ungroupItems.length + groupItems.length;
+            showCardGroupModal(groupsKey, totalSel > 0 ? (newGroup) => {
+              // 新建分组后，把勾选内容移入新分组
+              const groupDel = {};
+              selGroup.forEach(k => {
+                const [g, i] = k.split(':').map(Number);
+                (groupDel[g] = groupDel[g] || []).push(i);
+              });
+              Object.keys(groupDel).forEach(g => {
+                const idxs = groupDel[g].sort((a, b) => b - a);
+                idxs.forEach(i => { newGroup.items.push(groups[g].items[i]); });
+                idxs.forEach(i => groups[g].items.splice(i, 1));
+              });
+              const ungroupIdx = [...selUngroup].sort((a, b) => b - a);
+              ungroupIdx.forEach(i => { newGroup.items.push(cards[listKey][i]); });
+              ungroupIdx.forEach(i => cards[listKey].splice(i, 1));
+            } : null);
+          };
+        }
+
+        // 批量删除
+        const delBtn = $('#btn-cards-batchdel-mod');
+        if (delBtn) {
+          delBtn.onclick = () => {
+            const ungroupIdx = [...selUngroup].sort((a, b) => b - a);
+            ungroupIdx.forEach(i => cards[listKey].splice(i, 1));
+            const groupDel = {};
+            selGroup.forEach(k => {
+              const [g, i] = k.split(':').map(Number);
+              (groupDel[g] = groupDel[g] || []).push(i);
+            });
+            Object.keys(groupDel).forEach(g => {
+              const idxs = groupDel[g].sort((a, b) => b - a);
+              idxs.forEach(i => groups[g].items.splice(i, 1));
+            });
+            saveCards(cards).then(() => { window._cardsBatch = false; showCardsModal(); });
+          };
+        }
+        return;
+      }
+
+      // 非批量：删除未分组条目
+      document.querySelectorAll('[data-mod-idx]').forEach(el => {
+        el.onclick = () => {
+          const i = parseInt(el.dataset.modIdx);
+          cards[listKey].splice(i, 1);
+          saveCards(cards).then(() => showCardsModal());
+        };
+      });
+      // 非批量：删除分组内条目
+      document.querySelectorAll('[data-mod-g][data-mod-i]').forEach(el => {
+        el.onclick = () => {
+          const g = parseInt(el.dataset.modG), i = parseInt(el.dataset.modI);
+          groups[g].items.splice(i, 1);
+          saveCards(cards).then(() => showCardsModal());
+        };
+      });
+      // 非批量：删除分组
+      document.querySelectorAll('[data-mod-delgroup]').forEach(el => {
+        el.onclick = () => {
+          const g = parseInt(el.dataset.modDelgroup);
+          showConfirm(`删除分组「${groups[g].name || '未命名分组'}」？组内内容将一并删除。`, () => {
+            groups.splice(g, 1);
+            saveCards(cards).then(() => showCardsModal());
+          });
+        };
+      });
+      // 添加一条：有分组则让玩家选分组（默认未分组），无分组直接进未分组
+      $('#mod-add-btn').onclick = () => {
+        const t = $('#mod-add-input').value.trim();
+        if (!t) { showToast('内容不能为空'); return; }
+        cards[listKey] = cards[listKey] || [];
+        if (groups.length === 0) {
+          cards[listKey].push(t);
+          saveCards(cards).then(() => showCardsModal());
+        } else {
+          showGroupSelectModal(groups, (gid) => {
+            if (gid == null) { cards[listKey].push(t); }        // 未选 → 未分组
+            else { groups.find(g => g.id === gid).items.push(t); } // 选了 → 进对应分组
+            saveCards(cards).then(() => showCardsModal());
+          });
+        }
+      };
+      // 新建分组（非批量）
+      const newGroupBtn = $('#mod-new-group');
+      if (newGroupBtn) {
+        newGroupBtn.onclick = () => showCardGroupModal(groupsKey);
+      }
+      return;
+    }
+
+    // 扁平模块（玩家戳一戳/状态/寄语/表情/朋友圈预设）：仅批量勾选删除，不分组
+    const flatKey = CARD_FLAT_MODULES[tab];
+    if (!cards[flatKey]) cards[flatKey] = [];
+
+    if (batch) {
+      const sel = new Set();
+      const applyHighlight = () => {
+        document.querySelectorAll('[data-flat-sel]').forEach(el => {
+          const i = parseInt(el.dataset.flatSel);
+          const on = sel.has(i);
+          el.style.background = on ? 'var(--purple)' : '';
+          el.style.color = on ? '#141019' : '';
+        });
+      };
+      document.querySelectorAll('[data-flat-sel]').forEach(el => {
+        el.onclick = () => { const i = parseInt(el.dataset.flatSel); sel.has(i) ? sel.delete(i) : sel.add(i); applyHighlight(); };
+      });
+      const delBtn = $('#btn-cards-batchdel-mod');
+      if (delBtn) {
+        delBtn.onclick = () => {
+          const idxs = [...sel].sort((a, b) => b - a);
+          idxs.forEach(i => cards[flatKey].splice(i, 1));
+          saveCards(cards).then(() => { window._cardsBatch = false; showCardsModal(); });
+        };
+      }
+      return;
+    }
+
+    // 非批量：删除单条
+    document.querySelectorAll('[data-flat-idx]').forEach(el => {
       el.onclick = () => {
-        const i = parseInt(el.dataset.modDel);
-        cards[listKey].splice(i, 1);
+        const i = parseInt(el.dataset.flatIdx);
+        cards[flatKey].splice(i, 1);
         saveCards(cards).then(() => showCardsModal());
       };
     });
+    // 添加一条
     $('#mod-add-btn').onclick = () => {
       const t = $('#mod-add-input').value.trim();
       if (!t) { showToast('内容不能为空'); return; }
-      cards[listKey] = cards[listKey] || [];
-      cards[listKey].push(t);
+      cards[flatKey].push(t);
       saveCards(cards).then(() => showCardsModal());
     };
-    // 20261028：朋友圈预设批量导入（每行一条）
+    // 朋友圈预设批量导入（每行一条）
     const batchBtn = $('#mod-batch-import');
     if (batchBtn) {
       batchBtn.onclick = () => {
         showCardInputModal('批量导入朋友圈预设', '', async (text) => {
           const lines = text.split('\n').map(s => s.trim()).filter(Boolean);
           if (!lines.length) { showToast('没有有效内容'); return; }
-          cards[listKey] = cards[listKey] || [];
-          const exist = new Set(cards[listKey]);
+          cards[flatKey] = cards[flatKey] || [];
+          const exist = new Set(cards[flatKey]);
           let added = 0;
-          for (const ln of lines) { if (!exist.has(ln)) { cards[listKey].push(ln); exist.add(ln); added++; } }
+          for (const ln of lines) { if (!exist.has(ln)) { cards[flatKey].push(ln); exist.add(ln); added++; } }
           await saveCards(cards);
           miniToast(`已导入 ${added} 条${added < lines.length ? `（跳过重复 ${lines.length - added} 条）` : ''}`);
           showCardsModal();
         });
       };
     }
-    const batchNoteBtn = $('#btn-cards-batchnote');
-    if (batchNoteBtn) batchNoteBtn.onclick = () => miniToast('该模块暂不支持批量管理');
     return;
   }
 
@@ -11801,8 +12190,10 @@ function showCardInputModal(title, initial, onSave) {
   };
 }
 
-/* 新建分组弹窗 */
-function showCardGroupModal() {
+/* 新建分组弹窗（groupsKey 默认 customReplyGroups；非 replies 模块传入对应分组字段）
+   onCreated(新建的分组对象)：可选回调，在创建后、落库前调用（用于把勾选内容移入新分组）。
+   取消/创建后都回到字卡库弹窗（showCardsModal），不直接退出。 */
+function showCardGroupModal(groupsKey = 'customReplyGroups', onCreated = null) {
   openModal(`
     <div style="font-size:18px;font-weight:600;margin-bottom:16px;">新建分组</div>
     <div class="field">
@@ -11818,20 +12209,96 @@ function showCardGroupModal() {
       <button class="btn primary" style="flex:1;" id="group-save">创建</button>
     </div>
   `);
-  $('#group-cancel').onclick = closeModal;
+  $('#group-cancel').onclick = () => showCardsModal();  // 取消 → 回到字卡库，不退出
   $('#group-save').onclick = () => {
     const name = $('#group-name').value.trim();
     if (!name) { showToast('请填写分组名称'); return; }
-    cards.customReplyGroups.push({
+    cards[groupsKey] = cards[groupsKey] || [];
+    const newGroup = {
       id: uid('group'),
       name,
       color: $('#group-color').value,
       disabled: false,
       _collapsed: false,
       items: [],
-    });
+    };
+    cards[groupsKey].push(newGroup);
+    // 可选回调（批量模式把勾选内容移入新分组）
+    if (onCreated) { try { onCreated(newGroup); } catch (e) {} }
     saveCards(cards).then(() => showCardsModal());
   };
+}
+/* 为指定分组字段新建分组（非 replies 模块用） */
+function showCardGroupModalFor(groupsKey) {
+  showCardGroupModal(groupsKey);
+}
+
+/* 移入分组弹窗（针对任意 groups 数组，而非写死 customReplyGroups）。
+   选已有分组或新建分组，回调 onMove(targetName) 由调用方执行移动。 */
+function showCardMoveModalForGroups(groups, onMove) {
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:18px;font-weight:600;">移入分组</div>
+      <button class="icon-btn" id="move-close">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">将选中的内容移动到某个分组，或直接新建一个分组</div>
+
+    <div style="font-size:14px;font-weight:600;margin-bottom:8px;">移动到已有分组</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px;max-height:200px;overflow-y:auto;" id="move-group-list">
+      ${groups.length === 0
+        ? '<div style="color:var(--text-tertiary);font-size:13px;">还没有分组，可在下方新建</div>'
+        : groups.map(g => `
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-movegroup="${escapeHtml(g.name)}">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${g.color};"></span>
+            <div style="flex:1;font-size:14px;font-weight:600;">${escapeHtml(g.name)}</div>
+            <div style="font-size:12px;color:var(--text-tertiary);">${(g.items || []).length} 条</div>
+            <span style="color:var(--purple-soft);">›</span>
+          </div>`).join('')}
+    </div>
+
+    <div style="font-size:14px;font-weight:600;margin-bottom:8px;">新建分组</div>
+    <div style="display:flex;gap:8px;margin-bottom:4px;">
+      <input class="input" id="move-new-name" placeholder="输入新分组名字…" style="flex:1;">
+      <button class="btn primary" id="move-new-btn">新建并移动</button>
+    </div>
+  `);
+  $('#move-close').onclick = () => showCardsModal();
+  document.querySelectorAll('[data-movegroup]').forEach(el => {
+    el.onclick = () => onMove(el.dataset.movegroup);
+  });
+  $('#move-new-btn').onclick = () => {
+    const name = $('#move-new-name').value.trim();
+    if (!name) { showToast('请填写新分组名字'); return; }
+    onMove(name);
+  };
+  $('#move-new-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('#move-new-btn').click();
+  });
+}
+
+/* 添加内容时选择分组弹窗（有多个分组时让玩家选；onPick(groupId|null)，null=未分组） */
+function showGroupSelectModal(groups, onPick) {
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:18px;font-weight:600;">选择分组</div>
+      <button class="icon-btn" id="gsel-close">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">选择要存入的分组，不选则默认存到「未分组」</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px;max-height:260px;overflow-y:auto;">
+      ${groups.map(g => `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-gsel="${g.id}">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${g.color};"></span>
+          <div style="flex:1;font-size:14px;font-weight:600;">${escapeHtml(g.name)}</div>
+          <span style="color:var(--purple-soft);">›</span>
+        </div>`).join('')}
+    </div>
+    <button class="btn block" id="gsel-ungroup" style="margin-bottom:4px;">存入「未分组」</button>
+  `);
+  $('#gsel-close').onclick = () => onPick(null);
+  document.querySelectorAll('[data-gsel]').forEach(el => {
+    el.onclick = () => onPick(el.dataset.gsel);
+  });
+  $('#gsel-ungroup').onclick = () => onPick(null);
 }
 
 /* ---------- 全局字卡禁词管理（5.11：独立于访客禁词，含文件夹分类 + 批量管理） ---------- */
@@ -14078,7 +14545,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">📌 角色每天写入行程条数</label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色每天在记事蒲日历里随机写入几条自己的行程（如「上班」「学习」）。这里设置最低和最高条数，当天触发后在该区间内随机取一个条数写入。默认 2~3 条。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色每天在记事蒲日历里随机写入几条自己的行程（如「上班」「学习」）。这里设置最低和最高条数，当天在该区间内随机取一个条数写入。默认 2~3 条；最低为 0 表示当天可能写也可能不写（随机触发）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">最低</span>
         <input type="number" id="cs-char-sched-min" min="0" max="20" step="1" value="${typeof s.charSchedCountMin === 'number' ? s.charSchedCountMin : 2}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最低条数">
@@ -14087,7 +14554,20 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <input type="number" id="cs-char-sched-max" min="0" max="20" step="1" value="${typeof s.charSchedCountMax === 'number' ? s.charSchedCountMax : 3}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最高条数">
         <span style="font-size:12px;color:var(--text-tertiary);">条（0~20）</span>
       </div>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">设 0 表示当天不写；最低大于最高时自动对调。此设置对所有访客生效。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">最低为 0 时表示当天可能写也可能不写（随机触发）；最低大于最高时自动对调。此设置对所有访客生效。</div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">💬 行程留言/备注抽卡张数</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色给玩家行程写留言、给自己行程写备注时，从「回复字卡 + 状态 + Emoji」里随机抽取并组合。这里设置每次抽取的张数区间（最低~最高）。默认 0~2 张，0 表示这次可能不写。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">最低</span>
+        <input type="number" id="cs-comment-pick-min" min="0" max="20" step="1" value="${typeof s.commentPickCountMin === 'number' ? s.commentPickCountMin : 0}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最低抽卡张数">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">最高</span>
+        <input type="number" id="cs-comment-pick-max" min="0" max="20" step="1" value="${typeof s.commentPickCountMax === 'number' ? s.commentPickCountMax : 2}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最高抽卡张数">
+        <span style="font-size:12px;color:var(--text-tertiary);">张（0~20）</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">最低大于最高时自动对调；设 0 表示可能不写。此设置对所有访客生效。</div>
     </div>
     ${isPerChar ? `
     <div class="field">
@@ -14223,6 +14703,26 @@ function bindChatSettings(s, onSave, tcChar) {
     };
     csMinEl.onchange = applyCs;
     csMaxEl.onchange = applyCs;
+  }
+  // 20261031：行程留言/备注抽卡张数（全局设置；change 落库 + min>max 对调）
+  const cpMinEl = $('#cs-comment-pick-min');
+  const cpMaxEl = $('#cs-comment-pick-max');
+  if (cpMinEl && cpMaxEl) {
+    const applyCp = () => {
+      let lo = Math.min(20, Math.max(0, parseInt(cpMinEl.value, 10) || 0));
+      let hi = Math.min(20, Math.max(0, parseInt(cpMaxEl.value, 10) || 0));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      cpMinEl.value = String(lo); cpMaxEl.value = String(hi);
+      s.commentPickCountMin = lo;
+      s.commentPickCountMax = hi;
+      // 对所有访客生效，统一写全局 chatSettings
+      chatSettings.commentPickCountMin = lo;
+      chatSettings.commentPickCountMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      miniToast('留言/备注抽卡张数已设为 ' + lo + '～' + hi + ' 张');
+    };
+    cpMinEl.onchange = applyCp;
+    cpMaxEl.onchange = applyCp;
   }
   // 20260929bi：悬浮窗2号浮游开关（仅总聊天设置；立即生效）
   const f2cb = $('#cs-float2');
@@ -16525,6 +17025,7 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
       worldBook: await getSetting('worldBook', { folders: [], entries: [] }), // 世界树
       worldBookDrafts: await getSetting('worldBookDrafts', []),      // 世界树草稿箱
       notebookItems: await getSetting('notebookItems', []),          // 记事簿
+      notebookSchedules: await getSetting('notebookSchedules', []),  // 记事簿行程（角色/玩家行程+留言/备注，独立存储）
       customFonts: await getSetting('customFonts', []),              // 自定义字体
       floatSettings: await getSetting('floatSettings', null),        // 悬浮窗设置
       bmScheduleReminders: await getSetting('bmScheduleReminders', []), // 行程提醒（网页端）
@@ -17096,20 +17597,24 @@ async function charMomentPost(c) {
   if (aiContent) {
     content = aiContent;
   } else {
-    // 20261028：恋人关系专属——与玩家是「恋人」的角色，25% 概率从朋友圈预设库抽、
-    // 75% 从普通字卡库抽；非恋人角色或预设为空则完全走原有逻辑
-    const presets = (cards && Array.isArray(cards.customMomentPresets) && cards.customMomentPresets.length) ? cards.customMomentPresets : [];
-    if (c.relation === '恋人' && presets.length && Math.random() < 0.25) {
-      content = drawFrom(presets);
-    } else {
-      const r = Math.random();
-      if (r < 0.5) content = drawReply(cards, getCharBanWords(c), c.relation, c.bannedGroups || []);
-      else if (r < 0.75) content = drawFrom(cards.customMottos) || drawReply(cards, [], null, []);
-      else {
-        const emo = drawFrom(cards.customEmojis) || '✨';
-        content = emo + ' ' + drawFrom(cards.customStatuses);
-      }
-    }
+    // 朋友圈发帖内容池（字卡模式）：回复字卡 + 寄语 + 朋友圈预设 + Emoji 四类。
+    // 朋友圈预设是「恋人专属」库（仅对恋人关系角色生效），因此：
+    //   - 恋人关系角色：四类一起抽（回复字卡 / 寄语 / 朋友圈预设 / Emoji）
+    //   - 非恋人角色：只用回复字卡 + 寄语 + Emoji 三类（预设不参与）
+    const presets = (c.relation === '恋人') ? (cards.customMomentPresets || []) : [];
+    const pool = [];
+    // 回复字卡（走 drawReply：自动过滤禁词 / 禁用分组）
+    const reply = drawReply(cards, getCharBanWords(c), c.relation, c.bannedGroups || []);
+    if (reply) pool.push(reply);
+    // 寄语（可发朋友圈）
+    const motto = drawFrom(cards.customMottos || []);
+    if (motto) pool.push(motto);
+    // 朋友圈预设（恋人专属，仅此角色关系时进入）
+    if (presets.length) pool.push(drawFrom(presets));
+    // Emoji（字卡表情库，兜底 '✨'）
+    const emo = drawFrom(cards.customEmojis) || '✨';
+    pool.push(emo);
+    content = drawFrom(pool) || reply || motto || emo;
   }
   const post = {
     id: uid('mo'), authorType: 'char', authorId: c.id,
@@ -21043,10 +21548,10 @@ async function maybeRecordCharSchedule(c) {
   const today = annivDayKey(new Date());
   const flagKey = 'charSchedDone_' + c.id + '_' + today;
   if (await getSetting(flagKey, false)) return false;   // 今天已记录
-  // 概率触发（约 60% 的角色每天会记录自己的行程；其余 40% 当天不记）
-  if (Math.random() >= 0.6) { await setSetting(flagKey, true); return false; }
   // 触发后：当天随机记 N 条（条数读聊天设置 charSchedCountMin~Max，默认 2~3；不同时刻、不同标签，模拟 TA 一天里的若干件事）
-  // 20261031：条数改为玩家可配置（最低/最高条数，钳 0~20；min>max 自动对调；0 条=当天不写）
+  // 20261031：条数改为玩家可配置（最低/最高条数，钳 0~20；min>max 自动对调）。
+  //   min=0 的语义是「随机触发」——当天可能写也可能不写（不是「当天一定不写」），
+  //   因为 count 在 0~max 之间随机，抽到 0 才不写、抽到 >0 就写。
   let count = 2 + (Math.random() < 0.5 ? 1 : 0); // 兜底默认 2~3
   try {
     let cmin = parseInt(chatSettings.charSchedCountMin, 10);
@@ -21057,7 +21562,7 @@ async function maybeRecordCharSchedule(c) {
     cmin = Math.min(20, cmin); cmax = Math.min(20, cmax);
     count = cmin + Math.floor(Math.random() * (cmax - cmin + 1));
   } catch (e) {}
-  if (count <= 0) { await setSetting(flagKey, true); return false; } // 条数为 0：当天不写
+  if (count <= 0) { await setSetting(flagKey, true); return false; } // 随机抽到 0 条：当天不写
   const list = await nbLoadSchedules();  // 20261030：角色行程写记事蒲独立存储
   const dayKey = today;
   const usedTitles = new Set();
@@ -21137,12 +21642,39 @@ async function genNotebookComment(c, targetTitle, isNote) {
     } catch (e) {}
   }
   if (!text) {
-    // 字卡模式：留言用回复字卡，备注用寄语字卡（更贴合「给自己做标记」的语义）
-    const pool = isNote
-      ? (cards.customMottos && cards.customMottos.length ? cards.customMottos : cards.customReplies)
-      : cards.customReplies;
-    text = (pool && pool.length) ? drawFrom(pool) : '';
-    if (!text) text = isNote ? '今天要记得' : '注意休息呀';
+    // 字卡模式：留言与备注都从「回复字卡 + 状态 + Emoji」三类里抽，可组合 1~3 张。
+    // 抽卡张数读聊天设置 commentPickCountMin~Max（默认 0~2 张，见聊天设置「行程」tab）；
+    // 0 张 = 本次随机不生成（返回空串由调用方跳过）。
+    let pickMin = 1, pickMax = 2;
+    try {
+      const pmin = parseInt(chatSettings.commentPickCountMin, 10);
+      const pmax = parseInt(chatSettings.commentPickCountMax, 10);
+      if (isFinite(pmin) && isFinite(pmax)) {
+        pickMin = Math.min(20, Math.max(0, pmin));
+        pickMax = Math.min(20, Math.max(0, pmax));
+        if (pickMin > pickMax) { const t = pickMin; pickMin = pickMax; pickMax = t; }
+      }
+    } catch (e) {}
+    const n = pickMin + Math.floor(Math.random() * (pickMax - pickMin + 1));
+    if (n <= 0) return '';
+    // 内容池：回复字卡（过滤禁词/禁用分组）+ 状态 + Emoji
+    const pieces = [];
+    const reply = drawReply(cards, getCharBanWords(c), (c && c.relation) || null, (c && c.bannedGroups) || []);
+    if (reply) pieces.push(reply);
+    const st = drawFrom(cards.customStatuses || []);
+    if (st) pieces.push(st);
+    const emo = drawFrom(cards.customEmojis || []);
+    if (emo) pieces.push(emo);
+    if (pieces.length === 0) { text = isNote ? '今天要记得' : '注意休息呀'; }
+    else {
+      // 从内容池里随机抽 n 条组合（不重复抽同一项）
+      const pool = pieces.slice();
+      const chosen = [];
+      for (let i = 0; i < n && pool.length; i++) {
+        chosen.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+      }
+      text = chosen.join('，');
+    }
   }
   return text;
 }

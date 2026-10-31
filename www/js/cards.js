@@ -430,6 +430,18 @@ function drawFrom(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
+/* 合并池：某模块「顶层扁平数组 + 未禁用分组 items」合并为一个可抽取数组。
+   listKey / groupsKey 是 cards 上的字段名。任何模块接上分组后，抽取都应走此函数，
+   否则分组里的内容永远不会被抽到。 */
+function modulePool(cards, listKey, groupsKey) {
+  const list = (cards && Array.isArray(cards[listKey])) ? cards[listKey].slice() : [];
+  const groups = (cards && Array.isArray(cards[groupsKey])) ? cards[groupsKey] : [];
+  groups.forEach(g => {
+    if (g && !g.disabled && Array.isArray(g.items)) g.items.forEach(t => { if (t) list.push(t); });
+  });
+  return list;
+}
+
 /* 生成唯一 ID */
 function uid(prefix = 'id') {
   return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
