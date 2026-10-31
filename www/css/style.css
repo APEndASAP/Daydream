@@ -4971,6 +4971,11 @@ body.theme-light {
   --danger: #d95050;
   --ok: #0f9d77;
 }
+/* 20261031：所有浅色主题下，个人主页下滑浮现的顶栏昵称统一白色
+   （下滑时顶栏背景为深色半透明/背景主色，深色文字压深底会看不清；
+     头像里的字跟随预设颜色走，不强制白色；
+     berryblue/lotus 已有更具体的同名规则，特异性更高，结果一致无冲突） */
+body.theme-light #home-topbar.scrolled .topbar-profile-name { color: #ffffff; text-shadow: 0 1px 3px rgba(0,0,0,.30); }
 /* 各浅色预设：背景色调 + 强调色（文字色沿用基底深色，保证对比度） */
 body.theme-light.tl-lilac  { --bg: #f2eef9; --bg-elevated-2: #ede8f6; }
 body.theme-light.tl-sakura { --bg: #faf0f4; --bg-elevated-2: #f6ecf1; --purple: #d6568d; --purple-soft: #bb4377; --purple-dim: rgba(214,86,141,.10); --purple-glow: rgba(214,86,141,.20); }
@@ -5069,6 +5074,67 @@ body.theme-light.tl-berryblue.glass-ui .moment-text { color: rgba(255,255,255,.9
 body.theme-light.tl-berryblue.glass-ui .moment-time { color: rgba(255,255,255,.85); }
 /* 蓝粉：聊天页底部输入栏改亮粉色（不再白色），呼应蓝粉主色 */
 body.theme-light.tl-berryblue .chat-input-bar { background: rgba(245, 175, 184, 0.94); border-top-color: rgba(255,255,255,.40); }
+
+/* ============================================================
+   20261031：夏日清荷（薄荷绿 × 樱花粉撞色，仿蓝粉撞色手法）
+   背景=浅薄荷绿→浅粉渐变；导航栏=较深薄荷绿；卡片=粉色；图标=深薄荷绿；
+   点击/激活填充=粉色；白字压粉色卡片、深薄荷绿压浅底，双重可读性兼容。 */
+body.theme-light.tl-lotus { --bg: #cdf3ec; --bg-elevated: #e9fbf6; --bg-elevated-2: #f6cddd; --sv-card: #fbdbe4; --card-solid: #f6cddd; --border: rgba(91,194,173,.28); --purple: #5bc2ad; --purple-soft: #45b19b; --purple-dim: rgba(91,194,173,.18); --purple-glow: rgba(91,194,173,.26); --text: #2a2340; --text-secondary: rgba(42,35,64,.72); --text-tertiary: rgba(42,35,64,.55); }
+/* 夏日清荷：粉色卡片内文字用灰黑（正常模式深色文字压粉底），图标用白底衬块+深薄荷绿 */
+body.theme-light.tl-lotus .stat-card,
+body.theme-light.tl-lotus .func-row { border-color: rgba(255,255,255,.42); }
+body.theme-light.tl-lotus .stat-num,
+body.theme-light.tl-lotus .func-label,
+body.theme-light.tl-lotus .func-note { color: #2a2340; }
+body.theme-light.tl-lotus .stat-label,
+body.theme-light.tl-lotus .func-arrow { color: rgba(42,35,64,.66); }
+body.theme-light.tl-lotus .func-ic { background: #ffffff; color: #45b19b; }
+/* 夏日清荷：底导航栏用提亮后的薄荷绿，未激活图标浅薄荷绿，激活图标粉色高亮 */
+body.theme-light.tl-lotus .tabbar { background: rgba(91, 194, 173, 0.96); border-top-color: rgba(255,255,255,.28); }
+body.theme-light.tl-lotus .tab-item { color: #e6fbf5; }
+body.theme-light.tl-lotus .tab-item .tab-icon { color: #e6fbf5; }
+body.theme-light.tl-lotus .tab-item.active { color: #f6cddd; }
+body.theme-light.tl-lotus .tab-item.active .tab-icon { color: #ffffff; background: #e97bb0; }
+/* 夏日清荷：顶部栏下滑浮现的昵称 + 头像首字改白色（雾粉背景上醒目） */
+body.theme-light.tl-lotus .topbar-profile-name { color: #ffffff; }
+body.theme-light.tl-lotus #topbar-avatar { color: #ffffff; }
+body.theme-light.tl-lotus .player-avatar-round { color: #ffffff; }
+/* 夏日清荷玻璃模式：粉色卡片半透明 + 一点着色，灰黑字可读 */
+body.theme-light.tl-lotus.glass-ui .stat-card {
+  background: rgba(246, 205, 221, 0.72);
+  border-color: rgba(255,255,255,.42);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  box-shadow: 0 4px 16px rgba(42,35,64,.14), inset 0 1px 0 rgba(255,255,255,.46);
+}
+body.theme-light.tl-lotus.glass-ui .func-row {
+  background: rgba(246, 205, 221, 0.72);
+  border-color: rgba(255,255,255,.42);
+  box-shadow: 0 4px 16px rgba(42,35,64,.12), inset 0 1px 0 rgba(255,255,255,.46);
+}
+/* 夏日清荷朋友圈卡片：白半透明 + 轻磨砂，透出浅薄荷底 */
+body.theme-light.tl-lotus .moment-card {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(91, 194, 173, 0.20);
+  backdrop-filter: blur(8px) saturate(150%);
+  -webkit-backdrop-filter: blur(8px) saturate(150%);
+  box-shadow: 0 5px 18px rgba(42, 35, 64, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+body.theme-light.tl-lotus .moment-name { color: #2a2340; }
+body.theme-light.tl-lotus .moment-text { color: #2a2340; }
+body.theme-light.tl-lotus .moment-time { color: rgba(42,35,64,.55); }
+body.theme-light.tl-lotus.glass-ui .moment-card {
+  background: rgba(251, 219, 228, 0.78);
+  border-color: rgba(91, 194, 173, 0.22);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  box-shadow: 0 5px 18px rgba(42, 35, 64, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.56);
+}
+body.theme-light.tl-lotus.glass-ui .moment-name { color: #2a2340; }
+body.theme-light.tl-lotus.glass-ui .moment-text { color: rgba(42,35,64,.92); }
+body.theme-light.tl-lotus.glass-ui .moment-time { color: rgba(42,35,64,.66); }
+/* 夏日清荷：聊天页底部输入栏改亮粉色（呼应粉主色） */
+body.theme-light.tl-lotus .chat-input-bar { background: rgba(246, 205, 221, 0.94); border-top-color: rgba(255,255,255,.42); }
 
 /* ============================================================
    20261030：新增 4 款深色预设 —— 暗夜黑红（暗红为主）+ 黑苦巧（暖灰棕）
@@ -5706,6 +5772,18 @@ body.theme-light .oc-side-action:active { background: rgba(124, 92, 240, 0.28); 
     --text: #35507a !important;
     --text-secondary: rgba(53, 80, 122, 0.72) !important;
     --text-tertiary: rgba(53, 80, 122, 0.55) !important;
+  }
+  /* 夏日清荷：系统暗色下仍锁浅薄荷底 + 粉紫卡片 + 深薄荷绿图标 + 灰黑字 */
+  body.theme-light.tl-lotus {
+    --bg: #d6f4ed !important;
+    --bg-elevated: #e9fbf6 !important;
+    --bg-elevated-2: #f6cddd !important;
+    --card: rgba(91, 194, 173, 0.06) !important;
+    --card-solid: #f6cddd !important;
+    --border: rgba(91, 194, 173, 0.28) !important;
+    --text: #2a2340 !important;
+    --text-secondary: rgba(42, 35, 64, 0.72) !important;
+    --text-tertiary: rgba(42, 35, 64, 0.55) !important;
   }
 }
 

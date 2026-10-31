@@ -794,7 +794,7 @@ async function generateDailyCard() {
   try { festival = (typeof pickFestivalCard === 'function') ? pickFestivalCard(new Date()) : null; } catch (e) { festival = null; }
   // 20260929ae：AI 模式下，心情/寄语/来信心文由 AI 生成；天气/状态仍走字卡（特殊项一）
   let aiText = null;
-  if (await isAIMode()) {
+  if (await isCharAIMode(char ? char.id : null)) {
     try { aiText = await aiGenerateDailyCardText(char ? char.id : null); } catch (e) {}
   }
   const data = {
@@ -1403,7 +1403,7 @@ function ensureCharSign(c) {
    失败/非 AI 模式静默跳过（签名保持字卡占位）。 */
 async function aiRefreshCharSign(c) {
   try {
-    if (!(await isAIMode())) return;
+    if (!(await isCharAIMode(c.id))) return;
     const cfg = await loadAIConfig();
     if (!(cfg.chatApi && cfg.chatApi.url)) return;
     const ctx = await buildCharAIContext(c.id, []);
@@ -5395,7 +5395,7 @@ async function __proactiveScan() {
           // 20260929ba：转账/红包不再搭载在主动消息里——独立「随机红包」模式（下方 s.randomPacket 块）
           // 20260929ah：AI 模式下主动消息由 AI 生成（节奏不变）；失败软回退字卡（不回滚模式开关）
           let msg = null;
-          if (await isAIMode()) {
+          if (await isCharAIMode(c.id)) {
             const r = await aiSoftReply(c,
               '请主动给玩家发一条消息（像自然地想起对方）：可以是分享、问候、吐槽或关心，1~3 句，符合角色口吻。',
               () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
@@ -5499,7 +5499,7 @@ async function __proactiveScan() {
             _checkinCount[c.id + '|' + day]++;
             // 20260929ah：查岗寄语 AI 模式由 AI 生成（TA 在做什么也由 AI 编），失败回退字卡
             let text;
-            if (await isAIMode()) {
+            if (await isCharAIMode(c.id)) {
               text = await aiSoftReply(c,
                 '请以角色身份发一条「突击查岗」消息给玩家：先问玩家现在在做什么，再自然地说出你此刻正在做的一件具体小事（符合人设与当前时段）。2~3 句。',
                 () => {
@@ -5559,7 +5559,7 @@ async function _maybeWeightedAction(c, now = Date.now()) {
     // 20261019：字卡模式下彻底关闭「权重记忆自动提起 / 纪念日主动庆祝」——
     //   否则字卡模式会把权重记忆条目的 title 原文直出成「我突然想起……」消息，
     //   玩家存进记忆宫殿的信（title=信前30字）会被原样拼进聊天，造成「信变成字卡/消息」的假象。
-    if (!(await isAIMode())) return;
+    if (!(await isCharAIMode(c.id))) return;
     const day = todayKey();
     const myAnniv = anniversaries.filter(a => a.charId === c.id);
     // 今天是否该角色的纪念日（纪念日列表 或 权重记忆条目 annivDate 命中）
@@ -5594,7 +5594,7 @@ async function _maybeWeightedAction(c, now = Date.now()) {
     const pick = weighted[randInt(0, weighted.length - 1)];
     const topic = palWithPlayerName(pick.title || pick.summary || pick.text || '');
     if (!topic) return;
-    const aiOn = await isAIMode();
+    const aiOn = await isCharAIMode(c.id);
     let msg;
     if (aiOn) {
       msg = await aiSoftReply(c,
@@ -5612,7 +5612,7 @@ async function _maybeWeightedAction(c, now = Date.now()) {
 async function _doAnnivCelebration(c, annivList) {
   try {
     const reason = (annivList[0] && annivList[0].reason) || '我们的纪念日';
-    const aiOn = await isAIMode();
+    const aiOn = await isCharAIMode(c.id);
     // 随机抽取 1~3 种行为（去重）
     const acts = new Set();
     const pool = ['chat', 'moment', 'gift'];
@@ -6253,7 +6253,7 @@ async function _bmProcessTask(c, kind, taskId) {
   }
   // 2. 无消息 → 生成 + 落库
   let msg = null;
-  if (await isAIMode()) {
+  if (await isCharAIMode(c.id)) {
     const r = await aiSoftReply(c,
       '请主动给玩家发一条消息（像自然地想起对方）：可以是分享、问候、吐槽或关心，1~3 句，符合角色口吻。',
       () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
@@ -6863,7 +6863,7 @@ function bmParseCNDateTime(text, now) {
 async function maybeDetectImportantDate(charId, text) {
   try {
     if (!charId || !text) return;
-    if (await isAIMode()) return; // AI 模式交给 [[ANNIV:]] 标签，避免重复
+    if (await isCharAIMode(charId)) return; // AI 模式交给 [[ANNIV:]] 标签，避免重复
     const s = String(text);
     // 明确的关系型重要日期表达：我的/你的/TA的生日、我们认识/在一起/确定关系/结婚/相恋的日期
     const dateRe = /(\d{4}\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/;
@@ -7577,7 +7577,7 @@ function switchView(viewName) {
   }
   // 全局背景层：聊天导航/朋友圈显示对应背景（铺满含底栏后方），主页/聊天页各自管理
   updateAppFullBg();
-  if (viewName === 'moments') enterMoments();
+  if (viewName === 'moments') { enterMoments(); refreshModeSwitchUI(); }
   // 进入主页时重算统计（访客数量 / 聊天天数），保证添加/删除访客后数字即时刷新
   if (viewName === 'home') renderPlayerHome();
   // 20261008：打字卡悬浮窗常驻圆点显隐同步（仅单聊聊天页+打字卡开+悬浮窗模式才显示；
@@ -9210,7 +9210,7 @@ async function sendCharPoke(c) {
   let text = '';
   // 20260929ah：AI 模式也可触发戳一戳——文案由 AI 生成（轻量 prompt，失败静默回字卡）
   try {
-    if (await isAIMode()) {
+    if (await isCharAIMode(c.id)) {
       const cfg = await loadAIConfig();
       if (cfg.chatApi && cfg.chatApi.url) {
         const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
@@ -9716,7 +9716,7 @@ function scheduleCharAutoHangup() {
       if (_callActive !== ca || !ca.answered || ca.charHangupDone) return; // 已挂断/已结束则停
       const now = Date.now();
       // ① 先查 AI 模式：每轮问一次 AI「现在是否该挂断」，AI 判定要挂 → 带原因挂断
-      if (await isAIMode()) {
+      if (await isCharAIMode(ca.c ? ca.c.id : null)) {
         if (!ca.charHangupAiBusy) {
           ca.charHangupAiBusy = true;
           try {
@@ -9855,7 +9855,7 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
     // 20261030：挂断原因小字只在 AI 模式下生成（AI 根据人设判定挂断才会给理由）；
     // 字卡模式是随机兜底挂断，没有「理由」可言，不生成这行小字。
     let aiMode = false;
-    try { aiMode = await isAIMode(); } catch (e) {}
+    try { aiMode = await isCharAIMode(cRef.id); } catch (e) {}
     const reasonTxt = (aiMode && reason && String(reason).trim()) ? String(reason).trim() : '';
     const cm = { id: uid('msg'), charId: cRef.id, from: 'them', type: 'callEnd', content: base, reason: reasonTxt, time: Date.now() };
     await idbPut('messages', cm);
@@ -11126,9 +11126,10 @@ function bindEvents() {
   // 20261006：聊天记录搜索（单聊+群聊共用，搜索当前 _chatWin.all）
   $('#btn-chat-search').onclick = () => openChatSearch();
   // 20260929af：顶栏 AI/字卡模式开关（三个点左侧），切换带「滴」声；be 起逻辑抽为共用函数
-  $('#btn-chat-aimode').onclick = () => toggleAImodeFromUI();
-  // 20260929be：朋友圈顶栏同款 AI/字卡开关
-  $('#btn-moments-aimode').onclick = () => toggleAImodeFromUI();
+  // 20261031：单聊开关支持「仅当前角色」，点击弹「全局 / 仅当前角色」选择框；朋友圈开关保持全局
+  $('#btn-chat-aimode').onclick = () => toggleAImodeFromUI('char');
+  // 20260929be：朋友圈顶栏同款 AI/字卡开关（全局）
+  $('#btn-moments-aimode').onclick = () => toggleAImodeFromUI('global');
   // 5.2：点击聊天页中的梦角头像也可进入梦角主页（箭头包装，防止 Event 被当成 charId）
   $('#chat-header').onclick = () => showCharProfile();
 
@@ -14151,6 +14152,7 @@ const GLOBAL_THEMES = {
   red:    { name: '浅绛暗红',       cls: 'tl-red',      dot: 'linear-gradient(135deg,#faf1f1,#f0d9d9)', accent: '#c0392b' },
   berry:  { name: '红浆果', cls: 'tl-berry', dot: 'linear-gradient(135deg,#f5d1c5,#dc565a)', accent: '#a80c19' },
   berryBlue: { name: '蓝粉', cls: 'tl-berryblue', dot: 'linear-gradient(135deg,#f5afbb,#88b9e6)', accent: '#88b9e6' },
+  lotus:   { name: '夏日清荷', cls: 'tl-lotus', dot: 'linear-gradient(135deg,#cdf3ec,#f6cddd)', accent: '#5bc2ad' },
 };
 let _globalThemeId = 'dark';
 /* 启动时从 kv 载入用户选择的全局色彩 */
@@ -14163,7 +14165,7 @@ async function loadGlobalTheme() {
 function applyGlobalThemeNow() {
   const conf = GLOBAL_THEMES[_globalThemeId] || GLOBAL_THEMES.dark;
   const cl = document.body.classList;
-  cl.remove('theme-light', 'tl-lilac', 'tl-sakura', 'tl-sky', 'tl-mint', 'tl-cream', 'tl-mist', 'tl-red', 'tl-berry', 'tl-berryblue', 'td-blackred', 'td-choco', 'td-pumpkin', 'td-gray', 'td-berry');
+  cl.remove('theme-light', 'tl-lilac', 'tl-sakura', 'tl-sky', 'tl-mint', 'tl-cream', 'tl-mist', 'tl-red', 'tl-berry', 'tl-berryblue', 'tl-lotus', 'td-blackred', 'td-choco', 'td-pumpkin', 'td-gray', 'td-berry');
   if (conf.cls) {
     cl.add(conf.cls);
     if (conf.cls.indexOf('tl-') === 0) cl.add('theme-light');
@@ -14231,6 +14233,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <button class="btn cs-ai-btn" data-mode="ai" style="flex:1;gap:6px;display:inline-flex;align-items:center;justify-content:center;">${icon('ai', 15)} AI 模式</button>
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">AI 模式下除入梦签外，随机字卡功能停用，回复由 AI 生成；需先在「API 接入」配置链接</div>
+      <button class="btn block" id="cs-manage-ai-chars" style="margin-top:12px;justify-content:space-between;">
+        <span>查看 AI 模式角色名单 <small style="display:block;color:var(--text-tertiary);font-size:11.5px;text-align:left;">查看/添加/关闭哪些访客处于 AI 模式（角色单独设置优先于全局）</small></span><span>›</span>
+      </button>
     </div>` : ''}
 
     <div class="field">
@@ -14955,6 +14960,9 @@ function bindChatSettings(s, onSave, tcChar) {
       await doSwitch();
     };
   });
+  // 20261031：查看 AI 模式角色名单（可添加/关闭角色的 AI 模式）
+  const manageBtn = $('#cs-manage-ai-chars');
+  if (manageBtn) manageBtn.onclick = () => showAIModeCharManager();
   refreshModeSwitchUI().then(() => {
     loadAIConfig().then(cfg => {
       document.querySelectorAll('.cs-ai-btn').forEach(b => b.classList.toggle('primary', b.dataset.mode === cfg.chatMode));
@@ -17035,6 +17043,7 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
       oc_seen: await getSetting('oc_seen', false),
       oc_unlocked: await getSetting('oc_unlocked', false),
       oc_surpriseUnlocked: await getSetting('oc_surpriseUnlocked', false),
+      perCharMode: await getSetting('perCharMode', null),          // 20261031：角色级 AI/字卡模式覆盖（单独设置的访客）
       // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
     },
   };
@@ -21133,7 +21142,7 @@ async function periodCareText(char) {
   const cname = char ? char.name : 'TA';
   const st = periodStateFor(await getPeriodInfo(), today);
   let line = '';
-  if (await isAIMode()) {
+  if (await isCharAIMode(char ? char.id : null)) {
     try {
       const cfg = await loadAIConfig();
       const phase = st.inPeriod
@@ -21569,7 +21578,7 @@ async function maybeRecordCharSchedule(c) {
   let written = 0;
   for (let i = 0; i < count; i++) {
     let title = '';
-    if (await isAIMode()) {
+    if (await isCharAIMode(c.id)) {
       try {
         const cfg = await loadAIConfig();
         const tags = charScheduleTags(c);
@@ -21629,7 +21638,7 @@ async function dailyCharScheduleRecord() {
 /* 生成一条留言/备注文本（字卡模式抽字卡，AI 模式让 AI 生成） */
 async function genNotebookComment(c, targetTitle, isNote) {
   let text = '';
-  if (c && await isAIMode()) {
+  if (c && await isCharAIMode(c.id)) {
     try {
       const cfg = await loadAIConfig();
       const role = c.name || 'TA';
@@ -21724,7 +21733,7 @@ function startNotebookTimer() {
         dirty = true;
         // 20260929ae：AI 模式下提醒文案由 AI 生成（失败回退字卡）
         let quote = '';
-        if (c && await isAIMode()) {
+        if (c && await isCharAIMode(c.id)) {
           try {
             const cfg = await loadAIConfig();
             const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
@@ -22250,7 +22259,7 @@ async function charSendLetter(c, opts = {}) {
     // 信文：AI 模式由 AI 写信（回信会结合玩家原信），失败回退随机抽 10 张字卡
     let text = '';
     const isReply = !!opts.replyToText;
-    if (await isAIMode()) {
+    if (await isCharAIMode(c.id)) {
       const aiText = await aiSoftReply(c, isReply
         ? `请以角色身份给玩家写一封回信，回应这封来信的内容：\n「${String(opts.replyToText).slice(0, 400)}」\n书信体，温柔自然，100~200 字，分段，不要跳出角色。`
         : '请以角色身份主动给玩家写一封信（不是回信）：分享近况、思念或日常，书信体，温柔自然，100~200 字，分段，不要跳出角色。', () => '');
@@ -23678,6 +23687,66 @@ async function isAIMode() {
   const cfg = await loadAIConfig();
   return cfg.chatMode === 'ai' && !!(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim());
 }
+/* 20261031：角色级模式覆盖（单聊开关只针对该角色）。
+   perCharMode = { [charId]: 'ai' | 'card' }，仅角色被显式设置过才有条目；
+   未设置的角色回退全局 chatMode（默认字卡）。三态：显式设过 > 全局。
+   API 是否配置仍是硬前提（AI 模式没配 API 时整体不生效）。 */
+async function loadPerCharMode() {
+  const m = await getSetting('perCharMode', null);
+  return (m && typeof m === 'object') ? m : {};
+}
+async function savePerCharMode(map) { await setSetting('perCharMode', map); }
+/* 取某角色最终模式（'ai' | 'card'）：角色显式设过 → 以角色为准；否则跟随全局 */
+async function getCharMode(charId) {
+  const per = await loadPerCharMode();
+  if (per && Object.prototype.hasOwnProperty.call(per, charId)) return per[charId] === 'ai' ? 'ai' : 'card';
+  const cfg = await loadAIConfig();
+  return cfg.chatMode === 'ai' ? 'ai' : 'card';
+}
+/* 角色级是否处于 AI 模式：先看角色覆盖，再看全局 + API 配置 */
+async function isCharAIMode(charId) {
+  if (!charId) return isAIMode();
+  const per = await loadPerCharMode();
+  let mode;
+  if (per && Object.prototype.hasOwnProperty.call(per, charId)) mode = per[charId];
+  else { const cfg = await loadAIConfig(); mode = cfg.chatMode; }
+  if (mode !== 'ai') return false;
+  const cfg = await loadAIConfig();
+  return !!(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim());
+}
+/* 设置/清除某角色模式覆盖（mode='ai'|'card'；传 null 清除该角色覆盖） */
+async function setCharMode(charId, mode) {
+  const per = await loadPerCharMode();
+  if (mode === null || mode === undefined) { delete per[charId]; }
+  else per[charId] = (mode === 'ai') ? 'ai' : 'card';
+  await savePerCharMode(per);
+  invalidateAICache();
+}
+/* 20261031：AI 调用失败时的模式回滚——角色级显式 AI 则回退该角色为字卡；
+   否则（全局 AI）回退全局。避免误改全局/其它角色。 */
+async function rollbackAIModeOnFail(charId) {
+  try {
+    const per = await loadPerCharMode();
+    if (per && Object.prototype.hasOwnProperty.call(per, charId) && per[charId] === 'ai') {
+      await setCharMode(charId, 'card');
+    } else {
+      const cfg = await loadAIConfig();
+      if (cfg.chatMode === 'ai') { cfg.chatMode = 'card'; await saveAIConfig(cfg); }
+    }
+    invalidateAICache();
+    refreshModeSwitchUI();
+  } catch (e) {}
+}
+/* 收集当前「实际处于 AI 模式」的角色列表（角色显式设 ai，或未设且全局 ai） */
+async function listAIModeChars() {
+  const per = await loadPerCharMode();
+  const cfg = await loadAIConfig();
+  const globalAI = cfg.chatMode === 'ai';
+  return characters.filter(c => {
+    if (per && Object.prototype.hasOwnProperty.call(per, c.id)) return per[c.id] === 'ai';
+    return globalAI;
+  });
+}
 /* 同步版（配置已在内存缓存时用，避免频繁 await）——聊天气泡渲染等高频处 */
 let _aiCfgCache = null; // { cfg, ts } 内存缓存（配置改动时清除）
 async function getAIConfigCached() {
@@ -24601,21 +24670,97 @@ function ensureModeSwitchUI() { refreshModeSwitchUI(); }
 
 async function refreshModeSwitchUI() {
   const cfg = await loadAIConfig();
-  const aiOn = cfg.chatMode === 'ai';
-  // 20260929be：聊天顶栏与朋友圈顶栏共用同一个 AI/字卡开关状态
-  ['#btn-chat-aimode', '#btn-moments-aimode'].forEach(sel => {
-    const btn = $(sel);
-    if (!btn) return;
-    btn.classList.toggle('on', aiOn);
-    btn.title = aiOn ? '当前：AI 模式 · 点击切回字卡' : '当前：字卡模式 · 点击切换 AI';
-  });
+  const globalAI = cfg.chatMode === 'ai';
+  // 单聊页开关：显示当前角色实际模式（角色覆盖优先，回退全局）
+  const chatBtn = $('#btn-chat-aimode');
+  if (chatBtn) {
+    let chatAI = globalAI;
+    if (currentCharId) {
+      const mode = await getCharMode(currentCharId);
+      chatAI = mode === 'ai';
+    }
+    chatBtn.classList.toggle('on', chatAI);
+    chatBtn.title = currentCharId
+      ? (chatAI ? '当前角色：AI 模式 · 点击切换' : '当前角色：字卡模式 · 点击切换')
+      : (chatAI ? '当前：AI 模式 · 点击切回字卡' : '当前：字卡模式 · 点击切换 AI');
+  }
+  // 朋友圈开关：始终显示全局模式
+  const moBtn = $('#btn-moments-aimode');
+  if (moBtn) {
+    moBtn.classList.toggle('on', globalAI);
+    moBtn.title = globalAI ? '当前：AI 模式 · 点击切回字卡' : '当前：字卡模式 · 点击切换 AI';
+  }
 }
 
-/* 20260929be：AI/字卡模式切换（聊天顶栏 + 朋友圈顶栏共用） */
-async function toggleAImodeFromUI() {
+/* 20261031：AI/字卡模式切换。source='char'=单聊页开关（支持仅当前角色），
+   'global'=朋友圈/群聊开关（保持全局）。 */
+async function toggleAImodeFromUI(source = 'global') {
   const cfg = await loadAIConfig();
+  const hasAPI = !!(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim());
+
+  // 单聊页：弹「全局 / 仅当前角色」选择框
+  if (source === 'char' && currentCharId) {
+    const charId = currentCharId;
+    const curMode = await getCharMode(charId);
+    const toAI = curMode !== 'ai';
+    if (toAI && !hasAPI) {
+      showToast('尚未配置 API，请先在「主页 → API 接入」填写链接');
+      return;
+    }
+    // 目标状态描述
+    const charName = (characters.find(x => x.id === charId) || {}).name || 'TA';
+    openModal(`
+      <div style="text-align:center;padding:6px 0 2px;">
+        <div style="font-size:17px;font-weight:600;">切换聊天模式</div>
+        <div style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-top:10px;text-align:left;">
+          要把「${escapeHtml(charName)}」切换为 <b>${toAI ? 'AI 模式' : '字卡模式'}</b>，选择生效范围：
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px;">
+          <button class="btn" id="am-scope-global" style="justify-content:space-between;padding:12px 14px;">
+            <span style="text-align:left;"><b>全局开启</b><small style="display:block;color:var(--text-tertiary);font-size:11.5px;">所有角色（含群聊、朋友圈）统一切换</small></span><span>›</span>
+          </button>
+          <button class="btn" id="am-scope-char" style="justify-content:space-between;padding:12px 14px;">
+            <span style="text-align:left;"><b>仅当前角色</b><small style="display:block;color:var(--text-tertiary);font-size:11.5px;">只切换「${escapeHtml(charName)}」，其它角色不变</small></span><span>›</span>
+          </button>
+        </div>
+        <button class="btn" id="am-cancel" style="margin-top:14px;width:100%;">取消</button>
+      </div>
+    `);
+    const doGlobal = async () => {
+      cfg.chatMode = toAI ? 'ai' : 'card';
+      await saveAIConfig(cfg);
+      invalidateAICache();
+      playModeBeep(toAI);
+      miniToast(toAI ? '已全局切换到 AI 模式' : '已全局切换到字卡模式');
+      refreshModeSwitchUI();
+      document.querySelectorAll('.cs-ai-btn').forEach(b => b.classList.toggle('primary', b.dataset.mode === cfg.chatMode));
+    };
+    const doChar = async () => {
+      await setCharMode(charId, toAI ? 'ai' : 'card');
+      playModeBeep(toAI);
+      miniToast(toAI ? `已仅对「${charName}」开启 AI 模式` : `已仅对「${charName}」切回字卡模式`);
+      refreshModeSwitchUI();
+    };
+    $('#am-scope-global').onclick = () => {
+      closeModal();
+      if (toAI && hasFixedProactiveChar()) { warnAIApiBurn(doGlobal); return; }
+      doGlobal();
+    };
+    $('#am-scope-char').onclick = () => {
+      closeModal();
+      // 仅当前角色：只检测当前角色是否按固定间隔发消息
+      const c = characters.find(x => x.id === charId);
+      const fixedThis = c && (() => { const s = getCharChatSettings(c); return s.proactive && !s.proactiveRandom; })();
+      if (toAI && fixedThis) { warnAIApiBurn(doChar); return; }
+      doChar();
+    };
+    $('#am-cancel').onclick = closeModal;
+    return;
+  }
+
+  // 朋友圈/群聊（或单聊无当前角色兜底）：全局切换
   const toAI = cfg.chatMode !== 'ai';
-  if (toAI && !(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim())) {
+  if (toAI && !hasAPI) {
     showToast('尚未配置 API，请先在「主页 → API 接入」填写链接');
     return;
   }
@@ -24666,7 +24811,7 @@ const _bmMeetPending = {};
 /* 给 scheduleCharReply / scheduleGroupReply 用：按当前模式决定回复内容。
    返回 { type:'card'|'ai', text }。AI 失败时返回 { type:'card', text, fallback:true }。 */
 async function generateCharReply(charId, opts = {}) {
-  const aiOn = await isAIMode();
+  const aiOn = await isCharAIMode(charId);
   if (!aiOn) {
     const c = characters.find(x => x.id === charId);
     const reply = drawReply(cards, getCharBanWords(c), c ? (c.relation || null) : null, c ? (c.bannedGroups || []) : []);
@@ -24759,18 +24904,13 @@ async function generateCharReply(charId, opts = {}) {
       return { type: 'ai', text: parsed.clean };
     }
     // 失败：弹窗报错 + 回退字卡；模式开关同步回滚到字卡（20260929af）
-    cfg.chatMode = 'card';
-    await saveAIConfig(cfg);
-    invalidateAICache();
-    refreshModeSwitchUI();
+    // 20261031：角色级模式下只回退该角色，不误改全局/其它角色
+    await rollbackAIModeOnFail(charId);
     showToast(`AI 调用失败，已自动回退字卡模式：${r.error}`);
     const reply = drawReply(cards, getCharBanWords(c), c ? (c.relation || null) : null, c ? (c.bannedGroups || []) : []);
     return { type: 'card', text: reply, fallback: true };
   } catch (e) {
-    cfg.chatMode = 'card';
-    await saveAIConfig(cfg);
-    invalidateAICache();
-    refreshModeSwitchUI();
+    await rollbackAIModeOnFail(charId);
     showToast('AI 调用异常，已自动回退字卡模式');
     const reply = drawReply(cards, getCharBanWords(c), c ? (c.relation || null) : null, c ? (c.bannedGroups || []) : []);
     return { type: 'card', text: reply, fallback: true };
@@ -25680,6 +25820,73 @@ function hasFixedProactiveChar() {
     return s.proactive && !s.proactiveRandom;
   });
 }
+/* 是否存在「按固定间隔发消息」的角色（proactive 开 + 非随机模式），仅限某角色 */
+function charHasFixedProactive(charId) {
+  const c = characters.find(x => x.id === charId);
+  if (!c) return false;
+  const s = getCharChatSettings(c);
+  return s.proactive && !s.proactiveRandom;
+}
+
+/* 20261031：AI 模式角色名单管理弹窗。
+   列出当前实际处于 AI 模式的角色（角色显式设 ai 或未设且全局 ai），
+   可：①打开某角色的 AI 开关（添加进 AI 模式）②关闭某角色（切回字卡模式）。
+   角色单独设置优先于全局；关闭=清除该角色覆盖并回退全局（若全局本就是字卡则字卡）。 */
+async function showAIModeCharManager() {
+  const hasAPI = await (async () => { const cfg = await loadAIConfig(); return !!(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim()); })();
+  const render = async () => {
+    const per = await loadPerCharMode();
+    const cfg = await loadAIConfig();
+    const globalAI = cfg.chatMode === 'ai';
+    const aiChars = await listAIModeChars(); // 实际处于 AI 模式的角色
+    const listHtml = characters.length
+      ? characters.map(c => {
+          const isAI = aiChars.some(x => x.id === c.id);
+          const explicitlySet = per && Object.prototype.hasOwnProperty.call(per, c.id);
+          const scope = explicitlySet ? (per[c.id] === 'ai' ? '单独开启' : '单独关闭') : (globalAI ? '跟随全局 AI' : '跟随全局字卡');
+          return `
+            <div class="ai-char-row" data-cid="${c.id}" style="display:flex;align-items:center;justify-content:space-between;padding:11px 4px;border-bottom:1px solid var(--border);">
+              <span style="font-size:14px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.name || 'TA')}</span>
+              <span style="font-size:11px;color:var(--text-tertiary);margin:0 10px;white-space:nowrap;">${scope}</span>
+              <button class="ai-char-toggle ${isAI ? 'on' : ''}" data-cid="${c.id}" data-now="${isAI ? 'ai' : 'card'}" style="position:relative;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;background:${isAI ? 'var(--purple)' : 'rgba(128,128,128,.35)'};transition:background .2s;">
+                <span style="position:absolute;top:3px;left:${isAI ? '23px' : '3px'};width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s;"></span>
+              </button>
+            </div>`;
+        }).join('')
+      : `<div style="font-size:13px;color:var(--text-tertiary);text-align:center;padding:20px 0;">还没有访客，先去添加吧</div>`;
+    const modalHtml = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div style="font-size:18px;font-weight:600;">AI 模式角色名单</div>
+        <button class="icon-btn" id="aim-close">✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">开关为「开」= 该角色处于 AI 模式（单独设置优先于全局）。点开关可直接切换该角色的模式。</div>
+      ${!hasAPI ? `<div style="font-size:12px;color:var(--danger);margin-bottom:10px;">⚠️ 尚未配置 API，开启 AI 也不会真正生效，请先在「主页 → API 接入」配置链接</div>` : ''}
+      <div id="aim-list" style="max-height:50vh;overflow-y:auto;margin-bottom:8px;">${listHtml}</div>
+    `;
+    openModal(modalHtml);
+    $('#aim-close').onclick = () => closeModal();
+    document.querySelectorAll('.ai-char-toggle').forEach(btn => {
+      btn.onclick = async () => {
+        const cid = btn.dataset.cid;
+        const nowMode = btn.dataset.now; // 'ai' 或 'card'
+        const toAI = nowMode !== 'ai';
+        if (toAI && !hasAPI) { showToast('尚未配置 API，请先在「主页 → API 接入」填写链接'); return; }
+        const c = characters.find(x => x.id === cid);
+        // 目标 = 显式设为 ai 或 card（角色覆盖），切换后即「单独设置」该角色
+        const doSet = async () => {
+          await setCharMode(cid, toAI ? 'ai' : 'card');
+          playModeBeep(toAI);
+          miniToast(toAI ? `已开启「${c ? c.name : 'TA'}」的 AI 模式` : `已关闭「${c ? c.name : 'TA'}」的 AI 模式（切回字卡）`);
+          refreshModeSwitchUI();
+          render();
+        };
+        if (toAI && charHasFixedProactive(cid)) { warnAIApiBurn(doSet); return; }
+        await doSet();
+      };
+    });
+  };
+  await render();
+}
 
 /* 字卡模式：角色有概率把一条朋友圈收进记忆宫殿（每天每角色至多 1 条）
    范围：玩家发布时未屏蔽该访客的帖子（玩家开放权限的）或 TA 自己的帖子。
@@ -25816,7 +26023,7 @@ async function _answerSurvey(sv) {
     await idbPut('surveys', cur);
 
     const c = characters.find(x => x.id === cur.charId);
-    const aiOn = await isAIMode();
+    const aiOn = await isCharAIMode(cur.charId);
     const qs = cur.questions || [];
     for (const q of qs) {
       if (q.answer && q.answer.trim()) continue; // 已答跳过
@@ -26029,7 +26236,7 @@ async function charAskPlayer(c) {
 
   // 从字卡库/默认问题池抽一个问题（AI 模式由 AI 出题）
   let question = '';
-  const aiOn = await isAIMode();
+  const aiOn = await isCharAIMode(c.id);
   if (aiOn) {
     try {
       const cfg = await loadAIConfig();
@@ -26169,7 +26376,7 @@ async function _charReactToAnswers(sv) {
     if (!c) return;
     const answered = (sv.questions || []).filter(q => q.answer && q.answer.trim());
     if (!answered.length) return;
-    const aiOn = await isAIMode();
+    const aiOn = await isCharAIMode(c.id);
     for (let i = 0; i < answered.length; i++) {
       const q = answered[i];
       let text = '';
@@ -27099,7 +27306,7 @@ async function _ocGenerateNote(c) {
     const pool = (cards.customReplies || []).concat((cards.customReplyGroups || []).flatMap(g => g.items || []));
     return pool.length ? drawFrom(pool) : '跨越维度，把这份心意送到你身边。';
   };
-  if (await isAIMode()) {
+  if (await isCharAIMode(c.id)) {
     // AI 模式：由 AI 生成一句送礼物时的寄语，失败回退字卡
     const note = await aiSoftReply(c,
       '你刚刚给玩家送了一份礼物，请以角色的身份、口吻写一句送礼物时的「寄语」（1~2 句，温暖自然，20~40 字），不要跳出角色，不要提"礼物""寄语"等字眼，只输出这句话本身。',
