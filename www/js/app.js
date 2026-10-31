@@ -9975,6 +9975,40 @@ function minimizeCall(c, kind) {
   buildCallFloat(c, kind, sec);
 }
 
+/* 20261031：群通话缩小悬浮窗——群没有单一角色头像，悬浮窗显示群名首字 + 群名；
+   复用 buildCallFloat（传入 {name: g.name} 伪角色对象），切回走 backToGroupCall */
+function minimizeGroupCall(g, kind) {
+  const sec = _callActive.sec || 0;
+  const layer = document.getElementById('call-layer');
+  if (layer) layer.classList.remove('show', 'call-float2');
+  bmOverlayBindEvents();
+  // 群通话悬浮窗不区分头像，原生/系统悬浮窗按群名显示
+  const pseudo = { name: g.name || '群通话' };
+  if (floatSettings.floatMode === 'overlay' && bmOverlayAvailable()) {
+    Promise.all([
+      Promise.resolve(''),
+      Promise.resolve(''),
+    ]).then(() => {
+      bmOverlayShow(g.name || '群通话', formatDurShort(sec), { avatar: '', bg: '', kind, baseSec: sec }).then(ok => {
+        if (ok) { _bmOverlayShown = true; return; }
+        buildCallFloat(pseudo, kind, sec);
+      });
+    }).catch(() => { buildCallFloat(pseudo, kind, sec); });
+    return;
+  }
+  buildCallFloat(pseudo, kind, sec);
+}
+
+/* 20261031：群通话悬浮窗「切回完整通话」——重新打开群通话界面并恢复已通话时长 */
+function backToGroupCall(g, members, kind) {
+  const sec = _callActive ? _callActive.sec : 0;
+  const msg = _callActive ? _callActive.msg : null;
+  removeCallFloat();
+  // 先摘掉 _callActive，避免 openGroupCallScreen 开头的 closeCall(true) 误把通话标「已结束」落库
+  _callActive = null;
+  openGroupCallScreen(g, members, kind, msg, sec);
+}
+
 /* 悬浮窗上次位置（只保留当前设置，不保留历史记录） */
 let _callFloatPos = null; // { x, y }
 let _callFloatDragging = false; // 拖拽中标记：拖拽时禁止悬停展开/缩回
@@ -10078,8 +10112,12 @@ function buildCallFloat(c, kind, sec) {
     if (_callFloatDragging) return;
     collapseCallFloat();
   });
-  // 扩展按钮 → 切回完整通话并移除悬浮窗
-  $('#cf-back').onclick = (e) => { e.stopPropagation(); backToFullCall(c, kind); };
+  // 扩展按钮 → 切回完整通话并移除悬浮窗；20261031 群通话走 backToGroupCall
+  $('#cf-back').onclick = (e) => {
+    e.stopPropagation();
+    if (_callActive && _callActive.group) backToGroupCall(_callActive.g, _callActive.members, kind);
+    else backToFullCall(c, kind);
+  };
   // 挂断按钮
   $('#cf-hangup').onclick = async (e) => {
     e.stopPropagation();
@@ -10536,15 +10574,15 @@ function showGroupCallModal(g) {
   $('#gcall-video').onclick = () => start('video');
 }
 /* 群通话全屏界面（复用通话计时/挂断状态机；关闭后停留在当前视图，不跳单聊） */
-function openGroupCallScreen(g, members, kind, msg) {
+function openGroupCallScreen(g, members, kind, msg, initSec) {
   if (_callActive) closeCall(true);
-  let sec = 0;
-  const startTs = Date.now(); // 20261004dj：墙钟基准——后台冻结 setInterval 停走、sec++ 丢秒，改差值后解冻自动追平
+  let sec = initSec || 0;
+  const startTs = Date.now() - (initSec || 0) * 1000; // 20261004dj：墙钟基准——后台冻结 setInterval 停走、sec++ 丢秒，改差值后解冻自动追平；20261031 切回时从 initSec 继续计时
   const avatars = members.slice(0, 4).map(c => `<div class="avatar" style="width:72px;height:72px;font-size:26px;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml(c.name[0] || '?')}</div>`).join('');
   const more = members.length > 4 ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">等 ${members.length} 人</div>` : '';
   openCallLayer(`
     <div style="display:flex;flex-direction:column;align-items:center;padding:20px 0;min-height:360px;">
-      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:6px;" id="call-timer">${formatDurShort(0)}</div>
+      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:6px;" id="call-timer">${formatDurShort(initSec || 0)}</div>
       <div style="font-size:22px;font-weight:700;margin-bottom:4px;">${escapeHtml(g.name)}</div>
       <div style="font-size:13px;color:var(--purple-soft);margin-bottom:24px;">${kind === 'video' ? '视频' : '语音'}群聊通话中 · ${members.length} 人</div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-bottom:12px;">${avatars}</div>
@@ -10552,6 +10590,7 @@ function openGroupCallScreen(g, members, kind, msg) {
       <div style="display:flex;gap:26px;margin-top:auto;">
         <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" title="静音">🔇</button>
         <button class="icon-btn" style="width:64px;height:64px;background:var(--danger);border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;" id="call-hangup" title="挂断"><span style="display:inline-flex;transform:rotate(135deg);color:#ffffff;">${icon('call', 22)}</span></button>
+        <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" id="call-minimize" title="缩小悬浮窗">▣</button>
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:20px;">挂断后群里会显示通话时长</div>
     </div>
@@ -10590,6 +10629,9 @@ function openGroupCallScreen(g, members, kind, msg) {
   } catch (e) {}
   const hangup = $('#call-hangup');
   if (hangup) hangup.onclick = () => { endCall(); };
+  // 20261031：群通话同样支持「缩小悬浮窗」——复用单聊悬浮窗载体，悬浮窗显示群名 + 时长
+  const minimize = $('#call-minimize');
+  if (minimize) minimize.onclick = () => minimizeGroupCall(g, kind);
 }
 
 /* 访客随机来电（5.8：随机接收视频/语音通话，可接听/拒绝/未接听）；kind 可强制指定 'video'/'voice'（开发者命令用） */
