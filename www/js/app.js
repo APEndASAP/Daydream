@@ -53,6 +53,13 @@ let chatSettings = {
   typecardSummonIntervalMin: 40,   // 20261009：召唤自动发消息随机区间下限（分钟）；上限 240 与查岗区间惯例一致，玩家可在召唤开关旁自设
   typecardSummonIntervalMax: 240,  // 20261009：召唤自动发消息随机区间上限（分钟）；每次触发后在 [min,max] 内随机取下一次间隔
   bmSchedDetect: true,             // 20261029：聊天日程+闹钟自动检测总开关（默认开；全局开关，聊天设置里读写）
+  multiCardOn: false,              // 20261031：多字卡组合回复总开关（独立新功能，与打字卡无关；默认关）
+  multiCardCountMin: 1,            // 20261031：组合字卡条数下限（1~10）
+  multiCardCountMax: 3,            // 20261031：组合字卡条数上限（1~10，最多10）
+  multiCardIntervalMin: 40,        // 20261031：多字卡组合独立随机固定间隔下限（分钟）
+  multiCardIntervalMax: 240,       // 20261031：多字卡组合独立随机固定间隔上限（分钟）
+  charSchedCountMin: 2,            // 20261031：角色每天随机写入行程条数下限（默认2）
+  charSchedCountMax: 3,            // 20261031：角色每天随机写入行程条数上限（默认3）
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -5209,6 +5216,7 @@ let _callUntil = {};     // 随机通话：按角色记录「下次来电时间�
 let _callCount = {};     // 随机通话：按角色+日期记录当天来电次数
 let _packetUntil = {};   // 20260929ba 随机红包：按角色记录「下次发红包时间点」
 let _emojiUntil = {};    // 20261005dy 表情包主动发：按角色记录「下次发表情包时间点」（随机区间，比主动消息更长）
+let _multiCardUntil = {}; // 20261031：多字卡组合回复——按角色记录「下次触发时间点」（独立随机固定间隔，与打字卡/主动消息无关）
 let _ocNextAt = {};      // 超频：按访客记录下一次独立随机触发时刻（20260929at 起持久化到 kv，跨会话累计）
 let _ocPending = new Set(); // 超频：避免同一访客的交互动画期间重复触发
 function _ocSaveNextAt() { try { _ocSet('nextAt', _ocNextAt).catch(() => {}); } catch (e) {} }
@@ -5412,6 +5420,27 @@ async function __proactiveScan() {
             }
           } catch (e) {}
         }
+      }
+
+      // —— 多字卡组合回复（20261031：独立新功能，与打字卡/主动消息/召唤完全无关）——
+      //     独立随机固定间隔（multiCardIntervalMin~Max，默认 40~240 分钟）；到点随机抽
+      //     1~N 条字卡（逗号分隔）+ 随机若干 emoji + 表情包（图片）最多 1 张，拼成一条
+      //     消息直接上屏（无打字动画）。只对当前聊天角色生效（调度按角色独立）。——
+      if (s.multiCardOn) {
+        const mcLo = Math.max(1, Math.min(720, parseInt(s.multiCardIntervalMin, 10) || 40));
+        const mcHi = Math.max(1, Math.min(720, parseInt(s.multiCardIntervalMax, 10) || 240));
+        const mcIvMin = Math.min(mcLo, mcHi), mcIvMax = Math.max(mcLo, mcHi);
+        const nextMcIv = () => mcIvMin + Math.floor(Math.random() * (mcIvMax - mcIvMin + 1)); // [lo,hi] 闭区间随机分钟
+        if (!_multiCardUntil[c.id]) {
+          _multiCardUntil[c.id] = now + nextMcIv() * 60000; // 首次播种
+          try { bmRegisterAlarm(c, 'msg', _multiCardUntil[c.id]); } catch (e) {}
+        } else if (now >= _multiCardUntil[c.id]) {
+          _multiCardUntil[c.id] = now + nextMcIv() * 60000; // 重排下一次
+          try { bmRegisterAlarm(c, 'msg', _multiCardUntil[c.id]); } catch (e) {}
+          try { await _sendMultiCardCombo(c, s); } catch (e) {}
+        }
+      } else if (_multiCardUntil[c.id]) {
+        delete _multiCardUntil[c.id]; // 关闭即清除，重开重新播种
       }
 
       // —— 碎梦重拼召唤自动发消息（20261009：独立于主动消息，到点自动拼发一条碎梦重拼消息）——
@@ -10864,6 +10893,52 @@ function _inNonChatPage() {
   return v === 'home' || v === 'chatlist' || v === 'moments' || v === 'discover';
 }
 
+/* 20261031：多字卡组合回复——独立新功能（与打字卡/主动消息无关）。
+   到点后随机抽 1~N 条字卡（逗号分隔）+ 随机若干 emoji + 表情包（图片）最多 1 张，
+   拼成一条消息直接上屏（无打字动画）。字卡条数区间读聊天设置 multiCardCountMin/Max（钳 1~10）。
+   表情包最多一张（像带图消息）；emoji 可随机组合多个。 */
+async function _sendMultiCardCombo(c, s) {
+  if (!c || !c.id) return;
+  const lo = Math.min(10, Math.max(1, parseInt(s.multiCardCountMin, 10) || 1));
+  const hi = Math.min(10, Math.max(1, parseInt(s.multiCardCountMax, 10) || 3));
+  const cntMin = Math.min(lo, hi), cntMax = Math.max(lo, hi);
+  const n = cntMin + Math.floor(Math.random() * (cntMax - cntMin + 1)); // 条数 [min,max]
+  // 抽 N 条不重复字卡（drawReply 每次独立抽；用 Set 去重后补抽）
+  const used = new Set();
+  const cardsList = [];
+  for (let i = 0; i < n; i++) {
+    let t = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
+    let guard = 0;
+    while (used.has(t) && guard < 8) { t = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []); guard++; }
+    if (t) { used.add(t); cardsList.push(t); }
+  }
+  // 随机 emoji（0~3 个，从字卡表情字卡池 / EMOJI_LIB 抽）
+  const emojiCount = Math.floor(Math.random() * 4); // 0~3
+  const emojis = [];
+  for (let i = 0; i < emojiCount; i++) {
+    const e = drawFrom(cards.customEmojis || []) || drawFrom(EMOJI_LIB);
+    if (e) emojis.push(e);
+  }
+  // 组装文本：字卡用「，」间隔，emoji 附加在末尾
+  let text = cardsList.join('，');
+  if (emojis.length) text = text ? (text + ' ' + emojis.join('')) : emojis.join('');
+  if (!text) text = '想你了'; // 兜底：字卡与 emoji 都为空
+  // 先发文本消息（字卡+emoji）
+  await deliverCharMessage(c, text, 'text');
+  // 表情包（图片）最多 1 张，作为独立带图消息紧随其后（像微信带图一起发）
+  if (Math.random() < 0.5) {
+    try {
+      const st = await pickCharSticker(c);
+      if (st && st.img) {
+        const imgMsg = { id: uid('msg'), charId: c.id, from: 'them', type: 'emoji', content: st.img, time: Date.now() };
+        await idbPut('messages', imgMsg);
+        if (_inChatWith(c.id) && !bmIsBg()) appendMessage(imgMsg);
+        else renderChatList();
+      }
+    } catch (e) {}
+  }
+}
+
 /* 统一投递：角色发给玩家的消息（text/查岗等）——他访客消息不进当前聊天页 */
 async function deliverCharMessage(c, content, type = 'text', extra = null, taskId = null) {
   // 20261020：三态返回值——供后台主动消息链路准确区分「落库成功 / 落库失败」，
@@ -13634,6 +13709,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <button class="btn cs-tab" data-cs-tab="声音" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">声音</button>
       <button class="btn cs-tab" data-cs-tab="消息" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">消息</button>
       <button class="btn cs-tab" data-cs-tab="打字卡" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">打字卡</button>
+      <button class="btn cs-tab" data-cs-tab="字卡组合" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">字卡组合</button>
       ${(isPerChar || s.overclockUnlocked) ? `<button class="btn cs-tab" data-cs-tab="超频" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">超频</button>` : ''}
       <button class="btn cs-tab" data-cs-tab="行程" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">行程</button>
     </div>
@@ -13925,6 +14001,30 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     </section>
 
+    <section class="cs-panel" data-cs-panel="字卡组合">
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>多字卡组合回复</span>
+        <input type="checkbox" id="cs-multicard-on" ${s.multiCardOn ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">独立新功能（与打字卡无关）。开启后，角色照常抽字卡发消息，但会按下方独立随机固定间隔额外随机触发「多字卡组合」——一次把多条字卡用逗号隔开拼成一条消息，并随机组合 emoji（多个）、偶尔附带一张表情包（像带图发消息）。不影响正常聊天、也不影响打字卡。</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">组合字卡条数</span>
+        <input type="number" id="cs-multicard-count-min" min="1" max="10" step="1" value="${typeof s.multiCardCountMin === 'number' ? s.multiCardCountMin : 1}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最少条数">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-multicard-count-max" min="1" max="10" step="1" value="${typeof s.multiCardCountMax === 'number' ? s.multiCardCountMax : 3}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最多条数">
+        <span style="font-size:12px;color:var(--text-tertiary);">条（1~10）</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">自动发消息区间（分钟）</span>
+        <input type="number" id="cs-multicard-interval-min" min="1" max="720" step="1" value="${typeof s.multiCardIntervalMin === 'number' ? s.multiCardIntervalMin : 40}" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-multicard-interval-max" min="1" max="720" step="1" value="${typeof s.multiCardIntervalMax === 'number' ? s.multiCardIntervalMax : 240}" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔">
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">开启后，TA 会在最小～最大分钟之间的随机时刻自动组合发一条多字卡消息（无需你操作）。挂后台/锁屏时同样通过系统通知提醒你。条数区间 1~10（最多 10 条），间隔 1~720 分钟，最小大于最大时自动对调。此调度完全独立，不与打字卡/主动消息冲突。</div>
+    </div>
+    </section>
+
     <section class="cs-panel" data-cs-panel="超频">
     ${!isPerChar && s.overclockUnlocked ? `
     <div class="field">
@@ -13961,6 +14061,19 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <input type="checkbox" id="cs-bm-sched" ${(chatSettings.bmSchedDetect !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，你在聊天里对访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统会自动识别并弹窗确认，把行程写入系统日历/闹钟提醒。字卡模式与 AI 模式通用，关闭后不再自动检测。</div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">📌 角色每天写入行程条数</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色每天在记事蒲日历里随机写入几条自己的行程（如「上班」「学习」）。这里设置最低和最高条数，当天触发后在该区间内随机取一个条数写入。默认 2~3 条。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">最低</span>
+        <input type="number" id="cs-char-sched-min" min="0" max="20" step="1" value="${typeof s.charSchedCountMin === 'number' ? s.charSchedCountMin : 2}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最低条数">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">最高</span>
+        <input type="number" id="cs-char-sched-max" min="0" max="20" step="1" value="${typeof s.charSchedCountMax === 'number' ? s.charSchedCountMax : 3}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最高条数">
+        <span style="font-size:12px;color:var(--text-tertiary);">条（0~20）</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">设 0 表示当天不写；最低大于最高时自动对调。此设置对所有访客生效。</div>
     </div>
     ${isPerChar ? `
     <div class="field">
@@ -14030,6 +14143,72 @@ function bindChatSettings(s, onSave, tcChar) {
     };
     if (tagAddBtn) tagAddBtn.onclick = doAdd;
     if (tagInput) tagInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } };
+  }
+  // 20261031：多字卡组合回复开关（独立新功能；立即落库生效，走 tcPersist 差异语义）
+  const mcOnEl = $('#cs-multicard-on');
+  if (mcOnEl) mcOnEl.onchange = () => {
+    const on = mcOnEl.checked;
+    if (!on && !tcChar) {
+      // 总设置关闭=总闸，级联清所有访客覆盖
+      characters.forEach(c => {
+        if (c && c.chatSettings && c.chatSettings.multiCardOn !== undefined) { delete c.chatSettings.multiCardOn; saveChar(c); }
+      });
+    }
+    tcPersist('multiCardOn', on);
+    miniToast(on ? '多字卡组合回复已开启' : '多字卡组合回复已关闭');
+  };
+  // 条数区间 + 间隔区间：change 时立即落库并钳制（1~10 条 / 1~720 分钟，min>max 自动对调）
+  const mcCntMinEl = $('#cs-multicard-count-min');
+  const mcCntMaxEl = $('#cs-multicard-count-max');
+  if (mcCntMinEl && mcCntMaxEl) {
+    const applyCnt = () => {
+      let lo = Math.min(10, Math.max(1, parseInt(mcCntMinEl.value, 10) || 1));
+      let hi = Math.min(10, Math.max(1, parseInt(mcCntMaxEl.value, 10) || 3));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      mcCntMinEl.value = String(lo); mcCntMaxEl.value = String(hi);
+      tcPersist('multiCardCountMin', lo);
+      tcPersist('multiCardCountMax', hi);
+      miniToast('组合字卡条数已设为 ' + lo + '～' + hi + ' 条');
+    };
+    mcCntMinEl.onchange = applyCnt;
+    mcCntMaxEl.onchange = applyCnt;
+  }
+  const mcIvMinEl = $('#cs-multicard-interval-min');
+  const mcIvMaxEl = $('#cs-multicard-interval-max');
+  if (mcIvMinEl && mcIvMaxEl) {
+    const applyIv = () => {
+      let lo = Math.min(720, Math.max(1, parseInt(mcIvMinEl.value, 10) || 40));
+      let hi = Math.min(720, Math.max(1, parseInt(mcIvMaxEl.value, 10) || 240));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      mcIvMinEl.value = String(lo); mcIvMaxEl.value = String(hi);
+      tcPersist('multiCardIntervalMin', lo);
+      tcPersist('multiCardIntervalMax', hi);
+      // 区间变更即时清空所有角色调度，让新区间立即生效
+      for (const k in _multiCardUntil) delete _multiCardUntil[k];
+      miniToast('多字卡组合间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    mcIvMinEl.onchange = applyIv;
+    mcIvMaxEl.onchange = applyIv;
+  }
+  // 20261031：角色每天写入行程条数（全局设置；change 落库 + min>max 对调）
+  const csMinEl = $('#cs-char-sched-min');
+  const csMaxEl = $('#cs-char-sched-max');
+  if (csMinEl && csMaxEl) {
+    const applyCs = () => {
+      let lo = Math.min(20, Math.max(0, parseInt(csMinEl.value, 10) || 0));
+      let hi = Math.min(20, Math.max(0, parseInt(csMaxEl.value, 10) || 0));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      csMinEl.value = String(lo); csMaxEl.value = String(hi);
+      s.charSchedCountMin = lo;
+      s.charSchedCountMax = hi;
+      // 此项对所有访客生效，统一写全局 chatSettings（角色级设置弹窗里改的也落到全局）
+      chatSettings.charSchedCountMin = lo;
+      chatSettings.charSchedCountMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      miniToast('角色写入行程条数已设为 ' + lo + '～' + hi + ' 条');
+    };
+    csMinEl.onchange = applyCs;
+    csMaxEl.onchange = applyCs;
   }
   // 20260929bi：悬浮窗2号浮游开关（仅总聊天设置；立即生效）
   const f2cb = $('#cs-float2');
@@ -14426,7 +14605,7 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
@@ -20341,7 +20520,14 @@ async function renderNotebookCalendar() {
       const who = isChar ? (it.charName ? `${it.charName} 记的` : 'TA 记的') : '你记的';
       // 20261030：玩家自己的行程（source='player'）可删除；角色行程只读不可删
       const delBtn = isChar ? '' : `<button class="badge" data-nb-sched-del="${escapeHtml(it.id)}" style="cursor:pointer;color:var(--danger);margin-left:6px;flex-shrink:0;">删</button>`;
-      bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;gap:8px;"><div style="min-width:0;">${isChar ? '🕐' : '📌'} ${escapeHtml(it.title || '行程')} <span style="color:var(--text-tertiary);font-size:11.5px;">${escapeHtml(bmFormatCNTime(it.at))} · ${escapeHtml(who)}</span></div>${delBtn}</div>`);
+      // 20261031：留言/备注区分展示——玩家行程的角色留言=💬（给玩家）；角色行程的备注=📌自注（给角色自己）
+      let extra = '';
+      if (!isChar && it.comment) {
+        extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--purple-soft);border-radius:6px;font-size:12px;color:var(--text-secondary);">💬 ${escapeHtml(it.commentCharName || 'TA')} 给你留言：${escapeHtml(it.comment)}</div>`;
+      } else if (isChar && it.note) {
+        extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--text-tertiary);border-radius:6px;font-size:12px;color:var(--text-tertiary);">📌 ${escapeHtml(it.charName || 'TA')} 的备注：${escapeHtml(it.note)}</div>`;
+      }
+      bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><div style="min-width:0;">${isChar ? '🕐' : '📌'} ${escapeHtml(it.title || '行程')} <span style="color:var(--text-tertiary);font-size:11.5px;">${escapeHtml(bmFormatCNTime(it.at))} · ${escapeHtml(who)}</span></div>${delBtn}</div>${extra}</div>`);
     });
     dayNotes.forEach(it => bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">📝 ${escapeHtml(it.text)}${it.done ? '（已完成）' : ''}</div>`));
     box.innerHTML = `
@@ -20570,8 +20756,19 @@ async function maybeRecordCharSchedule(c) {
   if (await getSetting(flagKey, false)) return false;   // 今天已记录
   // 概率触发（约 60% 的角色每天会记录自己的行程；其余 40% 当天不记）
   if (Math.random() >= 0.6) { await setSetting(flagKey, true); return false; }
-  // 触发后：当天随机记 2~3 条（不同时刻、不同标签，模拟 TA 一天里的若干件事）
-  const count = 2 + (Math.random() < 0.5 ? 1 : 0);
+  // 触发后：当天随机记 N 条（条数读聊天设置 charSchedCountMin~Max，默认 2~3；不同时刻、不同标签，模拟 TA 一天里的若干件事）
+  // 20261031：条数改为玩家可配置（最低/最高条数，钳 0~20；min>max 自动对调；0 条=当天不写）
+  let count = 2 + (Math.random() < 0.5 ? 1 : 0); // 兜底默认 2~3
+  try {
+    let cmin = parseInt(chatSettings.charSchedCountMin, 10);
+    let cmax = parseInt(chatSettings.charSchedCountMax, 10);
+    if (!isFinite(cmin) || cmin < 0) cmin = 2;
+    if (!isFinite(cmax) || cmax < 0) cmax = 3;
+    if (cmin > cmax) { const t = cmin; cmin = cmax; cmax = t; }
+    cmin = Math.min(20, cmin); cmax = Math.min(20, cmax);
+    count = cmin + Math.floor(Math.random() * (cmax - cmin + 1));
+  } catch (e) {}
+  if (count <= 0) { await setSetting(flagKey, true); return false; } // 条数为 0：当天不写
   const list = await nbLoadSchedules();  // 20261030：角色行程写记事蒲独立存储
   const dayKey = today;
   const usedTitles = new Set();
@@ -20628,6 +20825,70 @@ async function dailyCharScheduleRecord() {
   }
 }
 
+/* ==================== 记事蒲留言 / 角色备注（20261031） ====================
+   需求：① 玩家记录的行程（source='player'）→ 角色看到后可随机给玩家留言（comment）；
+        ② 角色自己写入的行程（source='char'）→ 角色可随机给自己的行程写备注（note）。
+   留言与备注在日历里区分展示：留言=角色对玩家说的话（💬），备注=角色对自己的标记（📌自注）。
+   内容生成：字卡模式抽字卡（customReplies/customMottos）；AI 模式根据角色人设让 AI 生成。
+   触发：挂记事簿心跳，随机概率触发；对「今天」及近 3 天内的行程补生成，落库持久化（幂等）。 */
+
+/* 生成一条留言/备注文本（字卡模式抽字卡，AI 模式让 AI 生成） */
+async function genNotebookComment(c, targetTitle, isNote) {
+  let text = '';
+  if (c && await isAIMode()) {
+    try {
+      const cfg = await loadAIConfig();
+      const role = c.name || 'TA';
+      const kind = isNote ? '一条「你自己」这条行程的备注（像给自己做的标记，短小自然，1 句，可带 emoji）' : '一句对玩家说的话（像看到玩家这条行程后自然的关心/调侃，1 句，可带 emoji）';
+      const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+        { role: 'system', content: `你是角色扮演 AI「${role}」。玩家在记事蒲日历里记了/你记了一条行程「${targetTitle}」。请写${kind}，不要解释、不要跳出角色。` },
+        { role: 'user', content: '请写一句。' },
+      ], { temperature: 0.85, maxTokens: 60, timeout: 15000 });
+      if (r.ok && r.text) text = r.text.trim().slice(0, 40);
+    } catch (e) {}
+  }
+  if (!text) {
+    // 字卡模式：留言用回复字卡，备注用寄语字卡（更贴合「给自己做标记」的语义）
+    const pool = isNote
+      ? (cards.customMottos && cards.customMottos.length ? cards.customMottos : cards.customReplies)
+      : cards.customReplies;
+    text = (pool && pool.length) ? drawFrom(pool) : '';
+    if (!text) text = isNote ? '今天要记得' : '注意休息呀';
+  }
+  return text;
+}
+
+/* 随机为未留言/未备注的行程补生成（挂记事簿心跳）。只处理今天 + 未来 3 天内的行程，避免补历史。 */
+async function maybeAddNotebookComments() {
+  try {
+    const list = await nbLoadSchedules();
+    if (!Array.isArray(list) || !list.length) return;
+    const now = Date.now();
+    const horizon = now + 3 * 864e5; // 近 3 天
+    let changed = false;
+    for (const it of list) {
+      if (!it || !it.at) continue;
+      if (it.at < now - 864e5 || it.at > horizon) continue; // 只处理今天前后 1 天 ~ 未来 3 天
+      const isChar = it.source === 'char';
+      // 玩家行程：尚未有角色留言（comment）时，随机触发（约 50%）生成一条
+      if (!isChar && !it.comment) {
+        if (Math.random() >= 0.5) continue;
+        const c = characters[0] || null;
+        const txt = await genNotebookComment(c, it.title || '行程', false);
+        if (txt) { it.comment = txt; if (c) { it.commentCharId = c.id; it.commentCharName = c.name || 'TA'; } changed = true; }
+      }
+      // 角色行程：尚未有角色备注（note）时，随机触发（约 50%）生成一条
+      else if (isChar && !it.note) {
+        if (Math.random() >= 0.5) continue;
+        const c = it.charId ? characters.find(x => x.id === it.charId) : (characters[0] || null);
+        const txt = await genNotebookComment(c, it.title || '行程', true);
+        if (txt) { it.note = txt; changed = true; }
+      }
+    }
+    if (changed) await nbSaveSchedules(list);
+  } catch (e) {}
+}
+
 /* 记事簿心跳：到点提醒（30 秒一查；文案=梦角名 + 字卡抽的一句话） */
 function startNotebookTimer() {
   const tick = async () => {
@@ -20661,6 +20922,7 @@ function startNotebookTimer() {
       if (dirty) await setSetting('notebookItems', items);
       await periodDailyNotify();   // 20261027：经期潮汐每日关心提醒（前 5 天 + 经期中）
       await dailyCharScheduleRecord();  // 20261028：角色每日记录自己的重要行程（概率）
+      await maybeAddNotebookComments(); // 20261031：记事蒲留言/角色备注（随机触发，幂等）
     } catch (e) {}
   };
   tick();
