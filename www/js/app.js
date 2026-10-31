@@ -4996,6 +4996,20 @@ function blobToDataURL(b) {
     r.readAsDataURL(b);
   });
 }
+/* 20261031：循环引用安全的 JSON.stringify（仅导出边界使用）。
+   数据里若混入自引用对象（某字段引回自身/父级），原生 JSON.stringify 会抛
+   「Converting circular structure to JSON」→ 导出失败。这里用 WeakSet 记录已序列化对象，
+   再次遇到直接输出 null 跳过，导出不再因脏数据/循环引用中断。对正常数据零影响。 */
+function jsonSafeStringify(obj) {
+  const seen = new WeakSet();
+  return JSON.stringify(obj, function (k, v) {
+    if (typeof v === 'object' && v !== null) {
+      if (seen.has(v)) return null; // 循环引用 → 置 null 跳过，不中断导出
+      seen.add(v);
+    }
+    return v;
+  });
+}
 async function dataURLToBlob(s) {
   // 20261011：根治「APK 端导入失败」——旧写法 fetch(data:URL) 在 Android WebView 里
   // 对 data:/blob: URL 支持不可靠（常直接失败或返回空）。改为 atob 手动解码 base64，
@@ -15381,7 +15395,24 @@ async function exportChatRecords() {
     count: messages.length,
     messages,
   };
-  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  // 20261031：容器式单文件——与 exportAll 同一套图片抽取逻辑，根治「表情包 Blob/内嵌 base64
+  //   塞进单 JSON 超 512MB 上限 → 卡死/失败」，且表情包图完整保留可恢复。
+  if (FS && FS.writeFile) {
+    try {
+      const { data: headData, images } = await collectImagesV4(data, null);
+      await writeContainerFile('白日梦备份/白日梦聊天记录备份.chatdata', headData, images, 'DOCUMENTS', null);
+      miniToast('已导出 ' + messages.length + ' 条聊天记录（单文件，图片完整）');
+      return;
+    } catch (e) {
+      miniToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
+      return;
+    }
+  }
+  // 网页端（非 APK）：无分块 append 能力，图片量一般不大，走原 deepImagesToExport 内嵌 + <a download>
+  let safeData = data;
+  try { safeData = await deepImagesToExport(data, '正在打包聊天图片', null); } catch (e) {}
+  const blob = new Blob([jsonSafeStringify(safeData)], { type: 'application/json' });
   await finishExport(save, blob, '已导出 ' + messages.length + ' 条聊天记录');
 }
 
@@ -15404,8 +15435,22 @@ function showImportChatModal(back = null) {
     const f = $('#ich-file').files[0];
     if (!f) { miniToast('请先选择文件'); return; }
     try {
-      const text = await f.text();
-      const data = JSON.parse(text);
+      // 20261031：容器格式兼容——先读前 4MB 找分隔符，有则切 JSON 头 + 逐张图还原
+      const size = f.size || 0;
+      const headProbe = await f.slice(0, Math.min(4 * 1024 * 1024, size)).text();
+      const sepIdx = headProbe.indexOf(BM_CONTAINER_SEP);
+      let data;
+      if (sepIdx !== -1) {
+        data = JSON.parse(headProbe.slice(0, sepIdx));
+        const containerStart = sepIdx + BM_CONTAINER_SEP.length;
+        const readImageV4 = async (offset, len, mime) => {
+          const seg = await f.slice(containerStart + offset, containerStart + offset + len).text();
+          return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + seg);
+        };
+        data = await restoreImagesV4(data, readImageV4);
+      } else {
+        data = JSON.parse(await f.text());
+      }
       const msgs = data.messages || data;
       if (!Array.isArray(msgs)) { miniToast('文件里没有聊天记录'); return; }
       const existing = await idbGetAll('messages');
@@ -15691,27 +15736,48 @@ function showImportModal(back = null) {
         { label: '写入数据库' },
       ], 0, 'import');
       setProgressPanelMode(true);
-      // 阶段0：分块读取文件（大文件整读会让 WebView 主线程长时间无响应，分块 + yield 让出）
-      const CHUNK = 4 * 1024 * 1024; // 4MB/块
+      // 阶段0：读文件。20261031 容器格式——只把「JSON 头」读进内存解析，图片块按 offset/len
+      //   在还原阶段用 file.slice 逐张读，绝不把 700MB 图片块聚合成超长字符串（爆 512MB 上限）。
+      //   先读前 4MB 找分隔符 \nBMIMG\n；找不到则整个文件是老格式（纯 JSON），整读。
       const size = file.size || 0;
-      const parts = [];
-      let off = 0;
-      while (off < size) {
-        const seg = await file.slice(off, Math.min(off + CHUNK, size)).text();
-        parts.push(seg);
-        off += CHUNK;
-        setStageProgress(0, off, size);
-        await new Promise(r => setTimeout(r, 0)); // yield 让出主线程，UI 可刷新
-      }
-      setStageProgress(0, 1, 1);
-      // 阶段1：解析数据
+      const headProbe = await file.slice(0, Math.min(4 * 1024 * 1024, size)).text();
+      const sepIdx = headProbe.indexOf(BM_CONTAINER_SEP);
       let data;
-      try {
-        data = JSON.parse(parts.join(''));
-      } catch (e) {
-        closeProgressPanel();
-        showToast('文件解析失败，请确认是有效的《白日梦》备份');
-        return;
+      let containerFile = null; // 容器格式时保留 file + 图片块起点，供逐张读图
+      let containerStart = 0;
+      if (sepIdx !== -1) {
+        // 容器格式：JSON 头在分隔符之前
+        const headStr = headProbe.slice(0, sepIdx);
+        try {
+          data = JSON.parse(headStr);
+        } catch (e) {
+          closeProgressPanel();
+          showToast('文件解析失败，请确认是有效的《白日梦》备份');
+          return;
+        }
+        containerFile = file;
+        containerStart = sepIdx + BM_CONTAINER_SEP.length;
+        setStageProgress(0, 1, 1);
+      } else {
+        // 老格式：整文件是纯 JSON，分块读 + 拼接解析
+        const CHUNK = 4 * 1024 * 1024;
+        const parts = [];
+        let off = 0;
+        while (off < size) {
+          const seg = await file.slice(off, Math.min(off + CHUNK, size)).text();
+          parts.push(seg);
+          off += CHUNK;
+          setStageProgress(0, off, size);
+          await new Promise(r => setTimeout(r, 0));
+        }
+        setStageProgress(0, 1, 1);
+        try {
+          data = JSON.parse(parts.join(''));
+        } catch (e) {
+          closeProgressPanel();
+          showToast('文件解析失败，请确认是有效的《白日梦》备份');
+          return;
+        }
       }
       setStageProgress(1, 1, 1);
       if (data.app !== 'bairimeng') {
@@ -15719,8 +15785,14 @@ function showImportModal(back = null) {
         showConfirm('该文件似乎不是《白日梦》的备份，仍要导入吗？', () => doImport(data, mode));
         return;
       }
-      // 阶段2+3：还原图片 + 写入数据库（doImport 内部驱动这两阶段进度）
-      await doImport(data, mode, (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total));
+      // 阶段2+3：还原图片 + 写入数据库。容器格式传 readImageV4（逐张 file.slice 读图）
+      const readImageV4 = containerFile
+        ? async (offset, len, mime) => {
+            const seg = await containerFile.slice(containerStart + offset, containerStart + offset + len).text();
+            return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + seg);
+          }
+        : null;
+      await doImport(data, mode, (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), readImageV4);
       closeProgressPanel();
     } catch (e) {
       if (prog) closeProgressPanel();
@@ -15783,12 +15855,15 @@ async function deepImagesFromExport(node, onProgress = null) {
   return node;
 }
 
-async function doImport(data, mode = 'overwrite', onStage = null) {
+async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = null) {
   const _stage = (idx, val, total) => { if (onStage) { try { onStage(idx, val, total); } catch (e) {} } };
   try {
-    // 20261005ea：3.0 自动备份（图片独立文件）——图片是 {__img:3, ref} 引用，需 FS.readFile 读回；
-    // 2.2 及旧备份（图片 base64 内嵌）走原 deepImagesFromExport 逻辑不变。
-    if (data && data.version === '3.0' && data.imagesDir) {
+    // 20261031：容器格式（{__img:4} 引用 + 图片块）——用 readImageV4 逐张还原
+    if (readImageV4) {
+      data = await restoreImagesV4(data, readImageV4);
+    } else if (data && data.version === '3.0' && data.imagesDir) {
+      // 20261005ea：3.0 自动备份（图片独立文件）——图片是 {__img:3, ref} 引用，需 FS.readFile 读回；
+      // 2.2 及旧备份（图片 base64 内嵌）走原 deepImagesFromExport 逻辑不变。
       const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
       if (FS && typeof FS.readFile === 'function') {
         const imagesDir = String(data.imagesDir);
@@ -15903,6 +15978,178 @@ async function imgDescToExport(v) {
       ? await blobToDataURL(v.thumb)
       : (typeof v.thumb === 'string' && v.thumb ? v.thumb : ''),
   };
+}
+
+/* ==================== 20261031：容器式单文件备份（根治「导出失败/卡死」） ====================
+   问题：老用户历史表情包消息里内嵌了大量 base64 图片（实测 1968 条、data+thumb 合计 ~700MB），
+   全塞进单个 JSON 后 JSON.stringify 超过 V8 单字符串 ~512MB 上限 → Invalid string length → 导出失败；
+   裸 stringify 遍历 2 万条消息 + 700MB base64 也极慢 → 表现为卡死。
+   方案：仍保持「单个 .ocdata / .chatdata 文件」（手机用户无法导文件夹），但把图片 base64 从 JSON
+   里抽出来、拼成文件尾部的一个「二进制图片块」，JSON 头里只存 {__img:4, ref, mime, offset, len}
+   引用。这样 JSON 头很小（纯文字+引用），stringify 不再爆 512MB；图片块靠 writeSingleFileChunked
+   分块写盘，也不产生单一超长字符串。
+   文件结构（与旧格式唯一区别是结尾多了一段）：
+       [完整 JSON，图片字段替换为 {__img:4, ref, mime, offset, len}]
+       \nBMIMG\n
+       [所有图片 base64 连续拼接，无分隔，靠 offset/len 定位]
+   兼容：导入端检测到 \nBMIMG\n 分隔符才走容器还原；老格式（{__img:1}/{__img:3}/字符串/Blob）完全不受影响。 */
+
+const BM_CONTAINER_SEP = '\nBMIMG\n'; // 容器分隔符（JSON 头与图片块之间）
+
+/* 抽取图片 → 生成容器结构。返回 { data, images:[{ref,mime,base64}] }。
+   收集两类图片：① {blob:Blob} 描述符（正常新数据）；② {__img:1, data:dataURL} 老格式内嵌。
+   统一替换成 {__img:4, ref, mime, offset, len}（offset/len 在 packContainerFile 阶段回填）。 */
+async function collectImagesV4(node, onProgress = null) {
+  if (!node || typeof node !== 'object') return { data: node, images: [] };
+  const found = [];
+  const seen = new WeakSet(); // 循环引用保护
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object') return;
+    if (seen.has(n)) return; seen.add(n);
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    // 图片描述符：{blob:Blob} 或 {__img:1, data:string} 老格式
+    if (n.blob instanceof Blob) { found.push({ parent, key, n, kind: 'blob' }); return; }
+    if (n.__img === 1 && typeof n.data === 'string') { found.push({ parent, key, n, kind: 'img1' }); return; }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+
+  const images = [];
+  let seq = 0;
+  for (const it of found) {
+    const n = it.n;
+    let mime = 'image/png', mainB64 = '', thumbB64 = '', thumbMime = 'image/jpeg';
+    if (it.kind === 'blob') {
+      mime = (n.blob && n.blob.type) || 'image/png';
+      // blobToDataURL 返回 dataURL，剥前缀只留纯 base64 正文（还原端会按 mime 重拼前缀）
+      const md = await blobToDataURL(n.blob);
+      mainB64 = (md.indexOf(',') !== -1 ? md.slice(md.indexOf(',') + 1) : md);
+      if (n.thumb instanceof Blob) {
+        const td = await blobToDataURL(n.thumb);
+        thumbB64 = (td.indexOf(',') !== -1 ? td.slice(td.indexOf(',') + 1) : td);
+        thumbMime = (n.thumb.type) || 'image/jpeg';
+      }
+    } else { // img1 老格式：data/thumb 已是 dataURL
+      const dm = /^data:([^;,]+)?(;base64)?,/.exec(n.data || '');
+      mime = (dm && dm[1]) || 'image/png';
+      // 剥掉 dataURL 前缀，只留纯 base64 正文
+      const cIdx = (n.data || '').indexOf(',');
+      mainB64 = (cIdx !== -1 ? (n.data || '').slice(cIdx + 1) : (n.data || ''));
+      if (typeof n.thumb === 'string' && n.thumb) {
+        const tdm = /^data:([^;,]+)?(;base64)?,/.exec(n.thumb);
+        thumbMime = (tdm && tdm[1]) || 'image/jpeg';
+        const tIdx = n.thumb.indexOf(',');
+        thumbB64 = (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb);
+      }
+    }
+    const ref = 'img-' + String(++seq).padStart(6, '0');
+    const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
+    images.push({ ref, mime, b64: mainB64 });
+    if (thumbB64) {
+      const tref = 'thm-' + String(seq).padStart(6, '0');
+      out.thumbRef = tref;
+      out.thumbMime = thumbMime;
+      images.push({ ref: tref, mime: thumbMime, b64: thumbB64 });
+    }
+    if (it.parent) it.parent[it.key] = out;
+    if (onProgress) onProgress(found.length, found.length);
+  }
+  return { data: node, images };
+}
+
+/* 计算每张图在图片块里的 offset/len，并回填到 data 里的 {__img:4} 引用；返回 JSON 头字符串
+   （不含图片 base64，很小）。图片块由 writeContainerFile 单独逐块 append 写盘。 */
+function packContainerFile(data, images) {
+  const imgMap = {};
+  let cursor = 0;
+  for (const im of images) { imgMap[im.ref] = { offset: cursor, len: im.b64.length, mime: im.mime }; cursor += im.b64.length; }
+  // 回填 offset/len 到 data 里的 {__img:4} 引用（含 thumbOffset/thumbLen）
+  const seen = new WeakSet();
+  (function walk(n) {
+    if (!n || typeof n !== 'object') return;
+    if (seen.has(n)) return; seen.add(n);
+    if (Array.isArray(n)) { for (const x of n) walk(x); return; }
+    if (n.__img === 4 && n.ref && imgMap[n.ref]) { n.offset = imgMap[n.ref].offset; n.len = imgMap[n.ref].len; }
+    if (n.__img === 4 && n.thumbRef && imgMap[n.thumbRef]) { n.thumbOffset = imgMap[n.thumbRef].offset; n.thumbLen = imgMap[n.thumbRef].len; }
+    for (const k of Object.keys(n)) walk(n[k]);
+  })(data);
+  const head = jsonSafeStringify(data); // 回填 offset/len 后再序列化一次（含完整引用）
+  return head + BM_CONTAINER_SEP;
+}
+
+/* 容器式单文件写盘：JSON 头（小）首块 writeFile，图片逐块 appendFile。
+   全程不聚合出超长字符串（图片块单张最大 ~5.8MB，分块后更小），
+   根治「一次性 writeFile 传 700MB base64 过 Bridge → OOM / 超长字符串爆 512MB」。 */
+async function writeContainerFile(path, data, images, directory, onProgress = null) {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!FS || typeof FS.writeFile !== 'function') throw new Error('文件系统不可用');
+  const CHUNK = 4 * 1024 * 1024; // 4MB base64 字符
+  // ① 写 JSON 头（含分隔符）
+  const head = packContainerFile(data, images);
+  const headB64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
+    r.onerror = () => rej(new Error('读取失败'));
+    r.readAsDataURL(new Blob([head], { type: 'application/json' }));
+  });
+  await writeSingleFileChunked(path, headB64, directory, onProgress);
+  // ② 逐张图片 base64 分块 append（每张图单独 append，单次 bridge payload 小）
+  let totalBytes = headB64.length;
+  for (const im of images) {
+    totalBytes += im.b64.length;
+  }
+  let written = headB64.length;
+  for (const im of images) {
+    const pad = (4 - (im.b64.length % 4)) % 4;
+    const seg = im.b64 + '='.repeat(pad);
+    for (let off = 0; off < seg.length; off += CHUNK) {
+      const part = seg.slice(off, off + CHUNK);
+      if (typeof FS.appendFile === 'function') {
+        await FS.appendFile({ path, data: part, directory, recursive: true });
+      } else {
+        // 无 appendFile：累加后再整体写（兜底，仅小数据场景）
+        throw new Error('文件系统不支持追加写入');
+      }
+      written += part.length;
+      if (onProgress) onProgress(written, totalBytes);
+    }
+  }
+  return true;
+}
+
+/* 拆分容器文件 → { head, blob }。无分隔符返回 { head: 原文, blob: '' }（老格式）。 */
+function unpackContainerFile(text) {
+  const idx = String(text).indexOf(BM_CONTAINER_SEP);
+  if (idx === -1) return { head: text, blob: '' };
+  return { head: text.slice(0, idx), blob: text.slice(idx + BM_CONTAINER_SEP.length) };
+}
+
+/* 还原 {__img:4} 引用 → {blob:Blob, thumb, w, h}。
+   readImage(offset, len, mime) 由调用方提供（容器格式用 file.slice 逐张读图，避免超长字符串）。 */
+async function restoreImagesV4(node, readImage) {
+  if (!node || typeof node !== 'object') return node;
+  const found = [];
+  const seen = new WeakSet();
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object') return;
+    if (seen.has(n)) return; seen.add(n);
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.__img === 4 && typeof n.ref === 'string') { found.push({ parent, key, n }); return; }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+  if (!found.length) return node;
+  for (const it of found) {
+    const n = it.n;
+    try {
+      const blob = await readImage(n.offset || 0, n.len || 0, n.mime || 'image/png');
+      let thumb = null;
+      if (n.thumbRef && n.thumbOffset !== undefined) {
+        thumb = await readImage(n.thumbOffset, n.thumbLen || 0, n.thumbMime || 'image/jpeg');
+      }
+      const out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
+      if (it.parent) it.parent[it.key] = out;
+    } catch (e) { /* 单张图还原失败不影响整体，保留 {__img:4} 原样，渲染按缺失处理 */ }
+  }
+  return node;
 }
 
 /* 导出进度提示（Blob→base64 打包可能持续数秒，必须有可见反馈，否则像"点了没反应"）
@@ -16081,8 +16328,12 @@ async function deepImagesToExport(node, label = '正在打包图片', onProgress
   if (!node || typeof node !== 'object') return node;
   if (node instanceof Blob) return node; // 防御：不应单独出现
   const found = []; // { parent, key, n }
+  const seen = new WeakSet(); // 20261031：循环引用保护——数据里若出现自引用（对象引回自身/父级），
+  //   旧版 collect 会无限递归 → 栈溢出 → 导出「卡死/失败」。用 WeakSet 记录已访问对象，
+  //   遇到已访问过的直接跳过，彻底杜绝死循环；对正常无环数据零影响。
   (function collect(n, parent, key) {
     if (!n || typeof n !== 'object') return;
+    if (seen.has(n)) return; seen.add(n);
     if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
     if (n.blob instanceof Blob || (n.__img && n.data !== undefined)) { found.push({ parent, key, n }); return; }
     for (const k of Object.keys(n)) collect(n[k], n, k);
@@ -16117,8 +16368,10 @@ async function deepImagesToExport(node, label = '正在打包图片', onProgress
 async function collectImagesV3(node) {
   const found = []; // { parent, key, n, ref, thumbRef, mime, thumbMime }
   let seq = 0;
+  const seen = new WeakSet(); // 20261031：循环引用保护（同 deepImagesToExport）
   (function collect(n, parent, key) {
     if (!n || typeof n !== 'object') return;
+    if (seen.has(n)) return; seen.add(n);
     if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
     if (n.blob instanceof Blob) {
       const ref = 'img-' + String(++seq).padStart(4, '0');
@@ -16166,8 +16419,10 @@ async function collectImagesV3(node) {
 async function restoreImagesV3(node, readImage) {
   if (!node || typeof node !== 'object') return node;
   const found = [];
+  const seen = new WeakSet(); // 20261031：循环引用保护（同 deepImagesToExport）
   (function collect(n, parent, key) {
     if (!n || typeof n !== 'object') return;
+    if (seen.has(n)) return; seen.add(n);
     if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
     if (n.__img === 3 && typeof n.ref === 'string') { found.push({ parent, key, n }); return; }
     for (const k of Object.keys(n)) collect(n[k], n, k);
@@ -16301,21 +16556,17 @@ async function exportAll() {
       setProgressPanelMode(true);
       // 阶段0：整理数据（读库）
       setStageProgress(0, 1, 1);
-      // 阶段1：图片转码（buildBackupPayload 内 deepImagesToExport 回调）
-      const safeData = await buildBackupPayload('2.2', (done, total) => {
+      // 阶段1：图片转码 + 抽取（buildBackupPayload 产出原始 data，collectImagesV4 抽图片）
+      const rawData = await buildBackupPayload('3.0');
+      // 20261031：容器式单文件——图片抽成文件尾部二进制块，JSON 头只存 {__img:4} 引用，
+      //   彻底规避「700MB base64 内嵌单 JSON → 超 512MB 上限 → Invalid string length → 导出失败」。
+      const { data: headData, images } = await collectImagesV4(rawData, (done, total) => {
         setStageProgress(1, done, total);
       });
+      headData.version = '2.2'; // 容器格式仍是 2.2 单文件（导入端靠分隔符识别，不靠 version）
       setStageProgress(1, 1, 1);
-      // JSON 序列化 → base64（大对象 stringify 可能耗时，归入阶段0/阶段1之间）
-      const json = JSON.stringify(safeData);
-      const b64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
-        r.onerror = () => rej(new Error('读取失败'));
-        r.readAsDataURL(new Blob([json], { type: 'application/json' }));
-      });
-      // 阶段2：写入文件（writeSingleFileChunked 分块回调）
-      await writeSingleFileChunked('白日梦备份/白日梦数据备份.ocdata', b64, 'DOCUMENTS', (done, total) => {
+      // 阶段2：写入文件（writeContainerFile：JSON 头首块 writeFile + 图片逐块 appendFile，全程无超长字符串）
+      await writeContainerFile('白日梦备份/白日梦数据备份.ocdata', headData, images, 'DOCUMENTS', (done, total) => {
         setStageProgress(2, done, total);
       });
       setStageProgress(2, 1, 1);
