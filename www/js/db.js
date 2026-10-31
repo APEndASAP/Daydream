@@ -89,6 +89,27 @@ async function idbGet(store, key) {
   });
 }
 
+/* 20261031 提速：单事务批量写入。导入 2 万+ 条消息时，逐条 idbPut 每次 openDB + 单事务，
+   开销极大（openDB 是 async 且每事务一次 IPC）；批量写把所有值塞进一个事务，速度提升数十倍。
+   messages 同步维护 _messagesCache 镜像（与 idbPut 一致）。 */
+async function idbBulkPut(store, values) {
+  if (!Array.isArray(values) || !values.length) return;
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, 'readwrite');
+    const os = tx.objectStore(store);
+    for (const v of values) os.put(v);
+    tx.oncomplete = () => {
+      if (store === 'messages' && _messagesCache) {
+        // 直接替换缓存（导入是整批覆盖场景；缓存可能为 null 时跳过，下次 getAll 重建）
+        _messagesCache = values.slice();
+      }
+      resolve();
+    };
+    tx.onerror = (e) => reject(e.target.error);
+  });
+}
+
 async function idbDelete(store, key) {
   const db = await openDB();
   return new Promise((resolve, reject) => {

@@ -15950,11 +15950,20 @@ async function exportChatRecords() {
   //   塞进单 JSON 超 512MB 上限 → 卡死/失败」，且表情包图完整保留可恢复。
   if (FS && FS.writeFile) {
     try {
+      exportProgress(true, '正在抽取聊天图片…');
       const { data: headData, images } = await collectImagesV4(data, null);
-      await writeContainerFile('白日梦备份/白日梦聊天记录备份.chatdata', headData, images, 'DOCUMENTS', null);
+      exportProgress(true, `正在写入 ${images.length} 张图片…`);
+      await writeContainerFile('白日梦备份/白日梦聊天记录备份.chatdata', headData, images, 'DOCUMENTS',
+        (written, total) => {
+          if (written % (8 * 1024 * 1024) < (4 * 1024 * 1024)) {
+            exportProgress(true, `💾 正在导出聊天记录 ${Math.round(written / total * 100)}%（${(written / 1024 / 1024).toFixed(0)}MB / ${(total / 1024 / 1024).toFixed(0)}MB）`);
+          }
+        });
+      exportProgress(false);
       miniToast('已导出 ' + messages.length + ' 条聊天记录（单文件，图片完整）');
       return;
     } catch (e) {
+      exportProgress(false);
       miniToast('导出失败：' + (e && e.message ? e.message : '未知错误'));
       return;
     }
@@ -16007,11 +16016,14 @@ function showImportChatModal(back = null) {
       const existing = await idbGetAll('messages');
       const existingIds = new Set(existing.map(m => m.id));
       let added = 0, updated = 0;
+      const toWrite = [];
       for (const m of msgs) {
         if (!m || !m.id) continue;
         if (existingIds.has(m.id)) updated++; else added++;
-        await idbPut('messages', m);
+        toWrite.push(m);
       }
+      // 20261031 提速：单事务批量写（旧逐条 idbPut 对 2 万+ 条消息极慢）
+      await idbBulkPut('messages', toWrite);
       miniToast('导入完成：新增 ' + added + ' 条，覆盖 ' + updated + ' 条');
       closeModal();
       if (currentCharId && document.body.dataset.view === 'chat') await renderMessages(currentCharId);
@@ -16429,7 +16441,8 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
       await idbClear('kv');
     }
     // 写入导入的数据（覆盖模式直接写；合并模式按 id 合并覆盖）
-    // 20261011：阶段3「写入数据库」进度——按各集合条数加权汇总
+    // 20261031 提速：改用 idbBulkPut 单事务批量写（旧逐条 idbPut 每条约 1 次 openDB+1 事务，
+    //   2 万+ 条消息串行极慢）。进度按各集合条数加权汇总。
     const chars = Array.isArray(data.characters) ? data.characters : [];
     const msgs = Array.isArray(data.messages) ? data.messages : [];
     const emos = Array.isArray(data.emojis) ? data.emojis : [];
@@ -16437,13 +16450,13 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
     const srvs = Array.isArray(data.surveys) ? data.surveys : []; // 问卷（20260929al）
     const gifts = Array.isArray(data.gifts) ? data.gifts : []; // 超频礼物柜（20260929ao）
     const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length || 1;
-    let wDone = 0;
-    for (const c of chars) { await idbPut('characters', c); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
-    for (const m of msgs) { await idbPut('messages', m); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
-    for (const e of emos) { await idbPut('emojis', e); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
-    for (const e of pals) { await idbPut('palace', e); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
-    for (const e of srvs) { await idbPut('surveys', e); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
-    for (const e of gifts) { await idbPut('gifts', e); wDone++; if (wDone % 20 === 0) _stage(3, wDone, wTotal); }
+    _stage(3, 0, wTotal);
+    if (chars.length) await idbBulkPut('characters', chars);
+    if (msgs.length) await idbBulkPut('messages', msgs);
+    if (emos.length) await idbBulkPut('emojis', emos);
+    if (pals.length) await idbBulkPut('palace', pals);
+    if (srvs.length) await idbBulkPut('surveys', srvs);
+    if (gifts.length) await idbBulkPut('gifts', gifts);
     _stage(3, wTotal, wTotal);
     if (data.cards) {
       if (mode === 'merge') {
@@ -16682,12 +16695,32 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     r.readAsDataURL(new Blob([head], { type: 'application/json' }));
   });
   await writeSingleFileChunked(path, headB64, directory, onProgress);
-  // ② 逐张图片【流式】转 base64 并分块 append（每张转完立即写盘、释放，内存只留单张）
+  // ② 逐张图片【流式】转 base64，但【合并成大块再 append】。
+  //   20261031 提速：真机实测 appendFile 单次 Bridge 调用 ~265ms（无论多大），转码却只需 ~14ms/3MB。
+  //   旧写法「每张图单独 append」→ 2833 张 × 265ms ≈ 12.5 分钟。改为把 base64 攒到 ~4MB 再一次性
+  //   append，调用次数从 2833 降到 ~129 次，耗时降到 ~35 秒。图片写入顺序不变，offset/len 语义不变。
   let totalBytes = headB64.length;
   for (const im of images) {
     totalBytes += im.byteLen;
   }
   let written = headB64.length;
+  let buf = ''; // 累积 base64 缓冲（攒到 CHUNK 再 flush）
+  const flush = async () => {
+    if (!buf) return;
+    const seg = buf;
+    buf = '';
+    for (let off = 0; off < seg.length; off += CHUNK) {
+      const part = seg.slice(off, off + CHUNK);
+      if (typeof FS.appendFile === 'function') {
+        await FS.appendFile({ path, data: part, directory, recursive: true });
+      } else {
+        throw new Error('文件系统不支持追加写入');
+      }
+      // part 是 base64 正文，appendFile 解码成二进制写入；进度按二进制字节累加（= base64 长度*3/4）
+      written += (part.length / 4) * 3;
+      if (onProgress) onProgress(written, totalBytes);
+    }
+  };
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
     let seg;
@@ -16697,17 +16730,14 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     } else {
       seg = im.dataURL || ''; // 老格式 dataURL 剥前缀后的纯 base64 正文
     }
-    for (let off = 0; off < seg.length; off += CHUNK) {
-      const part = seg.slice(off, off + CHUNK);
-      if (typeof FS.appendFile === 'function') {
-        await FS.appendFile({ path, data: part, directory, recursive: true });
-      } else {
-        // 无 appendFile：累加后再整体写（兜底，仅小数据场景）
-        throw new Error('文件系统不支持追加写入');
-      }
-      // part 是 base64 正文，appendFile 解码成二进制写入；进度按二进制字节累加（= base64 长度*3/4）
-      written += (part.length / 4) * 3;
-      if (onProgress) onProgress(written, totalBytes);
+    // 单张超过 CHUNK 的大图：先 flush 缓冲，再单独分块写（避免 buf 无限膨胀）
+    if (seg.length >= CHUNK) {
+      await flush();
+      buf = seg;
+      await flush();
+    } else {
+      buf += seg;
+      if (buf.length >= CHUNK) await flush();
     }
     // 释放该张引用，帮助 GC（转码出的 seg 不再被引用）
     seg = null;
@@ -16715,6 +16745,7 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     im.dataURL = null;
     images[i] = null;
   }
+  await flush(); // 尾块
   return true;
 }
 
@@ -16739,18 +16770,32 @@ async function restoreImagesV4(node, readImage) {
     for (const k of Object.keys(n)) collect(n[k], n, k);
   })(node, null, null);
   if (!found.length) return node;
-  for (const it of found) {
-    const n = it.n;
-    try {
-      const blob = await readImage(n.offset || 0, n.len || 0, n.mime || 'image/png');
-      let thumb = null;
-      if (n.thumbRef && n.thumbOffset !== undefined) {
-        thumb = await readImage(n.thumbOffset, n.thumbLen || 0, n.thumbMime || 'image/jpeg');
+  // 20261031 提速：8 路并发还原（与 deepImagesFromExport 同模型）。旧写法逐张串行 readImage，
+  //   2833 张图串行 file.slice 读盘很慢；并发后大幅缩短导入时间。单张失败不影响整体。
+  const total = found.length;
+  let idx = 0, done = 0;
+  const worker = async () => {
+    while (idx < total) {
+      const i = idx++;
+      const it = found[i];
+      const n = it.n;
+      try {
+        const blob = await readImage(n.offset || 0, n.len || 0, n.mime || 'image/png');
+        let thumb = null;
+        if (n.thumbRef && n.thumbOffset !== undefined) {
+          thumb = await readImage(n.thumbOffset, n.thumbLen || 0, n.thumbMime || 'image/jpeg');
+        }
+        const out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
+        if (it.parent) it.parent[it.key] = out;
+      } catch (e) { /* 单张图还原失败不影响整体，保留 {__img:4} 原样，渲染按缺失处理 */ }
+      done++;
+      if (total > 8 && (done % 8 === 0 || done === total)) {
+        exportProgress(true, `⬇️ 正在还原图片 ${done}/${total}…`);
       }
-      const out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
-      if (it.parent) it.parent[it.key] = out;
-    } catch (e) { /* 单张图还原失败不影响整体，保留 {__img:4} 原样，渲染按缺失处理 */ }
-  }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  exportProgress(false);
   return node;
 }
 
