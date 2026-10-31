@@ -16695,20 +16695,32 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     r.readAsDataURL(new Blob([head], { type: 'application/json' }));
   });
   await writeSingleFileChunked(path, headB64, directory, onProgress);
-  // ② 逐张图片【流式】转 base64，但【合并成大块再 append】。
+  // ② 逐张图片【流式】读二进制，但【合并成大块再 append】。
   //   20261031 提速：真机实测 appendFile 单次 Bridge 调用 ~265ms（无论多大），转码却只需 ~14ms/3MB。
-  //   旧写法「每张图单独 append」→ 2833 张 × 265ms ≈ 12.5 分钟。改为把 base64 攒到 ~4MB 再一次性
-  //   append，调用次数从 2833 降到 ~129 次，耗时降到 ~35 秒。图片写入顺序不变，offset/len 语义不变。
+  //   旧写法「每张图单独 append」→ 2833 张 × 265ms ≈ 12.5 分钟。改为把多张图的【二进制字节】攒到
+  //   ~3MB 再一次性 base64 编码 + append，调用次数从 2833 降到 ~130 次，耗时降到 ~35 秒。
+  //   图片写入顺序不变，offset/len 语义不变（packContainerFile 已按 byteLen 累加 offset）。
+  //   20261031 修复「not valid base64」：绝不能「把多张图各自独立 base64 的结果拼接后分块」——
+  //   每张图独立 base64 末尾的 '=' padding 会残留在合并流中间，而 Capacitor appendFile 每块独立
+  //   解码、Java Base64 严格拒绝中间 '='。正确做法是【按二进制字节累积】，flush 时对整块二进制
+  //   一次性 base64 编码（'=' 只在块末尾出现一次），保证每个 append 块都是完整合法 base64。
   let totalBytes = headB64.length;
   for (const im of images) {
     totalBytes += im.byteLen;
   }
   let written = headB64.length;
-  let buf = ''; // 累积 base64 缓冲（攒到 CHUNK 再 flush）
+  const BIN_CHUNK = 3 * 1024 * 1024; // 二进制缓冲阈值 ~3MB（编码后 ~4MB base64）
+  let binParts = []; // 累积的二进制 Uint8Array 片段
+  let binLen = 0;    // 已累积二进制字节数
   const flush = async () => {
-    if (!buf) return;
-    const seg = buf;
-    buf = '';
+    if (!binParts.length) return;
+    // 合并所有累积的二进制片段为一个 Blob，一次性 base64 编码（'=' 只在末尾出现一次）
+    const merged = new Blob(binParts);
+    binParts = [];
+    binLen = 0;
+    const du = await blobToDataURL(merged);
+    const seg = (du.indexOf(',') !== -1 ? du.slice(du.indexOf(',') + 1) : du);
+    // 分块 append（seg 是「一个完整二进制块」的 base64，4 的倍数长度，中间无 '='）
     for (let off = 0; off < seg.length; off += CHUNK) {
       const part = seg.slice(off, off + CHUNK);
       if (typeof FS.appendFile === 'function') {
@@ -16716,31 +16728,30 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
       } else {
         throw new Error('文件系统不支持追加写入');
       }
-      // part 是 base64 正文，appendFile 解码成二进制写入；进度按二进制字节累加（= base64 长度*3/4）
       written += (part.length / 4) * 3;
       if (onProgress) onProgress(written, totalBytes);
     }
   };
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
-    let seg;
+    let bytes;
     if (im.src === 'blob' && im.blob) {
-      const du = await blobToDataURL(im.blob); // 单张转码（最大 ~5.8MB base64）
-      seg = (du.indexOf(',') !== -1 ? du.slice(du.indexOf(',') + 1) : du);
+      bytes = new Uint8Array(await im.blob.arrayBuffer()); // 读二进制（不经过 base64 中转）
+    } else if (im.dataURL) {
+      // 老格式 dataURL：atob 解码 base64 → 二进制
+      const b64 = im.dataURL;
+      const bin = atob(b64);
+      bytes = new Uint8Array(bin.length);
+      for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
     } else {
-      seg = im.dataURL || ''; // 老格式 dataURL 剥前缀后的纯 base64 正文
+      bytes = new Uint8Array(0);
     }
-    // 单张超过 CHUNK 的大图：先 flush 缓冲，再单独分块写（避免 buf 无限膨胀）
-    if (seg.length >= CHUNK) {
-      await flush();
-      buf = seg;
-      await flush();
-    } else {
-      buf += seg;
-      if (buf.length >= CHUNK) await flush();
-    }
-    // 释放该张引用，帮助 GC（转码出的 seg 不再被引用）
-    seg = null;
+    binParts.push(bytes);
+    binLen += bytes.length;
+    // 攒到 BIN_CHUNK 就 flush 一次
+    if (binLen >= BIN_CHUNK) await flush();
+    // 释放该张引用，帮助 GC
+    bytes = null;
     im.blob = null;
     im.dataURL = null;
     images[i] = null;
