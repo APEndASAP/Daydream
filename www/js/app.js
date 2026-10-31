@@ -16264,6 +16264,124 @@ async function clearStaleCache() {
   }
 }
 
+/* ---------- 20261101：App 内备份文件浏览器（根治「文件选择器跳错文件夹」） ----------
+   用户此前反复反馈：点「导入」后系统文件选择器跳到的文件夹不对，很难找到「文档/白日梦备份」。
+   根因：<input type="file"> 是 Android 系统文件管理器，它的「起始目录」由系统记忆决定（降级重装后
+   记忆被清空就跳回默认目录），网页代码【无法】控制它跳到哪个文件夹——历史上也从没实现过这个能力。
+   彻底修法：在 App（有 Capacitor Filesystem）里，不再依赖系统文件选择器，而是直接列
+   「文档/白日梦备份」目录下的备份文件，玩家点一下就能选，永远不用去系统文件管理器里翻路径。
+   网页端（无 Filesystem）自动回退到原来的 <input type="file">。 */
+async function pickBackupFile(accepts, title, onPicked) {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  // 无 Filesystem（纯网页/浏览器）→ 回退系统文件选择器
+  if (!FS || typeof FS.readdir !== 'function') {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = (accepts || []).join(',');
+    inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) onPicked(f); };
+    inp.click();
+    return;
+  }
+  // 阶段1：列出「文档/白日梦备份」下的文件（保留 size/uri，供后续按大小走不同读回路径）
+  let files = [];
+  try {
+    const r = await FS.readdir({ path: '白日梦备份', directory: 'DOCUMENTS' });
+    files = (r.files || []).filter(f => f && f.name);
+  } catch (e) { files = []; }
+  // 按扩展名过滤（accepts 里形如 '.ocdata' 的条目），并按修改时间倒序（新的在前）
+  const extSet = new Set((accepts || []).filter(a => a && a[0] === '.').map(a => a.toLowerCase()));
+  let list = files.filter(f => {
+    if (!extSet.size) return true;
+    const dot = f.name.lastIndexOf('.');
+    const ext = dot === -1 ? '' : f.name.slice(dot).toLowerCase();
+    return extSet.has(ext);
+  });
+  list.sort((a, b) => (b.name > a.name ? 1 : -1)); // 文件名带时间戳，字典序倒序 = 新的在前
+  // 人类可读的文件大小
+  const fmtSize = (s) => {
+    if (!s && s !== 0) return '';
+    if (s < 1024) return s + ' B';
+    if (s < 1024 * 1024) return (s / 1024).toFixed(1) + ' KB';
+    if (s < 1024 * 1024 * 1024) return (s / 1024 / 1024).toFixed(1) + ' MB';
+    return (s / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  };
+
+  // 弹 App 内文件列表
+  const rows = list.length
+    ? list.map(f => `<div class="bkf-row" data-name="${escapeHtml(f.name)}" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;">
+        <span style="font-size:15px;">📄</span>
+        <span style="flex:1;font-size:13px;word-break:break-all;">${escapeHtml(f.name)}</span>
+        <span style="font-size:11px;color:var(--text-tertiary);flex:0 0 auto;">${fmtSize(f.size)}</span>
+      </div>`).join('')
+    : `<div style="font-size:13px;color:var(--text-secondary);padding:16px 4px;line-height:1.7;">
+        在「文档/白日梦备份」里还没有找到<b>${escapeHtml(title)}</b>类型的备份文件。<br><br>
+        如果你之前把备份存到了别的位置，可以点下面的「手动选择文件」去系统里找。</div>`;
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div style="font-size:17px;font-weight:600;">选择备份文件</div>
+      <button class="icon-btn" id="bkf-close">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.5;">
+      已自动定位到「文档 / 白日梦备份」文件夹，下面就是里面的备份文件（新的在最上面）。<br>
+      直接点一下要恢复的文件即可。
+    </div>
+    <div style="max-height:46vh;overflow-y:auto;margin-bottom:12px;">${rows}</div>
+    <button class="btn block" id="bkf-manual" style="justify-content:center;color:var(--text-secondary);">手动选择文件（去系统文件里找）</button>
+  `);
+  // 读回文件为 Blob。策略：优先用 FS.getUri 拿 file:// URI 走 XMLHttpRequest（惰性、大文件安全，
+  // 不经过 base64 字符串膨胀）；getUri/XHR 不可用时回退 FS.readFile（小文件场景）。
+  const readToBlob = async (name) => {
+    const path = '白日梦备份/' + name;
+    // 尝试 getUri + XHR（大文件安全）
+    try {
+      if (typeof FS.getUri === 'function') {
+        const u = await FS.getUri({ path, directory: 'DOCUMENTS' });
+        const uri = u && u.uri;
+        if (uri) {
+          const blob = await new Promise((res, rej) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', uri, true);
+            xhr.responseType = 'blob';
+            xhr.onload = () => { if (xhr.status === 200 || xhr.status === 0) res(xhr.response); else rej(new Error('HTTP ' + xhr.status)); };
+            xhr.onerror = () => rej(new Error('读取失败'));
+            xhr.send();
+          });
+          return blob;
+        }
+      }
+    } catch (e) { /* 回退 readFile */ }
+    // 回退：FS.readFile（base64 → Blob）
+    const r = await FS.readFile({ path, directory: 'DOCUMENTS' });
+    const b64 = String(r.data).replace(/[\r\n]/g, '');
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new Blob([u8], { type: 'application/octet-stream' });
+  };
+  const pick = (name) => {
+    closeModal();
+    if (!name) return;
+    readToBlob(name).then(blob => {
+      try { blob.name = name; } catch (e) {}
+      onPicked(blob);
+    }).catch(e => {
+      showToast('读取文件失败：' + (e && e.message ? e.message : '未知错误'));
+    });
+  };
+  $('#bkf-close').onclick = closeModal;
+  document.querySelectorAll('.bkf-row').forEach(el => {
+    el.onclick = () => pick(el.getAttribute('data-name'));
+  });
+  $('#bkf-manual').onclick = () => {
+    closeModal();
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = (accepts || []).join(',');
+    inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) onPicked(f); };
+    inp.click();
+  };
+}
+
 /* ---------- 导入全局数据（2.4：支持覆盖/合并） ---------- */
 function showImportModal(back = null) {
   openModal(`
@@ -16277,7 +16395,11 @@ function showImportModal(back = null) {
     </div>
     <div class="field">
       <label>备份文件</label>
-      <input class="input" type="file" id="import-file" accept=".ocdata,.json,.letterdata,.chatdata,application/octet-stream,application/json,text/plain">
+      <button class="btn block" id="import-pick" style="justify-content:space-between;">
+        <span style="font-size:13px;color:var(--text-secondary);">从「白日梦备份」文件夹选择…</span>
+        <span style="font-size:13px;">📂</span>
+      </button>
+      <div id="import-file-name" style="font-size:12px;color:var(--purple);margin-top:6px;word-break:break-all;display:none;"></div>
     </div>
     <div class="field">
       <label>导入方式</label>
@@ -16301,8 +16423,21 @@ function showImportModal(back = null) {
   if (isProgressActive()) setProgressPanelMode(true);
   $('#import-close').onclick = () => back ? back() : closeModal();
   $('#import-cancel').onclick = () => back ? back() : closeModal();
+  // 选中的文件（File 或从 App 内读回的 Blob）
+  let pickedFile = null;
+  // 「选择备份文件」→ App 内文件浏览器（网页端自动回退系统文件选择器）
+  $('#import-pick').onclick = () => {
+    pickBackupFile(['.ocdata', '.json', '.letterdata', '.chatdata', 'application/octet-stream', 'application/json', 'text/plain'], '数据备份', (blob) => {
+      pickedFile = blob;
+      const name = (blob.name) || '已选择的文件';
+      const el = $('#import-file-name');
+      if (el) { el.textContent = '已选：' + name; el.style.display = 'block'; }
+      const btn = $('#import-pick');
+      if (btn) btn.querySelector('span').textContent = name;
+    });
+  };
   $('#import-go').onclick = async () => {
-    const file = $('#import-file').files[0];
+    const file = pickedFile;
     if (!file) { showToast('请先选择备份文件'); return; }
     const mode = (document.querySelector('input[name="import-mode"]:checked') || {}).value || 'overwrite';
     // 20261011：四阶段进度面板（读取文件 → 解析数据 → 还原图片 → 写入数据库），
@@ -16892,33 +17027,48 @@ function b64ToByteLen(b64) {
   return Math.floor(b64.length / 4) * 3 - pad;
 }
 
-/* 20261031 修复「文件解析失败」：探测容器分隔符。旧代码固定只读前 4MB 找 \nBMIMG\n，
-   JSON 头一旦超过 4MB（大数据量：2 万+消息时头可到 3.6MB+），分隔符落在窗口外被误判成
-   「老格式纯 JSON」→ 整读 700MB → JSON.parse 抛异常 → 报「文件解析失败」。
-   这里改为【分块递增探测】：从 4MB 起逐块往后读，直到找到分隔符或读完整文件，任何大小的
-   JSON 头都能正确识别容器格式。返回：
-     { sepFound:true,  headStr, containerStart }  容器格式（containerStart=图片块字节起点）
+/* 探测容器分隔符（20261101 彻底修复「图片全坏/导入失败」的 UTF-8 字节边界 bug）。
+   20261031 引入容器格式时，读取端用 file.slice().text() 按 4MB 字节边界切片再按 UTF-8 解码，
+   但 JSON 头里【中文角色名/昵称/人设是原始 UTF-8 多字节字符（JSON.stringify 不转义）】——
+   当 4MB 边界正好切在某中文字符（3 字节）中间时，.text() 会解码成替换字符 U+FFFD，
+   再用 TextEncoder().encode(headStr).length 反推 containerStart 字节偏移就【对不上实际文件字节】，
+   导致后续 containerFile.slice(containerStart+offset) 读图时所有图片字节位置错位 → 图片全坏。
+   修法：全程用 arrayBuffer() 读【原始字节】，用 TextDecoder 累积解码，并在【字节层面】找
+   分隔符的字节序列、直接记录分隔符在字节流中的【真实结束偏移】作为 containerStart，
+   彻底绕开 UTF-8 边界切错的问题。返回：
+     { sepFound:true,  headStr, containerStart }  容器格式（containerStart=图片块字节起点，精确到字节）
      { sepFound:false, headStr }                   老格式（整文件纯 JSON，headStr=全文） */
 async function probeContainerHead(file) {
   const size = file.size || 0;
-  const CHUNK = 4 * 1024 * 1024; // 每次读 4MB（与写端分块对齐，读起来快且不爆内存）
-  let acc = '';                 // 累积已读文本（JSON 头可能跨多个 chunk，必须完整保留到找到分隔符）
-  let off = 0;
-  while (off < size) {
-    const seg = await file.slice(off, Math.min(off + CHUNK, size)).text();
-    acc += seg;
-    const idx = acc.indexOf(BM_CONTAINER_SEP);
-    if (idx !== -1) {
-      // 找到分隔符：headStr 是分隔符前的 JSON 头；containerStart 是图片块字节起点
-      const headStr = acc.slice(0, idx);
-      const headBytes = new TextEncoder().encode(headStr).length;
-      const containerStart = headBytes + new TextEncoder().encode(BM_CONTAINER_SEP).length;
-      return { sepFound: true, headStr, containerStart };
+  const CHUNK = 4 * 1024 * 1024; // 每次读 4MB 原始字节
+  const SEP_BYTES = new TextEncoder().encode(BM_CONTAINER_SEP); // 分隔符的 UTF-8 字节序列
+  const dec = new TextDecoder('utf-8'); // 跨块解码器（fatal:false 会吞掉边界处不完整字符，避免乱码）
+  let acc = '';                 // 累积已解码的 JSON 头文本
+  let byteOff = 0;              // 已读原始字节数（= 下一次 slice 的起点）
+  let found = null;             // 找到分隔符时记录 { headStr, containerStart }
+  while (byteOff < size) {
+    const buf = await file.slice(byteOff, Math.min(byteOff + CHUNK, size)).arrayBuffer();
+    const u8 = new Uint8Array(buf);
+    // 在【字节层面】找分隔符序列（避免中文 UTF-8 边界被 .text() 切坏）
+    let sepByteIdx = -1;
+    for (let i = 0; i <= u8.length - SEP_BYTES.length; i++) {
+      let m = true;
+      for (let j = 0; j < SEP_BYTES.length; j++) { if (u8[i + j] !== SEP_BYTES[j]) { m = false; break; } }
+      if (m) { sepByteIdx = i; break; }
     }
-    // 未找到：继续累积（不能丢弃已读内容，否则跨块 JSON 头会丢失；JSON 头本身不大，累积安全）
-    off += CHUNK;
+    if (sepByteIdx !== -1) {
+      // 分隔符落在本块内：解码分隔符前的字节为 headStr（跨块解码器保证中文完整）
+      const headU8 = u8.subarray(0, sepByteIdx);
+      acc += dec.decode(headU8, { stream: true });
+      acc += dec.decode(); // flush
+      found = { sepFound: true, headStr: acc, containerStart: byteOff + sepByteIdx + SEP_BYTES.length };
+      return found;
+    }
+    // 本块没找到分隔符：整块解码累积，继续往后读
+    acc += dec.decode(u8, { stream: true });
+    byteOff += u8.length;
   }
-  // 读完整文件都没找到分隔符 → 老格式纯 JSON，acc 即全文
+  acc += dec.decode(); // flush 最后残余
   return { sepFound: false, headStr: acc };
 }
 
