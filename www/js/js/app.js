@@ -254,6 +254,8 @@ async function init() {
   await initGlassPresets(); // 20261011：液态玻璃美化预设（悬浮窗/气泡/通话 1号纯CSS/2号真折射，默认1号）
   await loadGlobalTheme(); // 20260929bo：全局色彩预设（先于 applyChatTheme，浅色主题 class 一次到位）
   applyChatTheme();
+  // 20261101 APP 端：冷启动预热图片文件引用 URL（后台异步，不阻塞渲染）
+  _bmImgWarmup();
   try {
     await showDailyCard();
     renderChatList();
@@ -2354,6 +2356,8 @@ async function renderGroupMessages(groupId) {
   const scroll = $('#chat-scroll');
   const all = await idbGetAll('messages');
   const msgs = all.filter(m => m.groupId === groupId).sort((a, b) => a.time - b.time);
+  // 20261101 APP 端：预热群聊消息里的 {__img:5} 图片引用 URL
+  if (bmImgIsApp()) _bmImgWarmupOn(msgs);
   scroll.innerHTML = '';
   if (msgs.length === 0) {
     _chatWin = null;
@@ -3309,6 +3313,9 @@ async function renderMessages(charId) {
   // 数据乱串根治（用户 20260925 反馈）：群聊消息落库带 charId+groupId，之前这里只按 charId 取，
   // 群聊里说的话全被串进该访客的单聊——现在排除一切带 groupId 的消息，单聊只留单聊
   const msgs = (await idbGetMessagesByChar(charId, 100000)).filter(m => !m.groupId);
+  // 20261101 APP 端：预热本批消息里的 {__img:5} 图片引用 URL（后台异步，不阻塞渲染）。
+  //   冷启动后 _bmImgUrlMap 为空，先预热再渲染，避免首屏图片空白。
+  if (bmImgIsApp()) _bmImgWarmupOn(msgs);
   scroll.innerHTML = '';
   if (msgs.length === 0) {
     _chatWin = null;
@@ -4962,14 +4969,147 @@ function compressImage(file, maxEdge = 1080, quality = 0.7, keepAlpha = false) {
   });
 }
 
+/* ============ 20261101 图片文件系统存储层（APP 端专用，网页端零影响）============
+   背景：真机实测证明「图片塞 IndexedDB」在 APP 端走不通（Blob backing 失效→InvalidBlob；
+   转 base64→0.9G 膨胀→OOM 崩）。改为 APP 端把图片写到「文档/白日梦备份/白日梦图片数据/」，
+   IndexedDB 只存 {__img:5, ref:hash, mime, w, h} 引用；渲染用 Capacitor.convertFileSrc(getUri)
+   拿 WebView 内部 URL 直接给 <img>，不把图片读回 base64 存内存，根治 OOM。
+   网页端（无 Capacitor）走原 Blob 存 IndexedDB 逻辑，完全不动。 */
+const BM_IMG_FS_DIR = '白日梦备份/白日梦图片数据';
+function bmImgIsApp() {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!FS || typeof FS.writeFile !== 'function') return false;
+  const p = window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : '';
+  return p === 'android' || p === 'ios';
+}
+/* ref(hash) → 内部渲染 URL 的内存缓存（URL 字符串，非图片字节，内存占用可忽略） */
+const _bmImgUrlMap = new Map();
+/* ref → 正在 getUri 中的 Promise（防并发重复 getUri） */
+const _bmImgUriPending = new Map();
+/* 图片文件扩展名（按 mime 映射，无匹配默认 .bin；仅用于文件名，不影响解码） */
+function bmImgExt(mime) {
+  const m = (mime || '').toLowerCase();
+  if (m.indexOf('png') !== -1) return '.png';
+  if (m.indexOf('jpeg') !== -1 || m.indexOf('jpg') !== -1) return '.jpg';
+  if (m.indexOf('webp') !== -1) return '.webp';
+  if (m.indexOf('gif') !== -1) return '.gif';
+  if (m.indexOf('bmp') !== -1) return '.bmp';
+  return '.bin';
+}
+/* 异步求图片内容 SHA-256（前 16 hex 作文件名，去重 + 无危险字符）。失败退回时间戳+序号。 */
+let _bmImgHashSeq = 0;
+async function bmImgHash(u8) {
+  try {
+    if (window.crypto && window.crypto.subtle) {
+      const d = await window.crypto.subtle.digest('SHA-256', u8);
+      const hx = Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, '0')).join('');
+      return hx.slice(0, 16);
+    }
+  } catch (e) {}
+  return 'img' + Date.now().toString(36) + '_' + (++_bmImgHashSeq);
+}
+/* APP 端：把图片二进制写到图片目录，返回引用 {ref, mime}（ref=文件名 hash+ext，已存在则跳过写去重）。
+   失败抛异常（调用方降级为原 Blob 路径）。 */
+async function bmImgWriteFs(u8, mime) {
+  const FS = window.Capacitor.Plugins.Filesystem;
+  const ref = await bmImgHash(u8) + bmImgExt(mime);
+  const path = BM_IMG_FS_DIR + '/' + ref;
+  // 去重：文件已存在则跳过写（hash+ext 同名 = 同内容）
+  try {
+    const st = await FS.stat({ path, directory: 'DOCUMENTS' });
+    if (st && st.size === u8.byteLength) return { ref, mime };
+  } catch (e) { /* 不存在，继续写 */ }
+  // 二进制 → base64（分块转，避免大图一次性拼长字符串）
+  let b64 = '';
+  const CH = 0x8000; // 32KB
+  for (let off = 0; off < u8.byteLength; off += CH) {
+    const chunk = u8.subarray(off, off + CH);
+    let bin = '';
+    for (let i = 0; i < chunk.length; i++) bin += String.fromCharCode(chunk[i]);
+    b64 += btoa(bin);
+  }
+  await FS.writeFile({ path, data: b64, directory: 'DOCUMENTS', recursive: true });
+  return { ref, mime };
+}
+/* APP 端：Blob → 写文件 → 返回 {ref, mime}（去重，复用 bmImgWriteFs）。
+   供 restoreImagesV4 导入还原时调用。 */
+async function _bmImgBlobToFs(blob, mime) {
+  const u8 = new Uint8Array(await blob.arrayBuffer());
+  return bmImgWriteFs(u8, mime || blob.type || 'image/png');
+}
+/* 20261101 APP 端：预热数据里的 {__img:5} 引用 URL。
+   遍历收集 ref，并发 bmImgEnsureUrl（getUri 轻量、不读图片内容），
+   使渲染时 _bmImgUrlMap 已命中，避免首屏图片空白。异步后台跑，不阻塞渲染。 */
+async function _bmImgWarmupOn(anyData) {
+  if (!bmImgIsApp() || !anyData) return;
+  try {
+    const refs = new Set();
+    const scan = (n) => {
+      if (!n || typeof n !== 'object') return;
+      if (Array.isArray(n)) { for (const x of n) scan(x); return; }
+      if (n.__img === 5 && typeof n.ref === 'string') { refs.add(n.ref); if (typeof n.thumbRef === 'string') refs.add(n.thumbRef); return; }
+      for (const k of Object.keys(n)) { try { scan(n[k]); } catch (e) {} }
+    };
+    scan(anyData);
+    const arr = Array.from(refs);
+    if (!arr.length) return;
+    await Promise.all(arr.map(r => bmImgEnsureUrl(r)));
+  } catch (e) {}
+}
+/* 20261101 APP 端：冷启动后预热全局已加载的角色数据（characters）。 */
+async function _bmImgWarmup() {
+  if (!bmImgIsApp()) return;
+  try { await _bmImgWarmupOn(characters); } catch (e) {}
+}
+/* 20261101 APP 端：同步取 ref 对应的渲染 URL（有缓存直接返回；无缓存返回空串，
+   由 bmImgEnsureUrl 异步回填后触发刷新）。 */
+function bmImgUrl(ref) {
+  return _bmImgUrlMap.get(ref) || '';
+}
+async function bmImgEnsureUrl(ref) {
+  if (!ref) return '';
+  if (_bmImgUrlMap.has(ref)) return _bmImgUrlMap.get(ref);
+  if (_bmImgUriPending.has(ref)) return _bmImgUriPending.get(ref);
+  const p = (async () => {
+    try {
+      const FS = window.Capacitor.Plugins.Filesystem;
+      const path = BM_IMG_FS_DIR + '/' + ref;
+      const uri = await FS.getUri({ path, directory: 'DOCUMENTS' });
+      let url = '';
+      if (window.Capacitor.convertFileSrc) url = window.Capacitor.convertFileSrc(uri.uri);
+      else url = uri.uri;
+      _bmImgUrlMap.set(ref, url);
+      return url;
+    } catch (e) {
+      return '';
+    } finally {
+      _bmImgUriPending.delete(ref);
+    }
+  })();
+  _bmImgUriPending.set(ref, p);
+  return p;
+}
+
 /* 显示层统一取图 URL（20260929g）：
    - 字符串（旧 base64 数据 / 兜底结果）→ 原样返回，旧数据一字不动；
    - { blob, thumb } 描述符 → objectURL；WeakMap 按 Blob 实例缓存，
-     同一条记录在会话内只创建一次 URL，避免每次渲染重复创建导致泄漏 */
+     同一条记录在会话内只创建一次 URL，避免每次渲染重复创建导致泄漏；
+   - { __img:5, ref, ... } APP 端文件系统引用 → 查内存 URL Map 返回内部 URL；
+     若尚未回填（App 冷启动后首次渲染），返回空串并异步 bmImgEnsureUrl 回填。 */
 const _imgURLCache = new WeakMap();
 function imgSrc(v, useThumb = false) {
   if (!v) return '';
   if (typeof v === 'string') return v;
+  // 20261101：APP 端文件系统图片引用 {__img:5, ref, mime}（thumb 用 thumbRef）
+  if (v.__img === 5) {
+    const ref = useThumb && v.thumbRef ? v.thumbRef : v.ref;
+    if (!ref) return '';
+    const url = bmImgUrl(ref);
+    if (url) return url;
+    // 尚未回填：异步 ensure，返回空串占位（下次渲染或刷新后可见）
+    bmImgEnsureUrl(ref).then(u => { if (u) _bmImgRefreshByRef(ref); }).catch(() => {});
+    return '';
+  }
   const b = (useThumb && v.thumb) ? v.thumb : v.blob;
   if (!b) return '';
   if (typeof b === 'string') return b;
@@ -4978,6 +5118,17 @@ function imgSrc(v, useThumb = false) {
     if (!u) { u = URL.createObjectURL(b); _imgURLCache.set(b, u); }
     return u;
   } catch (e) { return ''; }
+}
+/* 20261101：ref 的 URL 回填后，把页面上所有已引用该 ref 的 <img> 刷新一次 src。
+   仅在 APP 冷启动首次渲染时触发（导入后 Map 已预热，不会走到这里）。 */
+function _bmImgRefreshByRef(ref) {
+  try {
+    const url = _bmImgUrlMap.get(ref);
+    if (!url) return;
+    document.querySelectorAll('img[data-bmref="' + ref + '"]').forEach(img => {
+      if (!img.src || img.src !== url) img.src = url;
+    });
+  } catch (e) {}
 }
 /* 20261011：HTML 属性输出防护——imgSrcAttr 仅用于 HTML 属性上下文（<img src=...>、
    data-full=... 等）。内部先走 imgSrc 取 URL，再经 escapeHtml 转义 & < > " '，
@@ -16378,13 +16529,18 @@ function showImportModal(back = null) {
       // 阶段2+3：还原图片 + 写入数据库。容器格式传 readImageV4（逐张 file.slice 读图）
       const readImageV4 = containerFile
         ? async (offset, len, mime) => {
-            const buf = await containerFile.slice(containerStart + offset, containerStart + offset + len).arrayBuffer();
-            // 20261101 修复「Failed to write blobs (InvalidBlob)」：Android WebView 里
-            //   file.slice().arrayBuffer() 返回的 ArrayBuffer 可能是 file-backed / 延迟加载，
-            //   8 路并发读 730MB 大文件时，某些 ArrayBuffer 的 backing 在 new Blob 后失效，
-            //   写入 IndexedDB 时被报 InvalidBlob（= 源 blob 不再可读）。
-            //   这里用 slice(0) 强制做一次【内存独立拷贝】，让 Blob 完全脱离文件句柄，
-            //   从源头杜绝 backing 失效。同时对空图做防御（len>0 但读回 0 字节 = offset 错位）。
+            // 20261101 方案A：改用 FileReader.readAsArrayBuffer 读独立拷贝。
+            //   根因：Android WebView(Chrome130) 对 754MB 大文件高频 file.slice().arrayBuffer()
+            //   会触发 NotFoundError / InvalidBlob（底层 content:// URI 的 backing 在并发读中失效）。
+            //   FileReader 把 slice 出的 Blob 完整读进【独立内存 ArrayBuffer】，彻底脱离原文件
+            //   的 backing 句柄，从根本上规避 content:// 失效。空图防御：len>0 但读回 0 字节 = 错位。
+            const slice = containerFile.slice(containerStart + offset, containerStart + offset + len);
+            const buf = await new Promise((res, rej) => {
+              const fr = new FileReader();
+              fr.onload = () => res(fr.result);
+              fr.onerror = () => rej(fr.error || new Error('read-blob-failed'));
+              fr.readAsArrayBuffer(slice);
+            });
             const copy = buf.slice(0);
             if (len > 0 && copy.byteLength === 0) throw new Error('empty-blob');
             return new Blob([copy], { type: (mime || 'image/png') });
@@ -16406,15 +16562,41 @@ async function imgDescFromExport(v) {
     // 20261011：兼容旧备份——若整个字段本身就是 dataURL/base64 字符串，原样保留为字符串
     // （imgSrc 已兼容字符串，渲染不会崩；无需强行转 Blob 徒增 WebView 风险）
     if (typeof v === 'string') return v;
+    const useFs = bmImgIsApp();
     // 旧备份形态 { blob:"dataURL字符串", thumb? }（无 __img 标记）：blob 字段是字符串，迁移成 Blob
     if (typeof v.blob === 'string' && v.blob) {
       const mainBlob = await dataURLToBlob(v.blob);
+      if (useFs) {
+        // 20261101 APP 端：写文件 + {__img:5} 引用
+        const mainRef = await _bmImgBlobToFs(mainBlob, mainBlob.type || 'image/png');
+        let out = { __img: 5, ref: mainRef.ref, mime: mainRef.mime, w: v.w || 0, h: v.h || 0 };
+        if (typeof v.thumb === 'string' && v.thumb) {
+          try {
+            const tBlob = await dataURLToBlob(v.thumb);
+            const tRef = await _bmImgBlobToFs(tBlob, tBlob.type || 'image/jpeg');
+            out.thumbRef = tRef.ref; out.thumbMime = tRef.mime;
+          } catch (e) {}
+        }
+        return out;
+      }
       const tBlob = (typeof v.thumb === 'string' && v.thumb) ? await dataURLToBlob(v.thumb) : null;
       return { blob: mainBlob, thumb: tBlob, w: v.w || 0, h: v.h || 0 };
     }
     // 新格式 { __img:1, data:"dataURL", thumb? }
     const blob = v.data ? await dataURLToBlob(v.data) : null;
     if (!blob) return '';
+    if (useFs) {
+      const mainRef = await _bmImgBlobToFs(blob, blob.type || 'image/png');
+      let out = { __img: 5, ref: mainRef.ref, mime: mainRef.mime, w: v.w || 0, h: v.h || 0 };
+      if (v.thumb) {
+        try {
+          const tBlob = await dataURLToBlob(v.thumb);
+          const tRef = await _bmImgBlobToFs(tBlob, tBlob.type || 'image/jpeg');
+          out.thumbRef = tRef.ref; out.thumbMime = tRef.mime;
+        } catch (e) {}
+      }
+      return out;
+    }
     const thumb = v.thumb ? await dataURLToBlob(v.thumb) : null;
     return { blob, thumb, w: v.w || 0, h: v.h || 0 };
   } catch (e) { return ''; }
@@ -17009,6 +17191,21 @@ async function collectImagesV4(node, onProgress = null) {
       }
       return out;
     }
+    // 20261101 APP 端文件系统引用 {__img:5, ref, mime, thumbRef?}：转回 {__img:4} 引用参与容器打包。
+    //   src='fs' 标记：writeContainerFile 阶段用 FS.readFile 从图片目录读回二进制，不占内存。
+    if (n.__img === 5 && typeof n.ref === 'string') {
+      const mime = n.mime || 'image/png';
+      const ref = 'fs-' + String(++seq).padStart(6, '0');
+      const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
+      images.push({ ref, mime, src: 'fs', fsRef: n.ref, blob: null, dataURL: '', byteLen: 0 });
+      if (typeof n.thumbRef === 'string' && n.thumbRef) {
+        const tref = 'fs-' + String(seq).padStart(6, '0');
+        out.thumbRef = tref;
+        out.thumbMime = n.thumbMime || 'image/jpeg';
+        images.push({ ref: tref, mime: out.thumbMime, src: 'fs', fsRef: n.thumbRef, blob: null, dataURL: '', byteLen: 0 });
+      }
+      return out;
+    }
     // 普通对象：浅拷贝键值 + 递归
     const obj = {};
     seen.set(n, obj);
@@ -17016,6 +17213,8 @@ async function collectImagesV4(node, onProgress = null) {
     return obj;
   }
   const data = clone(node, new WeakMap());
+  // 20261101：src='fs' 图片的 byteLen 在 writeContainerFile 阶段用 FS.stat 回填（stat 轻量不读内容，
+  //   避免在这里提前 readFile 把 754MB 图全读进内存 → OOM）。这里只保证 images 已含 fsRef 标记。
   if (onProgress) onProgress(images.length, images.length);
   return { data, images };
 }
@@ -17048,7 +17247,18 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!FS || typeof FS.writeFile !== 'function') throw new Error('文件系统不可用');
   const CHUNK = 4 * 1024 * 1024; // 4MB base64 字符
-  // ① 写 JSON 头（含分隔符）
+  // ① 20261101：先 stat 所有 src='fs' 图（APP 端文件系统图片）回填 byteLen。
+  //    stat 只取元数据不读内容，轻量；packContainerFile 依赖 byteLen 累加 offset，必须先算好。
+  const fsImgs = images.filter(im => im.src === 'fs');
+  if (fsImgs.length) {
+    await Promise.all(fsImgs.map(async (im) => {
+      try {
+        const st = await FS.stat({ path: BM_IMG_FS_DIR + '/' + im.fsRef, directory: 'DOCUMENTS' });
+        im.byteLen = (st && st.size) ? st.size : 0;
+      } catch (e) { im.byteLen = 0; }
+    }));
+  }
+  // ② 写 JSON 头（含分隔符）
   const head = packContainerFile(data, images);
   const headB64 = await new Promise((res, rej) => {
     const r = new FileReader();
@@ -17099,6 +17309,15 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     let bytes;
     if (im.src === 'blob' && im.blob) {
       bytes = new Uint8Array(await im.blob.arrayBuffer()); // 读二进制（不经过 base64 中转）
+    } else if (im.src === 'fs' && im.fsRef) {
+      // 20261101 APP 端文件系统图片：FS.readFile 读 base64 → atob 转二进制。逐张读、逐张释放，
+      //   不提前全读进内存（754MB 图全读会 OOM）。
+      try {
+        const r = await FS.readFile({ path: BM_IMG_FS_DIR + '/' + im.fsRef, directory: 'DOCUMENTS' });
+        const bin = atob(r.data);
+        bytes = new Uint8Array(bin.length);
+        for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+      } catch (e) { bytes = new Uint8Array(0); }
     } else if (im.dataURL) {
       // 老格式 dataURL：atob 解码 base64 → 二进制
       const b64 = im.dataURL;
@@ -17152,6 +17371,11 @@ async function restoreImagesV4(node, readImage, onProgress = null) {
   const total = found.length;
   let idx = 0, done = 0;
   const CONC = 3;
+  // 20261101：APP 端（有 Capacitor Filesystem）图片走「写文件 + {__img:5} 引用」，不再塞 IndexedDB。
+  //   真机实测：Blob 写 IndexedDB backing 随机失效（InvalidBlob），转 base64 膨胀 0.9G → OOM 崩。
+  //   改为图片写「文档/白日梦备份/白日梦图片数据/」（内容 hash 文件名去重），记录只存 {__img:5, ref}，
+  //   渲染用 convertFileSrc(getUri) 拿内部 URL，从根上绕开 IndexedDB 写大图这条死路。
+  const useFs = bmImgIsApp();
   const worker = async () => {
     while (idx < total) {
       const i = idx++;
@@ -17159,11 +17383,27 @@ async function restoreImagesV4(node, readImage, onProgress = null) {
       const n = it.n;
       try {
         const blob = await readImage(n.offset || 0, n.len || 0, n.mime || 'image/png');
-        let thumb = null;
-        if (n.thumbRef && n.thumbOffset !== undefined) {
-          thumb = await readImage(n.thumbOffset, n.thumbLen || 0, n.thumbMime || 'image/jpeg');
+        let out;
+        if (useFs) {
+          // 写文件 + 存 {__img:5} 引用
+          const mainRef = await _bmImgBlobToFs(blob, n.mime || 'image/png');
+          let thumbRef = null, thumbMime = null;
+          if (n.thumbRef && n.thumbOffset !== undefined) {
+            try {
+              const tBlob = await readImage(n.thumbOffset, n.thumbLen || 0, n.thumbMime || 'image/jpeg');
+              const tRef = await _bmImgBlobToFs(tBlob, n.thumbMime || 'image/jpeg');
+              thumbRef = tRef.ref; thumbMime = tRef.mime;
+            } catch (e) { /* 缩略图失败不影响主图 */ }
+          }
+          out = { __img: 5, ref: mainRef.ref, mime: mainRef.mime, w: n.w || 0, h: n.h || 0 };
+          if (thumbRef) { out.thumbRef = thumbRef; out.thumbMime = thumbMime; }
+        } else {
+          let thumb = null;
+          if (n.thumbRef && n.thumbOffset !== undefined) {
+            thumb = await readImage(n.thumbOffset, n.thumbLen || 0, n.thumbMime || 'image/jpeg');
+          }
+          out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
         }
-        const out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
         if (it.parent) it.parent[it.key] = out;
       } catch (e) { /* 单张图还原失败不影响整体，保留 {__img:4} 原样，渲染按缺失处理 */ }
       done++;
@@ -21842,9 +22082,13 @@ async function renderNotebookCalendar() {
       // 20261030：玩家自己的行程（source='player'）可删除；角色行程只读不可删
       const delBtn = isChar ? '' : `<button class="badge" data-nb-sched-del="${escapeHtml(it.id)}" style="cursor:pointer;color:var(--danger);margin-left:6px;flex-shrink:0;">删</button>`;
       // 20261031：留言/备注区分展示——玩家行程的角色留言=💬（给玩家）；角色行程的备注=📌自注（给角色自己）
+      // 20261101 修复「留言不互通」：玩家行程互通全显示，但留言要按角色隔离——
+      //   只在留言者 == 当前聊天角色时才显示这条留言（测试窗口只看测试的，厉言霄窗口只看厉言霄的）。
       let extra = '';
       if (!isChar && it.comment) {
-        extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--purple-soft);border-radius:6px;font-size:12px;color:var(--text-secondary);">💬 ${escapeHtml(it.commentCharName || 'TA')} 给你留言：${escapeHtml(it.comment)}</div>`;
+        if (!it.commentCharId || it.commentCharId === curCid) {
+          extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--purple-soft);border-radius:6px;font-size:12px;color:var(--text-secondary);">💬 ${escapeHtml(it.commentCharName || 'TA')} 给你留言：${escapeHtml(it.comment)}</div>`;
+        }
       } else if (isChar && it.note) {
         extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--text-tertiary);border-radius:6px;font-size:12px;color:var(--text-tertiary);">📌 ${escapeHtml(it.charName || 'TA')} 的备注：${escapeHtml(it.note)}</div>`;
       }
@@ -22092,7 +22336,18 @@ async function maybeRecordCharSchedule(c) {
   if (count <= 0) { await setSetting(flagKey, true); return false; } // 随机抽到 0 条：当天不写
   const list = await nbLoadSchedules();  // 20261030：角色行程写记事蒲独立存储
   const dayKey = today;
-  const usedTitles = new Set();
+  // 20261101 修复「行程重复叠加」：数据包导入后防重标记(charSchedGlobal_*/charSchedDone_*)丢失，
+  //   当天已写入的行程（source='char'）会叠加新生成的一起显示成超量多条。
+  //   这里改为——先统计该角色「今天」已有几条自己的行程，若已 ≥ 设置上限 charSchedCountMax，
+  //   就不再补写（数据包已有的行程优先，不叠加）。这样无论防重标记是否丢失都不会超量。
+  const existCount = list.filter(it => it && it.source === 'char' && it.charId === c.id && it.at && annivDayKey(new Date(it.at)) === dayKey).length;
+  if (existCount >= (parseInt(chatSettings.charSchedCountMax, 10) || 3)) {
+    await setSetting(flagKey, true);
+    return false; // 今天已写够，不再补
+  }
+  // 需补写的条数 = 目标条数 - 今天已有条数（只补差额，不重复叠加）
+  count = Math.max(0, count - existCount);
+  const usedTitles = new Set(list.filter(it => it && it.source === 'char' && it.charId === c.id && it.at && annivDayKey(new Date(it.at)) === dayKey).map(it => it.title));
   let written = 0;
   for (let i = 0; i < count; i++) {
     let title = '';
@@ -22184,24 +22439,23 @@ async function genNotebookComment(c, targetTitle, isNote) {
     } catch (e) {}
     const n = pickMin + Math.floor(Math.random() * (pickMax - pickMin + 1));
     if (n <= 0) return '';
-    // 内容池：回复字卡（过滤禁词/禁用分组）+ 状态 + Emoji
-    const pieces = [];
-    const reply = drawReply(cards, getCharBanWords(c), (c && c.relation) || null, (c && c.bannedGroups) || []);
-    if (reply) pieces.push(reply);
-    const st = drawFrom(cards.customStatuses || []);
-    if (st) pieces.push(st);
-    const emo = drawFrom(cards.customEmojis || []);
-    if (emo) pieces.push(emo);
-    if (pieces.length === 0) { text = isNote ? '今天要记得' : '注意休息呀'; }
-    else {
-      // 从内容池里随机抽 n 条组合（不重复抽同一项）
-      const pool = pieces.slice();
-      const chosen = [];
-      for (let i = 0; i < n && pool.length; i++) {
-        chosen.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
-      }
-      text = chosen.join('，');
+    // 20261101 修复「留言/备注只有 1 张」：旧实现每类（回复/状态/Emoji）只抽 1 个，
+    //   内容池最多 3 个且常只有 1 个可用 → 无论设置 0~2 张都只能出 1 张。
+    //   改为——循环抽 n 条不重复的回复字卡（drawReply 每次独立抽，Set 去重补抽），
+    //   与「多字卡组合」功能（见 multiCard 抽卡）同一套语义：n 张 = 抽 n 条回复字卡。
+    const banWords = getCharBanWords(c);
+    const relation = (c && c.relation) || null;
+    const bannedGroups = (c && c.bannedGroups) || [];
+    const used = new Set();
+    const chosen = [];
+    for (let i = 0; i < n; i++) {
+      let t = drawReply(cards, banWords, relation, bannedGroups);
+      let guard = 0;
+      while (used.has(t) && guard < 8) { t = drawReply(cards, banWords, relation, bannedGroups); guard++; }
+      if (t && !used.has(t)) { used.add(t); chosen.push(t); }
     }
+    if (chosen.length === 0) { text = isNote ? '今天要记得' : '注意休息呀'; }
+    else { text = chosen.join('，'); }
   }
   return text;
 }
