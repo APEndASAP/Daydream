@@ -4969,6 +4969,66 @@ function compressImage(file, maxEdge = 1080, quality = 0.7, keepAlpha = false) {
   });
 }
 
+/* ============ 20261101 导出图片压缩（根治文件膨胀，730MB 大头是图片）============
+   目标：导入导出每次 700 多 MB 太糟心，导出时把图片压小（看得清即可，不求高清）。
+   规则：
+   - JPG/JPEG：限宽 1080px、质量 0.7
+   - PNG 带透明：保留 PNG 透明通道，限宽 1080px
+   - PNG 不透明：转 JPG 限宽 1080px（更省）
+   - GIF 动图：canvas 会把动图压成静态首帧 → 跳过不压（原样保留，保证动图不坏）
+   - WebP：保留 WebP 或转 JPG，限宽 1080px
+   - 本就小图（≤1080px 且字节 ≤ 阈值）：跳过，不重复压
+   只改图片二进制内容，不改容器格式，导入端按 offset/len 读天然兼容（零改动）。 */
+const BM_EXPORT_MAX_EDGE = 1080;
+const BM_EXPORT_QUALITY = 0.7;
+function _bmGifBlob(blob) {
+  // 判断是否为 GIF（动图）：mime 或前 6 字节 'GIF87a'/'GIF89a'
+  if ((blob.type || '').toLowerCase() === 'image/gif') return true;
+  return false;
+}
+/* 压缩一张图用于导出。返回 { blob, mime }（可能是原图或压缩图）。
+   失败返回 null（调用方回退用原图）。 */
+async function compressForExport(blob, mime) {
+  const t = (mime || blob.type || 'image/jpeg').toLowerCase();
+  try {
+    // GIF 动图：跳过压缩，原样返回
+    if (t.indexOf('gif') !== -1 || _bmGifBlob(blob)) {
+      return { blob, mime: 'image/gif' };
+    }
+    const dataUrl = await blobToDataURL(blob);
+    const img = await new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => rej(new Error('图片解码失败'));
+      im.src = dataUrl;
+    });
+    let { width, height } = img;
+    const hasAlpha = t.indexOf('png') !== -1;
+    // 小图（≤1080px）跳过压缩，避免无谓重编码
+    if (Math.max(width, height) <= BM_EXPORT_MAX_EDGE && blob.size <= 200 * 1024) {
+      return { blob, mime: t };
+    }
+    if (Math.max(width, height) > BM_EXPORT_MAX_EDGE) {
+      const r = BM_EXPORT_MAX_EDGE / Math.max(width, height);
+      width = Math.round(width * r);
+      height = Math.round(height * r);
+    }
+    const outMime = hasAlpha ? 'image/png' : 'image/jpeg';
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (hasAlpha) { ctx.clearRect(0, 0, width, height); }
+    else { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, height); }
+    ctx.drawImage(img, 0, 0, width, height);
+    const outBlob = await canvasToBlob(canvas, outMime, BM_EXPORT_QUALITY);
+    canvas.width = canvas.height = 0; // 释放 canvas 内存
+    return { blob: outBlob, mime: outMime };
+  } catch (e) {
+    return null; // 压缩失败 → 调用方回退原图
+  }
+}
+
 /* ============ 20261101 图片文件系统存储层（APP 端专用，网页端零影响）============
    背景：真机实测证明「图片塞 IndexedDB」在 APP 端走不通（Blob backing 失效→InvalidBlob；
    转 base64→0.9G 膨胀→OOM 崩）。改为 APP 端把图片写到「文档/白日梦备份/白日梦图片数据/」，
@@ -5036,6 +5096,75 @@ async function bmImgWriteFs(u8, mime) {
 async function _bmImgBlobToFs(blob, mime) {
   const u8 = new Uint8Array(await blob.arrayBuffer());
   return bmImgWriteFs(u8, mime || blob.type || 'image/png');
+}
+
+/* ============ 20261101 顺序流式读图器（根治 content:// 大文件随机读失效）============
+   病根：Android WebView 对 content:// 大文件（754MB）的 file.slice(大offset) 随机读，
+   读不了几百张就【静默返回空】（不抛错），导致 offset 靠后的图片（表情包/封面）全坏。
+   方案：不再逐张 file.slice 随机跳读，改为【顺序分块读 + 窗口缓存】——FileReader 按
+   8MB 块从头到尾顺序读（顺序读 content:// 是稳定的，probeContainerHead 已验证），
+   图片按 offset 顺序排列（容器格式保证），readAt(offset,len) 落在当前窗口内直接切，
+   否则顺序推进到目标 offset。一次顺序遍历读完所有图，彻底绕开随机读失效。 */
+function bmCreateStreamReader(file, baseOffset) {
+  // baseOffset = containerStart（图片块起点在文件内的绝对字节位置）
+  const CHUNK = 8 * 1024 * 1024; // 8MB 顺序读块
+  const fileSize = file.size || 0;
+  let curStart = baseOffset;   // 当前窗口在【文件】内的绝对起点
+  let curBuf = null;           // 当前窗口的 Uint8Array（文件绝对字节）
+  let curEnd = baseOffset;     // 当前窗口绝对终点（curBuf 覆盖 [curStart, curEnd)）
+  // 读 [absStart, absEnd) 这一段文件字节，返回 Uint8Array
+  async function readRange(absStart, absEnd) {
+    const s = Math.max(0, absStart);
+    const e = Math.min(fileSize, absEnd);
+    if (e <= s) return new Uint8Array(0);
+    const slice = file.slice(s, e);
+    const buf = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = () => rej(fr.error || new Error('read-blob-failed'));
+      fr.readAsArrayBuffer(slice);
+    });
+    return new Uint8Array(buf);
+  }
+  // 确保窗口覆盖 [absStart, absEnd)；不足则顺序推进
+  async function ensure(absStart, absEnd) {
+    if (curBuf && absStart >= curStart && absEnd <= curEnd) return; // 已覆盖
+    // 顺序推进：从 curStart（或 absStart 之前一点）读到覆盖 absEnd
+    const newStart = curBuf ? curStart : absStart; // 首次从目标 offset 开始读
+    const readStart = Math.min(newStart, absStart);
+    const readEnd = Math.max(absEnd, readStart + CHUNK);
+    curBuf = await readRange(readStart, readEnd);
+    curStart = readStart;
+    curEnd = readStart + curBuf.length;
+  }
+  // 按【图片块相对 offset】（相对 baseOffset）读 len 字节，返回 Uint8Array
+  return {
+    async readAt(offset, len) {
+      if (!len || len <= 0) return new Uint8Array(0);
+      const absStart = baseOffset + offset;
+      const absEnd = absStart + len;
+      // 目标图过大（超过一块）时直接按需读，不走窗口
+      if (len > CHUNK) return await readRange(absStart, absEnd);
+      await ensure(absStart, absEnd);
+      // 从窗口切出 [absStart, absEnd) 对应的字节
+      const out = new Uint8Array(len);
+      let copied = 0;
+      let pos = absStart;
+      while (copied < len && pos < curEnd) {
+        const srcIdx = pos - curStart;
+        const avail = Math.min(len - copied, curEnd - pos);
+        out.set(curBuf.subarray(srcIdx, srcIdx + avail), copied);
+        copied += avail;
+        pos += avail;
+        if (copied < len) {
+          // 跨窗口：推进到 pos
+          await ensure(pos, pos + (len - copied));
+        }
+      }
+      return out;
+    },
+    get baseOffset() { return baseOffset; },
+  };
 }
 /* 20261101 APP 端：预热数据里的 {__img:5} 引用 URL。
    遍历收集 ref，并发 bmImgEnsureUrl（getUri 轻量、不读图片内容），
@@ -16526,24 +16655,15 @@ function showImportModal(back = null) {
         showConfirm('该文件似乎不是《白日梦》的备份，仍要导入吗？', () => doImport(data, mode));
         return;
       }
-      // 阶段2+3：还原图片 + 写入数据库。容器格式传 readImageV4（逐张 file.slice 读图）
-      const readImageV4 = containerFile
+      // 阶段2+3：还原图片 + 写入数据库。容器格式传 readImageV4（顺序流式读图）
+      // 20261101 根治：content:// 大文件随机 file.slice 读静默返回空（图片全坏）。
+      //   改用顺序流式读图器（8MB 块顺序读 + 窗口缓存），图片按 offset 顺序切出。
+      const streamReader = containerFile ? bmCreateStreamReader(containerFile, containerStart) : null;
+      const readImageV4 = streamReader
         ? async (offset, len, mime) => {
-            // 20261101 方案A：改用 FileReader.readAsArrayBuffer 读独立拷贝。
-            //   根因：Android WebView(Chrome130) 对 754MB 大文件高频 file.slice().arrayBuffer()
-            //   会触发 NotFoundError / InvalidBlob（底层 content:// URI 的 backing 在并发读中失效）。
-            //   FileReader 把 slice 出的 Blob 完整读进【独立内存 ArrayBuffer】，彻底脱离原文件
-            //   的 backing 句柄，从根本上规避 content:// 失效。空图防御：len>0 但读回 0 字节 = 错位。
-            const slice = containerFile.slice(containerStart + offset, containerStart + offset + len);
-            const buf = await new Promise((res, rej) => {
-              const fr = new FileReader();
-              fr.onload = () => res(fr.result);
-              fr.onerror = () => rej(fr.error || new Error('read-blob-failed'));
-              fr.readAsArrayBuffer(slice);
-            });
-            const copy = buf.slice(0);
-            if (len > 0 && copy.byteLength === 0) throw new Error('empty-blob');
-            return new Blob([copy], { type: (mime || 'image/png') });
+            const u8 = await streamReader.readAt(offset || 0, len || 0);
+            if ((len || 0) > 0 && u8.byteLength === 0) throw new Error('empty-blob');
+            return new Blob([u8], { type: (mime || 'image/png') });
           }
         : null;
       await doImport(data, mode, (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), readImageV4);
@@ -17258,6 +17378,52 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
       } catch (e) { im.byteLen = 0; }
     }));
   }
+  // ② 20261101 导出压缩：逐张读二进制 → compressForExport 压缩 → 存 im.compressed + 回填 byteLen。
+  //   压缩只改图片内容不改容器格式，导入端按 offset/len 读天然兼容（零改动）。
+  //   在 packContainerFile 之前统一压缩，offset 按压缩后 byteLen 累加，天然正确。
+  for (let i = 0; i < images.length; i++) {
+    const im = images[i];
+    let raw;
+    if (im.src === 'blob' && im.blob) {
+      raw = new Uint8Array(await im.blob.arrayBuffer());
+    } else if (im.src === 'fs' && im.fsRef) {
+      try {
+        const r = await FS.readFile({ path: BM_IMG_FS_DIR + '/' + im.fsRef, directory: 'DOCUMENTS' });
+        const bin = atob(r.data);
+        raw = new Uint8Array(bin.length);
+        for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k);
+      } catch (e) { raw = new Uint8Array(0); }
+    } else if (im.dataURL) {
+      const bin = atob(im.dataURL);
+      raw = new Uint8Array(bin.length);
+      for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k);
+    } else {
+      raw = new Uint8Array(0);
+    }
+    if (raw.byteLength > 0) {
+      try {
+        const res = await compressForExport(new Blob([raw], { type: im.mime || 'image/jpeg' }), im.mime);
+        if (res && res.blob) {
+          const cbytes = new Uint8Array(await res.blob.arrayBuffer());
+          // 只保留「确实变小」的压缩结果，避免压缩反而变大
+          im.compressed = (cbytes.byteLength < raw.byteLength) ? cbytes : raw;
+          im.byteLen = im.compressed.byteLength;
+          im.mime = res.mime || im.mime;
+        } else {
+          im.compressed = raw;
+          im.byteLen = raw.byteLength;
+        }
+      } catch (e) {
+        im.compressed = raw;
+        im.byteLen = raw.byteLength;
+      }
+    } else {
+      im.compressed = new Uint8Array(0);
+      im.byteLen = 0;
+    }
+    im.blob = null;      // 释放原始 Blob 引用，帮助 GC
+    im.dataURL = null;
+  }
   // ② 写 JSON 头（含分隔符）
   const head = packContainerFile(data, images);
   const headB64 = await new Promise((res, rej) => {
@@ -17276,11 +17442,15 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
   //   每张图独立 base64 末尾的 '=' padding 会残留在合并流中间，而 Capacitor appendFile 每块独立
   //   解码、Java Base64 严格拒绝中间 '='。正确做法是【按二进制字节累积】，flush 时对整块二进制
   //   一次性 base64 编码（'=' 只在块末尾出现一次），保证每个 append 块都是完整合法 base64。
-  let totalBytes = headB64.length;
+  // 20261101 修复进度条单位不一致：totalBytes/written 统一用「二进制字节数」。
+  //   旧代码 totalBytes = headB64.length（base64 字符数），而 written 累加的是二进制字节
+  //   （(part.length/4)*3），两者单位不同导致总进度条永远跑不满/跳动。
+  const headBinLen = new TextEncoder().encode(head).length; // JSON 头实际写入文件的二进制字节数
+  let totalBytes = headBinLen;
   for (const im of images) {
     totalBytes += im.byteLen;
   }
-  let written = headB64.length;
+  let written = headBinLen;
   const BIN_CHUNK = 3 * 1024 * 1024; // 二进制缓冲阈值 ~3MB（编码后 ~4MB base64）
   let binParts = []; // 累积的二进制 Uint8Array 片段
   let binLen = 0;    // 已累积二进制字节数
@@ -17306,33 +17476,14 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
   };
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
-    let bytes;
-    if (im.src === 'blob' && im.blob) {
-      bytes = new Uint8Array(await im.blob.arrayBuffer()); // 读二进制（不经过 base64 中转）
-    } else if (im.src === 'fs' && im.fsRef) {
-      // 20261101 APP 端文件系统图片：FS.readFile 读 base64 → atob 转二进制。逐张读、逐张释放，
-      //   不提前全读进内存（754MB 图全读会 OOM）。
-      try {
-        const r = await FS.readFile({ path: BM_IMG_FS_DIR + '/' + im.fsRef, directory: 'DOCUMENTS' });
-        const bin = atob(r.data);
-        bytes = new Uint8Array(bin.length);
-        for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
-      } catch (e) { bytes = new Uint8Array(0); }
-    } else if (im.dataURL) {
-      // 老格式 dataURL：atob 解码 base64 → 二进制
-      const b64 = im.dataURL;
-      const bin = atob(b64);
-      bytes = new Uint8Array(bin.length);
-      for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
-    } else {
-      bytes = new Uint8Array(0);
-    }
+    // 20261101：直接取压缩预扫描阶段存好的 im.compressed（已压缩的二进制），不再重新读图
+    const bytes = im.compressed || new Uint8Array(0);
     binParts.push(bytes);
     binLen += bytes.length;
     // 攒到 BIN_CHUNK 就 flush 一次
     if (binLen >= BIN_CHUNK) await flush();
     // 释放该张引用，帮助 GC
-    bytes = null;
+    im.compressed = null;
     im.blob = null;
     im.dataURL = null;
     images[i] = null;
@@ -17354,66 +17505,78 @@ function unpackContainerFile(text) {
    进度条卡在「解析完成」不动，像假死。加回调后每还原 8 张刷新一次进度。 */
 async function restoreImagesV4(node, readImage, onProgress = null) {
   if (!node || typeof node !== 'object') return node;
-  const found = [];
+  // 20261101：collect 阶段把【主图 + 缩略图】都展开成独立读图任务（每个任务记录写回目标），
+  //   整体按 offset 排序后顺序遍历，配合 bmCreateStreamReader 顺序流式读。
+  const jobs = []; // { offset, len, mime, parent, key, isThumb }
   const seen = new WeakSet();
   (function collect(n, parent, key) {
     if (!n || typeof n !== 'object') return;
     if (seen.has(n)) return; seen.add(n);
     if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
-    if (n.__img === 4 && typeof n.ref === 'string') { found.push({ parent, key, n }); return; }
+    if (n.__img === 4 && typeof n.ref === 'string') {
+      jobs.push({ offset: n.offset || 0, len: n.len || 0, mime: n.mime || 'image/png', parent, key, isThumb: false });
+      if (n.thumbRef && n.thumbOffset !== undefined) {
+        jobs.push({ offset: n.thumbOffset || 0, len: n.thumbLen || 0, mime: n.thumbMime || 'image/jpeg', parent, key, isThumb: true });
+      }
+      return;
+    }
     for (const k of Object.keys(n)) collect(n[k], n, k);
   })(node, null, null);
-  if (!found.length) { if (onProgress) onProgress(0, 0); return node; }
-  // 20261031 提速：并发还原（与 deepImagesFromExport 同模型）。旧写法逐张串行 readImage，
-  //   2833 张图串行 file.slice 读盘很慢；并发后大幅缩短导入时间。单张失败不影响整体。
-  //   20261101：并发 8→3。真机 WebView 对 730MB 大文件 8 路并发 file.slice().arrayBuffer()
-  //   会触发 InvalidBlob（源 blob backing 失效）；降并发 + readImage 内 slice(0) 拷贝双保险。
-  const total = found.length;
-  let idx = 0, done = 0;
-  const CONC = 3;
+  if (!jobs.length) { if (onProgress) onProgress(0, 0); return node; }
+  // 20261101 根治：按 offset 升序顺序遍历。旧并发 worker 随机跳读 content:// 大文件，
+  //   读不了几百张就静默返回空 → 图片全坏。现在严格顺序读，一次遍历读完所有图。
   // 20261101：APP 端（有 Capacitor Filesystem）图片走「写文件 + {__img:5} 引用」，不再塞 IndexedDB。
-  //   真机实测：Blob 写 IndexedDB backing 随机失效（InvalidBlob），转 base64 膨胀 0.9G → OOM 崩。
-  //   改为图片写「文档/白日梦备份/白日梦图片数据/」（内容 hash 文件名去重），记录只存 {__img:5, ref}，
-  //   渲染用 convertFileSrc(getUri) 拿内部 URL，从根上绕开 IndexedDB 写大图这条死路。
   const useFs = bmImgIsApp();
-  const worker = async () => {
-    while (idx < total) {
-      const i = idx++;
-      const it = found[i];
-      const n = it.n;
-      try {
-        const blob = await readImage(n.offset || 0, n.len || 0, n.mime || 'image/png');
-        let out;
-        if (useFs) {
-          // 写文件 + 存 {__img:5} 引用
-          const mainRef = await _bmImgBlobToFs(blob, n.mime || 'image/png');
-          let thumbRef = null, thumbMime = null;
-          if (n.thumbRef && n.thumbOffset !== undefined) {
-            try {
-              const tBlob = await readImage(n.thumbOffset, n.thumbLen || 0, n.thumbMime || 'image/jpeg');
-              const tRef = await _bmImgBlobToFs(tBlob, n.thumbMime || 'image/jpeg');
-              thumbRef = tRef.ref; thumbMime = tRef.mime;
-            } catch (e) { /* 缩略图失败不影响主图 */ }
-          }
-          out = { __img: 5, ref: mainRef.ref, mime: mainRef.mime, w: n.w || 0, h: n.h || 0 };
-          if (thumbRef) { out.thumbRef = thumbRef; out.thumbMime = thumbMime; }
-        } else {
-          let thumb = null;
-          if (n.thumbRef && n.thumbOffset !== undefined) {
-            thumb = await readImage(n.thumbOffset, n.thumbLen || 0, n.thumbMime || 'image/jpeg');
-          }
-          out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
-        }
-        if (it.parent) it.parent[it.key] = out;
-      } catch (e) { /* 单张图还原失败不影响整体，保留 {__img:4} 原样，渲染按缺失处理 */ }
-      done++;
-      if (total > 8 && (done % 8 === 0 || done === total)) {
-        if (onProgress) { try { onProgress(done, total); } catch (e) {} }
-        exportProgress(true, `⬇️ 正在还原图片 ${done}/${total}…`);
-      }
+  jobs.sort((a, b) => a.offset - b.offset);
+  const total = jobs.length;
+  // 读回的图（按 job 顺序暂存 blob，供写回时组合主图+缩略图）
+  const blobByJob = new Map(); // job 索引 → Blob
+  for (let i = 0; i < total; i++) {
+    const j = jobs[i];
+    try {
+      blobByJob.set(i, await readImage(j.offset, j.len, j.mime));
+    } catch (e) { blobByJob.set(i, null); }
+    if (total > 8 && (i % 8 === 0 || i === total - 1)) {
+      if (onProgress) { try { onProgress(i + 1, total); } catch (e) {} }
+      exportProgress(true, `⬇️ 正在还原图片 ${i + 1}/${total}…`);
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(CONC, total) }, worker));
+  }
+  // 写回：把每个 {__img:4} 引用的主图+缩略图组合写回（APP 端写文件转 {__img:5}，网页端存 Blob）
+  // 用 key 字符串（parent 引用 + key）分组合并主图/缩略图
+  const group = new Map(); // key → { parent, key, main, thumb, mime, thumbMime, w, h }
+  for (let i = 0; i < total; i++) {
+    const j = jobs[i];
+    const blob = blobByJob.get(i);
+    if (!blob) continue; // 读失败，跳过
+    const gk = j.parent; // 用 parent 对象本身作 Map key（同一 {__img:4} 的主图+缩略图 parent 相同）
+    let g = group.get(gk);
+    if (!g) {
+      g = { parent: j.parent, key: j.key, main: null, thumb: null, mime: null, thumbMime: null, w: 0, h: 0 };
+      group.set(gk, g);
+    }
+    if (j.isThumb) { g.thumb = blob; } else { g.main = blob; g.mime = j.mime; }
+    // 从原始引用对象补 w/h/thumbMime
+    const orig = j.parent && j.parent[j.key];
+    if (orig) { g.w = orig.w || 0; g.h = orig.h || 0; g.thumbMime = orig.thumbMime || 'image/jpeg'; }
+  }
+  for (const g of group.values()) {
+    try {
+      let out;
+      if (useFs && g.main) {
+        const mainRef = await _bmImgBlobToFs(g.main, g.mime || 'image/png');
+        out = { __img: 5, ref: mainRef.ref, mime: mainRef.mime, w: g.w, h: g.h };
+        if (g.thumb) {
+          try {
+            const tRef = await _bmImgBlobToFs(g.thumb, g.thumbMime || 'image/jpeg');
+            out.thumbRef = tRef.ref; out.thumbMime = tRef.mime;
+          } catch (e) {}
+        }
+      } else if (g.main) {
+        out = { blob: g.main, thumb: g.thumb, w: g.w, h: g.h };
+      }
+      if (out && g.parent) g.parent[g.key] = out;
+    } catch (e) { /* 写回失败保留 {__img:4} 原样 */ }
+  }
   exportProgress(false);
   return node;
 }
@@ -17453,14 +17616,18 @@ function exportProgress(show, text) {
 let _progState = null;      // 全局进度状态（跨弹窗/页面持久，直到 closeProgressPanel 才清）
 let _progInModal = false;   // 当前形态：true=显示完整面板（挂在弹窗内） false=隐藏（后台继续跑）
 function _progOverall(stages) {
-  let acc = 0, weight = 0;
+  // 20261101 修复总进度条与阶段进度不一致：旧实现按 s.total 加权，导入各阶段 total 数量级
+  //   差异巨大（读取文件/解析数据 total=1，还原图片 total=4034），导致总进度被大数据量阶段
+  //   完全主导、前面阶段对总进度几乎无贡献，且总进度数值与「当前阶段」感知脱节。
+  //   改为【等权】——每个阶段权重相同，总进度 = 各阶段进度简单平均，感知准确。
+  let acc = 0;
+  const n = stages.length;
+  if (!n) return 0;
   stages.forEach(s => {
-    const w = s.total > 0 ? s.total : 1;
-    weight += w;
     const ratio = s.total > 0 ? Math.min(1, s.val / s.total) : Math.min(1, s.val);
-    acc += ratio * w;
+    acc += ratio;
   });
-  return weight > 0 ? acc / weight : 0;
+  return acc / n;
 }
 function startProgressPanel(stages, total, kind = 'export') {
   // 若已有进行中的任务且阶段定义相同，直接复用状态（避免重复开启时丢失已有进度）；
@@ -17866,22 +18033,46 @@ async function exportAll() {
     const rawData = await buildBackupPayload('3.0'); // 拿含 {blob,thumb} 的原始 data（不做 base64 内嵌）
     const { data: headData, images } = await collectImagesV4(rawData);
     headData.version = '2.2';
-    const headStr = packContainerFile(headData, images); // JSON 头 + 分隔符（小）
-    const headBytes = new TextEncoder().encode(headStr);
-    // 图片块：逐张读二进制，直接按顺序拼 Blob（不转 base64，无超长字符串）
-    const parts = [headBytes];
+    // 20261101 网页端导出压缩（补漏）：网页端无 Capacitor，走的是本 fallback 分支，之前漏了压缩，
+    //   导致网页端导出的 .ocdata 仍是 700MB+ 原图。这里与 APK 端 writeContainerFile 一致地
+    //   逐张 compressForExport 压缩 → 回填 im.compressed + im.byteLen，再 packContainerFile
+    //   用压缩后 byteLen 累加 offset，保证 offset/len 与实际写入的压缩字节严格一致。
     for (const im of images) {
-      let bytes;
+      let raw;
       if (im.src === 'blob' && im.blob) {
-        bytes = new Uint8Array(await im.blob.arrayBuffer());
+        raw = new Uint8Array(await im.blob.arrayBuffer());
       } else if (im.dataURL) {
         const bin = atob(im.dataURL);
-        bytes = new Uint8Array(bin.length);
-        for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+        raw = new Uint8Array(bin.length);
+        for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k);
       } else {
-        bytes = new Uint8Array(0);
+        raw = new Uint8Array(0);
       }
-      parts.push(bytes);
+      if (raw.byteLength > 0) {
+        try {
+          const res = await compressForExport(new Blob([raw], { type: im.mime || 'image/jpeg' }), im.mime);
+          if (res && res.blob) {
+            const cbytes = new Uint8Array(await res.blob.arrayBuffer());
+            im.compressed = (cbytes.byteLength < raw.byteLength) ? cbytes : raw; // 只保留确实变小的
+            im.byteLen = im.compressed.byteLength;
+          } else {
+            im.compressed = raw; im.byteLen = raw.byteLength;
+          }
+        } catch (e) {
+          im.compressed = raw; im.byteLen = raw.byteLength;
+        }
+      } else {
+        im.compressed = new Uint8Array(0); im.byteLen = 0;
+      }
+      im.blob = null; im.dataURL = null; // 释放原始引用，帮助 GC
+    }
+    const headStr = packContainerFile(headData, images); // JSON 头 + 分隔符（小，offset/len 已按压缩后字节算）
+    const headBytes = new TextEncoder().encode(headStr);
+    // 图片块：直接按顺序拼「压缩后的」二进制（不转 base64，无超长字符串）
+    const parts = [headBytes];
+    for (const im of images) {
+      parts.push(im.compressed || new Uint8Array(0));
+      im.compressed = null; im.blob = null; im.dataURL = null;
     }
     const blob = new Blob(parts, { type: 'application/octet-stream' });
     await finishExport(save, blob, '全量备份已导出');
