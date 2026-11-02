@@ -164,15 +164,15 @@ const FX_AUDIO = {
   apricot:'rain_splashing.ogg', pear:'rain_splashing.ogg',           // 清明雨
   thunder:'thunder_big_rumble.ogg',                                  // 惊蛰 → 惊雷轰隆
   firefly:'night_crickets_loop.ogg',                                 // 立夏 → 夏夜虫鸣（流萤）
-  snow:'snow_winter_wind.ogg', heavysnow:'snow_winter_wind.ogg', icecrystal:['snow_winter_wind.ogg', 0.35],// 大雪/大寒 雪类（大寒音量调小）
-  lightsnow:null,                                                    // 小雪 → 静音（初雪将至，不配冬风）
+  snow:'snow_winter_wind.ogg', heavysnow:'snow_winter_wind.ogg', icecrystal:['snow_winter_wind.ogg', 0.9],// 大雪/大寒 雪类（20261102 大寒音量调大 0.35→0.9）
+  lightsnow:['snow_winter_wind.ogg', 0.8],                          // 小雪 → 冬风（20261102 补音，音量稍轻于大雪）
   leaves:'leaves_breeze_2427.ogg', leaf:'leaves_breeze_2427.ogg', frost:'leaves_breeze_2427.ogg', geese:'bsb_soft_wind.mp3',// 秋风/落叶类；寒露 → 微风（20261031 用户拍板 soft_wind）
   moon:'bsb_field_cricket_1020.mp3', stars:['__LAYER__',['bsb_3487.mp3', 0.7],['magpie_sound.mp3', 0.45]], sunburst:'bsb_forest_stream2.mp3',// 中秋 → 田野蟋蟀；七夕 → 欧洲黑鸟 + 喜鹊（喜鹊音量调小）；夏至 → 森林流水 #2
   heatwave:'summer_cicada_heat.ogg',                                // 大暑 → 夏日蝉鸣热浪腾腾
   wave:'water_flowing_ambience.ogg', riverlamp:'water_flowing_ambience.ogg', dew:'rain_splashing.ogg',// 端午/处暑 → 流水潺潺；白露 → 雨
   flag:'water_flowing_ambience.ogg', tea:'leaves_breeze_2427.ogg', osmanthus:'leaves_breeze_2427.ogg', chrysanth:'leaves_breeze_2427.ogg',// 国庆 → 流水潺潺；草木类
   wheat:['bsb_wind_grass_908.mp3', 1.6], swallows:'bsb_forest_stream2.mp3', sprout:'bsb_birds_waking4_1906.mp3', lotus:['__LAYER__',['leaves_breeze_2427.ogg', 0.35],['water_flowing_ambience.ogg', 0.6]],  // 小满/劳动节 → 麦浪风（原始电平低，音量调大 1.6）；立春 → 春天清晨鸟鸣；春分 → 森林流水 #2；小暑 → 风声 + 流水潺潺（双音叠加）
-  plum:null, hearth:'fire_campfire_crackles.ogg', warmwindow:'fire_campfire_crackles.ogg',// 冬至红梅 → 静音；小寒 → 篝火；立冬 → 燃烧
+  plum:'bsb_soft_wind.mp3', hearth:'fire_campfire_crackles.ogg', warmwindow:'fire_campfire_crackles.ogg',// 冬至红梅 → 柔风（20261102 补音，原静音）；小寒 → 篝火；立冬 → 燃烧
   balloon:null, choco:'bsb_chime_dream1.mp3', peony:'rain_splashing.ogg',              // 六一 → 静音；白色情人节 → 梦幻铃 #1（20261031 用户拍板）
   default:'leaves_breeze_2427.ogg',
 };
@@ -314,9 +314,9 @@ function runFx(kind, canvas) {
     wave(){ parts = []; },
     /* 儿童节：气球 */
     balloon(){ parts = []; for (let i=0;i<9;i++) parts.push({x:R()*W, y:H+R()*H*0.6, s:16+R()*18, v:0.5+R()*0.8, sw:R()*TAU, c:`hsl(${330+R()*60},70%,${72+R()*12}%)`}); },
-    /* 重阳：秋菊绽放 */
-    chrysanth(){ parts = []; for (let i=0;i<8;i++) parts.push({x:W*(0.12+R()*0.76), y:H*(0.2+R()*0.6), r:(14+R()*18)*S, ph:R()*3, petals:9+((i%3)*2), hue:38+R()*14});
-      extra = []; for (let i=0;i<8;i++) extra.push({x:R()*W, y:R()*-H, s:5+R()*7, v:0.4+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.06}); },
+    /* 重阳：秋菊绽放（20261102 二次调参：菊花再调小、落叶保持大） */
+    chrysanth(){ parts = []; for (let i=0;i<8;i++) parts.push({x:W*(0.12+R()*0.76), y:H*(0.2+R()*0.6), r:(6+R()*8)*S, ph:R()*3, petals:9+((i%3)*2), hue:38+R()*14});
+      extra = []; for (let i=0;i<8;i++) extra.push({x:R()*W, y:R()*-H, s:14+R()*16, v:0.4+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.06}); },
     /* 白色情人节：包装巧克力 + 缎带糖果 + 白羽毛 */
     choco(){ parts = []; const wraps=['#e8a0b4','#a0c4e8','#c0aee8','#f0c98a','#a8d8c0'];
       for (let i=0;i<14;i++) parts.push({x:R()*W, y:R()*-H, s:11+R()*11, v:0.4+R()*0.6, sw:R()*TAU, rot:R()*TAU, rv:(R()-0.5)*0.05, kind:'choco', c:wraps[i%wraps.length]});

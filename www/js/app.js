@@ -1164,7 +1164,16 @@ function _playDreamFxAudio(fx) {
   const BASE_GAIN = 1.35;
   const INSECT_GAIN = 1.55;
   const isInsect = INSECT_FILES.indexOf(file) !== -1;
-  vol = vol * (isInsect ? INSECT_GAIN : BASE_GAIN);
+  // 20261102：冬季节气（立冬/小雪/大雪/冬至/小寒/大寒）白噪音再「调大一点点」——
+  // 按动画 kind 精确判断，不影响其它节气复用同款音频文件（如冬至的柔风与寒露同文件）。
+  const WINTER_KINDS = ['warmwindow', 'lightsnow', 'heavysnow', 'plum', 'hearth', 'icecrystal'];
+  const WINTER_GAIN = 1.55;
+  // 20261102：小寒(hearth)、立冬(warmwindow)在冬季增益基础上再调大 70%（用户点名）
+  const WINTER_LOUD_KINDS = ['warmwindow', 'hearth'];
+  const WINTER_LOUD_GAIN = WINTER_GAIN * 1.7; // 1.55 × 1.7 ≈ 2.635
+  const isWinterLoud = WINTER_LOUD_KINDS.indexOf(fx) !== -1;
+  const isWinter = WINTER_KINDS.indexOf(fx) !== -1;
+  vol = vol * (isWinterLoud ? WINTER_LOUD_GAIN : (isWinter ? WINTER_GAIN : (isInsect ? INSECT_GAIN : BASE_GAIN)));
   // 20261028：入梦签白噪音音量跟随「软件内音乐音量」滑条（appBgmVol，百分数 0~200，默认 100）。
   // 在各自音效的固有音量基础上再乘软件内音乐音量，拖动滑条即生效（下次弹卡按最新值）。
   try {
@@ -16104,8 +16113,8 @@ function showDataCatModal(id) {
       ${btn('btn-export', '导出全局数据（.ocdata）', '⬇')}
       ${btn('btn-import', '导入全局数据（.ocdata）', '⬆')}
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
-      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">一键恢复：自动找到最近一次的<b>自动备份</b>并恢复（无需手动找文件）</div>
-      ${btn('btn-restore-auto', '恢复最近自动备份', '🔄')}
+      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">恢复：检测现有<b>自动备份</b>，选择要恢复到的那一份（无需手动找文件）</div>
+      ${btn('btn-restore-auto', '恢复自动备份（选择）', '🔄')}
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">维护：软件或浏览器更新后，清掉旧版本遗留的冗余缓存（只清缓存，<b>不影响</b>访客、聊天记录等正式数据）</div>
       ${btn('btn-clear-stale', '清除冗余缓存（旧版遗留）', '🧹')}`;
@@ -16885,53 +16894,118 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
   }
 }
 
-/* ---------- 20261101：一键恢复自动备份（数据安全兜底） ----------
-   用户此前丢失角色数据，根本原因是「空备份覆盖导入」清空了库，而普通玩家根本不知道
-   自动备份存在、更不知道它是个「文件夹」无法用文件选择器选。此功能解决：
-   · 系统自动扫描「文档/白日梦备份/auto-*」目录，找最近一份自动备份；
-   · 读它的 manifest.json（3.0 格式），走 doImport 的 3.0 路径（图片从 imagesDir 读回）；
-   · 全程进度面板，玩家只需点一下「恢复」，无需去任何文件夹手动找文件。
-   只做「恢复」，绝不改动现有导出/自动备份的写入流程。 */
+/* ---------- 20261101/02：恢复自动备份（数据安全兜底） ----------
+   20261102 改造：不再「系统自动选最近/最完整的一份」，改为扫描「文档/白日梦备份/auto-*」
+   全部备份，逐个读 manifest.json 统计【时间 + 角色数 + 消息数 + 图片数】，弹一个选择列表
+   让玩家自己勾选要恢复到哪一份（覆盖导入）。恢复走 doImport 3.0 路径，图片经 restoreImagesV3
+   （已改 APP 端写文件转 {__img:5}）正确还原。只做「恢复」，不改自动备份的写入流程。 */
+
+/* 扫描所有 auto-* 备份，逐个读 manifest 统计信息，弹选择列表。 */
 async function restoreAutoBackup() {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!FS || typeof FS.readdir !== 'function') {
     showConfirm('当前环境不支持自动备份恢复（需在手机 App 内操作）。', null);
     return;
   }
-  let prog = null;
   try {
-    // 阶段0：扫描自动备份目录
     const r = await FS.readdir({ path: '白日梦备份', directory: 'DOCUMENTS' });
     const names = (r.files || []).map(f => f.name).filter(n => n && n.indexOf('auto-') === 0);
     if (!names.length) {
       showConfirm('还没有任何自动备份。\n\n自动备份会在每次使用 App 后自动生成，等你用一段时间后再来恢复即可。', null);
       return;
     }
-    // 20261101 修复「恢复到残缺备份」：旧的「按时间戳取最新」会把恢复后残缺的自动备份
-    //   （图片被清空后重新自动备份出的只有几张图的目录）当成最新选走，导致图片永远补不回来。
-    //   改为：逐个检查各 auto-* 目录的 images 子目录里图片文件数量，选【图片最完整】的那份；
-    //   图片数并列时再按时间戳取最新。这样一定选到历史里图片最全的那次完整备份。
-    let bestSet = null, bestCount = -1, bestStamp = 0;
+    // 逐个读 manifest 统计信息（时间/角色数/消息数/图片数）
+    const list = [];
     for (const n of names) {
+      const stamp = parseInt(n.slice(5), 10) || 0;
       try {
-        const imgR = await FS.readdir({ path: '白日梦备份/' + n + '/images', directory: 'DOCUMENTS' });
-        const cnt = (imgR.files || []).length;
-        const stamp = parseInt(n.slice(5), 10) || 0;
-        if (cnt > bestCount || (cnt === bestCount && stamp > bestStamp)) {
-          bestCount = cnt; bestStamp = stamp; bestSet = n;
-        }
-      } catch (e) { /* 该目录无 images，跳过 */ }
+        const mr = await FS.readFile({ path: '白日梦备份/' + n + '/manifest.json', directory: 'DOCUMENTS' });
+        const b64 = String(mr.data).replace(/[\r\n]/g, '');
+        const bin = atob(b64);
+        const u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        const d = JSON.parse(new TextDecoder('utf-8').decode(u8));
+        if (!d || d.app !== 'bairimeng') continue;
+        let imgCount = 0;
+        try {
+          const imgR = await FS.readdir({ path: '白日梦备份/' + n + '/images', directory: 'DOCUMENTS' });
+          imgCount = (imgR.files || []).length;
+        } catch (e) { imgCount = 0; }
+        list.push({
+          set: n,
+          stamp,
+          time: stamp ? fmtBackupTime(stamp) : '未知时间',
+          charCount: Array.isArray(d.characters) ? d.characters.length : 0,
+          msgCount: Array.isArray(d.messages) ? d.messages.length : 0,
+          imgCount,
+        });
+      } catch (e) { /* 该目录 manifest 读失败/损坏，跳过 */ }
     }
-    if (!bestSet || bestCount <= 0) {
-      showConfirm('没有找到包含图片的完整自动备份。', null);
+    if (!list.length) {
+      showConfirm('没有找到可用的自动备份（可能都损坏或不完整）。', null);
       return;
     }
-    const latestSet = '白日梦备份/' + bestSet;
+    // 按时间倒序（最新在前）
+    list.sort((a, b) => b.stamp - a.stamp);
+    showRestoreAutoModal(list);
+  } catch (e) {
+    miniToast('扫描自动备份失败：' + (e && e.message ? e.message : '未知错误'));
+  }
+}
 
-    // 确认（覆盖导入会清空当前数据）
-    const go = await confirmAsync('已找到最完整的一份自动备份（含 ' + bestCount + ' 张图片）。\n\n将恢复到该时间点的完整数据（角色/聊天/表情包/头像/封面/字卡/世界树等，图片会一并还原）。\n\n⚠️ 覆盖导入会先清空当前所有数据，是否继续？', '恢复', '取消');
-    if (!go) return;
+/* 时间戳 → 可读时间（YYYY-MM-DD HH:MM） */
+function fmtBackupTime(stamp) {
+  try {
+    const d = new Date(stamp);
+    if (isNaN(d.getTime())) return '';
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  } catch (e) { return ''; }
+}
 
+/* 备份选择列表弹窗：玩家勾选要恢复到的那一份。 */
+function showRestoreAutoModal(list) {
+  const rows = list.map((it, i) => `
+    <label class="bm-restore-item" data-idx="${i}" style="display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;margin-bottom:8px;">
+      <input type="radio" name="bm-restore-pick" value="${i}" style="accent-color:var(--purple);width:16px;height:16px;" ${i === 0 ? 'checked' : ''}>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:600;color:var(--text-primary);">${escapeHtml(it.time)}</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;line-height:1.5;">角色 ${it.charCount} 个 · 消息 ${it.msgCount} 条 · 图片 ${it.imgCount} 张</div>
+      </div>
+    </label>`).join('');
+
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;">恢复自动备份</div>
+      <button class="icon-btn" id="bm-restore-close">✕</button>
+    </div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">检测到 ${list.length} 份自动备份，选择要恢复到的那一份。</div>
+    <div style="max-height:46vh;overflow-y:auto;">${rows}</div>
+    <div style="color:var(--danger);font-size:12px;margin:12px 0 4px;line-height:1.5;">⚠️ 覆盖恢复会先清空当前所有数据（角色/聊天/表情包/记忆宫殿等），再写入所选备份。</div>
+    <div style="display:flex;gap:10px;margin-top:12px;">
+      <button class="btn" style="flex:1;" id="bm-restore-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="bm-restore-go">恢复所选备份</button>
+    </div>
+  `);
+
+  $('#bm-restore-close').onclick = () => closeModal();
+  $('#bm-restore-cancel').onclick = () => closeModal();
+  $('#bm-restore-go').onclick = async () => {
+    const picked = document.querySelector('input[name="bm-restore-pick"]:checked');
+    if (!picked) { miniToast('请先选择一份备份'); return; }
+    const it = list[parseInt(picked.value, 10)];
+    if (!it) { miniToast('选择的备份无效'); return; }
+    closeModal();
+    await doRestoreAutoBackup(it);
+  };
+}
+
+/* 执行恢复：读所选备份的 manifest → doImport 3.0 路径（图片正确还原）。 */
+async function doRestoreAutoBackup(it) {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  const setDir = '白日梦备份/' + it.set;
+  let prog = null;
+  try {
     prog = startProgressPanel([
       { label: '读取备份' },
       { label: '还原图片' },
@@ -16939,11 +17013,10 @@ async function restoreAutoBackup() {
     ], 0, 'import');
     setProgressPanelMode(true);
 
-    // 阶段1：读 manifest.json
     setStageProgress(0, 1, 1);
     let data;
     try {
-      const mr = await FS.readFile({ path: latestSet + '/manifest.json', directory: 'DOCUMENTS' });
+      const mr = await FS.readFile({ path: setDir + '/manifest.json', directory: 'DOCUMENTS' });
       const b64 = String(mr.data).replace(/[\r\n]/g, '');
       const bin = atob(b64);
       const u8 = new Uint8Array(bin.length);
@@ -16959,10 +17032,20 @@ async function restoreAutoBackup() {
       showConfirm('自动备份文件异常，无法恢复。', null);
       return;
     }
-    // 20261101 强制 imagesDir 指向扫描选中的那份（防 manifest 里的 imagesDir 指向别处导致图片读空）
-    data.imagesDir = latestSet + '/images';
+    // 强制 imagesDir 指向玩家选中的那份（防 manifest 里的 imagesDir 指向别处导致图片读空）
+    data.imagesDir = setDir + '/images';
 
-    // 阶段2+3：doImport 走 3.0 路径（图片从 imagesDir 读回，进度回调）
+    // 20261102：恢复自动备份专用图片还原——不碰共用的 restoreImagesV3（那函数被全局导入/
+    //   宫殿导入调用，还原成 {blob,thumb} 塞 IndexedDB）。这里先把 3.0 的 {__img:3,ref} 读回
+    //   并写成 {__img:5,ref} 文件引用（APP 端），再把已还原的 data 交给 doImport。
+    //   因 data 里已无 {__img:3}，doImport 走 deepImagesFromExport 分支，而 {__img:5} 不在
+    //   其收集范围内（只收 {__img:1,data} 与 {blob:dataURL}），会被原样保留正确写库。
+    const readImage = async (ref, mime) => {
+      const r = await FS.readFile({ path: data.imagesDir + '/' + ref, directory: 'DOCUMENTS' });
+      return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + r.data);
+    };
+    data = await restoreAutoImagesV3(data, readImage, (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total));
+
     await doImport(data, 'overwrite', (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), null);
     closeProgressPanel();
   } catch (e) {
@@ -16978,9 +17061,85 @@ async function restoreAutoBackup() {
    导出 characters store 即完整覆盖需求。图片(头像+表情包)走容器式单文件(2.2 同款)，
    复用 collectImagesV4 + writeContainerFile，格式 .chardata。 */
 async function exportCharCards() {
+  // 20261102：先弹「选择角色」弹窗，玩家可选单个/多个/全部角色导出，再执行导出。
+  const chars = await idbGetAll('characters');
+  if (!chars || !chars.length) { miniToast('还没有任何角色可以导出'); return; }
+  showExportCharSelectModal(chars);
+}
+
+/* 20261102：角色卡导出——选择角色弹窗（头像九宫格 + 点选高亮 + 顶部全选）。
+   支持单选、全选、部分选；确定后按已选角色导出（复用 collectImagesV4 + writeContainerFile 容器格式）。 */
+function showExportCharSelectModal(chars) {
+  const gridItems = chars.map(c => {
+    const av = c.avatar ? `<img src="${imgSrcAttr(c.avatar, true)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((c.name || '?')[0] || '?');
+    return `<div class="bm-charsel-item" data-id="${escapeHtml(c.id)}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;border:1px solid var(--border);border-radius:12px;cursor:pointer;background:var(--bg-card,var(--bg));transition:border-color .12s,background .12s;">
+      <div style="width:52px;height:52px;border-radius:50%;overflow:hidden;background:var(--purple-dim);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-secondary);">${av}</div>
+      <div style="font-size:12px;color:var(--text-secondary);max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.name || '未命名')}</div>
+      <div class="bm-charsel-check" style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;border:2px solid var(--border);background:var(--bg);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;">✓</div>
+    </div>`;
+  }).join('');
+
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;">导出角色卡</div>
+      <button class="icon-btn" id="excs-close">✕</button>
+    </div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">选择要导出的角色（可单选、多选或全选）。</div>
+    <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;margin-bottom:12px;">
+      <input type="checkbox" id="excs-all" style="accent-color:var(--purple);width:16px;height:16px;">
+      <span style="font-size:14px;">全选（共 ${chars.length} 个角色）</span>
+    </label>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;max-height:46vh;overflow-y:auto;padding:2px;" id="excs-grid">${gridItems}</div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn" style="flex:1;" id="excs-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="excs-go">导出所选（<span id="excs-count">0</span>）</button>
+    </div>
+  `);
+
+  const selected = new Set(chars.map(c => c.id)); // 默认全选
+  const allBox = $('#excs-all');
+  allBox.checked = true;
+  const refresh = () => {
+    const n = selected.size;
+    $('#excs-count').textContent = n;
+    allBox.checked = (n === chars.length);
+    document.querySelectorAll('.bm-charsel-item').forEach(el => {
+      const id = el.dataset.id;
+      const on = selected.has(id);
+      el.style.borderColor = on ? 'var(--purple)' : 'var(--border)';
+      el.style.background = on ? 'var(--purple-dim)' : 'var(--bg-card,var(--bg))';
+      const ck = el.querySelector('.bm-charsel-check');
+      ck.style.borderColor = on ? 'var(--purple)' : 'var(--border)';
+      ck.style.background = on ? 'var(--purple)' : 'var(--bg)';
+    });
+  };
+  document.querySelectorAll('.bm-charsel-item').forEach(el => {
+    el.onclick = () => {
+      const id = el.dataset.id;
+      if (selected.has(id)) selected.delete(id); else selected.add(id);
+      refresh();
+    };
+  });
+  allBox.onchange = () => {
+    if (allBox.checked) { chars.forEach(c => selected.add(c.id)); }
+    else selected.clear();
+    refresh();
+  };
+  $('#excs-close').onclick = () => closeModal();
+  $('#excs-cancel').onclick = () => closeModal();
+  $('#excs-go').onclick = () => {
+    const chosen = chars.filter(c => selected.has(c.id));
+    if (!chosen.length) { miniToast('请至少选择一个角色'); return; }
+    closeModal();
+    doExportCharCards(chosen);
+  };
+  refresh();
+}
+
+/* 20261102：按已选角色列表执行导出（原 exportCharCards 的导出主体，抽出来复用）。 */
+async function doExportCharCards(chars) {
   let prog = null;
   try {
-    const chars = await idbGetAll('characters');
     if (!chars || !chars.length) { miniToast('还没有任何角色可以导出'); return; }
     const _ts = (() => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; })();
     const expFile = `白日梦角色卡备份_${_ts}.chardata`;
@@ -17907,6 +18066,64 @@ async function restoreImagesV3(node, readImage) {
   return node;
 }
 
+/* 20261102：恢复自动备份【专用】图片还原——只被 doRestoreAutoBackup 调用，不复用共用的
+   restoreImagesV3。把 3.0 自动备份的 {__img:3, ref} 引用读回后，APP 端（bmImgIsApp）写文件
+   转 {__img:5, ref, mime} 文件引用（与全局导入 restoreImagesV4 一致，Blob 塞 IndexedDB 会
+   InvalidBlob/OOM 导致恢复后图片不显示），网页端（无 Capacitor）仍存 Blob。此函数独立存在，
+   不影响全局导入/宫殿导入仍走 restoreImagesV3 的原有逻辑。 */
+async function restoreAutoImagesV3(node, readImage, onProgress = null) {
+  if (!node || typeof node !== 'object') return node;
+  const found = [];
+  const seen = new WeakSet(); // 循环引用保护
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object') return;
+    if (seen.has(n)) return; seen.add(n);
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.__img === 3 && typeof n.ref === 'string') { found.push({ parent, key, n }); return; }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+  if (!found.length) { if (onProgress) { try { onProgress(0, 0); } catch (e) {} } return node; }
+  const useFs = bmImgIsApp();
+  const total = found.length;
+  let idx = 0, done = 0;
+  const worker = async () => {
+    while (idx < total) {
+      const i = idx++;
+      const it = found[i];
+      const n = it.n;
+      try {
+        const blob = await readImage(n.ref, n.mime || 'image/png');
+        let thumb = null;
+        if (n.thumbRef) thumb = await readImage(n.thumbRef, n.thumbMime || 'image/jpeg');
+        let out;
+        if (useFs) {
+          const mainRef = await _bmImgBlobToFs(blob, n.mime || 'image/png');
+          out = { __img: 5, ref: mainRef.ref, mime: mainRef.mime, w: n.w || 0, h: n.h || 0 };
+          if (thumb && thumb.size > 0) {
+            try {
+              const tRef = await _bmImgBlobToFs(thumb, n.thumbMime || 'image/jpeg');
+              out.thumbRef = tRef.ref; out.thumbMime = tRef.mime;
+            } catch (e) {}
+          }
+        } else {
+          out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
+        }
+        if (it.parent) it.parent[it.key] = out;
+      } catch (e) {
+        // 缺失图容错：降级为占位，其余图照常恢复
+        const out = useFs ? { __img: 5, ref: '', mime: n.mime || 'image/png', w: n.w || 0, h: n.h || 0 }
+                          : { blob: new Blob([]), thumb: null, w: n.w || 0, h: n.h || 0 };
+        if (it.parent) it.parent[it.key] = out;
+      }
+      done++;
+      if (onProgress && (done % 8 === 0 || done === total)) { try { onProgress(done, total); } catch (e) {} }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  if (onProgress) { try { onProgress(total, total); } catch (e) {} }
+  return node;
+}
+
 /* 20261002ce：把"打包全量备份数据"抽成公共函数，手动导出 exportAll 与自动备份 autoBackup 共用，
    保证两处导出的内容一字不差（灰度殿堂/书信/世界树/朋友圈/记事簿/字体等 kv 数据都完整包含）。 */
 async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
@@ -17958,6 +18175,8 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
       oc_seen: await getSetting('oc_seen', false),
       oc_unlocked: await getSetting('oc_unlocked', false),
       oc_surpriseUnlocked: await getSetting('oc_surpriseUnlocked', false),
+      customGifts: await getSetting('customGifts', []),        // 20261102：超频自定义礼物（此前漏导）
+      customSurprises: await getSetting('customSurprises', []), // 20261102：超频自定义惊喜（此前漏导）
       perCharMode: await getSetting('perCharMode', null),          // 20261031：角色级 AI/字卡模式覆盖（单独设置的访客）
       // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
     },
