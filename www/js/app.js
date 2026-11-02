@@ -18175,8 +18175,6 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
       oc_seen: await getSetting('oc_seen', false),
       oc_unlocked: await getSetting('oc_unlocked', false),
       oc_surpriseUnlocked: await getSetting('oc_surpriseUnlocked', false),
-      customGifts: await getSetting('customGifts', []),        // 20261102：超频自定义礼物（此前漏导）
-      customSurprises: await getSetting('customSurprises', []), // 20261102：超频自定义惊喜（此前漏导）
       perCharMode: await getSetting('perCharMode', null),          // 20261031：角色级 AI/字卡模式覆盖（单独设置的访客）
       // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
     },
