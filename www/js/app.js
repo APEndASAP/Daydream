@@ -17547,18 +17547,47 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
   // ② 20261101 导出压缩：逐张读二进制 → compressForExport 压缩 → 存 im.compressed + 回填 byteLen。
   //   压缩只改图片内容不改容器格式，导入端按 offset/len 读天然兼容（零改动）。
   //   在 packContainerFile 之前统一压缩，offset 按压缩后 byteLen 累加，天然正确。
+  // 20261103 性能修复：① 读文件（src='fs'）改 6 路并发，缩短桥接串行等待；② 压缩预扫描
+  //   也按完成张数上报进度（onProgress），让「卡 67% 假死」变成可见的推进——此前这段
+  //   逐张串行读+压缩、且不报任何进度，几千张图要静默跑几分钟，进度条纹丝不动像卡死。
+  const READ_CONCURRENCY = 6;
+  let compressDone = 0;
+  const compressTotal = images.length;
+  // 统一进度口径：阶段2 = 压缩预扫描（前 50%）+ 写盘（后 50%），分母统一用 compressTotal*2，
+  //   压缩上报 0~compressTotal，写盘上报 compressTotal~compressTotal*2，进度条不会「走满又回退」。
+  const reportCompress = () => { if (onProgress) { try { onProgress(compressDone, compressTotal * 2); } catch (e) {} } };
+  // 先把所有 src='fs' 的图并发读成二进制（Uint8Array），避免在压缩循环里串行 await 读文件。
+  const fsReadTasks = [];
+  for (let i = 0; i < images.length; i++) {
+    const im = images[i];
+    if (im.src === 'fs' && im.fsRef) {
+      fsReadTasks.push({ im, idx: i });
+    }
+  }
+  if (fsReadTasks.length) {
+    let fi = 0;
+    const fsWorker = async () => {
+      while (fi < fsReadTasks.length) {
+        const j = fi++;
+        const { im } = fsReadTasks[j];
+        try {
+          const r = await FS.readFile({ path: BM_IMG_FS_DIR + '/' + im.fsRef, directory: 'DOCUMENTS' });
+          const bin = atob(r.data);
+          const raw = new Uint8Array(bin.length);
+          for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k);
+          im._raw = raw;
+        } catch (e) { im._raw = new Uint8Array(0); }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, fsReadTasks.length) }, fsWorker));
+  }
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
     let raw;
     if (im.src === 'blob' && im.blob) {
       raw = new Uint8Array(await im.blob.arrayBuffer());
     } else if (im.src === 'fs' && im.fsRef) {
-      try {
-        const r = await FS.readFile({ path: BM_IMG_FS_DIR + '/' + im.fsRef, directory: 'DOCUMENTS' });
-        const bin = atob(r.data);
-        raw = new Uint8Array(bin.length);
-        for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k);
-      } catch (e) { raw = new Uint8Array(0); }
+      raw = im._raw || new Uint8Array(0);
     } else if (im.dataURL) {
       const bin = atob(im.dataURL);
       raw = new Uint8Array(bin.length);
@@ -17589,7 +17618,11 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     }
     im.blob = null;      // 释放原始 Blob 引用，帮助 GC
     im.dataURL = null;
+    im._raw = null;
+    compressDone++;
+    if (compressDone % 4 === 0 || compressDone === compressTotal) reportCompress();
   }
+  if (compressTotal > 0) reportCompress();
   // ② 写 JSON 头（含分隔符）
   const head = packContainerFile(data, images);
   const headB64 = await new Promise((res, rej) => {
@@ -17598,7 +17631,7 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     r.onerror = () => rej(new Error('读取失败'));
     r.readAsDataURL(new Blob([head], { type: 'application/json' }));
   });
-  await writeSingleFileChunked(path, headB64, directory, onProgress);
+  await writeSingleFileChunked(path, headB64, directory, null); // JSON 头很小，瞬时写完，不报进度（避免字节数污染统一口径）
   // ② 逐张图片【流式】读二进制，但【合并成大块再 append】。
   //   20261031 提速：真机实测 appendFile 单次 Bridge 调用 ~265ms（无论多大），转码却只需 ~14ms/3MB。
   //   旧写法「每张图单独 append」→ 2833 张 × 265ms ≈ 12.5 分钟。改为把多张图的【二进制字节】攒到
@@ -17637,7 +17670,13 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
         throw new Error('文件系统不支持追加写入');
       }
       written += (part.length / 4) * 3;
-      if (onProgress) onProgress(written, totalBytes);
+      // 写盘进度映射到统一口径的后 50%（compressTotal ~ compressTotal*2）
+      if (onProgress) {
+        try {
+          const ratio = totalBytes > 0 ? Math.min(1, written / totalBytes) : 0;
+          onProgress(compressTotal + Math.round(ratio * compressTotal), compressTotal * 2);
+        } catch (e) {}
+      }
     }
   };
   for (let i = 0; i < images.length; i++) {
@@ -18266,14 +18305,28 @@ async function exportAll() {
     //   packContainerFile 回填 offset/len 生成小 JSON 头，图片二进制直接拼 Blob（不经 base64），
     //   全程不累积超长字符串，任何数据量都能导出。产物仍是单文件 .ocdata（容器 2.2），
     //   与 APK 端、导入端完全兼容。
-    miniToast('正在打包全量数据，图库大时需要几秒…');
+    // 20261103 修复「网页端导出进度条消失」：此前网页端 fallback 分支只有 miniToast、没有
+    //   startProgressPanel，导致网页端导出完全看不到进度（大图库时像卡死）。这里补上与 APK 端
+    //   一致的三阶段进度面板，并让压缩预扫描也上报进度。
+    prog = startProgressPanel([
+      { label: '整理数据' },
+      { label: '图片转码' },
+      { label: '写入文件' },
+    ], 0, 'export');
+    setProgressPanelMode(true);
+    setStageProgress(0, 1, 1);
     const rawData = await buildBackupPayload('3.0'); // 拿含 {blob,thumb} 的原始 data（不做 base64 内嵌）
-    const { data: headData, images } = await collectImagesV4(rawData);
+    const { data: headData, images } = await collectImagesV4(rawData, (done, total) => {
+      setStageProgress(1, done, total);
+    });
     headData.version = '2.2';
+    setStageProgress(1, 1, 1);
     // 20261101 网页端导出压缩（补漏）：网页端无 Capacitor，走的是本 fallback 分支，之前漏了压缩，
     //   导致网页端导出的 .ocdata 仍是 700MB+ 原图。这里与 APK 端 writeContainerFile 一致地
     //   逐张 compressForExport 压缩 → 回填 im.compressed + im.byteLen，再 packContainerFile
     //   用压缩后 byteLen 累加 offset，保证 offset/len 与实际写入的压缩字节严格一致。
+    let webCompressDone = 0;
+    const webCompressTotal = images.length;
     for (const im of images) {
       let raw;
       if (im.src === 'blob' && im.blob) {
@@ -18302,7 +18355,10 @@ async function exportAll() {
         im.compressed = new Uint8Array(0); im.byteLen = 0;
       }
       im.blob = null; im.dataURL = null; // 释放原始引用，帮助 GC
+      webCompressDone++;
+      if (webCompressDone % 4 === 0 || webCompressDone === webCompressTotal) setStageProgress(2, webCompressDone, webCompressTotal);
     }
+    setStageProgress(2, 1, 1);
     const headStr = packContainerFile(headData, images); // JSON 头 + 分隔符（小，offset/len 已按压缩后字节算）
     const headBytes = new TextEncoder().encode(headStr);
     // 图片块：直接按顺序拼「压缩后的」二进制（不转 base64，无超长字符串）
@@ -18312,7 +18368,10 @@ async function exportAll() {
       im.compressed = null; im.blob = null; im.dataURL = null;
     }
     const blob = new Blob(parts, { type: 'application/octet-stream' });
+    setStageProgress(2, 1, 1);
     await finishExport(save, blob, '全量备份已导出');
+    closeProgressPanel();
+    return;
   } catch (e) {
     closeProgressPanel();
     // 20261011：导出失败时清理可能残留的半截文件（分块写盘中途失败会留下半个 .ocdata，
