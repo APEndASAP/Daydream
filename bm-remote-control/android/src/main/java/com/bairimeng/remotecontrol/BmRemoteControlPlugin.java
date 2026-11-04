@@ -112,7 +112,9 @@ public class BmRemoteControlPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("ok", true);
         if (extra != null) {
-            for (String k : extra.keySet()) {
+            java.util.Iterator<String> it = extra.keys();
+            while (it.hasNext()) {
+                String k = it.next();
                 try { ret.put(k, extra.get(k)); } catch (Throwable t) { /* ignore */ }
             }
         }
