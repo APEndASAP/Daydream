@@ -1,0 +1,27 @@
+{
+  "name": "bm-remote-control",
+  "version": "1.0.0",
+  "description": "白日梦后台遥控插件：通过 MediaSessionManager 控制外部音乐 App（网易云/QQ音乐等）的播放/暂停/上一首/下一首，不跳转软件",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "android/",
+    "dist/",
+    "src/"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@capacitor/core": "^6.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/core": "^6.0.0",
+    "typescript": "^5.0.0"
+  },
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  }
+}

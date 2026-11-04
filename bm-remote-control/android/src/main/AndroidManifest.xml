@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.bairimeng.remotecontrol">
+    <!-- 控制外部媒体会话所需的监听通知权限（Android 11+ 获取活跃 MediaSession 需要） -->
+    <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL" />
+
+    <application>
+        <!-- 通知监听服务：用于获取外部音乐 App 的活跃媒体会话并发送媒体控制键 -->
+        <service
+            android:name="com.bairimeng.remotecontrol.BmRemoteNotificationListener"
+            android:label="白日梦后台遥控"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
