@@ -27,6 +27,7 @@ let chatSettings = {
   proactiveRandMax: 120,         // 20260929bf 随机发消息区间·最大（分钟）
   proactiveCheckin: false,       // 访客随机查岗：开启后访客随机向玩家发查岗卡片（15.1；每日上限见 checkinDailyLimit，0=不限）
   checkinDailyLimit: 0,          // 随机查岗每日上限（20260929an：0=不限制；可在角色聊天设置里调）
+  checkinLocation: true,         // 20261103：查岗/报备允许发送位置（开启后玩家可真实定位、角色带随机位置；关闭则不发位置）
   randomCall: false,             // 访客随机发起/接收视频通话：开启后访客随机来电，也会随机给你发视频通话
   callDailyLimit: 0,             // 随机来电每日上限（20260929an：0=不限制；可在角色聊天设置里调）
   randomPacket: false,           // 20260929ba 访客随机发红包：独立固定随机间隔模式（与查岗/通话同款）
@@ -62,6 +63,19 @@ let chatSettings = {
   charSchedCountMax: 3,            // 20261031：角色每天随机写入行程条数上限（默认3）
   commentPickCountMin: 0,          // 20261031：行程留言/备注每次抽取字卡张数下限（默认0，0=可能不写）
   commentPickCountMax: 2,          // 20261031：行程留言/备注每次抽取字卡张数上限（默认2）
+  musicFloatOn: true,              // 20261104：一起听歌悬浮窗开关（默认开；邀请/播放时自动弹悬浮窗）
+  musicAuto: false,                // 20261104：互动B（已废弃独立开关）——现改为「随一起听邀请同意自动开/关」，不再依赖此字段；保留字段仅为兼容旧数据
+  musicAutoMin: 20,                // 20261104：角色主动音乐操作随机间隔下限（分钟）
+  musicAutoMax: 120,               // 20261104：角色主动音乐操作随机间隔上限（分钟）
+  musicInvite: false,              // 20261104：角色主动邀请玩家一起听歌（随机固定间隔，默认关）
+  musicInviteMin: 120,             // 20261104：角色主动邀请一起听歌间隔下限（分钟，比主动操作更稀疏）
+  musicInviteMax: 480,             // 20261104：角色主动邀请一起听歌间隔上限（分钟）
+  musicPeek: true,                 // 20261104：互动A——角色偷偷查看玩家歌单/随机收藏/后台随机听歌记录（默认开启）
+  musicPeekMin: 60,                // 20261104：角色偷看玩家歌单间隔下限（分钟）
+  musicPeekMax: 240,               // 20261104：角色偷看玩家歌单间隔上限（分钟）
+  videoAuto: false,                // 20261104：角色主动搜发视频给玩家（随机固定间隔，默认关）
+  videoAutoMin: 60,                // 20261104：角色主动发视频随机间隔下限（分钟）
+  videoAutoMax: 240,               // 20261104：角色主动发视频随机间隔上限（分钟）
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -288,6 +302,14 @@ async function init() {
   } catch (e) {
     console.error('[白日梦] 界面初始化异常', e);
   }
+  // 20261104：启动时恢复一起听悬浮窗——开关开着的状态持久化，刷新/重进后自动重新显示，
+  // 除非用户在上一会话主动关闭过（musicFloatOn=false）。renderFloat 内部会按开关+状态自行判断显隐。
+  try {
+    if (window.bmMusicUI && window.bmMusicUI.renderFloat) {
+      const mfOn = !(chatSettings && chatSettings.musicFloatOn === false);
+      if (mfOn) window.bmMusicUI.renderFloat();
+    }
+  } catch (e) {}
   showDataSourceWarning(); // 20260929z：非 8902 入口打开时提示数据源隔离（数据串防呆）
   showSoftwareNotice(); // 20260929bj：首次打开一次性软件声明弹窗（已同意则跳过）
 }
@@ -1875,6 +1897,7 @@ async function renderChatList() {
       if (lastMsg.type === 'emoji') brief = speakerName + '：[表情]';
       else if (lastMsg.type === 'image') brief = speakerName + '：[图片]';
       else if (lastMsg.type === 'share') brief = speakerName + '：[朋友圈分享]';
+      else if (lastMsg.type === 'music') brief = speakerName + '：[一起听歌]';
       else if (lastMsg.type === 'poke') brief = '[戳一戳]';
       else if (lastMsg.type === 'survey') brief = speakerName + '：[问卷]';
       else if (lastMsg.type === 'grouppacket') brief = speakerName === '我' ? '你发了群红包' : speakerName + '：[群红包]';
@@ -1933,6 +1956,7 @@ async function renderChatList() {
       else if (lastMsg.type === 'poke') brief = lastMsg.from === 'me' ? '你戳了戳 TA' : 'TA 戳了戳你';
       else if (lastMsg.type === 'letter') brief = lastMsg.from === 'me' ? '[寄出的书信]' : '[收到的书信]';
       else if (lastMsg.type === 'share') brief = '[朋友圈分享]';
+      else if (lastMsg.type === 'music') brief = '[一起听歌]';
       else if (lastMsg.type === 'survey') brief = lastMsg.from === 'me' ? '[发出的问卷]' : '[问卷]';
       else if (typeof lastMsg.content === 'string') brief = lastMsg.content;
       else brief = '[卡片消息]';
@@ -2723,7 +2747,7 @@ async function generateGroupReplyText(g, member, opts = {}) {
     const all = await idbGetAll('messages');
     const recent = all.filter(m => m.groupId === g.id).sort((a, b) => a.time - b.time).slice(-12);
     // 20260929bb：话题卡/投票把实际内容喂给 AI；20261001ci：统一走全局 msgBodyText（图片/表情包/红包等可读描述）
-    const cardBody = (m) => (m && m.type === 'share') ? shareMsgAIText(m) : msgBodyText(m); // 20261005du：分享的朋友圈转完整描述
+    const cardBody = (m) => (m && m.type === 'share') ? shareMsgAIText(m) : (m && m.type === 'worldshare') ? worldShareAIText(m) : msgBodyText(m); // 20261005du：分享的朋友圈转完整描述
     const lines = recent.map(m => {
       const who = m.from === 'me' ? (playerProfile.name || '我') : groupMemberName(g, m.charId);
       return `${who}：${cardBody(m)}`;
@@ -3558,6 +3582,54 @@ function jumpToChatMessage(msgId) {
   setTimeout(() => { try { row.classList.remove('msg-jump-flash'); } catch (e) {} }, 1800);
 }
 
+/* 查岗/报备卡片内的「位置+天气+状态」区块（有位置数据时显示）。
+   loc: { lat, lng, dim }, weather: { desc, temp }, doing, marker, distKm, showLocation */
+function _locInfoHTML(loc, weather, doing, marker, distKm) {
+  if (!loc) return '';
+  const dim = loc.dim || 0;
+  // 位置被拒绝/不可用：只显示一句说明，不画地图点
+  if (loc.denied) {
+    return `<div class="checkin-loc-denied">📍 ${marker || 'TA'} 未发送位置（已拒绝定位）</div>`;
+  }
+  const map = _worldMapSvg({ lat: loc.lat, lng: loc.lng, dim, marker });
+  const weatherHtml = weather
+    ? `<span style="display:inline-flex;align-items:center;gap:4px;">${escapeHtml(weather.desc)} ${weather.temp != null ? weather.temp + '°C' : ''}</span>`
+    : '';
+  const doingHtml = doing ? `<span style="display:inline-flex;align-items:center;gap:4px;">🕒 ${escapeHtml(doing)}</span>` : '';
+  const distHtml = (distKm != null) ? `<span style="display:inline-flex;align-items:center;gap:4px;">↔ ${distKm} km</span>` : '';
+  const posLine = dim > 0
+    ? `📍 第 ${dim} 维度 · 无法识别具体位置`
+    : (loc.city ? `📍 ${escapeHtml(loc.city)}` : `📍 ${loc.lat}, ${loc.lng}`);
+  return `<div class="checkin-loc">
+    ${map}
+    <div class="checkin-loc-meta">
+      <div class="checkin-loc-pos">${posLine}</div>
+      <div class="checkin-loc-tags">${weatherHtml}${doingHtml}${distHtml}</div>
+    </div>
+  </div>`;
+}
+
+/* 查岗卡片 HTML（突击查岗 + 主动报备共用渲染） */
+function _checkinRepliesHTML(replies) {
+  if (!replies || !replies.length) return '';
+  return `<div class="checkin-replies" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:flex;flex-direction:column;gap:5px;">${replies.map(r => {
+    const dist = r.dist != null ? `<span style="color:var(--purple-soft);font-size:11px;">（相距 ${r.dist} km）</span>` : '';
+    return `<div style="font-size:12px;line-height:1.45;color:var(--text-secondary);"><span style="color:var(--text-tertiary);">${escapeHtml(r.who)}：</span>${escapeHtml(r.text)}${dist}</div>`;
+  }).join('')}</div>`;
+}
+
+function _checkinCardHTML(m) {
+  const c = m.content || {};
+  const replyHtml = _checkinRepliesHTML(c.replies);
+  const isReport = c.report === true;
+  const tag = isReport ? '📮 主动报备' : '📍 突击查岗';
+  const locHtml = _locInfoHTML(c.location, c.weather, c.doing, c.marker || (m.from === 'me' ? '你' : 'TA'), c.distKm);
+  const textHtml = c.text ? `<div style="margin-top:2px;">${escapeHtml(c.text)}</div>` : '';
+  const replyBtn = (m.from === 'them' && !isReport && !checkinAnswered(m))
+    ? `<button class="btn primary" style="margin-top:8px;padding:6px 12px;font-size:12px;" data-checkin-reply="${m.id}">回复查岗</button>` : '';
+  return `${quoteHtml(m.quote)}<div class="msg-card" data-checkin-card="${m.id}"><span class="msg-card-tag">${tag}</span>${textHtml}${locHtml}${replyHtml}${replyBtn}</div>`;
+}
+
 /* 查岗是否已完成一轮应答（20260925i：角色已回应过玩家的回复）。
    完成后卡片闭合，不再显示「回复查岗」——与书信线程同一套「一轮即闭合」逻辑，杜绝无限回复 */
 function checkinAnswered(m) {
@@ -3583,9 +3655,7 @@ function refreshCheckinCardReplies(m) {
   const btn = card.querySelector('[data-checkin-reply]');
   // 已完成一轮应答：按钮移除，卡片闭合（20260925i 防无限回复）
   if (btn && checkinAnswered(m)) btn.remove();
-  const replyHtml = replies.length
-    ? `<div class="checkin-replies" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:flex;flex-direction:column;gap:5px;">${replies.map(r => `<div style="font-size:12px;line-height:1.45;color:var(--text-secondary);"><span style="color:var(--text-tertiary);">${escapeHtml(r.who)}：</span>${escapeHtml(r.text)}</div>`).join('')}</div>`
-    : '';
+  const replyHtml = _checkinRepliesHTML(replies);
   if (replyHtml) {
     if (btn) btn.insertAdjacentHTML('beforebegin', replyHtml);
     else card.insertAdjacentHTML('beforeend', replyHtml);
@@ -3610,11 +3680,7 @@ function msgBodyHtml(m, oneLine = false) {
     case 'coin':
       return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">🪙 决策币</span><div>${escapeHtml(m.content.question)}</div><div style="margin-top:6px;font-size:20px;font-weight:700;color:var(--purple-soft);">${escapeHtml(m.content.result)}</div></div>`;
     case 'checkin': {
-      const replies = (m.content && m.content.replies) || [];
-      const replyHtml = replies.length
-        ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:flex;flex-direction:column;gap:5px;">${replies.map(r => `<div style="font-size:12px;line-height:1.45;color:var(--text-secondary);"><span style="color:var(--text-tertiary);">${escapeHtml(r.who)}：</span>${escapeHtml(r.text)}</div>`).join('')}</div>`
-        : '';
-      return `${quoteHtml(m.quote)}<div class="msg-card" data-checkin-card="${m.id}"><span class="msg-card-tag">📍 突击查岗</span><div>${escapeHtml(m.content.text)}</div>${replyHtml}${m.from === 'them' && !checkinAnswered(m) ? `<button class="btn primary" style="margin-top:8px;padding:6px 12px;font-size:12px;" data-checkin-reply="${m.id}">回复查岗</button>` : ''}</div>`;
+      return _checkinCardHTML(m);
     }
     case 'call':
       // 20260929ba：群通话卡片显示参与人数
@@ -3625,13 +3691,29 @@ function msgBodyHtml(m, oneLine = false) {
     case 'transfer': {
       const st = m.content.status || 'claimed';
       let statusLine = '';
-      if (m.content.returnedNote) statusLine = `<div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">${escapeHtml(m.content.returnedNote)}</div>`;
-      else if (st === 'pending') statusLine = `<div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">待领取…</div>`;
-      else if (st === 'claimed') statusLine = `<div style="font-size:12px;color:var(--ok);margin-top:4px;">已领取</div>`;
-      else if (st === 'returned') statusLine = `<div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">已退回</div>`;
+      if (m.content.returnedNote) statusLine = `<div class="tr-status">${escapeHtml(m.content.returnedNote)}</div>`;
+      else if (st === 'pending') statusLine = `<div class="tr-status">待领取…</div>`;
+      else if (st === 'claimed') statusLine = `<div class="tr-status ok">已领取</div>`;
+      else if (st === 'returned') statusLine = `<div class="tr-status">已退回</div>`;
       // 角色发来的转账（char_to_me）且待领取：显示「领取 / 退回」按钮
       const isCharToMePending = m.content.direction === 'char_to_me' && st === 'pending';
-      return `${quoteHtml(m.quote)}<div class="msg-card" data-transfer-card="${m.id}"><span class="msg-card-tag">🧧 转账</span><div style="font-size:18px;font-weight:700;color:var(--purple-soft);">¥${m.content.amount}</div>${m.content.note ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:3px;">${escapeHtml(m.content.note)}</div>` : ''}${statusLine}${isCharToMePending ? `<div style="display:flex;gap:8px;margin-top:8px;"><button class="btn primary" style="padding:5px 12px;font-size:12px;flex:1;" data-transfer-claim="${m.id}">领取</button><button class="btn" style="padding:5px 12px;font-size:12px;flex:1;" data-transfer-return="${m.id}">退回</button></div>` : ''}</div>`;
+      // 20261104：微信风转账卡片（扁平纯色 + 左侧描边转账图标 + 右侧金额/说明，颜色跟随全局主题）
+      const trWho = m.content.direction === 'char_to_me' ? 'TA 转给我' : '我转给 TA';
+      return `${quoteHtml(m.quote)}<div class="msg-card tr-card" data-transfer-card="${m.id}">
+        <div class="tr-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h12l3 4"/><path d="M20 16H8l-3-4"/></svg></div>
+        <div class="tr-body">
+          <div class="tr-amount">¥${m.content.amount}</div>
+          <div class="tr-sub">${st === 'pending' ? '你发起了一笔转账' : (st === 'claimed' ? '已收下' : '已退回')}</div>
+          ${m.content.note ? `<div class="tr-note">${escapeHtml(m.content.note)}</div>` : ''}
+          ${statusLine}
+          ${isCharToMePending ? `<div class="tr-btns"><button class="tr-btn" data-transfer-claim="${m.id}">领取</button><button class="tr-btn ghost" data-transfer-return="${m.id}">退回</button></div>` : ''}
+        </div>
+        <div class="tr-tag">转账</div>
+      </div>`;
+    }
+    case 'redpacket': {
+      // 20261104：单聊红包（微信风红包卡片——橙红包封 + 金色金额 + 开红包动效）
+      return redpacketCardHtml(m);
     }
     case 'grouppacket': // az：群红包（细则拓展 3）
       return gpacketCardHtml(m);
@@ -3662,6 +3744,77 @@ function msgBodyHtml(m, oneLine = false) {
         <div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);">${(sc.images || []).length > 1 ? `共 ${sc.images.length} 张图 · ` : ''}${escapeHtml(timeAgoStr(sc.time || m.time))}</div>
       </div>`;
     }
+    case 'worldshare': {
+      // 20261104：世界树内容分享卡片（玩家从世界树分享文章/图片给角色）
+      const wc = m.content || {};
+      const preview = wc.text ? wc.text.replace(/\s+/g, ' ').slice(0, 120) : '';
+      return `<div class="msg-card msg-worldshare-card" style="cursor:pointer;" data-worldshare-card="${m.id}">
+        <span class="msg-card-tag">🌳 世界树分享</span>
+        <div style="margin-top:4px;font-size:14px;font-weight:600;">${escapeHtml(wc.title || '世界树内容')}</div>
+        ${wc.img ? `<img src="${imgSrcAttr(wc.img, true)}" style="margin-top:6px;max-width:180px;max-height:130px;object-fit:cover;border-radius:10px;border:1px solid var(--border);">` : ''}
+        ${preview ? `<div style="margin-top:6px;font-size:12.5px;color:var(--text-secondary);line-height:1.55;word-break:break-word;">${escapeHtml(preview)}${wc.text && wc.text.length > 120 ? '…' : ''}</div>` : ''}
+        <div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);">分享给你的一段设定</div>
+      </div>`;
+    }
+    case 'music': {
+      // 一起听歌卡片（玩家邀请访客一起听歌时发到聊天页）
+      const mc = m.content || {};
+      const cover = mc.pic ? `<img src="${imgSrcAttr(mc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">♪</span>`;
+      return `<div class="msg-card msg-music-card" data-music-card="${m.id}" style="cursor:pointer;">
+        <span class="msg-card-tag">🎵 一起听歌</span>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+          ${cover}
+          <div style="min-width:0;">
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(mc.name || '一起听歌')}</div>
+            <div style="font-size:12px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${escapeHtml(mc.artist || '')}</div>
+          </div>
+        </div>
+        <div style="margin-top:6px;font-size:11.5px;color:var(--text-tertiary);">${mc.taName ? ('和 ' + escapeHtml(mc.taName) + ' 一起听') : '一起听歌'}</div>
+      </div>`;
+    }
+    case 'musiccard': {
+      // 20261104：音乐卡片（歌词 + 寄语）——角色听歌时随机发：某句歌词 + 角色寄语（抽字卡自由组合）
+      const mcc = m.content || {};
+      const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">♪</span>`;
+      return `<div class="msg-card msg-music-card">
+        <span class="msg-card-tag">🎶 听到这首歌，TA 想对你说</span>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+          ${cover}
+          <div style="min-width:0;">
+            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(mcc.name || '')}</div>
+            <div style="font-size:12px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${escapeHtml(mcc.artist || '')}</div>
+          </div>
+        </div>
+        ${mcc.lyric ? `<div style="margin-top:8px;font-size:12.5px;line-height:1.6;color:var(--text-secondary);font-style:italic;">「${escapeHtml(mcc.lyric)}」</div>` : ''}
+        <div style="margin-top:8px;font-size:13px;line-height:1.6;color:var(--purple-soft);word-break:break-word;">${escapeHtml(mcc.wish || '这首歌，送给你。')}</div>
+      </div>`;
+    }
+    case 'video': {
+      // 20261104：视频卡片——玩家/角色分享的视频（不自动播放，点开播放防卡顿）。平台标签醒目显示。
+      const vc = m.content || {};
+      const platMap = { bilibili: { label: 'B站', color: '#fb7299' }, douyin: { label: '抖音', color: '#1e1e1e' }, xiaohongshu: { label: '小红书', color: '#ff2442' }, youtube: { label: 'YouTube', color: '#ff0000' }, direct: { label: '本地视频', color: '#8b5cf6' }, link: { label: '链接', color: '#8b5cf6' } };
+      const plat = platMap[vc.platform] || { label: '视频', color: '#8b5cf6' };
+      const coverHtml = vc.cover ? `<img src="${imgSrcAttr(vc.cover, true)}" style="width:100%;height:120px;object-fit:cover;display:block;border-radius:8px;margin-top:8px;">` : `<div style="width:100%;height:110px;border-radius:8px;margin-top:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:40px;">▶</div>`;
+      const playable = vc.playUrl || vc.embed || vc.url || vc.videoId;
+      const mottoHtml = vc.motto ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12.5px;line-height:1.6;color:var(--purple-soft);word-break:break-word;">💌 ${escapeHtml(vc.motto)}</div>` : '';
+      return `<div class="msg-card msg-video-card" data-video-card="${m.id}" style="cursor:pointer;">
+        <span class="msg-card-tag" style="background:${plat.color};color:#fff;border:none;">📹 ${escapeHtml(plat.label)}</span>
+        <span style="margin-left:6px;font-size:11.5px;color:var(--text-tertiary);">视频分享</span>
+        <div style="margin-top:6px;font-size:14px;font-weight:600;line-height:1.4;">${escapeHtml(vc.title || '视频')}</div>
+        ${coverHtml}
+        <div style="margin-top:6px;font-size:11.5px;color:var(--text-tertiary);">${playable ? '点击播放' : '视频链接'}</div>
+        ${mottoHtml}
+      </div>`;
+    }
+    case 'videoreply': {
+      // 20261104：角色回应玩家发的视频（独立卡片）
+      const vr = m.content || {};
+      return `<div class="msg-card">
+        <span class="msg-card-tag">💬 TA 看了你的视频</span>
+        <div style="margin-top:6px;font-size:12px;color:var(--text-tertiary);">关于「${escapeHtml(vr.videoTitle || '视频')}」</div>
+        <div style="margin-top:6px;font-size:13px;line-height:1.6;color:var(--text-secondary);word-break:break-word;">${escapeHtml(vr.reply || '这个视频，我记住了。')}</div>
+      </div>`;
+    }
     case 'survey': {
       // 问卷卡片（20260929al）：玩家发出或角色发起的一份问卷
       // 20260929an：卡片上显示「预计还有 X 分钟回答」倒计时（用户要求）
@@ -3681,6 +3834,33 @@ function msgBodyHtml(m, oneLine = false) {
         <div style="margin-top:4px;font-size:14px;font-weight:600;">${escapeHtml(sv.title || '我向你发出了一份问卷，快来回答吧！')}</div>
         <div style="margin-top:4px;font-size:12px;color:var(--text-tertiary);">共 ${total} 题 · ${status}</div>
         ${!isCharAsk && !sv.done ? `<div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);">点击查看题目与回答状态</div>` : ''}
+      </div>`;
+    }
+    case 'divination': {
+      // 20261103：占卜「询问访客」卡片——玩家发的带三张牌；角色评价带打分+星星+寄语
+      const dc = m.content || {};
+      const cardLine = (dc.cards || []).map(cd => `${cd.sym}${escapeHtml(cd.name)}${cd.reversed ? '（逆）' : ''}`).join('　');
+      const starHtml = _diviStarsHTML(dc.score);
+      if (dc.state === 'rated' && dc.score != null) {
+        // 角色评价卡片
+        return `${quoteHtml(m.quote)}<div class="msg-card">
+          <span class="msg-card-tag">🔮 占卜评价</span>
+          ${dc.question ? `<div style="margin-top:6px;font-size:12px;color:var(--text-tertiary);">想问：${escapeHtml(dc.question)}</div>` : ''}
+          <div style="margin-top:6px;font-size:12.5px;color:var(--text-secondary);">${cardLine}</div>
+          <div style="margin-top:10px;display:flex;align-items:center;gap:6px;">
+            ${starHtml}
+            <span style="font-size:15px;font-weight:700;color:var(--purple-soft);">${dc.score.toFixed(1)} 分</span>
+          </div>
+          <div style="margin-top:6px;font-size:13px;font-weight:600;color:var(--purple-soft);">「${escapeHtml(dc.verdict || '')}」</div>
+          ${dc.comment ? `<div style="margin-top:8px;font-size:13.5px;line-height:1.6;word-break:break-word;">${escapeHtml(dc.comment)}</div>` : ''}
+        </div>`;
+      }
+      // 玩家发出的「询问访客」卡片（带三张牌）
+      return `${quoteHtml(m.quote)}<div class="msg-card">
+        <span class="msg-card-tag">🔮 占卜 · 询问访客</span>
+        ${dc.question ? `<div style="margin-top:6px;font-size:12px;color:var(--text-tertiary);">想问：${escapeHtml(dc.question)}</div>` : ''}
+        <div style="margin-top:6px;font-size:13px;line-height:1.6;">${cardLine}</div>
+        <div style="margin-top:6px;font-size:11.5px;color:var(--text-tertiary);">等待 TA 评价这次解牌…</div>
       </div>`;
     }
     case 'gift': {
@@ -3855,6 +4035,17 @@ function appendMessage(m, scroll = true, container = null) {
     return;
   }
 
+  /* 20261103：占卜「询问访客」——聊天页中间居中卡片（非左右气泡），询问+评价同卡就地过渡 */
+  if (m.type === 'divination') {
+    const row = document.createElement('div');
+    row.className = 'msg-row divi-center-row';
+    row.dataset.msgid = m.id;
+    row.innerHTML = _diviCardHTML(m);
+    mount.appendChild(row);
+    if (scroll) scrollToBottom();
+    return;
+  }
+
   const row = document.createElement('div');
   row.className = 'msg-row ' + (m.from === 'me' ? 'me' : 'them') + (multiSelectMode && !m.recalled ? ' ms-mode' : '');
   row.dataset.msgid = m.id;
@@ -3929,6 +4120,15 @@ function appendMessage(m, scroll = true, container = null) {
     };
   }
 
+  // 视频卡片：点击播放（20261104，不自动播放防卡顿）
+  const videoEl = row.querySelector('[data-video-card]');
+  if (videoEl) {
+    videoEl.onclick = (ev) => {
+      ev.stopPropagation();
+      openVideoPlay(m.content || {});
+    };
+  }
+
   // 超频礼物卡片（20260929ap 重做）：未打开 → 播打开动画 → 紫色星际弹窗；已打开/我送的 → 直接弹窗
   const giftEl = row.querySelector('[data-gift-card]');
   if (giftEl) {
@@ -3971,6 +4171,28 @@ function appendMessage(m, scroll = true, container = null) {
       await idbPut('messages', m);
       await renderMessages(m.charId);
       miniToast('已退回转账');
+    };
+  }
+
+  // 20261104：单聊红包卡片——点击「开」领取（角色发来的待领取红包）
+  const rpCard = row.querySelector('[data-redpacket-card]');
+  if (rpCard && rpCard.dataset.redpacketOpenable === '1' && m.content.direction === 'char_to_me') {
+    rpCard.style.cursor = 'pointer';
+    rpCard.onclick = async (ev) => {
+      ev.stopPropagation();
+      // 只有待领取的「角色发来」红包才能开；玩家自己发的红包点开无动作（或显示已发）
+      if (m.content.status !== 'pending') return;
+      // 20261104：拆开即时反馈——先加「开包」动效（红包封盖弹开 + 金币弹出），
+      //   动效播完再落库重渲染，用户能明确看到「已拆开」的视觉变化。
+      rpCard.classList.add('rp-opening');
+      m.content.status = 'claimed';
+      playerProfile.wallet += (m.content.amount || 0);
+      try { await savePlayerProfile(); await idbPut('messages', m); } catch (e) {}
+      // 短暂展示开包动画后再重渲染（让金币弹出动效可见）
+      setTimeout(async () => {
+        await renderMessages(m.charId);
+        miniToast(`🧧 拆开红包，收到 ¥${m.content.amount}`);
+      }, 320);
     };
   }
 
@@ -4422,8 +4644,8 @@ async function executeDeveloperCommand(command) {
       if (_callActive) { miniToast('当前已有通话进行中'); return true; }
       await triggerIncomingCall(c, 'video');
     } else if (command.action === 'redpacket') {
-      // 发红包：角色向玩家转账（char_to_me，待领取）；绝对命令无视钱包余额
-      await deliverCharTransfer(c, { force: true });
+      // 发红包：角色向玩家发红包（char_to_me，待领取，红包卡片）；绝对命令无视钱包余额
+      await deliverCharRedPacket(c, { force: true });
     } else if (command.action === 'letter') {
       await charSendLetter(c, {});
     } else if (command.action === 'survey') {
@@ -4441,7 +4663,7 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
   const c = characters.find(x => x.id === charId);
   const cs = getCharChatSettings(c);
   const inThisChat = currentCharId === charId && document.body.dataset.view === 'chat';
-  const burstStart = Date.now(); // 20260929bf：本轮回复起点——之后玩家再发消息视为「打断」
+  // 20261104：原 burstStart 打断起点已废弃——连发场景会误吞消息，改由第1条回复落库时间 firstReplyTime 判定
 
   // 2. 显示打字中（带头像）——只在当前正打开这个角色的聊天页时显示
   if (inThisChat) {
@@ -4535,11 +4757,17 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
       // AI 模式按 AI 输出分段拆条（最多 3 条），像真人连续发消息
       const parts = splitReplyParts(gen, curChar);
       let lastMsg = null;
+      let firstReplyTime = 0; // 20261104：本轮第1条回复的落库时间——打断判断的正确起点
       for (let i = 0; i < parts.length; i++) {
         // 20260929bf：玩家中途插话 → 剩余几条攒住不发（首条照常落地；插话的新消息会正常触发下一轮回复）
+        // 20261104 修复吞消息：打断起点原用 burstStart（scheduleCharReply 调用时刻），
+        //   但图片+文字连发时，文字消息在「第一轮（图片触发）调用之后」就落库了，
+        //   其 time >= burstStart 恒成立 → 第一轮的第2、3条被误判「玩家插话」而 break 吞掉。
+        //   改为：只在「本轮第1条回复已落库后，玩家才发新消息」时才打断——
+        //   连发时另一条消息触发的是独立另一轮，不会误伤本轮。
         if (i > 0) {
           const recent = await idbGetMessagesByChar(charId, 10);
-          if (recent && recent.some(mm => mm && mm.from === 'me' && mm.type === 'text' && !mm.groupId && mm.time >= burstStart)) break;
+          if (recent && recent.some(mm => mm && mm.from === 'me' && mm.type === 'text' && !mm.groupId && mm.time >= firstReplyTime)) break;
         }
         const replyMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: parts[i], time: Date.now() };
         if (i === 0 && finalQuote) replyMsg.quote = finalQuote;
@@ -4569,6 +4797,7 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
           }
         }
         lastMsg = replyMsg;
+        if (i === 0) firstReplyTime = replyMsg.time; // 20261104：记录第1条回复落库时间，供后续打断判断
         // 后续条目间隔 1.2~3.5 秒连续发出；引用只带在第一条上
         if (i < parts.length - 1) await new Promise(r => setTimeout(r, randInt(1200, 3500)));
       }
@@ -4860,6 +5089,36 @@ let _camReturnConsumed = false;  // guard 已消费（防重复消费）
 let _camGraceUntil = 0;          // 极端时序兜底时间戳（只消费一次）
 
 /* 发送图片消息（5.9：压缩后存本地；20260929g 存 Blob+缩略图描述符） */
+/* 20261103：拍摄/上传图片融合入口——点「拍摄」后弹选择框：拍照 或 从相册选择 */
+function showImageSourcePicker() {
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:18px;font-weight:600;">发送图片</div>
+      <button class="icon-btn" id="imgpick-close">✕</button>
+    </div>
+    <div style="display:flex;gap:12px;">
+      <button class="btn" style="flex:1;flex-direction:column;gap:10px;padding:22px 0;" id="imgpick-camera">
+        ${icon('camera', 30)}
+        <span style="font-size:14px;">拍照</span>
+      </button>
+      <button class="btn" style="flex:1;flex-direction:column;gap:10px;padding:22px 0;" id="imgpick-album">
+        ${icon('image', 30)}
+        <span style="font-size:14px;">从相册选择</span>
+      </button>
+    </div>
+  `);
+  $('#imgpick-close').onclick = closeModal;
+  $('#imgpick-camera').onclick = () => {
+    closeModal();
+    capturePhotoMessage();
+  };
+  $('#imgpick-album').onclick = () => {
+    closeModal();
+    const inp = $('#plus-file-input');
+    if (inp) inp.click();
+  };
+}
+
 /* 20261001cq：拍摄——功能面板「拍摄」入口（单聊/群聊通用，照片走 sendImageMessage 统一管线）
    APK（Capacitor）：@capacitor/camera 调系统相机，先申请 CAMERA 运行时权限；
    网页：隐藏 input capture=environment（移动浏览器直接弹相机，桌面回退文件选择） */
@@ -5526,6 +5785,10 @@ let _callCount = {};     // 随机通话：按角色+日期记录当天来电次
 let _packetUntil = {};   // 20260929ba 随机红包：按角色记录「下次发红包时间点」
 let _emojiUntil = {};    // 20261005dy 表情包主动发：按角色记录「下次发表情包时间点」（随机区间，比主动消息更长）
 let _multiCardUntil = {}; // 20261031：多字卡组合回复——按角色记录「下次触发时间点」（独立随机固定间隔，与打字卡/主动消息无关）
+let _musicAutoUntil = {}; // 20261104：角色主动搜歌/切歌/收藏——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
+let _musicInviteUntil = {}; // 20261104：角色主动邀请玩家一起听歌——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
+let _musicPeekUntil = {}; // 20261104：角色偷偷查看玩家歌单——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
+let _videoAutoUntil = {}; // 20261104：角色主动搜发视频——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
 let _ocNextAt = {};      // 超频：按访客记录下一次独立随机触发时刻（20260929at 起持久化到 kv，跨会话累计）
 let _ocPending = new Set(); // 超频：避免同一访客的交互动画期间重复触发
 function _ocSaveNextAt() { try { _ocSet('nextAt', _ocNextAt).catch(() => {}); } catch (e) {} }
@@ -5752,6 +6015,89 @@ async function __proactiveScan() {
         delete _multiCardUntil[c.id]; // 关闭即清除，重开重新播种
       }
 
+      // —— 角色主动搜歌/切歌/收藏（20261104：互动B，随「一起听邀请同意」自动开/关）——
+      //     不再依赖独立 musicAuto 开关：玩家同意该角色的听歌邀请（startTogether 设置 togetherSince）
+      //     即自动开启；拒绝邀请或结束一起听（togetherSince 清空）即自动关闭。
+      //     随机固定间隔（musicAutoMin~Max，默认 20~120 分钟）；到点调用 music.js 的 charAutoMusic
+      //     （其内部仍有 togetherSince 判断兜底，只有真的正在一起听才真正动作）。
+      //     不设防刷屏冷却锁（文档一·4：随机固定间隔本身即防刷屏）。
+      const _togetherNow = !!(window.bmMusic && window.bmMusic.state && window.bmMusic.state.charId === c.id && window.bmMusic.state.togetherSince);
+      if (_togetherNow) {
+        const muLo = Math.max(1, Math.min(720, parseInt(s.musicAutoMin, 10) || 20));
+        const muHi = Math.max(1, Math.min(720, parseInt(s.musicAutoMax, 10) || 120));
+        const muIvMin = Math.min(muLo, muHi), muIvMax = Math.max(muLo, muHi);
+        const nextMuIv = () => muIvMin + Math.floor(Math.random() * (muIvMax - muIvMin + 1)); // [lo,hi] 闭区间随机分钟
+        if (!_musicAutoUntil[c.id]) {
+          _musicAutoUntil[c.id] = now + nextMuIv() * 60000; // 首次播种
+        } else if (now >= _musicAutoUntil[c.id]) {
+          _musicAutoUntil[c.id] = now + nextMuIv() * 60000; // 重排下一次
+          try {
+            if (window.bmMusicUI && window.bmMusicUI.charAutoMusic) await window.bmMusicUI.charAutoMusic(c.id);
+          } catch (e) {}
+        }
+      } else if (_musicAutoUntil[c.id]) {
+        delete _musicAutoUntil[c.id]; // 不在听即清除，重新进入一起听再重新播种
+      }
+
+      // —— 角色主动邀请玩家一起听歌（20261104：角色主动发起听歌邀请，玩家可同意/拒绝）——
+      //     随机固定间隔（musicInviteMin~Max，默认 120~480 分钟，比主动操作更稀疏）。
+      //     只对开启 musicInvite 的角色生效；到点调用 music.js 的 charInviteTogether。
+      if (s.musicInvite) {
+        const viLo = Math.max(1, Math.min(1440, parseInt(s.musicInviteMin, 10) || 120));
+        const viHi = Math.max(1, Math.min(1440, parseInt(s.musicInviteMax, 10) || 480));
+        const viIvMin = Math.min(viLo, viHi), viIvMax = Math.max(viLo, viHi);
+        const nextViIv = () => viIvMin + Math.floor(Math.random() * (viIvMax - viIvMin + 1));
+        if (!_musicInviteUntil[c.id]) {
+          _musicInviteUntil[c.id] = now + nextViIv() * 60000;
+        } else if (now >= _musicInviteUntil[c.id]) {
+          _musicInviteUntil[c.id] = now + nextViIv() * 60000;
+          try {
+            if (window.bmMusicUI && window.bmMusicUI.charInviteTogether) await window.bmMusicUI.charInviteTogether(c.id);
+          } catch (e) {}
+        }
+      } else if (_musicInviteUntil[c.id]) {
+        delete _musicInviteUntil[c.id];
+      }
+
+      // —— 角色偷偷查看玩家歌单（20261104：角色随机偷看玩家歌单，留足迹提醒）——
+      //     随机固定间隔（musicPeekMin~Max，默认 60~240 分钟）；到点调用 music.js 的 charPeekPlaylist。
+      //     只对开启 musicPeek 的角色生效。
+      if (s.musicPeek) {
+        const peLo = Math.max(1, Math.min(1440, parseInt(s.musicPeekMin, 10) || 60));
+        const peHi = Math.max(1, Math.min(1440, parseInt(s.musicPeekMax, 10) || 240));
+        const peIvMin = Math.min(peLo, peHi), peIvMax = Math.max(peLo, peHi);
+        const nextPeIv = () => peIvMin + Math.floor(Math.random() * (peIvMax - peIvMin + 1));
+        if (!_musicPeekUntil[c.id]) {
+          _musicPeekUntil[c.id] = now + nextPeIv() * 60000; // 首次播种
+        } else if (now >= _musicPeekUntil[c.id]) {
+          _musicPeekUntil[c.id] = now + nextPeIv() * 60000; // 重排下一次
+          try {
+            if (window.bmMusicUI && window.bmMusicUI.charPeekPlaylist) await window.bmMusicUI.charPeekPlaylist(c.id);
+          } catch (e) {}
+        }
+      } else if (_musicPeekUntil[c.id]) {
+        delete _musicPeekUntil[c.id]; // 关闭即清除，重开重新播种
+      }
+
+      // —— 角色主动搜发视频（20261104：角色随机搜视频发视频卡片给玩家）——
+      //     随机固定间隔（videoAutoMin~Max，默认 60~240 分钟）；到点调用 charAutoSendVideo。
+      if (s.videoAuto) {
+        const vaLo = Math.max(1, Math.min(1440, parseInt(s.videoAutoMin, 10) || 60));
+        const vaHi = Math.max(1, Math.min(1440, parseInt(s.videoAutoMax, 10) || 240));
+        const vaIvMin = Math.min(vaLo, vaHi), vaIvMax = Math.max(vaLo, vaHi);
+        const nextVaIv = () => vaIvMin + Math.floor(Math.random() * (vaIvMax - vaIvMin + 1));
+        if (!_videoAutoUntil[c.id]) {
+          _videoAutoUntil[c.id] = now + nextVaIv() * 60000;
+        } else if (now >= _videoAutoUntil[c.id]) {
+          _videoAutoUntil[c.id] = now + nextVaIv() * 60000;
+          try {
+            if (typeof charAutoSendVideo === 'function') await charAutoSendVideo(c.id);
+          } catch (e) {}
+        }
+      } else if (_videoAutoUntil[c.id]) {
+        delete _videoAutoUntil[c.id];
+      }
+
       // —— 碎梦重拼召唤自动发消息（20261009：独立于主动消息，到点自动拼发一条碎梦重拼消息）——
       // 20261009晚：间隔改为区间随机（typecardSummonIntervalMin~Max），每次播种/重排独立随机取值
       if (s.typecardSummon) {
@@ -5803,7 +6149,25 @@ async function __proactiveScan() {
               const doing = drawFrom([cards.customReplies, ...(cards.customReplyGroups || []).map(g => g.items || [])].flat());
               text = `突击查岗！你现在在做什么？\n我在做：${doing}`;
             }
-            await deliverCharMessage(c, text, 'checkin', { text });
+            // 20261103：角色查岗带位置（随机经纬度 / 50% 其他维度）+ 天气 + 状态（受「允许发送位置」开关控制）
+            let loc = null, weather = null, doing = null, distKm = null;
+            if (s.checkinLocation !== false) {
+              const p = _randWorldPos();
+              const dim = _randDim();
+              loc = { lat: p.lat, lng: p.lng, dim };
+              if (dim > 0) {
+                weather = _randWeather();
+              } else {
+                // 本世界可识别：反查城市名 + 查真实天气 + 尝试拿玩家实时 GPS 算距离
+                const city = await _reverseGeo(p.lat, p.lng);
+                if (city) loc.city = city;
+                weather = await _fetchWeather(p.lat, p.lng) || _randWeather();
+                const myPos = await _getPlayerLocation();
+                if (myPos.ok) distKm = _distKm(p.lat, p.lng, myPos.lat, myPos.lng);
+              }
+              doing = _drawCheckinStatus();
+            }
+            await deliverCharMessage(c, text, 'checkin', { text, location: loc, weather, doing, marker: 'TA', distKm });
           }
         }
       }
@@ -5825,11 +6189,11 @@ async function __proactiveScan() {
       }
 
       // —— 访客随机发红包（20260929ba：独立固定随机间隔模式，与查岗/通话同款；
-      //     总设置 randomPacket 开启后，访客从自己钱包发转账红包给玩家） ——
+      //     总设置 randomPacket 开启后，访客从自己钱包发红包给玩家） ——
       if (s.randomPacket) {
         if (!_packetUntil[c.id] || _packetUntil[c.id] <= now) {
           _packetUntil[c.id] = now + randInt(40, 240) * 60000; // 40~240 分钟随机一次
-          await deliverCharTransfer(c);
+          await deliverCharRedPacket(c);
         }
       }
 
@@ -5963,6 +6327,27 @@ async function deliverCharTransfer(c, opts = {}) {
     renderChatList();
     if (shouldDingFor(c)) playDing();
     notifyIncoming(c, '¥' + amount, c.name + ' 给你转账'); // 20260929bi：统一出口（含挂后台）
+  }
+}
+
+/* 20261104：角色向玩家发红包（char_to_me，待领取）——与转账区分，走微信风红包卡片 */
+async function deliverCharRedPacket(c, opts = {}) {
+  const amount = randInt(50, 500);
+  if ((c.wallet ?? 100000) < amount) {
+    if (!opts.force) return;
+  } else {
+    c.wallet = (c.wallet ?? 100000) - amount;
+    await saveChar(c);
+  }
+  const m = { id: uid('msg'), charId: c.id, from: 'them', type: 'redpacket', content: { amount, note: '恭喜发财，大吉大利', direction: 'char_to_me', status: 'pending' }, time: Date.now() };
+  await idbPut('messages', m);
+  if (currentCharId === c.id && document.body.dataset.view === 'chat') {
+    appendMessage(m);
+    setSetting('lastRead_' + c.id, Date.now());
+  } else {
+    renderChatList();
+    if (shouldDingFor(c)) playDing();
+    notifyIncoming(c, '🧧¥' + amount, c.name + ' 给你发了个红包');
   }
 }
 
@@ -9556,6 +9941,588 @@ async function maybeCharPoke(c) {
 /* ============================================================
    聊天底部功能面板（5.5：＋号展开）
    ============================================================ */
+/* 20261104：音乐入口弹窗——进入音乐页面 / 邀请当前角色一起听歌 */
+function showShareMediaEntry() {
+  const cid = currentCharId;
+  const c = cid ? (characters.find(x => x.id === cid) || null) : null;
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;">分享</div>
+      <button class="icon-btn" id="sm-close">✕</button>
+    </div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;line-height:1.6;">
+      ${c ? `选择要分享给 <b style="color:var(--purple)">${escapeHtml(c.name || 'TA')}</b> 的内容。` : '选择要分享的内容。'}
+    </div>
+    <div style="display:flex;gap:12px;">
+      <button class="btn" id="sm-music" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 10px;">
+        <span style="font-size:34px;">🎵</span>
+        <span style="font-size:14px;font-weight:600;">分享音乐</span>
+        <span style="font-size:11px;color:var(--text-tertiary);">一起听歌 / 分享歌曲</span>
+      </button>
+      <button class="btn" id="sm-video" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 10px;">
+        <span style="font-size:34px;">🎬</span>
+        <span style="font-size:14px;font-weight:600;">分享视频</span>
+        <span style="font-size:11px;color:var(--text-tertiary);">一起看视频</span>
+      </button>
+    </div>
+  `);
+  $('#sm-close').onclick = () => closeModal();
+  $('#sm-music').onclick = () => {
+    closeModal();
+    showMusicEntry();
+  };
+  $('#sm-video').onclick = () => {
+    closeModal();
+    showVideoEntry();
+  };
+}
+
+/* ============================================================
+   20261104 视频互动功能（角色主动搜发视频 / 玩家分享视频给角色 / 独立卡片回复）
+   ============================================================ */
+
+/* 解析常见视频链接 → { platform, title, cover, playUrl, videoId, embed }
+   支持：bilibili / 抖音 / 微博 / YouTube / 通用 mp4·m3u8 直链 / 本地视频 */
+function parseVideoLink(url) {
+  url = String(url || '').trim();
+  if (!url) return null;
+  const id = (re) => { const m = url.match(re); return m ? m[1] : ''; };
+  // 本地/通用直链（mp4 / webm / m3u8 / mov）
+  if (/\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(url) || /^data:video\//i.test(url)) {
+    return { platform: 'direct', title: '', cover: '', playUrl: url, videoId: '', embed: '' };
+  }
+  // B站
+  if (/bilibili\.com|b23\.tv|bili2233/i.test(url)) {
+    const bvRaw = id(/BV([0-9A-Za-z]+)/);       // 捕获组=纯 BV 号（不含 BV 前缀）
+    const avRaw = id(/av(\d+)/i);               // 捕获组=纯 av 数字
+    let bvid = bvRaw ? ('BV' + bvRaw) : (avRaw ? ('av' + avRaw) : '');
+    return { platform: 'bilibili', title: '', cover: '', playUrl: '', videoId: bvid, embed: bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}` : '' };
+  }
+  // 抖音
+  if (/douyin\.com|iesdouyin\.com/i.test(url)) {
+    return { platform: 'douyin', title: '', cover: '', playUrl: '', videoId: id(/video\/(\d+)/) || '', embed: '', url };
+  }
+  // 小红书（20261104 新增：xhslink.com 短链 / xiaohongshu.com 长链。视频无法内嵌播放，
+  //   走「内部跳转」——点卡片在软件内新窗口打开原链接查看）
+  if (/xiaohongshu\.com|xhslink\.com/i.test(url)) {
+    return { platform: 'xiaohongshu', title: '', cover: '', playUrl: '', videoId: '', embed: '', url };
+  }
+  // YouTube
+  if (/youtube\.com|youtu\.be/i.test(url)) {
+    const yid = id(/[?&]v=([\w-]{11})/) || id(/youtu\.be\/([\w-]{11})/);
+    return { platform: 'youtube', title: '', cover: '', playUrl: '', videoId: yid || '', embed: yid ? `https://www.youtube.com/embed/${yid}` : '' };
+  }
+  // 其它：当作普通链接卡片
+  return { platform: 'link', title: '', cover: '', playUrl: '', videoId: '', embed: '' };
+}
+
+/* 20261104：异步补全视频封面+标题（B站/YouTube 有公开无鉴权 CORS 接口，前端可直接拿）。
+   抖音/小红书无公开接口 + 强防盗链，保持「去原站查看」真实跳转兜底。 */
+async function fetchVideoMeta(vc) {
+  if (!vc) return vc;
+  try {
+    if (vc.platform === 'bilibili' && vc.videoId) {
+      // B站官方 view 接口：data.title 标题 + data.pic 封面（支持 CORS）
+      const bvid = (vc.videoId.startsWith('BV') || vc.videoId.startsWith('av')) ? vc.videoId : '';
+      if (bvid) {
+        const r = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`);
+        const j = await r.json();
+        if (j && j.code === 0 && j.data) {
+          vc.title = j.data.title || vc.title;
+          vc.cover = j.data.pic || vc.cover;
+          vc.embed = `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(bvid)}`;
+        }
+      }
+    } else if (vc.platform === 'youtube' && vc.videoId) {
+      // YouTube oEmbed：title + thumbnail_url（支持 CORS）
+      const r = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(vc.videoId)}&format=json`);
+      const j = await r.json();
+      if (j && j.title) {
+        vc.title = j.title;
+        vc.cover = j.thumbnail_url || vc.cover;
+        vc.embed = `https://www.youtube.com/embed/${encodeURIComponent(vc.videoId)}`;
+      }
+    }
+  } catch (e) {}
+  return vc;
+}
+
+/* 取视频卡片寄语：AI 模式 → AI 按人设生成一句；字卡模式 → 从寄语池抽一条（兜底固定句）。
+   20261104：用户要求「视频卡片下面附一条角色寄语，从回复卡片抽，AI 模式 AI 生成」。 */
+async function getVideoMotto(charId) {
+  const c = (charId && characters.find ? characters.find(x => x.id === charId) : null) || null;
+  // 1) AI 模式：AI 生成一句贴合人设的寄语（失败静默回退字卡）
+  try {
+    const mode = await getCharMode(charId);
+    if (mode === 'ai') {
+      const cfg = await loadAIConfig();
+      if (cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim()) {
+        const sys = c ? `你是「${c.name}」，一个 AI 角色扮演中的虚拟角色。用一句温柔、符合你人设的话作为分享视频时的寄语（20 字以内，纯文本，不要引号）。` : '用一句温柔的话作为分享视频时的寄语（20 字以内，纯文本，不要引号）。';
+        const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+          { role: 'system', content: sys },
+          { role: 'user', content: '给 TA 分享一个视频，附一句寄语。' },
+        ], { maxTokens: 60, temperature: 0.9 });
+        const txt = r && r.ok && r.text ? String(r.text).trim() : '';
+        if (txt) return txt.replace(/^["「『]+|["」』]+$/g, '').slice(0, 60);
+      }
+    }
+  } catch (e) {}
+  // 2) 字卡模式：从寄语池抽
+  try {
+    const pool = (cards && cards.customMottos) || [];
+    if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
+  } catch (e) {}
+  // 3) 兜底
+  const fallback = ['这个视频，想和你一起看。', '看到这个，第一个想到你。', '收下吧，是我喜欢的。', '愿这个视频带给你一点好心情。'];
+  return fallback[Math.floor(Math.random() * fallback.length)];
+}
+
+/* 发一张视频卡片到聊天（玩家或角色发）。附寄语（motto，AI 模式 AI 生成 / 字卡模式字卡抽） */
+async function sendVideoCard(charId, video, from, replyTo) {
+  // 20261104：先异步补全封面+标题（B站/YouTube），拿到真实标题封面再发卡片
+  video = await fetchVideoMeta(video).catch(() => video);
+  const motto = await getVideoMotto(charId).catch(() => '');
+  const msg = {
+    id: uid('msg'), charId, from, type: 'video',
+    content: {
+      platform: video.platform || 'direct',
+      title: video.title || '视频分享',
+      cover: video.cover || '',
+      playUrl: video.playUrl || '',
+      videoId: video.videoId || '',
+      embed: video.embed || '',
+      url: video.url || video.playUrl || '',
+      motto: motto || '',
+      time: Date.now(),
+      replyTo: replyTo || null,
+    },
+    time: Date.now(),
+    read: true,
+  };
+  try { await idbPut('messages', msg); } catch (e) {}
+  try {
+    if (document.body.dataset.view === 'chat' && currentCharId === charId && typeof appendMessage === 'function') appendMessage(msg);
+    else if (typeof renderChatList === 'function') renderChatList();
+  } catch (e) {}
+  return msg;
+}
+
+/* 玩家分享视频给角色：粘贴链接 / 本地视频，解析后发视频卡片 */
+function showVideoEntry() {
+  const cid = currentCharId;
+  const c = cid ? (characters.find(x => x.id === cid) || null) : null;
+  const opened = openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;">🎬 分享视频</div>
+      <button class="icon-btn" id="ve-close">✕</button>
+    </div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;line-height:1.6;">
+      ${c ? `把视频分享给 <b style="color:var(--purple)">${escapeHtml(c.name || 'TA')}</b>。` : '粘贴视频链接或选择本地视频。'}
+    </div>
+    <input id="ve-url" style="width:100%;box-sizing:border-box;height:40px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);font-size:13px;outline:none;margin-bottom:12px;" placeholder="粘贴视频链接（B站 / 抖音 / YouTube / 直链）" />
+    <div style="display:flex;gap:10px;margin-bottom:10px;">
+      <button class="btn primary" id="ve-send" style="flex:1;">解析并发送</button>
+      <button class="btn" id="ve-local" style="flex:1;">本地视频</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-tertiary);line-height:1.6;">支持 B站 / 抖音 / YouTube 链接及 mp4·m3u8 直链。本地视频会作为视频卡片发给 TA。</div>
+  `);
+  if (opened === false) return;
+  const close = () => closeModal();
+  $('#ve-close').onclick = close;
+  // 解析并发送链接视频
+  $('#ve-send').onclick = async () => {
+    const url = $('#ve-url').value.trim();
+    if (!url) { miniToast('请先粘贴视频链接'); return; }
+    const v = parseVideoLink(url);
+    if (!v) { miniToast('无法识别该视频链接'); return; }
+    v.url = url;
+    await sendVideoCard(cid, v, 'me');
+    close();
+    miniToast('视频已分享给 TA');
+    // 触发角色回应（独立卡片）
+    setTimeout(() => charReplyVideo(cid, v), 1200);
+  };
+  // 本地视频
+  $('#ve-local').onclick = () => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'video/*';
+    inp.onchange = async () => {
+      const f = inp.files[0];
+      if (!f) return;
+      const url = URL.createObjectURL(f);
+      const v = { platform: 'direct', title: f.name || '本地视频', cover: '', playUrl: url, videoId: '', embed: '', url };
+      await sendVideoCard(cid, v, 'me');
+      close();
+      miniToast('本地视频已分享给 TA');
+      setTimeout(() => charReplyVideo(cid, v), 1200);
+    };
+    inp.click();
+  };
+}
+
+/* 角色回应玩家发的视频：独立卡片（抽字卡寄语） */
+async function charReplyVideo(charId, video) {
+  try {
+    const c = characters.find(x => x.id === charId);
+    if (!c) return;
+    let reply = '';
+    try {
+      if (typeof drawReply === 'function') {
+        reply = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
+      }
+    } catch (e) {}
+    if (!reply) reply = '这个视频，我记住了。';
+    const msg = {
+      id: uid('msg'), charId, from: 'them', type: 'videoreply',
+      content: { reply, videoTitle: video.title || '视频', time: Date.now() },
+      time: Date.now(), read: true,
+    };
+    try { await idbPut('messages', msg); } catch (e) {}
+    try {
+      if (document.body.dataset.view === 'chat' && currentCharId === charId && typeof appendMessage === 'function') appendMessage(msg);
+      else if (typeof renderChatList === 'function') renderChatList();
+    } catch (e) {}
+  } catch (e) {}
+}
+
+/* 角色主动搜发视频：从真实可播放的视频池（B站公开视频）随机选一个发给玩家（不自动播放防卡顿）。
+   B站 iframe 播放器（player.bilibili.com）支持站内播放，点卡片即可看；标题为陪伴/治愈向。 */
+async function charAutoSendVideo(charId) {
+  try {
+    const c = characters.find(x => x.id === charId);
+    if (!c) return;
+    // 真实 B站视频池（bvid 可站内 iframe 播放）
+    const pool = [
+      { platform: 'bilibili', title: '雨声 · 陪你入眠的白噪音', videoId: 'BV1GJ411x7h7' },
+      { platform: 'bilibili', title: '治愈系风景 · 云海与星空', videoId: 'BV1Jx411q7iN' },
+      { platform: 'bilibili', title: '柴犬的一天 · 慢生活', videoId: 'BV1YW411P7Kj' },
+      { platform: 'bilibili', title: '深夜钢琴 · 温柔入梦', videoId: 'BV1Ws41127iN' },
+    ];
+    const v = pool[Math.floor(Math.random() * pool.length)];
+    await sendVideoCard(charId, v, 'them');
+  } catch (e) {}
+}
+
+/* 打开视频播放弹窗：播放视频（iframe 或 video 标签），不自动播放由用户点开触发。
+   20261104 重写 + 20261104 APP内播放：
+   - B站/YouTube：有 embed，软件内 iframe 真实播放（最理想的「APP 内播放」，无需跳转）；
+   - 本地/直链：<video> 直接播放；
+   - 小红书/抖音/其他外链：无法 iframe 内嵌（X-Frame-Options 拒绝）→ 走 @capacitor/browser
+     的 Browser.open()，在 APP 内打开系统内嵌浏览器（Chrome Custom Tabs / SFSafariViewController）
+     真实播放视频页，顶部自带返回按钮回到 APP，不跳去外部浏览器/原站 App；
+     纯网页端（无 Capacitor/Browser 插件）fallback 到 window.open 新标签页。 */
+function openVideoPlay(vc) {
+  if (!vc) return;
+  const title = vc.title || '视频';
+  const coverHtml = vc.cover
+    ? `<img src="${imgSrcAttr(vc.cover, true)}" style="width:100%;max-height:220px;object-fit:cover;display:block;border-radius:10px;margin-bottom:10px;">`
+    : '';
+  let playerHtml = '';
+  let extLink = '';   // 需要「APP 内打开网页播放」兜底的原始链接
+  if (vc.embed) {
+    // B站/YouTube：软件内 iframe 真实播放
+    playerHtml = `<iframe src="${escapeHtml(vc.embed)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  } else if (vc.playUrl) {
+    playerHtml = `<video src="${escapeHtml(vc.playUrl)}" controls style="width:100%;max-height:300px;border-radius:10px;background:#000;"></video>`;
+  } else if (vc.videoId && vc.platform === 'bilibili') {
+    playerHtml = `<iframe src="https://player.bilibili.com/player.html?bvid=${escapeHtml(vc.videoId)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  } else if (vc.url) {
+    // 小红书/抖音/其它：无法 iframe 内嵌，改在 APP 内打开网页播放（Browser.open），
+    // 展示封面 + 「在 APP 内播放」按钮
+    extLink = vc.url;
+    playerHtml = `${coverHtml}<div style="text-align:center;padding:16px 0;color:var(--text-secondary);font-size:13px;">该平台视频需跳转网页播放，点下方按钮在 App 内打开</div>`;
+  } else {
+    playerHtml = `<div style="text-align:center;color:var(--text-tertiary);padding:40px 0;">该视频暂无可播放源</div>`;
+  }
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div style="font-size:16px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${escapeHtml(title)}</div>
+      <button class="icon-btn" id="vp-close">✕</button>
+    </div>
+    ${playerHtml}
+    ${extLink ? `<div style="margin-top:10px;text-align:center;"><button id="vp-open" style="display:inline-block;padding:10px 20px;border-radius:10px;background:var(--purple);color:#141019;font-size:14px;font-weight:600;border:0;cursor:pointer;">▶ 在 App 内播放</button></div>` : ''}
+  `);
+  $('#vp-close').onclick = () => closeModal();
+  if (extLink) {
+    $('#vp-open').onclick = () => openVideoInApp(extLink, title);
+  }
+}
+
+/* 在 APP 内打开视频网页播放：优先 @capacitor/browser（系统内嵌浏览器，带返回按钮回到 App），
+   网页端 fallback window.open。不跳外部浏览器/原站 App。 */
+function openVideoInApp(url, title) {
+  if (!url) return;
+  const Browser = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser;
+  if (Browser && Browser.open) {
+    Browser.open({ url, windowName: '_blank' }).catch(() => {
+      window.open(url, '_blank', 'noopener');
+    });
+  } else {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
+
+
+/* 20261104：番茄钟陪伴功能占位符（后续实现完整计时/专注/角色陪伴逻辑） */
+/* 20261104：番茄钟陪伴——iframe 全屏加载 interact_proto.html（保留原型布局 100%），
+   用主项目真实访客替换原型内置角色；结算通过 postMessage 回传落库 focus_session。
+   番茄钟层 z-index 高于弹窗遮罩，独立于 #modal-mask，与通话层(#call-layer)同级。 */
+function ensurePomodoroLayer() {
+  let layer = document.getElementById('pomodoro-layer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'pomodoro-layer';
+    layer.innerHTML = '<iframe id="pomodoro-frame" allow="autoplay; fullscreen" title="番茄钟陪伴"></iframe>';
+    document.body.appendChild(layer);
+  }
+  return layer;
+}
+function openPomodoroLayer(cid) {
+  const layer = ensurePomodoroLayer();
+  const frame = document.getElementById('pomodoro-frame');
+  frame.src = 'interact_proto.html';
+  layer.classList.add('show');
+  // 番茄钟全屏层打开=离开聊天页观感——打字卡圆点/召唤悬浮窗立即收起
+  try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
+  _pomodoroCurrentCharId = cid || null;
+}
+function closePomodoroLayer() {
+  const layer = document.getElementById('pomodoro-layer');
+  if (!layer) return;
+  layer.classList.remove('show');
+  // 20261104：关闭番茄钟层即停止白噪音（防止退出后 BgAudio 仍后台播）
+  _pomodoroStopNoise();
+  try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
+}
+let _pomodoroCurrentCharId = null;
+function showPomodoroPlaceholder() {
+  const cid = currentCharId;
+  const c = cid ? (characters.find(x => x.id === cid) || null) : null;
+  openPomodoroLayer(cid);
+}
+
+/* 20261104：番茄钟 postMessage 桥接——收 iframe 的 ready/settle/close，
+   并把主项目真实访客列表（name/avatar/color/emoji）推给番茄钟原型 */
+async function _pomodoroPushChars() {
+  const frame = document.getElementById('pomodoro-frame');
+  if (!frame || !frame.contentWindow) return;
+  // 20261104：头像不能直接用 imgSrc 的 blob URL——blob URL 绑定在主项目 document 上，
+  //   iframe 是另一个 document，跨 document 访问 blob URL 会失效（头像空白/错位）。
+  //   这里把每张头像转成 base64 data URL（跨 document 通用）再下发。
+  const chars = [];
+  for (const x of (characters || [])) {
+    let avatar = '';
+    try {
+      const v = x.avatar;
+      // 直接取原始值：Blob → base64 data URL（跨 document 通用）；字符串 → 原样下发
+      if (v && typeof v === 'string') {
+        avatar = v;   // 已是 data:/http/相对路径，跨 iframe 可直接用
+      } else if (v && v.__img === 5) {
+        // APP 端文件系统引用：imgSrc 已回填则给 URL，否则给空（iframe 端用姓名首字兜底）
+        avatar = imgSrc(v) || '';
+      } else if (v && (v.blob || v.thumb)) {
+        const b = v.thumb || v.blob;
+        if (typeof b === 'string') avatar = b;
+        else if (b && typeof b === 'object') avatar = await blobToDataURL(b).catch(() => '');
+      } else {
+        avatar = imgSrc(v) || '';
+      }
+    } catch (e) { avatar = ''; }
+    chars.push({
+      id: x.id,
+      name: x.name || 'TA',
+      avatar,
+      color: pomodoroCharColor(x.id, x.name),
+      emoji: '✨',
+    });
+  }
+  // 20261104：附带 AI 模式判定 + 当前角色行程标签（字卡模式「角色做自己的事」抽取用）
+  let aiMode = false;
+  try { aiMode = await isAIMode(); } catch (e) { aiMode = false; }
+  const curChar = (_pomodoroCurrentCharId && characters.find(x => x.id === _pomodoroCurrentCharId)) || null;
+  const schedTags = curChar ? charScheduleTags(curChar) : CHAR_SCHED_DEFAULT_TAGS.slice();
+  frame.contentWindow.postMessage({
+    type: 'pomodoro-init',
+    chars,
+    currentCharId: _pomodoroCurrentCharId || null,
+    globalTheme: (typeof _globalThemeId !== 'undefined' ? _globalThemeId : 'dark'),
+    aiMode,                                   // 是否 AI 模式
+    charSchedTags: schedTags,                 // 当前角色行程标签（字卡模式用）
+  }, '*');
+}
+/* 角色配色：按 id 哈希取稳定淡色（原型无角色 color 字段，给每个访客固定一种柔和底色） */
+function pomodoroCharColor(id, name) {
+  const pool = ['#8b7a66', '#7c5cf0', '#5b8fb0', '#e89ab0', '#5bc2ad', '#d89b6a', '#7aa874', '#c084fc'];
+  let h = 0;
+  const s = String(id || name || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return pool[h % pool.length];
+}
+/* 结算落库：番茄钟 iframe 回传一条结算 → 写 focus_session
+   字段对齐 db.js focus_session 注释：id/charId/taskName/durSec/sentCount/heldCount/blurtedCount/
+   handledThings/messages/time（开始时间戳） */
+async function _pomodoroSaveSettle(data) {
+  try {
+    const rec = {
+      id: 'fs_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      charId: data.charId || _pomodoroCurrentCharId || '',
+      charName: data.charName || '自由',
+      taskName: data.taskName || '自由专注',
+      mode: data.mode || '轻陪伴',
+      durSec: data.durSec || data.durMin ? Math.round((data.durMin || 0) * 60 + (data.durSec || 0)) : 0,
+      date: data.date || '',
+      sentCount: data.sentCount || 0,       // 角色发了多少条打扰消息
+      heldCount: data.heldCount || 0,        // 玩家忍住了多少次
+      blurtedCount: data.blurtedCount || 0,  // 玩家没忍住（回应了）多少次
+      handledThings: Array.isArray(data.handledThings) ? data.handledThings : [],
+      messages: Array.isArray(data.messages) ? data.messages : [],
+      events: Array.isArray(data.events) ? data.events : [],
+      reply: data.reply || '',
+      results: Array.isArray(data.results) ? data.results : [],
+      time: data.time0 || Date.now(),        // 开始时间戳
+    };
+    await idbPut('focus_session', rec);
+    return true;
+  } catch (e) {
+    console.warn('[pomodoro] 结算落库失败', e);
+    return false;
+  }
+}
+/* 番茄钟消息监听（一次性注册，常驻） */
+(function () {
+  window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'pomodoro-ready') {
+      _pomodoroPushChars();
+    } else if (d.type === 'pomodoro-settle') {
+      _pomodoroSaveSettle(d.payload);
+    } else if (d.type === 'pomodoro-close') {
+      closePomodoroLayer();
+    } else if (d.type === 'pomodoro-noise') {
+      // 20261104：番茄钟白噪音——接主项目入梦签同款 BgAudio 播放器
+      _pomodoroPlayNoise(d.noises || []);
+    } else if (d.type === 'pomodoro-noise-stop') {
+      // 20261104：退出专注/关闭番茄钟时停止白噪音（否则 BgAudio 会一直播，吓人）
+      _pomodoroStopNoise();
+    } else if (d.type === 'pomodoro-gen-self-event') {
+      // 20261104：番茄钟「角色做自己的事」AI 模式——iframe 请求主项目用 AI 生成一句
+      //   「角色做了什么」，生成后回传 pomodoro-self-event-result 给 iframe
+      _pomodoroGenSelfEvent(d.payload || {});
+    }
+  });
+})();
+/* 番茄钟「角色做自己的事」AI 生成：字卡模式不需要（iframe 本地抽标签），
+   AI 模式由主项目 callAI 生成一句贴合角色的「TA 刚做了什么事」，回传给 iframe。 */
+async function _pomodoroGenSelfEvent(p) {
+  const frame = document.getElementById('pomodoro-frame');
+  try {
+    const charName = p.charName || 'TA';
+    let text = '';
+    // 有 AI 配置才走 AI，否则降级回「忙自己的事」兜底
+    try {
+      const aiOn = await isAIMode();
+      if (aiOn) {
+        const cfg = await loadAIConfig();
+        const { url, key, model } = (cfg && cfg.chatApi) || {};
+        if (url && url.trim()) {
+          const r = await callAI(url, key, model, [
+            { role: 'system', content: '你是一个陪伴应用的虚拟角色「' + charName + '」。用户正在专注做事，你在一旁安静陪伴。请用一句话（不超过 24 字、中文、口语化、贴合角色性格）描述你刚刚悄悄做了件什么自己的小事（例如整理东西、看窗外、泡了杯茶等）。只输出这一句话，不要引号、不要解释。' },
+            { role: 'user', content: '你刚刚做了件什么自己的小事？' },
+          ], { temperature: 0.8 });
+          if (r && r.ok && r.text) text = String(r.text).trim();
+        }
+      }
+    } catch (e) { text = ''; }
+    if (!text) text = '在忙自己的一点小事';
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.postMessage({ type: 'pomodoro-self-event-result', eventId: p.eventId, text }, '*');
+    }
+  } catch (e) {
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.postMessage({ type: 'pomodoro-self-event-result', eventId: p.eventId, text: '在忙自己的一点小事' }, '*');
+    }
+  }
+}
+/* 番茄钟白噪音 id → 音频文件名（audio/ 目录，与入梦签 FX_AUDIO 同一套文件）
+   20261104 补齐优质白噪音（CC0 归一化、无缝循环）：
+   - 海浪/咖啡馆/林间沙沙/深夜电台白噪音 → fspecii/focus-ambient-sounds（CC0，96kHz 归一化 -16~-20 LUFS）
+   - 雨夜火车 → whyiyhw/lull（台湾铁路 EP727 真实录音，Public domain）
+   - 钟摆滴答暂无优质 CC0 直链源，暂不映射（番茄钟列表也不展示） */
+const POMODORO_NOISE_MAP = {
+  rain: 'rain_splashing.ogg',
+  thunder: 'thunder_big_rumble.ogg',
+  cricket: 'night_crickets_loop.ogg',
+  cicada: 'summer_cicada_heat.ogg',
+  wind: 'snow_winter_wind.ogg',
+  leaves: 'leaves_breeze_2427.ogg',
+  stream: 'water_flowing_ambience.ogg',
+  fire: 'fire_campfire_crackles.ogg',
+  birds: 'bsb_birds_waking4_1906.mp3',
+  waves: 'bsb_waves_ambience.m4a',
+  train: 'bsb_rain_train.mp3',
+  forest: 'bsb_forest_rustle.m4a',
+  cafe: 'bsb_cafe_ambience.m4a',
+  night: 'bsb_night_radio.m4a',
+};
+/* 番茄钟白噪音播放：清空旧音 + 播放选中项（多选时叠加，用 BgAudio.playLayer） */
+function _pomodoroPlayNoise(noiseIds) {
+  try {
+    const BgAudio = window.BgAudio;
+    if (!BgAudio || typeof BgAudio.play !== 'function') return;
+    if (!noiseIds || !noiseIds.length) { BgAudio.stop(); return; }
+    const files = noiseIds.map(id => POMODORO_NOISE_MAP[id]).filter(Boolean);
+    if (!files.length) { BgAudio.stop(); return; }
+    if (files.length === 1) {
+      BgAudio.play(files[0], 1.0);
+    } else {
+      // 多选：叠加播放（风声+流水等），音量随「软件内音乐音量」
+      const appVol = (typeof _appBgmVolCache === 'number') ? _appBgmVolCache : 100;
+      const g = Math.max(0, Math.min(200, appVol)) / 100;
+      BgAudio.playLayer(files.map(f => [f, 1.0 * g]));
+    }
+  } catch (e) {}
+}
+/* 停止番茄钟白噪音（退出专注 / 关闭番茄钟时调用） */
+function _pomodoroStopNoise() {
+  try {
+    const BgAudio = window.BgAudio;
+    if (BgAudio && typeof BgAudio.stop === 'function') BgAudio.stop();
+  } catch (e) {}
+}
+
+function showMusicEntry() {
+  const cid = currentCharId;
+  const c = cid ? (characters.find(x => x.id === cid) || null) : null;
+  const opened = openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;">音乐</div>
+      <button class="icon-btn" id="mucent-close">✕</button>
+    </div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;line-height:1.6;">
+      ${c ? `当前正和 <b style="color:var(--purple)">${escapeHtml(c.name || 'TA')}</b> 聊天。` : '进入音乐页，或邀请角色一起听歌。'}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn primary" id="mucent-invite" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;">
+        ${c ? '🎧 邀请 TA 一起听歌' : '🎧 邀请角色一起听歌'}
+      </button>
+      <button class="btn" id="mucent-page" style="width:100%;">进入音乐页面</button>
+    </div>
+  `);
+  if (opened === false) return;   // 仅当 openModal 显式返回 false（声明未同意等抑制）时才跳过绑定
+  $('#mucent-close').onclick = () => closeModal();
+  $('#mucent-invite').onclick = () => {
+    closeModal();
+    if (typeof showInviteCard === 'function') showInviteCard(cid);
+    else miniToast('音乐功能未就绪');
+  };
+  $('#mucent-page').onclick = () => {
+    closeModal();
+    showMusicPage(cid);
+  };
+}
 function buildPlusPanel() {
   const g0 = currentGroupId ? chatGroups.find(x => x.id === currentGroupId) : null;
   /* az 群聊模式（细则一.2）：消息型功能直达群内；交互型功能先选目标成员、
@@ -9568,9 +10535,9 @@ function buildPlusPanel() {
     else { await openChat(m.id); if (singleFn) singleFn(); }
   };
   const items = g0 ? [
-    { label: '上传图片', labelFor: 'plus-file-input', icon: 'image' }, // 群内直达
-    { label: '拍摄', icon: 'camera', act: () => capturePhotoMessage() }, // 20261001cq：调相机拍摄后群内直达
-    { label: '表情包', icon: 'sticker', act: () => togglePanel('emoji-panel') }, // 群内直达
+    { label: '拍摄', icon: 'camera', act: () => showImageSourcePicker() }, // 20261103：拍照/相册融合为一个入口
+    { label: '分享', icon: 'share', act: () => showShareMediaEntry() }, // 20261104：音乐/视频合并分享入口
+    { label: '番茄钟', icon: 'timer', act: () => showPomodoroPlaceholder() }, // 20261104：番茄钟陪伴（占位）
     { label: '决策币', icon: 'coin', act: pickThen('决策币 · 选一名成员主持', (g, m) => showGroupCoinModal(g, m)) },
     { label: '查岗', icon: 'checkin', act: pickThen('查岗 · 选择目标成员', null, () => showCheckinModal()) },
     { label: '群通话', icon: 'call', act: () => showGroupCallModal(g0) }, // ba：勾选多名成员发起群通话
@@ -9583,13 +10550,13 @@ function buildPlusPanel() {
     { label: '话题卡', icon: 'topic', act: () => showTopicModal(g0) },
     { label: '群投票', icon: 'vote', act: () => showGroupVoteModal(g0) },
   ] : [
-    { label: '上传图片', labelFor: 'plus-file-input', icon: 'image' }, // label 原生触发，兼容沙箱/WebView
-    { label: '拍摄', icon: 'camera', act: () => capturePhotoMessage() }, // 20261001cq：APK=系统相机插件；网页= capture 弹相机
-    { label: '表情包', icon: 'sticker', act: () => togglePanel('emoji-panel') },
+    { label: '拍摄', icon: 'camera', act: () => showImageSourcePicker() }, // 20261103：拍照/相册融合为一个入口
+    { label: '分享', icon: 'share', act: () => showShareMediaEntry() }, // 20261104：音乐/视频合并分享入口（弹窗选音乐或视频）
+    { label: '番茄钟', icon: 'timer', act: () => showPomodoroPlaceholder() }, // 20261104：番茄钟陪伴（占位）
     { label: '决策币', icon: 'coin', act: showCoinModal },
     { label: '查岗', icon: 'checkin', act: showCheckinModal },
     { label: '模拟通话', icon: 'call', act: showCallModal },
-    { label: '发红包', icon: 'redpacket', act: showTransferModal },
+    { label: '红包/转账', icon: 'redpacket', act: () => showRedpacketTransferEntry() },
     { label: '占卜', icon: 'divination', act: () => showDivinationModal() },
     { label: '记事簿', icon: 'note', act: () => showNotebookModal() },
     { label: '书信', icon: 'letter', act: () => showLetterComposeModal(), id: 'plus-item-letter' },
@@ -9780,41 +10747,304 @@ function showCoinModal() {
   };
 }
 
+/* ==================== 查岗/报备：位置 + 天气 + 状态 + 维度（20261103） ==================== */
+
+/* 全球随机经纬度（避开极地极端区，落在可读范围） */
+function _randWorldPos() {
+  return { lat: +(randInt(-5800, 7400) / 100).toFixed(4), lng: +(randInt(-18000, 18000) / 100).toFixed(4) };
+}
+
+/* 随机维度：50% 留在本世界（返回 0），50% 落入第 1~11 维度 */
+function _randDim() {
+  return Math.random() < 0.5 ? 0 : randInt(1, 11);
+}
+
+/* 两点球面距离（公里，Haversine） */
+function _distKm(lat1, lng1, lat2, lng2) {
+  const R = 6371, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+/* 状态抽取：复用字卡库状态栏 customStatuses，兜底「平静」 */
+function _drawCheckinStatus() {
+  const pool = (cards && cards.customStatuses && cards.customStatuses.length) ? cards.customStatuses : ['平静'];
+  return drawFrom(pool);
+}
+
+/* 天气：有网查 Open-Meteo（免 key），失败/无网随机抽 */
+async function _fetchWeather(lat, lng) {
+  try {
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const t = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`, { signal: ctrl ? ctrl.signal : undefined });
+    if (t) clearTimeout(t);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const cw = j.current_weather;
+    if (!cw) return null;
+    const code = cw.weathercode;
+    const desc = _weatherCodeDesc(code);
+    return { desc, temp: Math.round(cw.temperature), code };
+  } catch (e) {
+    return null;
+  }
+}
+
+/* Open-Meteo 天气码 → 中文描述 + emoji */
+function _weatherCodeDesc(code) {
+  if (code === 0) return '☀️ 晴';
+  if (code === 1 || code === 2) return '🌤️ 多云';
+  if (code === 3) return '☁️ 阴';
+  if (code === 45 || code === 48) return '🌫️ 雾';
+  if (code === 51 || code === 53 || code === 55) return '🌦️ 毛毛雨';
+  if (code === 56 || code === 57) return '🌧️ 冻雨';
+  if (code === 61 || code === 63 || code === 65) return '🌧️ 雨';
+  if (code === 66 || code === 67) return '🌧️ 冻雨';
+  if (code === 71 || code === 73 || code === 75) return '🌨️ 雪';
+  if (code === 77) return '❄️ 霰';
+  if (code === 80 || code === 81 || code === 82) return '🌧️ 阵雨';
+  if (code === 85 || code === 86) return '🌨️ 阵雪';
+  if (code >= 95) return '⛈️ 雷雨';
+  return '🌡️ 未知';
+}
+
+/* 反向地理编码：经纬度 → 城市名（BigDataCloud 免费免 key；有网反查，失败/无网返回 null）。
+   返回城市名优先，其次省份/国家，全空返回 null */
+async function _reverseGeo(lat, lng) {
+  try {
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const t = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
+    const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=zh`, { signal: ctrl ? ctrl.signal : undefined });
+    if (t) clearTimeout(t);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const name = j.city || j.locality || j.principalSubdivision || j.countryName || '';
+    return name ? String(name).trim() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/* 随机天气（无网回退） */
+function _randWeather() {
+  const pool = [
+    { desc: '☀️ 晴', temp: randInt(18, 32) },
+    { desc: '🌤️ 多云', temp: randInt(15, 28) },
+    { desc: '☁️ 阴', temp: randInt(12, 24) },
+    { desc: '🌧️ 雨', temp: randInt(10, 22) },
+    { desc: '🌨️ 雪', temp: randInt(-8, 3) },
+    { desc: '🌫️ 雾', temp: randInt(8, 20) },
+    { desc: '⛈️ 雷雨', temp: randInt(16, 26) },
+  ];
+  return pool[randInt(0, pool.length - 1)];
+}
+
+/* 经纬度 → 简化世界地图投影坐标（等距圆柱投影，手稿风示意级精度） */
+function _proj(lat, lng) {
+  const x = (lng + 180) / 360 * 340;           // 0~340
+  const y = (90 - lat) / 180 * 150;            // 0~150
+  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+}
+
+/* 手绘手稿风世界地图 SVG（简化大陆轮廓 + 经纬网 + 标点）。
+   opts: { lat, lng, dim, marker } marker='你'/'TA'；dim>0 时显示「第 N 维度」不落点 */
+function _worldMapSvg(opts) {
+  const dim = opts.dim || 0;
+  // 简化大陆轮廓（粗分块，手稿感：用几条大折线勾勒欧亚非/美洲/澳洲等）
+  const land = `
+    <g fill="rgba(196,181,253,.10)" stroke="rgba(196,181,253,.55)" stroke-width="1.2" stroke-linejoin="round">
+      <!-- 欧亚大陆 -->
+      <path d="M120,18 L140,14 L170,16 L200,22 L230,26 L245,40 L240,58 L225,70 L210,88 L198,102 L185,108 L175,100 L168,78 L155,70 L145,52 L128,44 L118,30 Z"/>
+      <!-- 非洲 -->
+      <path d="M175,100 L198,102 L200,118 L192,134 L178,138 L168,128 L172,112 L175,100 Z"/>
+      <!-- 北美 -->
+      <path d="M40,28 L62,20 L78,24 L84,40 L76,58 L62,66 L52,58 L46,44 L40,28 Z"/>
+      <!-- 南美 -->
+      <path d="M78,78 L92,74 L98,92 L90,112 L80,120 L74,108 L78,78 Z"/>
+      <!-- 澳洲 -->
+      <path d="M250,100 L268,98 L276,110 L266,120 L252,116 L250,100 Z"/>
+      <!-- 南极洲 -->
+      <path d="M30,140 L320,140 L320,148 L30,148 Z"/>
+    </g>
+    <g stroke="rgba(196,181,253,.14)" stroke-width=".5">
+      <line x1="0" y1="25" x2="340" y2="25"/><line x1="0" y1="50" x2="340" y2="50"/>
+      <line x1="0" y1="75" x2="340" y2="75"/><line x1="0" y1="100" x2="340" y2="100"/>
+      <line x1="0" y1="125" x2="340" y2="125"/>
+      <line x1="68" y1="0" x2="68" y2="150"/><line x1="136" y1="0" x2="136" y2="150"/>
+      <line x1="204" y1="0" x2="204" y2="150"/><line x1="272" y1="0" x2="272" y2="150"/>
+    </g>`;
+
+  if (dim > 0) {
+    // 其他维度：不落具体点，中央显示维度星环
+    const cx = 170, cy = 75;
+    return `<svg viewBox="0 0 340 150" style="width:100%;height:auto;display:block;" fill="none">
+      ${land}
+      <circle cx="${cx}" cy="${cy}" r="30" stroke="rgba(196,181,253,.6)" stroke-width="1" stroke-dasharray="3 4"/>
+      <circle cx="${cx}" cy="${cy}" r="20" stroke="rgba(196,181,253,.35)" stroke-width=".8"/>
+      <polygon points="${cx},${cy-13} ${cx+3.5},${cy-4} ${cx+13},${cy-4} ${cx+6},${cy+3} ${cx+8.5},${cy+12} ${cx},${cy+6.5} ${cx-8.5},${cy+12} ${cx-6},${cy+3} ${cx-13},${cy-4} ${cx-3.5},${cy-4}" stroke="rgba(236,228,255,.9)" stroke-width="1"/>
+      <circle cx="${cx}" cy="${cy}" r="2.2" fill="rgba(236,228,255,.95)"/>
+      <text x="${cx}" y="${cy+48}" text-anchor="middle" fill="rgba(220,208,255,.85)" font-size="10" letter-spacing="2">第 ${dim} 维度</text>
+    </svg>`;
+  }
+
+  const p = _proj(opts.lat || 0, opts.lng || 0);
+  const label = opts.marker || '';
+  return `<svg viewBox="0 0 340 150" style="width:100%;height:auto;display:block;" fill="none">
+    ${land}
+    <g>
+      <circle cx="${p.x}" cy="${p.y}" r="9" fill="rgba(167,139,250,.22)" stroke="rgba(216,202,255,.7)" stroke-width="1"/>
+      <circle cx="${p.x}" cy="${p.y}" r="3.5" fill="rgba(236,228,255,.95)" stroke="rgba(123,97,220,.9)" stroke-width="1.2"/>
+      <text x="${p.x}" y="${p.y - 12}" text-anchor="middle" fill="rgba(226,214,255,.95)" font-size="9" font-weight="700">${label}</text>
+    </g>
+  </svg>`;
+}
+
+/* 定位结果（玩家真实 GPS）：返回 { ok, lat, lng, error } */
+function _getPlayerLocation() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) { resolve({ ok: false, error: 'unsupported' }); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ ok: true, lat: +pos.coords.latitude.toFixed(4), lng: +pos.coords.longitude.toFixed(4) }),
+      err => resolve({ ok: false, error: err && err.code === 1 ? 'denied' : 'unavailable' }),
+      { timeout: 8000, maximumAge: 300000 }
+    );
+  });
+}
+
 /* ---------- 突击查岗（15.2 简版：卡片 + 角色抽 2~3 条字卡回复） ---------- */
 function showCheckinModal() {
   openModal(`
-    <div style="font-size:18px;font-weight:600;margin-bottom:16px;">突击查岗</div>
+    <div style="font-size:18px;font-weight:600;margin-bottom:12px;">突击查岗</div>
+    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">向访客发起突击查岗，TA 会回复当前位置（或所在维度）、天气和正在做的事。</div>
     <div class="field">
       <label>查岗文案（可编辑）</label>
       <input class="input" id="checkin-text" value="突击查岗！你现在在做什么！">
     </div>
     <div style="display:flex;gap:10px;">
       <button class="btn" style="flex:1;" id="checkin-cancel">取消</button>
-      <button class="btn primary" style="flex:1;" id="checkin-send">发送</button>
+      <button class="btn primary" style="flex:1;" id="checkin-send">发送查岗</button>
     </div>
+    <button class="btn block" style="margin-top:10px;width:100%;" id="checkin-report">📮 主动报备（发送我的位置）</button>
   `);
   $('#checkin-cancel').onclick = closeModal;
   $('#checkin-send').onclick = async () => {
     const text = $('#checkin-text').value.trim() || '突击查岗！你现在在做什么！';
     closeModal();
     if (!currentCharId) return;
-    const myMsg = { id: uid('msg'), charId: currentCharId, from: 'me', type: 'checkin', content: { text, replies: [] }, time: Date.now() };
+    const c = characters.find(x => x.id === currentCharId);
+    // 角色回答：带位置（随机经纬度 / 50% 其他维度）+ 天气 + 状态（受「允许发送位置」开关控制）
+    const locOn = (getCharChatSettings(c) || {}).checkinLocation !== false;
+    let loc = null, weather = null, doing = null, distKm = null;
+    if (locOn) {
+      const p = _randWorldPos();
+      const dim = _randDim();
+      loc = { lat: p.lat, lng: p.lng, dim };
+      if (dim > 0) {
+        weather = _randWeather();
+      } else {
+        const city = await _reverseGeo(p.lat, p.lng);
+        if (city) loc.city = city;
+        weather = await _fetchWeather(p.lat, p.lng) || _randWeather();
+        const myPos = await _getPlayerLocation();
+        if (myPos.ok) distKm = _distKm(p.lat, p.lng, myPos.lat, myPos.lng);
+      }
+      doing = _drawCheckinStatus();
+    }
+    const myMsg = {
+      id: uid('msg'), charId: currentCharId, from: 'me', type: 'checkin', time: Date.now(),
+      content: { text, replies: [], location: loc, weather, doing, marker: 'TA', distKm },
+    };
     await idbPut('messages', myMsg);
     appendMessage(myMsg);
-    // 角色抽 2~3 条字卡依次回复（15.1），每条都引用查岗卡片，并把回复内容写进查岗卡片
-    const quote = { name: playerProfile.name || '我', content: text, msgId: myMsg.id }; // 20261004：带 msgId 支持点击跳回
-    const c = characters.find(x => x.id === currentCharId);
+    // 角色继续抽 2~3 条字卡 / AI 生成的话作为回复（正在做什么的话术）
+    const quote = { name: playerProfile.name || '我', content: text, msgId: myMsg.id };
+    const aiOn = await isCharAIMode(currentCharId);
     const n = randInt(2, 3);
     for (let i = 0; i < n; i++) {
-      const replyMsg = await scheduleCharReply(currentCharId, quote, { quick: true }); // 查岗汇报走快速节奏，反馈更及时
-      if (replyMsg) {
+      let replyContent;
+      if (aiOn) {
+        replyContent = await aiSoftReply(c,
+          '请以角色身份回复玩家的突击查岗：说一句你此刻正在做的具体小事（符合人设与当前时段），自然不跳戏。1 句。',
+          () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
+      } else {
+        replyContent = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
+      }
+      if (replyContent) {
         myMsg.content.replies = myMsg.content.replies || [];
-        myMsg.content.replies.push({ who: c ? c.name : 'TA', text: replyMsg.content });
+        myMsg.content.replies.push({ who: c ? c.name : 'TA', text: replyContent });
         await idbPut('messages', myMsg);
-        // 就地刷新这条查岗卡片的回复展示
         refreshCheckinCardReplies(myMsg);
       }
     }
+  };
+  // 主动报备：弹独立弹窗，输入「正在做什么」+ 选择是否带位置，一起发
+  $('#checkin-report').onclick = () => {
+    closeModal();
+    showReportModal();
+  };
+}
+
+/* 主动报备弹窗：输入框填「正在做什么」，勾选是否附带位置（真实 GPS，可拒绝），
+   确认后连同位置、天气、地图一起作为一条报备消息发出 */
+function showReportModal() {
+  const c = characters.find(x => x.id === currentCharId);
+  const locOn = (getCharChatSettings(c) || {}).checkinLocation !== false;
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:18px;font-weight:600;">📮 主动报备</div>
+      <button class="icon-btn" id="report-close">✕</button>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px;">告诉「${escapeHtml(c ? c.name : 'TA')}」你现在在做什么，可一并附上你的位置、天气与地图。</div>
+    <div class="field">
+      <label>我正在做什么（可编辑）</label>
+      <textarea class="textarea" id="report-text" placeholder="我现在在…" style="min-height:80px;">${escapeHtml(_drawCheckinStatus())}</textarea>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+      <input type="checkbox" id="report-loc" style="width:17px;height:17px;accent-color:var(--purple);" ${locOn ? 'checked' : ''} ${locOn ? '' : 'disabled'}>
+      <label for="report-loc" style="font-size:13px;color:var(--text-secondary);">📌 附带我的位置（需授权定位，可随时拒绝）</label>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn" style="flex:1;" id="report-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="report-send">发送报备</button>
+    </div>
+  `);
+  $('#report-close').onclick = closeModal;
+  $('#report-cancel').onclick = closeModal;
+  $('#report-send').onclick = async () => {
+    const text = $('#report-text').value.trim() || '我在忙';
+    const wantLoc = $('#report-loc') && $('#report-loc').checked && locOn;
+    closeModal();
+    if (!currentCharId) return;
+    let loc = null, weather = null, locRes = { ok: false };
+    if (wantLoc) {
+      locRes = await _getPlayerLocation();
+      if (locRes.ok) {
+        loc = { lat: locRes.lat, lng: locRes.lng, dim: 0 };
+        const city = await _reverseGeo(locRes.lat, locRes.lng);
+        if (city) loc.city = city;
+        weather = await _fetchWeather(locRes.lat, locRes.lng) || _randWeather();
+      } else {
+        loc = { lat: 0, lng: 0, dim: 0, denied: true };
+        weather = null;
+      }
+    }
+    const myMsg = {
+      id: uid('msg'), charId: currentCharId, from: 'me', type: 'checkin', time: Date.now(),
+      content: {
+        report: true,
+        text,
+        doing: text,
+        location: loc,
+        weather,
+        marker: '你',
+        replies: [],
+      },
+    };
+    await idbPut('messages', myMsg);
+    appendMessage(myMsg);
+    if (wantLoc && !locRes.ok) miniToast('未获取到定位（已拒绝或不可用），仅发送文字报备');
   };
 }
 
@@ -9831,6 +11061,10 @@ function openCheckinReplyModal(charId, checkinMsg = null) {
     <div class="field">
       <textarea class="textarea" id="ckr-input" placeholder="我现在在…" style="min-height:90px;"></textarea>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+      <input type="checkbox" id="ckr-loc" style="width:17px;height:17px;accent-color:var(--purple);">
+      <label for="ckr-loc" style="font-size:13px;color:var(--text-secondary);">📌 附带我的位置（需授权定位，可随时拒绝）</label>
+    </div>
     <div style="display:flex;gap:10px;">
       <button class="btn" style="flex:1;" id="ckr-cancel">取消</button>
       <button class="btn primary" style="flex:1;" id="ckr-send">发送</button>
@@ -9841,15 +11075,39 @@ function openCheckinReplyModal(charId, checkinMsg = null) {
   $('#ckr-send').onclick = async () => {
     const text = $('#ckr-input').value.trim();
     if (!text) { miniToast('请填写你的回复'); return; }
+    const wantLoc = $('#ckr-loc') && $('#ckr-loc').checked;
     closeModal();
+    // 可选：获取玩家真实定位（可拒绝）
+    let loc = null, weather = null;
+    if (wantLoc) {
+      const locRes = await _getPlayerLocation();
+      if (locRes.ok) {
+        loc = { lat: locRes.lat, lng: locRes.lng, dim: 0 };
+        const city = await _reverseGeo(locRes.lat, locRes.lng);
+        if (city) loc.city = city;
+        weather = await _fetchWeather(locRes.lat, locRes.lng) || _randWeather();
+      } else {
+        miniToast('未获取到定位，仅发送文字回复');
+      }
+    }
     // 玩家的回复引用角色的查岗卡片，在聊天里可见地对应这次查岗
-    const myMsg = { id: uid('msg'), charId, from: 'me', type: 'text', content: text, time: Date.now(), quote: { name: c ? c.name : 'TA', content: checkinText, msgId: checkinMsg ? checkinMsg.id : undefined } }; // 20261004：quote 带 msgId（引用查岗卡片可跳回）
+    const myMsg = {
+      id: uid('msg'), charId, from: 'me', type: 'checkin', time: Date.now(),
+      content: { report: true, text, doing: text, location: loc, weather, marker: '你', replies: [] },
+      quote: { name: c ? c.name : 'TA', content: checkinText, msgId: checkinMsg ? checkinMsg.id : undefined },
+    };
     await idbPut('messages', myMsg);
     if (currentCharId === charId) appendMessage(myMsg);
     // 玩家回复也写进查岗卡片
     if (checkinMsg) {
       checkinMsg.content.replies = checkinMsg.content.replies || [];
-      checkinMsg.content.replies.push({ who: playerProfile.name || '我', text });
+      const replyEntry = { who: playerProfile.name || '我', text };
+      // 若玩家带了位置，且角色卡片有位置，则计算距离附在回复里
+      if (loc && checkinMsg.content.location && !checkinMsg.content.location.dim && !loc.denied) {
+        const d = _distKm(loc.lat, loc.lng, checkinMsg.content.location.lat, checkinMsg.content.location.lng);
+        replyEntry.dist = d;
+      }
+      checkinMsg.content.replies.push(replyEntry);
       await idbPut('messages', checkinMsg);
       refreshCheckinCardReplies(checkinMsg);
     }
@@ -11014,10 +12272,14 @@ function makeDraggable(el, onDrop) {
     const t = e.touches[0];
     begin(t.clientX, t.clientY);
   }, { passive: true });
+  // 20261104 性能优化：touchmove 改 passive:false + preventDefault——拖动悬浮窗时
+  //   阻止底层 iframe（番茄钟）与页面同时响应触摸滚动手势，消除跨文档拖拽抖动/卡顿。
   el.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    e.preventDefault();
     const t = e.touches[0];
     onMove(t.clientX, t.clientY);
-  }, { passive: true });
+  }, { passive: false });
   el.addEventListener('touchend', () => { finishDrag(true); });
   el.addEventListener('touchcancel', () => { finishDrag(false); });
 
@@ -11043,6 +12305,93 @@ function makeDraggable(el, onDrop) {
 }
 
 /* ---------- 发红包 / 转账（14 简版：真扣款） ---------- */
+/* 20261104：红包/转账合并入口——点开先选「发红包」还是「转账」，再进对应弹窗 */
+function showRedpacketTransferEntry() {
+  const c = characters.find(x => x.id === currentCharId);
+  openModal(`
+    <div style="font-size:18px;font-weight:600;margin-bottom:16px;">红包 / 转账</div>
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">给 ${escapeHtml(c ? c.name : 'TA')} 发一个红包或转账</div>
+    <div style="display:flex;gap:12px;">
+      <button class="btn" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 0;" id="rt-redpacket">
+        <span style="font-size:30px;">🧧</span>
+        <span style="font-size:14px;font-weight:600;">发红包</span>
+        <span style="font-size:11px;color:var(--text-tertiary);">一份心意</span>
+      </button>
+      <button class="btn" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 0;" id="rt-transfer">
+        <span style="font-size:30px;">💳</span>
+        <span style="font-size:14px;font-weight:600;">转账</span>
+        <span style="font-size:11px;color:var(--text-tertiary);">明确金额</span>
+      </button>
+    </div>
+  `);
+  $('#rt-redpacket').onclick = () => { closeModal(); showRedPacketModal(); };
+  $('#rt-transfer').onclick = () => { closeModal(); showTransferModal(); };
+}
+
+/* 20261104：发红包（单聊）——区别于转账：红包是「包一份心意」，带吉利话，角色随机领取或退回 */
+function showRedPacketModal() {
+  const c = characters.find(x => x.id === currentCharId);
+  openModal(`
+    <div style="font-size:18px;font-weight:600;margin-bottom:16px;">发红包给 ${escapeHtml(c ? c.name : 'TA')}</div>
+    <div style="display:flex;gap:12px;margin-bottom:14px;font-size:13px;color:var(--text-secondary);">
+      <span>我的钱包：¥${playerProfile.wallet}</span>
+    </div>
+    <div class="field">
+      <label>红包金额</label>
+      <input class="input" type="number" id="rp-amount" placeholder="输入红包金额" min="1">
+    </div>
+    <div class="field">
+      <label>祝福语（可选）</label>
+      <input class="input" id="rp-note" placeholder="如：恭喜发财，大吉大利">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn" style="flex:1;" id="rp-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="rp-go">塞进红包</button>
+    </div>
+  `);
+  $('#rp-cancel').onclick = closeModal;
+  $('#rp-go').onclick = async () => {
+    const amount = parseInt($('#rp-amount').value);
+    if (!amount || amount <= 0) { miniToast('请输入有效金额'); return; }
+    if (amount > playerProfile.wallet) { miniToast('余额不足'); return; }
+    const note = $('#rp-note').value.trim();
+    const c2 = characters.find(x => x.id === currentCharId);
+    // 真扣款
+    playerProfile.wallet -= amount;
+    await savePlayerProfile();
+    closeModal();
+    const myMsg = {
+      id: uid('msg'), charId: currentCharId, from: 'me', type: 'redpacket',
+      content: { amount, note: note || '恭喜发财，大吉大利', direction: 'me_to_char', status: 'pending' }, time: Date.now()
+    };
+    await idbPut('messages', myMsg);
+    appendMessage(myMsg);
+    // 随机决定梦角是否拆开（70% 拆 / 30% 退回）
+    const claimed = Math.random() < 0.7;
+    const delay = randInt(2, 6) * 1000;
+    setTimeout(async () => {
+      const c3 = characters.find(x => x.id === currentCharId);
+      if (claimed) {
+        myMsg.content.status = 'claimed';
+        if (c3) { c3.wallet = (c3.wallet ?? 100000) + amount; await saveChar(c3); }
+        await idbPut('messages', myMsg);
+        if (currentCharId === myMsg.charId) await renderMessages(myMsg.charId);
+        await scheduleCharReply(myMsg.charId);
+      } else {
+        myMsg.content.status = 'returned';
+        playerProfile.wallet += amount;
+        await savePlayerProfile();
+        await idbPut('messages', myMsg);
+        if (currentCharId === myMsg.charId) await renderMessages(myMsg.charId);
+        const returnMsg = { id: uid('msg'), charId: myMsg.charId, from: 'them', type: 'redpacket', content: { amount, note, direction: 'me_to_char', status: 'returned', returnedNote: (c3 ? c3.name : 'TA') + ' 收下了心意，但把红包退了回来' }, time: Date.now() };
+        await idbPut('messages', returnMsg);
+        if (currentCharId === myMsg.charId) appendMessage(returnMsg);
+      }
+      renderChatList();
+    }, delay);
+  };
+}
+
 function showTransferModal() {
   const c = characters.find(x => x.id === currentCharId);
   openModal(`
@@ -11632,6 +12981,9 @@ function bindEvents() {
   // 朋友圈发布入口
   $('#btn-moments-publish').onclick = () => showPublishMomentModal();
   $('#btn-moments-bg').onclick = () => showMomentsCoverModal(); // 更换的是朋友圈顶部封面图（不是主页背景）
+  // 20261104：朋友圈「只看某个角色」筛选按钮
+  $('#btn-moments-filter').onclick = () => showMomentsFilterModal();
+  updateMomentsFilterBtn();
   // 20260929ax：朋友圈右上角「我」的名片（头像/昵称/签名）点击 → 编辑玩家资料（与个人主页头像一致）
   const meCard = document.querySelector('.mc-me');
   if (meCard) {
@@ -11658,9 +13010,11 @@ const CARD_MODULES = [
   { key: 'mottos', label: '寄语' },
   { key: 'emojis', label: '表情' },
   { key: 'momentPresets', label: '朋友圈预设' },
+  { key: 'companionActions', label: '陪伴动作' },
+  { key: 'companionReplies', label: '陪伴回复' },
 ];
 // 各模块的扁平数组字段 与 分组字段 对应关系（用于非 replies 模块的分组/批量管理）
-// 注：只有「访客戳一戳(pokes)」需要分组；玩家戳一戳/状态/寄语/表情/朋友圈预设都不分组，
+// 注：只有「访客戳一戳(pokes)」需要分组；玩家戳一戳/状态/寄语/表情/朋友圈预设/陪伴都不分组，
 //   只保留批量管理（勾选 + 删除）。
 const CARD_MODULE_FIELDS = {
   pokes: { list: 'customPokes', groups: 'customPokeGroups' },
@@ -11672,6 +13026,8 @@ const CARD_FLAT_MODULES = {
   mottos: 'customMottos',
   emojis: 'customEmojis',
   momentPresets: 'customMomentPresets',
+  companionActions: 'customCompanionActions',
+  companionReplies: 'customCompanionReplies',
 };
 
 function showCardsModal() {
@@ -13672,6 +15028,14 @@ async function showCharDiaryModal(c) {
     }
   });
   const callText = callSec > 0 ? diaryCallText(callSec) : '还没有通过话';
+  // 20261104：累计一起听歌时长——读 music.js 持久化的累计秒数（含进行中一起听的实时时长）
+  let togetherSec = 0;
+  try {
+    if (window.bmMusicUI && typeof window.bmMusicUI.getTogetherTotal === 'function') {
+      togetherSec = await window.bmMusicUI.getTogetherTotal(c.id) || 0;
+    }
+  } catch (e) {}
+  const togetherText = togetherSec > 0 ? diaryCallText(togetherSec) : '还没有一起听过歌';
   // 20261027：高频词——分别统计「我（用户）」与「TA（角色）」的文本消息，排除语气词，Top5
   const meTexts = [], taTexts = [];
   msgs.forEach(m => {
@@ -13705,6 +15069,11 @@ async function showCharDiaryModal(c) {
         <span class="diary-ic">📞</span>
         <span class="diary-label">累计通话时长</span>
         <span class="diary-val">${callText}${callCount > 0 ? `（${callCount} 次）` : ''}</span>
+      </div>
+      <div class="diary-stat">
+        <span class="diary-ic">🎧</span>
+        <span class="diary-label">一起听歌时长</span>
+        <span class="diary-val">${togetherText}</span>
       </div>
       <div class="diary-stat">
         <span class="diary-ic">🗓️</span>
@@ -14530,6 +15899,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <button class="btn cs-tab" data-cs-tab="字卡组合" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">字卡组合</button>
       ${(isPerChar || s.overclockUnlocked) ? `<button class="btn cs-tab" data-cs-tab="超频" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">超频</button>` : ''}
       <button class="btn cs-tab" data-cs-tab="行程" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">行程</button>
+      <button class="btn cs-tab" data-cs-tab="音乐" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">音乐</button>
     </div>
 
     ${!isPerChar ? `
@@ -14634,6 +16004,14 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <input class="input" type="number" min="0" max="99" value="${s.checkinDailyLimit ?? 0}" id="cs-checkin-limit" style="width:80px;">
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后访客会随机突击查岗（15.1）：TA 会问你「现在在做什么」，并抽字卡汇报自己正在做的事。默认不限次数，可设每日上限</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>允许发送位置</span>
+        <input type="checkbox" id="cs-checkin-location" ${s.checkinLocation !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">查岗/主动报备时是否附带位置。开启后：玩家可真实定位（可拒绝），访客会随机发一个世界位置或落入其他维度。关闭则双方都不发位置。</div>
     </div>
 
     <div class="field">
@@ -14922,6 +16300,84 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     ` : ''}
     </section>
 
+    <section class="cs-panel" data-cs-panel="音乐">
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🎧 一起听歌悬浮窗</span>
+        <input type="checkbox" id="cs-music-float" ${(chatSettings.musicFloatOn !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，邀请角色一起听歌、或播放歌曲时会自动弹出一起听悬浮窗（右下角小圆点，点开可看封面/歌词/一起听时长）。关闭后不再自动弹，可随时在音乐页手动开关。</div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🎨 音乐页主题</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">一起听歌页面的视觉主题（星空/纸墨/像素/千禧/拼贴/黑白）。与音乐页右上角的「✦ 切换主题」是同一份设置，两边同步。</div>
+      <select class="input" id="cs-music-theme" style="width:100%;">
+        <option value="star" ${((typeof s.musicTheme === 'string' ? s.musicTheme : 'star') === 'star') ? 'selected' : ''}>星空（默认）</option>
+        <option value="paper" ${((typeof s.musicTheme === 'string' ? s.musicTheme : 'star') === 'paper') ? 'selected' : ''}>纸墨</option>
+        <option value="pixel" ${((typeof s.musicTheme === 'string' ? s.musicTheme : 'star') === 'pixel') ? 'selected' : ''}>像素</option>
+        <option value="y2k" ${((typeof s.musicTheme === 'string' ? s.musicTheme : 'star') === 'y2k') ? 'selected' : ''}>千禧</option>
+        <option value="collage" ${((typeof s.musicTheme === 'string' ? s.musicTheme : 'star') === 'collage') ? 'selected' : ''}>拼贴</option>
+        <option value="bw" ${((typeof s.musicTheme === 'string' ? s.musicTheme : 'star') === 'bw') ? 'selected' : ''}>黑白</option>
+      </select>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🎶 角色主动搜歌/切歌（同意邀请后自动开启）</span>
+        <span style="font-size:11px;color:var(--text-tertiary);font-weight:400;">随一起听自动开/关</span>
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">无需单独开关——你<span style="color:var(--text);font-weight:600;">同意</span>该角色的听歌邀请（进入一起听）后，角色会自动开启自主音乐操作：播放、暂停、切上一首/下一首、往列表加歌、收藏、随机选歌、主动去网上搜歌。觉得好听的会收藏（存进「访客收藏」），不好听会切歌，并在聊天里发小横条告诉你。<span style="color:var(--text);font-weight:600;">拒绝邀请</span>或结束一起听后自动关闭。随机固定间隔触发（下方可设区间），不会刷屏。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
+        <input type="number" id="cs-music-auto-min" min="1" max="720" step="1" value="${typeof s.musicAutoMin === 'number' ? s.musicAutoMin : 20}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-music-auto-max" min="1" max="720" step="1" value="${typeof s.musicAutoMax === 'number' ? s.musicAutoMax : 120}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>💌 角色主动邀请一起听歌</span>
+        <input type="checkbox" id="cs-music-invite" ${(chatSettings.musicInvite === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动弹邀请函邀请你一起听歌，你可同意（进入一起听并自动播放）或拒绝。随机固定间隔触发（下方可设区间，默认比主动操作更稀疏）。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
+        <input type="number" id="cs-music-invite-min" min="1" max="1440" step="1" value="${typeof s.musicInviteMin === 'number' ? s.musicInviteMin : 120}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-music-invite-max" min="1" max="1440" step="1" value="${typeof s.musicInviteMax === 'number' ? s.musicInviteMax : 480}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>👀 角色偷偷查看你的歌单</span>
+        <input type="checkbox" id="cs-music-peek" ${(chatSettings.musicPeek === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会随机「偷看」你的歌单，并在你的歌单里留一条足迹提醒。偷看后可能只是看看、也可能把你歌单里的某首歌顺进 TA 自己的歌单、或偷偷听你歌单里的某首歌——每一种都会在歌单里留提醒，并在聊天里发小横条告诉你。随机固定间隔触发（下方可设区间）。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
+        <input type="number" id="cs-music-peek-min" min="1" max="1440" step="1" value="${typeof s.musicPeekMin === 'number' ? s.musicPeekMin : 60}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-music-peek-max" min="1" max="1440" step="1" value="${typeof s.musicPeekMax === 'number' ? s.musicPeekMax : 240}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🎬 角色主动搜发视频</span>
+        <input type="checkbox" id="cs-video-auto" ${(chatSettings.videoAuto === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动到网上搜视频（bilibili / 抖音 / 其他直链）发给你，发来一张视频卡片，点击可直接播放。随机固定间隔触发（下方可设区间），不会刷屏。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
+        <input type="number" id="cs-video-auto-min" min="1" max="1440" step="1" value="${typeof s.videoAutoMin === 'number' ? s.videoAutoMin : 60}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-video-auto-max" min="1" max="1440" step="1" value="${typeof s.videoAutoMax === 'number' ? s.videoAutoMax : 240}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+      </div>
+    </div>
+    </section>
+
     <button class="btn primary block" id="cs-save">保存</button>
   `;
 }
@@ -15073,6 +16529,132 @@ function bindChatSettings(s, onSave, tcChar) {
     if (!tcChar) { chatSettings.allowFloat2 = f2cb.checked; await setSetting('chatSettings', chatSettings); }
     miniToast(f2cb.checked ? '悬浮窗2号已允许浮游' : '悬浮窗2号已锁定居中');
   };
+  // 20261104：一起听歌设置——悬浮窗开关（全局，即时生效落库）+ 音乐主题（即时切换）
+  const mfCb = $('#cs-music-float');
+  if (mfCb) mfCb.onchange = async () => {
+    s.musicFloatOn = mfCb.checked;
+    if (!tcChar) { chatSettings.musicFloatOn = mfCb.checked; await setSetting('chatSettings', chatSettings); }
+    // 同步到音乐悬浮窗：关闭时立即收起悬浮窗，开启时若正在一起听则重新弹出
+    if (window.bmMusicUI) {
+      try {
+        if (!mfCb.checked) {
+          const fw = document.getElementById('bm-music-float');
+          if (fw) fw.remove();
+        } else {
+          window.bmMusicUI.renderFloat();
+        }
+      } catch (e) {}
+    }
+    miniToast(mfCb.checked ? '一起听悬浮窗已开启' : '一起听悬浮窗已关闭');
+  };
+  const mtSel = $('#cs-music-theme');
+  if (mtSel) mtSel.onchange = async () => {
+    const v = mtSel.value;
+    s.musicTheme = v;
+    await setSetting('musicTheme', v);
+    // 立即应用到已打开的音乐页/悬浮窗
+    const page = document.getElementById('bm-music-page');
+    if (page) page.dataset.theme = v;
+    const fw = document.getElementById('bm-music-float');
+    if (fw) fw.dataset.theme = v;
+    miniToast('音乐主题已切换');
+  };
+  // 20261104：角色主动搜歌/切歌的随机间隔（全局设置，即时生效落库）。
+  //   注：互动B 已改为「随一起听邀请同意自动开/关」，不再需要独立 musicAuto 开关，
+  //   这里只保留随机间隔设置。
+  const maMinEl = $('#cs-music-auto-min');
+  const maMaxEl = $('#cs-music-auto-max');
+  if (maMinEl && maMaxEl) {
+    const applyMa = () => {
+      let lo = Math.min(720, Math.max(1, parseInt(maMinEl.value, 10) || 20));
+      let hi = Math.min(720, Math.max(1, parseInt(maMaxEl.value, 10) || 120));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      maMinEl.value = String(lo); maMaxEl.value = String(hi);
+      s.musicAutoMin = lo;
+      s.musicAutoMax = hi;
+      chatSettings.musicAutoMin = lo;
+      chatSettings.musicAutoMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      miniToast('角色主动音乐间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    maMinEl.onchange = applyMa;
+    maMaxEl.onchange = applyMa;
+  }
+  // 20261104：角色主动邀请一起听歌开关 + 随机间隔（全局设置，即时生效落库）
+  const miCb = $('#cs-music-invite');
+  if (miCb) miCb.onchange = async () => {
+    s.musicInvite = miCb.checked;
+    if (!tcChar) { chatSettings.musicInvite = miCb.checked; await setSetting('chatSettings', chatSettings); }
+    miniToast(miCb.checked ? '角色会主动邀请你一起听歌' : '角色主动邀请已关闭');
+  };
+  const miMinEl = $('#cs-music-invite-min');
+  const miMaxEl = $('#cs-music-invite-max');
+  if (miMinEl && miMaxEl) {
+    const applyMi = () => {
+      let lo = Math.min(1440, Math.max(1, parseInt(miMinEl.value, 10) || 120));
+      let hi = Math.min(1440, Math.max(1, parseInt(miMaxEl.value, 10) || 480));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      miMinEl.value = String(lo); miMaxEl.value = String(hi);
+      s.musicInviteMin = lo;
+      s.musicInviteMax = hi;
+      chatSettings.musicInviteMin = lo;
+      chatSettings.musicInviteMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      miniToast('角色主动邀请间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    miMinEl.onchange = applyMi;
+    miMaxEl.onchange = applyMi;
+  }
+  // 20261104：角色偷偷查看玩家歌单开关 + 随机间隔（全局设置，即时生效落库）
+  const mpCb = $('#cs-music-peek');
+  if (mpCb) mpCb.onchange = async () => {
+    s.musicPeek = mpCb.checked;
+    if (!tcChar) { chatSettings.musicPeek = mpCb.checked; await setSetting('chatSettings', chatSettings); }
+    miniToast(mpCb.checked ? '角色会偷偷查看你的歌单' : '角色偷看歌单已关闭');
+  };
+  const mpMinEl = $('#cs-music-peek-min');
+  const mpMaxEl = $('#cs-music-peek-max');
+  if (mpMinEl && mpMaxEl) {
+    const applyMp = () => {
+      let lo = Math.min(1440, Math.max(1, parseInt(mpMinEl.value, 10) || 60));
+      let hi = Math.min(1440, Math.max(1, parseInt(mpMaxEl.value, 10) || 240));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      mpMinEl.value = String(lo); mpMaxEl.value = String(hi);
+      s.musicPeekMin = lo;
+      s.musicPeekMax = hi;
+      chatSettings.musicPeekMin = lo;
+      chatSettings.musicPeekMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      miniToast('角色偷看歌单间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    mpMinEl.onchange = applyMp;
+    mpMaxEl.onchange = applyMp;
+  }
+  // 20261104：角色主动搜发视频开关 + 随机间隔（全局设置，即时生效落库）
+  const vaCb = $('#cs-video-auto');
+  if (vaCb) vaCb.onchange = async () => {
+    s.videoAuto = vaCb.checked;
+    if (!tcChar) { chatSettings.videoAuto = vaCb.checked; await setSetting('chatSettings', chatSettings); }
+    miniToast(vaCb.checked ? '角色会主动搜发视频给你' : '角色主动发视频已关闭');
+  };
+  const vaMinEl = $('#cs-video-auto-min');
+  const vaMaxEl = $('#cs-video-auto-max');
+  if (vaMinEl && vaMaxEl) {
+    const applyVa = () => {
+      let lo = Math.min(1440, Math.max(1, parseInt(vaMinEl.value, 10) || 60));
+      let hi = Math.min(1440, Math.max(1, parseInt(vaMaxEl.value, 10) || 240));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      vaMinEl.value = String(lo); vaMaxEl.value = String(hi);
+      s.videoAutoMin = lo;
+      s.videoAutoMax = hi;
+      chatSettings.videoAutoMin = lo;
+      chatSettings.videoAutoMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      miniToast('角色主动发视频间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    vaMinEl.onchange = applyVa;
+    vaMaxEl.onchange = applyVa;
+  }
   // 20260929bk：悬浮窗2号模式选择（软件内 / 其他应用上）——全局与访客级都渲染
   const f2ModeBtns = $$('#cs-float2-mode .float2-mode-btn');
   const refreshF2ModeUI = () => {
@@ -15376,6 +16958,7 @@ function bindChatSettings(s, onSave, tcChar) {
       s.proactiveRandom = false;
     }
     s.proactiveCheckin = $('#cs-proactive-checkin').checked;
+    s.checkinLocation = !!$('#cs-checkin-location').checked;
     s.randomCall = $('#cs-random-call').checked;
     s.randomPacket = !!$('#cs-random-packet').checked;
     // az：群聊自动接龙轮次上限（仅总聊天设置渲染该输入；0~5）
@@ -16056,6 +17639,8 @@ async function showDataModal() {
     { id: 'letters', ic: 'letter',  name: '书信', desc: '往来书信与信箱文件夹（.letterdata）' },
     { id: 'world',   ic: 'tree',    name: '世界树', desc: '世界观设定库（.worlddata，原世界书）' },
     { id: 'palace',  ic: 'memory',  name: '记忆宫殿', desc: '记忆条目与文件夹结构（.palacedata）' },
+    { id: 'music',   ic: 'music',   name: '音乐', desc: '音乐库 / 歌单 / 访客收藏（.musicdata，独立于全局）' },
+    { id: 'focus',   ic: 'timer',   name: '番茄钟', desc: '番茄钟陪伴结算记录（.focusdata，按角色分角色导出）' },
   ];
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
@@ -16093,6 +17678,8 @@ function showDataCatModal(id) {
     letters: [`${ti('letter')}书信`, '单独导出全部往来书信与信箱文件夹结构（.letterdata），或从备份导入（按 ID 合并去重）'],
     world: [`${ti('tree')}世界树`, '导出/导入世界观设定库（.worlddata，含文件夹、条目与草稿箱；导入会覆盖当前世界树）'],
     palace: [`${ti('memory')}记忆宫殿`, '导出/导入记忆条目与文件夹结构（.palacedata）；导出可选访客/玩家文件夹，导入自动分辨归属'],
+    music: [`${ti('music')}音乐数据`, '单独导出/导入音乐数据（音乐库 · 歌单 · 访客收藏 · 音源设置）。<b>独立于全局备份</b>，全局导出/导入不包含音乐数据，需在此单独操作'],
+    focus: [`${ti('timer')}番茄钟结算`, '导出/导入番茄钟陪伴的专注结算记录。导出可按角色单选或多选（分角色导出），也可一键全部导出'],
   };
   const t = titles[id] || ['', ''];
   const btn = (bid, label, tail) => `<button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="${bid}">${label} <span>${tail}</span></button>`;
@@ -16158,7 +17745,245 @@ function showDataCatModal(id) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">导入时会自动分辨每条记忆的归属：访客记忆归入同名访客的文件夹，玩家记忆归入玩家的记忆，认不出的默认放进玩家根部且 AI 不可读</div>`;
     $('#btn-export-palace').onclick = () => showExportPalaceModal(showDataModal);
     $('#btn-import-palace').onclick = () => showImportPalaceModal(showDataModal);
+  } else if (id === 'music') {
+    body.innerHTML = `
+      ${btn('btn-export-music', '导出音乐数据（.musicdata）', '⬇')}
+      ${btn('btn-import-music', '导入音乐数据（.musicdata）', '⬆')}
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
+        音乐数据<b>独立于全局备份</b>：全局导出/导入不包含音乐，需在此单独备份。<br>
+        导出内容：音乐库歌曲、歌单、访客收藏、音源路径设置。<br>
+        注意：本地上传的音频文件本体不随导出（仅记录歌名/封面/来源），导入后本地歌曲需重新上传文件。
+      </div>`;
+    $('#btn-export-music').onclick = exportMusicData;
+    $('#btn-import-music').onclick = () => showImportMusicModal(showDataModal);
+  } else if (id === 'focus') {
+    body.innerHTML = `
+      ${btn('btn-export-focus', '导出番茄钟结算（.focusdata）', '⬇')}
+      ${btn('btn-import-focus', '导入番茄钟结算（.focusdata）', '⬆')}
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
+        番茄钟陪伴的专注结算记录。<br>
+        导出时可选<b>按角色分角色导出</b>（单选或多选），也可一键全部导出。<br>
+        导入时按记录 id 合并去重，不会覆盖已有结算。
+      </div>`;
+    $('#btn-export-focus').onclick = () => showExportFocusModal(showDataModal);
+    $('#btn-import-focus').onclick = () => showImportFocusModal(showDataModal);
   }
+}
+
+/* ---------- 导出番茄钟结算（20261104：按角色单选/多选导出，或一键全部） ---------- */
+async function showExportFocusModal(back = null) {
+  const backFn = () => back ? back() : closeModal();
+  const sessions = (await idbGetAll('focus_session')) || [];
+  if (!sessions.length) { miniToast('还没有番茄钟结算记录'); return; }
+  // 只列出实际有结算记录的角色
+  const withFocus = characters.filter(c => sessions.some(s => s.charId === c.id));
+  const picked = new Set();
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;">导出番茄钟结算</div>
+      <button class="icon-btn" id="fex-close">✕</button>
+    </div>
+    <button class="btn primary block" id="fex-all" style="margin-bottom:16px;">📦 全部导出（共 ${sessions.length} 条结算）</button>
+    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:8px;">单独导出：点选要导出的访客（可多选）</div>
+    ${withFocus.length ? `
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+        ${withFocus.map(c => `
+          <span class="badge fex-chip" data-cid="${c.id}" style="cursor:pointer;">${escapeHtml(c.name)}</span>
+        `).join('')}
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;" id="fex-count">已选 0 个访客</div>
+      <button class="btn block" id="fex-go" disabled style="opacity:.5;">⬇ 导出所选访客的结算</button>
+    ` : '<div style="color:var(--text-tertiary);font-size:12.5px;margin-bottom:10px;">（还没有任何访客的番茄钟结算）</div>'}
+  `);
+  $('#fex-close').onclick = backFn;
+  $('#fex-all').onclick = async () => { closeModal(); await exportFocusSessions(null); };
+  const refresh = () => {
+    const n = picked.size;
+    const go = $('#fex-go');
+    if (!go) return;
+    go.disabled = n === 0;
+    go.style.opacity = n === 0 ? '.5' : '1';
+    $('#fex-count').textContent = `已选 ${n} 个访客`;
+  };
+  document.querySelectorAll('.fex-chip').forEach(chip => {
+    chip.onclick = () => {
+      const cid = chip.dataset.cid;
+      if (picked.has(cid)) { picked.delete(cid); chip.style.background = ''; chip.style.color = ''; }
+      else { picked.add(cid); chip.style.background = 'var(--purple)'; chip.style.color = '#141019'; }
+      refresh();
+    };
+  });
+  const goBtn = $('#fex-go');
+  if (goBtn) goBtn.onclick = async () => {
+    if (!picked.size) { miniToast('先选至少一个访客'); return; }
+    closeModal();
+    await exportFocusSessions([...picked]);
+  };
+}
+
+/* 导出番茄钟结算：charIds=null 导出全部；传角色 id 数组只导出这些角色 */
+async function exportFocusSessions(charIds = null) {
+  let sessions = (await idbGetAll('focus_session')) || [];
+  const scoped = Array.isArray(charIds) && charIds.length > 0;
+  if (scoped) sessions = sessions.filter(s => charIds.includes(s.charId));
+  if (!sessions.length) { miniToast('所选范围内没有番茄钟结算'); return; }
+  const save = await beginExport(scoped ? '白日梦番茄钟结算备份（部分）.focusdata' : '白日梦番茄钟结算备份.focusdata');
+  if (save.cancelled) return;
+  const data = {
+    app: 'bairimeng',
+    format: 'focusdata',
+    version: '1.0',
+    exportDate: new Date().toISOString(),
+    count: sessions.length,
+    sessions,
+  };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  await finishExport(save, blob, '已导出 ' + sessions.length + ' 条番茄钟结算');
+}
+
+/* ---------- 导入番茄钟结算（合并导入，按 id 去重覆盖） ---------- */
+function showImportFocusModal(back = null) {
+  const backFn = () => back ? back() : closeModal();
+  openModal(`
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <button class="icon-btn" id="ifm-back">‹</button>
+      <div style="flex:1;font-size:17px;font-weight:600;">导入番茄钟结算</div>
+      <button class="icon-btn" id="ifm-close">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">
+      选择之前导出的「白日梦番茄钟结算备份.focusdata」文件，合并导入（按记录 ID 去重覆盖）。<br>
+      不会覆盖已有结算，也不影响其他数据。
+    </div>
+    <input type="file" id="ifm-file" accept=".focusdata,.json" style="display:none;" />
+    <button class="btn primary block" id="ifm-go">选择文件并导入</button>
+    <div id="ifm-msg" style="font-size:12px;color:var(--text-tertiary);margin-top:10px;display:none;"></div>
+  `);
+  $('#ifm-back').onclick = backFn;
+  $('#ifm-close').onclick = backFn;
+  const fileInput = $('#ifm-file');
+  const msg = $('#ifm-msg');
+  $('#ifm-go').onclick = () => fileInput.click();
+  fileInput.onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    msg.style.display = 'block';
+    msg.textContent = '正在导入…';
+    try {
+      const text = await f.text();
+      const data = JSON.parse(text);
+      if (!data || data.format !== 'focusdata') { msg.textContent = '文件格式不对（不是番茄钟结算备份）'; return; }
+      const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+      const existing = await idbGetAll('focus_session');
+      const existIds = new Set((existing || []).map(x => x.id));
+      let added = 0;
+      for (const s of sessions) {
+        if (!s || !s.id) continue;
+        await idbPut('focus_session', s);   // 同 id 直接覆盖，天然去重
+        if (!existIds.has(s.id)) added++;
+      }
+      msg.textContent = `导入完成：合并 ${sessions.length} 条，新增 ${added} 条`;
+      miniToast(`已导入 ${sessions.length} 条番茄钟结算（新增 ${added} 条）`);
+    } catch (err) {
+      msg.textContent = '导入失败：' + (err && err.message ? err.message : '未知错误');
+    }
+  };
+}
+
+/* ---------- 导出音乐数据（20261104：独立于全局，.musicdata 单文件） ---------- */
+async function exportMusicData() {
+  try {
+    const all = await idbGetAll('musicHistory');
+    const songs = (all || []).filter(x => x.kind === 'local');
+    const playlists = (all || []).filter(x => x.kind === 'playlist');
+    // 音源/主题/音量等设置（localStorage 里的音乐偏好）
+    let settings = {};
+    try {
+      settings = {
+        musicSource: localStorage.getItem('musicSource') || 'auto',
+        musicTheme: localStorage.getItem('musicTheme') || 'star',
+        musicVolume: localStorage.getItem('bmMusicVolume') || '1',
+        musicBg: localStorage.getItem('musicBg') || null,
+      };
+    } catch (e) {}
+    // 本地歌曲的 blob: url 不随导出（跨会话失效），清掉 url 但保留元数据
+    const cleanSongs = songs.map(s => {
+      const o = Object.assign({}, s);
+      if (o.url && String(o.url).indexOf('blob:') === 0) o.url = '';
+      delete o.blob;
+      return o;
+    });
+    const payload = { __musicdata: true, version: '1.0', exportedAt: Date.now(), songs: cleanSongs, playlists, settings };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const ok = await finishExport({ filename: '白日梦音乐数据备份.musicdata' }, blob, `已导出音乐数据（${cleanSongs.length} 首歌曲、${playlists.length} 个歌单）`);
+    if (!ok) miniToast('导出失败');
+  } catch (e) {
+    miniToast('导出音乐数据失败：' + (e && e.message ? e.message : '未知错误'));
+  }
+}
+
+/* ---------- 导入音乐数据（独立，合并导入，按 id 去重） ---------- */
+function showImportMusicModal(back = null) {
+  const backFn = () => back ? back() : closeModal();
+  openModal(`
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <button class="icon-btn" id="imm-back">‹</button>
+      <div style="flex:1;font-size:17px;font-weight:600;">导入音乐数据</div>
+      <button class="icon-btn" id="imm-close">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">
+      选择之前导出的「白日梦音乐数据备份.musicdata」文件，合并导入（按歌曲/歌单 ID 去重覆盖）。<br>
+      <b>独立于全局数据</b>，不影响访客、聊天记录等其他数据。
+    </div>
+    <input type="file" id="imm-file" accept=".musicdata,.json" style="display:none;" />
+    <button class="btn primary block" id="imm-go">选择文件并导入</button>
+    <div id="imm-msg" style="font-size:12px;color:var(--text-tertiary);margin-top:10px;display:none;"></div>
+  `);
+  $('#imm-back').onclick = backFn;
+  $('#imm-close').onclick = backFn;
+  const fileInput = $('#imm-file');
+  const msg = $('#imm-msg');
+  $('#imm-go').onclick = () => fileInput.click();
+  fileInput.onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    msg.style.display = 'block';
+    msg.textContent = '正在导入…';
+    try {
+      const text = await f.text();
+      const data = JSON.parse(text);
+      if (!data || !data.__musicdata) { msg.textContent = '文件格式不对（不是音乐数据备份）'; return; }
+      const songs = Array.isArray(data.songs) ? data.songs : [];
+      const playlists = Array.isArray(data.playlists) ? data.playlists : [];
+      // 合并导入：按 id 去重覆盖
+      const existing = await idbGetAll('musicHistory');
+      const existIds = new Set((existing || []).map(x => x.id));
+      let added = 0;
+      for (const s of songs) {
+        if (!s.id) continue;
+        await idbPut('musicHistory', Object.assign({ kind: 'local' }, s));
+        if (!existIds.has(s.id)) added++;
+      }
+      for (const p of playlists) {
+        if (!p.id) continue;
+        await idbPut('musicHistory', Object.assign({ kind: 'playlist' }, p));
+        if (!existIds.has(p.id)) added++;
+      }
+      // 恢复设置
+      if (data.settings) {
+        try {
+          if (data.settings.musicSource) localStorage.setItem('musicSource', data.settings.musicSource);
+          if (data.settings.musicTheme) localStorage.setItem('musicTheme', data.settings.musicTheme);
+          if (data.settings.musicVolume != null) localStorage.setItem('bmMusicVolume', String(data.settings.musicVolume));
+          if (data.settings.musicBg != null) localStorage.setItem('musicBg', data.settings.musicBg);
+        } catch (e2) {}
+      }
+      msg.textContent = `导入完成：新增 ${added} 项（歌曲 ${songs.length} 首、歌单 ${playlists.length} 个），本地音频文件本体需重新上传`;
+      miniToast(`已导入音乐数据（${songs.length} 首歌曲、${playlists.length} 个歌单）`);
+      fileInput.value = '';
+    } catch (e2) {
+      msg.textContent = '导入失败：' + (e2 && e2.message ? e2.message : '文件格式不对');
+    }
+  };
 }
 
 /* ---------- 导出书信选择弹窗（20260925i）：单独导出（可选多个角色）/ 全部导出 ---------- */
@@ -18913,6 +20738,49 @@ async function enterMoments() {
   updateMomentsBadge();
 }
 
+/* 朋友圈筛选：当前只看某个角色的朋友圈（null=全部） */
+let _momentsFilterCharId = null;
+
+/* 朋友圈「只看某个角色」选择弹窗（20261104）：列表点角色只看 TA 的朋友圈；可切回「全部」 */
+function showMomentsFilterModal() {
+  const list = (typeof characters !== 'undefined' && Array.isArray(characters)) ? characters : [];
+  const cur = _momentsFilterCharId;
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <div style="font-size:18px;font-weight:600;">只看某个角色的朋友圈</div>
+      <button class="icon-btn" id="mf-close">✕</button>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:12px;">选中后只显示该角色的动态；切回「全部」查看所有人</div>
+    <div style="display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto;">
+      <button class="btn ${cur === null ? 'primary' : ''}" id="mf-all" style="justify-content:flex-start;text-align:left;">👥 全部动态</button>
+      ${list.length ? list.map(c => `<button class="btn ${cur === c.id ? 'primary' : ''}" data-mf-char="${c.id}" style="justify-content:flex-start;text-align:left;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;margin-right:8px;vertical-align:middle;">` : '<span style="display:inline-block;width:22px;height:22px;border-radius:50%;background:var(--purple-glow);color:var(--purple-soft);text-align:center;line-height:22px;font-size:12px;margin-right:8px;">' + escapeHtml((c.name || '?')[0]) + '</span>'}${escapeHtml(c.name || 'TA')}</button>`).join('') : '<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0;">还没有访客</div>'}
+    </div>
+  `);
+  const close = () => { closeModal(); };
+  $('#mf-close').onclick = close;
+  $('#mf-all').onclick = async () => {
+    _momentsFilterCharId = null;
+    close();
+    await renderMoments();
+    updateMomentsFilterBtn();
+  };
+  document.querySelectorAll('[data-mf-char]').forEach(b => {
+    b.onclick = async () => {
+      _momentsFilterCharId = b.dataset.mfChar;
+      close();
+      await renderMoments();
+      updateMomentsFilterBtn();
+    };
+  });
+}
+
+/* 刷新「只看角色」按钮的高亮态（筛选时点亮） */
+function updateMomentsFilterBtn() {
+  const btn = $('#btn-moments-filter');
+  if (!btn) return;
+  btn.classList.toggle('on', _momentsFilterCharId !== null);
+}
+
 /* 时间显示：刚刚 / n分钟前 / n小时前 / 昨天 / n月n日；超过 5 天 → 完整年月日（2026年09月06日 19:34） */
 function timeAgoStr(ts) {
   const diff = Date.now() - ts;
@@ -18962,9 +20830,17 @@ async function renderMoments() {
         const cc = characters.find(x => x.id === p.authorId);
         if (cc && cc.momentsBlocked) return false;
       }
+      // 20261104：只看某个角色时，只保留该作者的动态
+      if (_momentsFilterCharId !== null && p.authorId !== _momentsFilterCharId) return false;
       return true;
     })
     .sort((a, b) => b.createTime - a.createTime);
+  // 筛选后该角色没有动态的空态提示
+  if (sorted.length === 0) {
+    const fc = _momentsFilterCharId ? characters.find(x => x.id === _momentsFilterCharId) : null;
+    list.innerHTML = `<div class="moments-empty">${fc ? (escapeHtml(fc.name || 'TA') + ' 还没有发过动态') : '没有匹配的动态'}<br><span style="font-size:12px;">${fc ? '换个角色看看，或切回「全部动态」' : '切回「全部动态」查看所有人'}</span></div>`;
+    return;
+  }
   for (const post of sorted) {
     const author = momentAuthor(post);
     const likedByMe = post.likes.some(l => l.who === 'player');
@@ -22111,7 +23987,7 @@ async function showDivinationModal() {
               <div class="tarot-back">${magicBack()}</div>
               <div class="tarot-face${p.reversed ? ' reversed' : ''}">
                 <div class="tf-no">${p.card.realm ? p.card.realm : '大阿卡纳'}</div>
-                <div class="tf-sym">${p.card.sym}</div>
+                <div class="tf-sym">${_diviSymSVG(p.card.n, p.card.realm || '')}</div>
                 <div class="tf-name">${escapeHtml(p.card.n)}</div>
                 <div class="tf-pos">${p.reversed ? '逆位' : '正位'}</div>
               </div>
@@ -22125,10 +24001,22 @@ async function showDivinationModal() {
       <button class="btn" style="flex:1;" id="divi-api">AI 解牌设置</button>
       <button class="btn primary" style="flex:1;" id="divi-again">重新占卜</button>
     </div>
+    <button class="btn primary block" id="divi-ask" disabled style="margin-top:10px;padding:12px;display:flex;align-items:center;justify-content:center;gap:8px;">${icon('chat', 16)} 询问访客（把这次占卜发给 TA 评价）</button>
   `);
   $('#divi-close').onclick = closeModal;
   $('#divi-again').onclick = () => showDivinationModal();
   $('#divi-api').onclick = () => showAIConfigModal(); // 20260929ae：统一到 API 接入配置页（占卜 API 独立栏）
+  // 20261103：询问访客——三张牌全翻开后才启用；把问题+三张牌+AI解牌发卡片，角色评价打分
+  const askBtn = $('#divi-ask');
+  let askEnabled = false;
+  const enableAsk = () => { askEnabled = true; if (askBtn) askBtn.disabled = false; };
+  if (askBtn) askBtn.onclick = async () => {
+    if (!askEnabled) { miniToast('先把三张牌都翻开'); return; }
+    const qEl = $('#divi-question');
+    const question = (qEl && qEl.value.trim()) || '';
+    await askDreamCharAboutDivination(pick, question);
+    closeModal();
+  };
   // AI 解牌开关（20260929ah）：即时持久化
   const useAiEl = $('#divi-useai');
   if (useAiEl) useAiEl.onchange = async (e) => {
@@ -22141,7 +24029,7 @@ async function showDivinationModal() {
       if (el.classList.contains('open')) return;
       el.classList.add('open');
       opened.add(parseInt(el.dataset.ti));
-      if (opened.size === 3) renderDivinationMeaning(pick);
+      if (opened.size === 3) { renderDivinationMeaning(pick); enableAsk(); }
     };
   });
 }
@@ -22182,22 +24070,280 @@ function renderDivinationMeaning(pick) {
   });
 }
 
+/* 20261103：占卜「询问访客」——把问题+三张牌以卡片消息发聊天流，角色评价 AI 解牌准度（打分+寄语）。
+   字卡模式：随机抽 2~3 张字卡（数量可配置）作为评价感想；AI 模式：AI 生成评价。
+   打分：5 星、半星 1 分、满分 10 分，支持 6.5 等小数（半星点亮），星星颜色跟全局主题色。
+   占卜牌随卡片消息一起发送（type='divination' 卡片）。 */
+async function askDreamCharAboutDivination(pick, question) {
+  const c = characters.find(x => x.id === currentCharId) || characters[0];
+  if (!c) { miniToast('先进入一个访客的聊天'); return; }
+  const cardsDesc = (pick || []).map((p, i) => `${['过去', '现在', '未来'][i]}：${p.card.n}（${p.reversed ? '逆位' : '正位'}）`).join('；');
+  // 只落一条「占卜询问」卡片消息（带实体牌面），角色评价返回后就地更新同一条，不新增第二条
+  const msgId = uid('msg');
+  const myMsg = {
+    id: msgId, charId: c.id, from: 'me', type: 'divination', time: Date.now(),
+    content: {
+      question: question || '',
+      name: c.name,
+      cards: (pick || []).map(p => ({ name: p.card.n, sym: p.card.sym, realm: p.card.realm || '', reversed: p.reversed })),
+      cardsDesc,
+      state: 'asked',
+    },
+  };
+  await idbPut('messages', myMsg);
+  if (currentCharId === c.id && document.body.dataset.view === 'chat') appendMessage(myMsg);
+  else renderChatList();
+
+  // 异步：角色评价（打分 + 寄语 + 感想），不阻塞 UI
+  setTimeout(async () => {
+    try {
+      const aiOn = await isCharAIMode(c.id);
+      // 打分：AI 模式让 AI 给 0~10（0.5 步进）；字卡模式随机 0~10（0.5 步进）
+      let score = null;
+      let comment = '';
+      if (aiOn) {
+        try {
+          const cfg = await loadAIConfig();
+          if (cfg.chatApi && cfg.chatApi.url) {
+            const ctx = await buildCharAIContext(c.id, []);
+            const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+              { role: 'system', content: `你是角色扮演 AI。玩家刚做了一次塔罗占卜，把三张牌（${cardsDesc}）交给 AI 解牌后，现在请你以角色身份评价这份「AI 解牌」准不准。\n请输出两行：\n第一行只输出一个 0~10 的数字（可以带 .5，如 6.5），代表你给这份解牌打的分数。\n第二行用角色口吻写一句简短的感想（1~2 句，自然不跳戏）。\n\n${ctx}` },
+              { role: 'user', content: '请评价这份 AI 解牌的准度并打分。' },
+            ], { temperature: 0.9 });
+            if (r.ok && r.text) {
+              const lines = r.text.trim().split('\n').filter(Boolean);
+              const num = parseFloat((lines[0] || '').replace(/[^0-9.]/g, ''));
+              if (!isNaN(num)) score = Math.round(Math.min(10, Math.max(0, num)) * 2) / 2;
+              if (lines.length > 1) comment = lines.slice(1).join(' ').trim().slice(0, 200);
+            }
+          }
+        } catch (e) {}
+      }
+      if (score == null) {
+        // 字卡模式 / AI 失败：随机 0~10（0.5 步进）
+        score = Math.round(randInt(0, 20) * 0.5 * 2) / 2;
+      }
+      if (!comment) {
+        // 字卡模式：抽 2~3 张字卡拼成感想（数量可配置，默认 2~3）
+        const n = await getSetting('diviRatingCardCount', 0);
+        const cnt = n >= 1 && n <= 5 ? n : randInt(2, 3);
+        const parts = [];
+        for (let i = 0; i < cnt; i++) parts.push(drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
+        comment = parts.join('，');
+      }
+      const verdict = _diviScoreVerdict(score);
+      // 就地更新同一条「占卜询问」消息为评价态（不新增第二条消息），评分区直接填进卡片
+      myMsg.content.state = 'rated';
+      myMsg.content.score = score;
+      myMsg.content.verdict = verdict;
+      myMsg.content.comment = comment;
+      await idbPut('messages', myMsg);
+      if (currentCharId === c.id && document.body.dataset.view === 'chat') {
+        // 聊天页正在看：就地刷新该消息的居中卡片 DOM
+        const row = document.querySelector(`.msg-row.divi-center-row[data-msgid="${msgId}"]`);
+        if (row) row.innerHTML = _diviCardHTML(myMsg);
+        else appendMessage(myMsg);
+        if (shouldDingFor(c)) playDing();
+      } else { renderChatList(); if (shouldDingFor(c)) playDing(); }
+      notifyIncoming(c, c.name + ' 评价了你的占卜解牌：' + verdict, '🔮 占卜评价', 'divination');
+    } catch (e) {}
+  }, 1200);
+}
+
+/* 打分寄语（按分数段） */
+function _diviScoreVerdict(score) {
+  const s = Math.round((score || 0) * 2) / 2;
+  if (s <= 0) return '还不如不解读，请苍天，辨忠奸！！';
+  if (s < 2) return '不理解这货在说什么，让它出去！！？';
+  if (s < 4) return '好歹是沾了一点边';
+  if (s < 6) return '可以适当听听';
+  if (s < 8) return '受到一丝触动';
+  if (s < 10) return '我的话终于可以被理解了吗！';
+  return '这 ai 讲义气！';
+}
+
+/* 5 星评分 HTML（半星 1 分、满分 10 分；星星颜色跟全局主题色 --purple） */
+function _diviStarsHTML(score) {
+  // 满分 10 分、共 5 颗星、半星 = 1 分 → 星星数 = score / 2
+  const s = Math.round((score || 0) / 2 * 2) / 2; // 归一到 0.5 步进
+  let html = '<span style="display:inline-flex;align-items:center;gap:2px;">';
+  for (let i = 1; i <= 5; i++) {
+    const full = s >= i;
+    const half = !full && s >= i - 0.5;
+    const off = 'rgba(160,160,170,0.28)';
+    if (half) {
+      // 半星：左半亮右半暗，用线性渐变 + background-clip 实现，兼容性最好
+      html += `<span style="font-size:20px;line-height:1;background:linear-gradient(90deg,var(--purple) 50%,${off} 50%);-webkit-background-clip:text;background-clip:text;color:transparent;">★</span>`;
+    } else {
+      html += `<span style="font-size:20px;line-height:1;color:${full ? 'var(--purple)' : off};">★</span>`;
+    }
+  }
+  html += '</span>';
+  return html;
+}
+
+/* 20261103：牌面星盘符号 SVG——参考卡背魔法阵风格（几何星线+虚线轨道+星点）。
+   78 张每张独立符号：大阿卡纳 22 张各配专属几何符号（取自牌面经典意象简化）；
+   小阿卡纳 56 张按「数字/人物牌 + 花色」组合（数字=N 个花色符号，人物=花色符号+角标）。
+   区分正逆位（逆位符号整体倒置）。纯细线稿，贴合白日梦梦幻紫星图 UI，不占空间。 */
+
+// 墨色：羊皮纸上的深棕紫线稿
+const _DIVI_INK = '#5b4a8a';
+const _DIVI_INK_DIM = '#8a7bb8';
+const _DIVI_INK_FAINT = '#b3a7d6';
+
+// 大阿卡纳 22 张专属中心符号（60×60 坐标系内，几何线稿）
+const TAROT_MAJOR_SYMBOL = {
+  '愚者': `<path d="M20 42 Q30 8 40 42" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><circle cx="40" cy="40" r="2.4" fill="none" stroke="${_DIVI_INK}" stroke-width="1.1"/><circle cx="30" cy="24" r="3" fill="${_DIVI_INK_FAINT}" stroke="${_DIVI_INK}" stroke-width=".8"/>`,
+  '魔术师': `<path d="M30 12 v20 M24 18 h12 M30 32 l-6 8 M30 32 l6 8" stroke="${_DIVI_INK}" stroke-width="1.2"/><circle cx="30" cy="44" r="2" fill="none" stroke="${_DIVI_INK}" stroke-width=".9"/>`,
+  '女祭司': `<path d="M22 44 a8 8 0 0 1 16 0" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><line x1="22" y1="44" x2="22" y2="16" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/><line x1="38" y1="44" x2="38" y2="16" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/><circle cx="30" cy="26" r="4" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/>`,
+  '女皇': `<circle cx="30" cy="20" r="5" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><path d="M30 25 l3 6 6 2 -4.5 4.5 1 6.5 -5.5 -3 -5.5 3 1 -6.5 -4.5 -4.5 6 -2 z" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/>`,
+  '皇帝': `<path d="M22 16 a8 8 0 0 1 16 0" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><line x1="30" y1="16" x2="30" y2="46" stroke="${_DIVI_INK}" stroke-width="1.2"/><line x1="22" y1="46" x2="38" y2="46" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/>`,
+  '教皇': `<path d="M24 20 v16 M36 20 v16 M24 28 h12" stroke="${_DIVI_INK}" stroke-width="1.2"/><circle cx="30" cy="44" r="2.5" fill="none" stroke="${_DIVI_INK}" stroke-width=".9"/><line x1="28" y1="46" x2="28" y2="50" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><line x1="32" y1="46" x2="32" y2="50" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/>`,
+  '恋人': `<circle cx="24" cy="26" r="4" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/><circle cx="36" cy="26" r="4" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/><path d="M24 30 v12 M36 30 v12 M24 42 h12" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/><circle cx="30" cy="14" r="2.5" fill="${_DIVI_INK_FAINT}" stroke="${_DIVI_INK}" stroke-width=".8"/>`,
+  '战车': `<path d="M16 30 h28" stroke="${_DIVI_INK}" stroke-width="1.2"/><circle cx="20" cy="30" r="3.5" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/><circle cx="40" cy="30" r="3.5" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/><path d="M22 30 l6 -12 6 12 z" fill="none" stroke="${_DIVI_INK}" stroke-width="1.1"/>`,
+  '力量': `<path d="M24 22 a6 6 0 0 1 12 0" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><path d="M30 22 v10 M26 28 h8" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/><path d="M22 44 q8 6 16 0" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/>`,
+  '隐士': `<line x1="30" y1="14" x2="30" y2="34" stroke="${_DIVI_INK}" stroke-width="1.2"/><path d="M24 34 l6 12 6 -12 z" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/><circle cx="30" cy="38" r="1.6" fill="${_DIVI_INK_FAINT}"/>`,
+  '命运之轮': `<circle cx="30" cy="30" r="11" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><line x1="30" y1="19" x2="30" y2="41" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><line x1="19" y1="30" x2="41" y2="30" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><circle cx="30" cy="30" r="2.2" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/>`,
+  '正义': `<line x1="30" y1="12" x2="30" y2="20" stroke="${_DIVI_INK}" stroke-width="1.1"/><line x1="20" y1="20" x2="40" y2="20" stroke="${_DIVI_INK}" stroke-width="1.2"/><path d="M20 20 l-4 8 h8 z" fill="none" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><path d="M40 20 l-4 8 h8 z" fill="none" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><line x1="30" y1="20" x2="30" y2="46" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/>`,
+  '倒吊人': `<path d="M30 14 v22" stroke="${_DIVI_INK}" stroke-width="1.2"/><path d="M30 14 l6 6 M30 14 l-6 6" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/><circle cx="30" cy="46" r="3.5" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/>`,
+  '死神': `<path d="M20 44 q10 -18 20 0" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><path d="M30 44 v-16" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/><circle cx="24" cy="26" r="1.6" fill="${_DIVI_INK_FAINT}"/><circle cx="36" cy="26" r="1.6" fill="${_DIVI_INK_FAINT}"/>`,
+  '节制': `<path d="M24 14 a6 5 0 0 1 12 0" fill="none" stroke="${_DIVI_INK}" stroke-width="1.1"/><path d="M30 14 v8" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><path d="M20 34 a10 6 0 0 0 20 0" fill="none" stroke="${_DIVI_INK}" stroke-width="1.1"/><line x1="30" y1="20" x2="28" y2="32" stroke="${_DIVI_INK_DIM}" stroke-width=".7"/>`,
+  '恶魔': `<polygon points="30,12 41,44 19,44" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><line x1="19" y1="44" x2="19" y2="50" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><line x1="41" y1="44" x2="41" y2="50" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><path d="M26 36 q4 -4 8 0" fill="none" stroke="${_DIVI_INK}" stroke-width=".9"/>`,
+  '塔': `<path d="M22 46 L22 24 L38 24 L38 46 z" fill="none" stroke="${_DIVI_INK}" stroke-width="1.1"/><line x1="30" y1="12" x2="28" y2="24" stroke="${_DIVI_INK_DIM}" stroke-width="1"/><line x1="30" y1="12" x2="34" y2="20" stroke="${_DIVI_INK_FAINT}" stroke-width=".8"/>`,
+  '星星': `<polygon points="30,12 33,25 46,25 35,33 39,46 30,38 21,46 25,33 14,25 27,25" fill="none" stroke="${_DIVI_INK}" stroke-width="1.1"/><circle cx="30" cy="29" r="1.8" fill="${_DIVI_INK_FAINT}"/>`,
+  '月亮': `<path d="M20 44 a10 12 0 0 1 20 0" fill="none" stroke="${_DIVI_INK}" stroke-width="1.1"/><path d="M20 44 a10 12 0 0 1 20 0" fill="${_DIVI_INK_FAINT}" opacity=".5"/><circle cx="16" cy="20" r="2.5" fill="none" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/><circle cx="44" cy="20" r="2.5" fill="none" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/>`,
+  '太阳': `<circle cx="30" cy="30" r="9" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><line x1="30" y1="14" x2="30" y2="18" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><line x1="30" y1="42" x2="30" y2="46" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><line x1="14" y1="30" x2="18" y2="30" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><line x1="42" y1="30" x2="46" y2="30" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/>`,
+  '审判': `<path d="M24 12 a6 6 0 0 1 12 0 v8 h-12 z" fill="none" stroke="${_DIVI_INK}" stroke-width="1.1"/><path d="M20 24 h20" stroke="${_DIVI_INK_DIM}" stroke-width=".9"/><circle cx="24" cy="40" r="2.5" fill="none" stroke="${_DIVI_INK}" stroke-width=".9"/><circle cx="36" cy="40" r="2.5" fill="none" stroke="${_DIVI_INK}" stroke-width=".9"/>`,
+  '世界': `<ellipse cx="30" cy="30" rx="7" ry="11" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><line x1="30" y1="12" x2="30" y2="48" stroke="${_DIVI_INK_DIM}" stroke-width=".7"/><line x1="14" y1="30" x2="46" y2="30" stroke="${_DIVI_INK_DIM}" stroke-width=".7"/>`,
+};
+
+// 小阿卡纳花色符号（中心图案，60×60 内，位于指定偏移量）
+function _diviSuitSymbol(suit, ox, oy, scale = 1) {
+  const g = `transform="translate(${ox},${oy}) scale(${scale})"`;
+  if (suit === '权杖') return `<g ${g}><line x1="0" y1="-9" x2="0" y2="9" stroke="${_DIVI_INK}" stroke-width="1.4" stroke-linecap="round"/><circle cx="0" cy="-10" r="1.4" fill="${_DIVI_INK}"/></g>`;
+  if (suit === '圣杯') return `<g ${g}><path d="M-4 -6 h8 v4 a4 4 0 0 1 -8 0 z" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><line x1="-4" y1="2" x2="-4" y2="8" stroke="${_DIVI_INK}" stroke-width="1"/><line x1="4" y1="2" x2="4" y2="8" stroke="${_DIVI_INK}" stroke-width="1"/><line x1="-7" y1="8" x2="7" y2="8" stroke="${_DIVI_INK}" stroke-width="1"/></g>`;
+  if (suit === '宝剑') return `<g ${g}><line x1="-6" y1="9" x2="6" y2="-9" stroke="${_DIVI_INK}" stroke-width="1.3" stroke-linecap="round"/><line x1="-3" y1="9" x2="3" y2="-9" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/><line x1="-6" y1="-2" x2="6" y2="-2" stroke="${_DIVI_INK_DIM}" stroke-width=".8"/></g>`;
+  if (suit === '星币') return `<g ${g}><circle cx="0" cy="0" r="6" fill="none" stroke="${_DIVI_INK}" stroke-width="1.2"/><polygon points="0,-4 1.2,-1.2 4,-1.2 1.8,0.6 2.6,3.4 0,1.6 -2.6,3.4 -1.8,0.6 -4,-1.2 -1.2,-1.2" fill="none" stroke="${_DIVI_INK}" stroke-width=".7"/></g>`;
+  return '';
+}
+
+// 小阿卡纳：根据 rank 生成 N 个花色符号的排布
+function _diviMinorSymbol(rank, suit) {
+  const n = parseInt(rank, 10);
+  // 人物牌：单个大花色符号 + 角标（侍从=圆点 / 骑士=马首 / 王后=王冠 / 国王=交叉）
+  const court = { '侍从': 'dot', '骑士': 'horse', '王后': 'crown', '国王': 'cross' };
+  if (court[rank]) {
+    let badge = '';
+    if (rank === '侍从') badge = `<circle cx="30" cy="44" r="2.5" fill="none" stroke="${_DIVI_INK}" stroke-width="1"/>`;
+    else if (rank === '骑士') badge = `<path d="M24 46 q6 -6 12 0 l-3 2 h-6 z" fill="none" stroke="${_DIVI_INK}" stroke-width=".9"/>`;
+    else if (rank === '王后') badge = `<path d="M24 46 l2 -6 4 3 4 -3 2 6 z" fill="none" stroke="${_DIVI_INK}" stroke-width=".9"/>`;
+    else if (rank === '国王') badge = `<line x1="26" y1="44" x2="34" y2="50" stroke="${_DIVI_INK}" stroke-width="1"/><line x1="34" y1="44" x2="26" y2="50" stroke="${_DIVI_INK}" stroke-width="1"/>`;
+    return `${_diviSuitSymbol(suit, 30, 26, 1.6)}${badge}`;
+  }
+  // 数字牌：N 个花色符号按列/行排布
+  const rows = n <= 5 ? 1 : 2;
+  const per = Math.ceil(n / rows);
+  const gapY = rows === 1 ? 0 : 14;
+  const xs = (k, cnt) => cnt === 1 ? [30] : cnt === 2 ? [24, 36] : cnt === 3 ? [20, 30, 40] : cnt === 4 ? [18, 27, 33, 42] : [15, 22.5, 30, 37.5, 45];
+  let out = '';
+  for (let r = 0; r < rows; r++) {
+    const cy = rows === 1 ? 30 : (26 + r * gapY);
+    const cntInRow = Math.min(per, n - r * per);
+    const arr = xs(r, cntInRow);
+    arr.forEach((x, idx) => { out += _diviSuitSymbol(suit, x, cy, n > 5 ? 0.9 : 1.1); });
+  }
+  return out;
+}
+
+function _diviSymSVG(cardName, realm) {
+  // 大阿卡纳：查专属符号表；小阿卡纳：解析 rank·花色
+  const major = TAROT_MAJOR_SYMBOL[cardName];
+  let center;
+  if (major) {
+    center = major;
+  } else {
+    // 小阿卡纳牌名形如「侍从·权杖」/「7·宝剑」
+    const dot = cardName.indexOf('·');
+    const rank = dot >= 0 ? cardName.slice(0, dot) : cardName;
+    const suit = dot >= 0 ? cardName.slice(dot + 1) : realm;
+    center = _diviMinorSymbol(rank, suit);
+  }
+  return `<svg width="30" height="30" viewBox="0 0 60 60" fill="none">
+    <circle cx="30" cy="30" r="26" stroke="${_DIVI_INK_FAINT}" stroke-width=".8" stroke-dasharray="1.6 2.6"/>
+    <circle cx="30" cy="30" r="20" stroke="${_DIVI_INK_DIM}" stroke-width=".7"/>
+    ${center}
+    <circle cx="14" cy="16" r="1" fill="${_DIVI_INK_DIM}"/>
+    <circle cx="47" cy="14" r=".8" fill="${_DIVI_INK_FAINT}"/>
+    <circle cx="16" cy="45" r=".8" fill="${_DIVI_INK_FAINT}"/>
+    <circle cx="45" cy="47" r="1" fill="${_DIVI_INK_DIM}"/>
+  </svg>`;
+}
+
+/* 20261103：单张实体牌面（星盘手稿风格：星盘符号 + 牌名 + 正逆位，简约无复杂插画） */
+function _diviFaceHTML(cd) {
+  const name = cd.name || '';
+  const pos = cd.reversed ? '逆位' : '正位';
+  return `<div style="display:flex;flex-direction:column;align-items:center;">
+    <div class="divi-face">
+      <div class="df-no">${cd.realm ? escapeHtml(cd.realm) : '大阿卡纳'}</div>
+      <div class="df-sym${cd.reversed ? ' rev' : ''}">${_diviSymSVG(name, cd.realm || '')}</div>
+      <div class="df-name">${escapeHtml(name)}</div>
+      <div class="df-pos">${pos}</div>
+    </div>
+  </div>`;
+}
+
+/* 20261103：占卜「询问访客」居中卡片——上半三张实体牌面+问题，下半评分（等待/已评）。单条消息，状态 asked→rated 就地过渡。 */
+function _diviCardHTML(m) {
+  const dc = m.content || {};
+  const labels = ['过去', '现在', '未来'];
+  const faces = (dc.cards || []).map((cd, i) => `
+    <div style="display:flex;flex-direction:column;align-items:center;">
+      ${_diviFaceHTML(cd)}
+      <div class="divi-face-label">${labels[i]}</div>
+    </div>`).join('');
+  const tag = dc.state === 'rated' ? '🔮 占卜评价' : '🔮 占卜 · 询问访客';
+  let rateHtml = '';
+  if (dc.state === 'rated' && dc.score != null) {
+    const starHtml = _diviStarsHTML(dc.score);
+    rateHtml = `<div class="divi-rate">
+      <div class="divi-stars">${starHtml}<span style="font-size:15px;font-weight:700;color:var(--purple-soft);">${dc.score.toFixed(1)} 分</span></div>
+      <div class="divi-verdict">「${escapeHtml(dc.verdict || '')}」</div>
+      ${dc.comment ? `<div class="divi-comment">${escapeHtml(dc.comment)}</div>` : ''}
+    </div>`;
+  } else {
+    rateHtml = `<div class="divi-asking">${escapeHtml(dc.name || '梦角')} 正在解读这三张牌…</div>`;
+  }
+  return `<div class="divi-card" data-divi-card="${m.id}">
+    <span class="divi-tag">${tag}</span>
+    ${dc.question ? `<div class="divi-question">想问：${escapeHtml(dc.question)}</div>` : ''}
+    <div class="divi-faces">${faces}</div>
+    ${rateHtml}
+  </div>`;
+}
+
 /* 占卜 API 独立设置（可与聊天 API 不同；未接入时使用本地牌意） */
 async function showDivinationApiModal() {
   const cur = await getSetting('divinationApi', '');
+  const rateCnt = await getSetting('diviRatingCardCount', 0);
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:17px;font-weight:600;">占卜 API 设置</div>
+      <div style="font-size:17px;font-weight:600;">占卜设置</div>
       <button class="icon-btn" id="diviapi-close">✕</button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">填入占卜用的 API 链接（可以和聊天 API 是同一个，也可以不同）。留空则使用本地牌意解读。</div>
     <div class="field"><input class="input" id="diviapi-url" placeholder="https://…" value="${escapeHtml(cur)}"></div>
+    <div style="margin-top:14px;font-size:13px;color:var(--text-secondary);">字卡模式评价「询问访客」解牌时，随机抽取的字卡张数（0=默认随机 2~3 张）</div>
+    <div class="field" style="margin-top:8px;"><input class="input" type="number" id="diviapi-ratecnt" min="0" max="5" step="1" value="${rateCnt}" placeholder="0"></div>
     <button class="btn primary block" id="diviapi-save">保存</button>
   `);
   $('#diviapi-close').onclick = closeModal;
   $('#diviapi-save').onclick = async () => {
     await setSetting('divinationApi', $('#diviapi-url').value.trim());
-    miniToast('占卜 API 已保存');
+    const rc = parseInt($('#diviapi-ratecnt').value, 10);
+    await setSetting('diviRatingCardCount', (!isNaN(rc) && rc >= 0 && rc <= 5) ? rc : 0);
+    miniToast('占卜设置已保存');
     closeModal();
   };
 }
@@ -23009,6 +25155,34 @@ function startNotebookTimer() {
         notifyIncoming(c, body.slice(0, 120), '⏰ 记事簿提醒');
       }
       if (dirty) await setSetting('notebookItems', items);
+
+      // 20261103：玩家行程（notebookSchedules，source='player'）到点提醒。
+      //   行程存独立 kv（记事蒲拆分），此前心跳只遍历待办 notebookItems，行程从不到点提醒。
+      //   到点且未提醒 → notifyIncoming（软件内横幅 + APK 本地通知/网页通知），打 reminded 落库防重复。
+      const scheds = await nbLoadSchedules();
+      let schedDirty = false;
+      for (const sc of scheds) {
+        if (!sc || sc.source !== 'player' || sc.reminded || !sc.at || sc.at > now) continue;
+        sc.reminded = true;
+        schedDirty = true;
+        let sq = '';
+        if (c && await isCharAIMode(c.id)) {
+          try {
+            const cfg = await loadAIConfig();
+            const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+              { role: 'system', content: `你是角色扮演 AI。玩家记了一条行程「${sc.title}」，到点了，请以角色身份写一句温柔的提醒（1 句，可带 emoji）。` },
+              { role: 'user', content: '请写一句提醒。' },
+            ], { temperature: 0.8 });
+            if (r.ok && r.text) sq = r.text;
+          } catch (e) {}
+        }
+        if (!sq) sq = cards.customReplies && cards.customReplies.length ? drawFrom(cards.customReplies) : '';
+        const sbody = sq ? `${sc.title}\n\n—— ${c ? c.name : '梦角'}：${sq}` : sc.title;
+        miniToast('⏰ 行程提醒：' + String(sc.title || '').slice(0, 18));
+        notifyIncoming(c, sbody.slice(0, 120), '⏰ 行程提醒');
+      }
+      if (schedDirty) await nbSaveSchedules(scheds);
+
       await periodDailyNotify();   // 20261027：经期潮汐每日关心提醒（前 5 天 + 经期中）
       await dailyCharScheduleRecord();  // 20261028：角色每日记录自己的重要行程（概率）
       await maybeAddNotebookComments(); // 20261031：记事蒲留言/角色备注（随机触发，幂等）
@@ -23082,6 +25256,7 @@ async function showLetterRecordsModal(charId = null) {
   let curFrom = 'all';         // 20261028：发出方 tab 'all' | 'me'（玩家发出） | 'them'（角色发出）
   let batchMode = false;
   const selected = new Set();  // 线程 id
+  let viewMode = (await getSetting('letterViewMode', 'list')) === 'env' ? 'env' : 'list'; // 20261104：信箱外观 list=列表 / env=信封
 
   const all = await idbGetAll('messages');
   const letters = all.filter(m => m.type === 'letter' && m.charId && (!charId || m.charId === charId));
@@ -23098,6 +25273,7 @@ async function showLetterRecordsModal(charId = null) {
         <span class="badge" id="lr-count"></span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
+        <button class="btn" style="padding:6px 10px;font-size:13px;" id="lr-view" title="切换列表/信封外观"></button>
         <button class="btn" style="padding:6px 12px;font-size:13px;" id="lr-batch">批量管理</button>
         <button class="icon-btn" id="lr-close">✕</button>
       </div>
@@ -23121,6 +25297,19 @@ async function showLetterRecordsModal(charId = null) {
   `);
   $('#lr-close').onclick = closeModal;
   // 20260929bh：信箱顶栏「记忆宫殿」入口按钮已删除（批量管理里的「存宫殿」保留）
+  // 20261104：信箱外观切换——列表 ⇄ 信封，记住上次选择（kv 持久化）
+  const renderViewBtn = () => {
+    const b = $('#lr-view');
+    b.textContent = viewMode === 'env' ? '📋 列表' : '✉️ 信封';
+    b.classList.toggle('primary', viewMode === 'env');
+  };
+  renderViewBtn();
+  $('#lr-view').onclick = async () => {
+    viewMode = viewMode === 'env' ? 'list' : 'env';
+    await setSetting('letterViewMode', viewMode);
+    renderViewBtn();
+    render();
+  };
   $('#lr-batch').onclick = () => {
     batchMode = !batchMode;
     selected.clear();
@@ -23208,6 +25397,55 @@ async function showLetterRecordsModal(charId = null) {
         </div>`;
       return;
     }
+    // 20261104：信封视图（viewMode='env'）——信封卡片网格，未读=封口火漆、已读=开口；
+    //   点击行为与列表一致（打开主条目，不播开信动画）。批量管理仍走列表。
+    if (viewMode === 'env' && !batchMode) {
+      list.classList.add('lr-env-grid');
+      list.innerHTML = shown.map(t => {
+        const root = t.root, rep = t.replyMsg;
+        const c = characters.find(x => x.id === (root || rep).charId);
+        const name = c ? c.name : '已删除的访客';
+        const unread = ((rep && !rep.read) || (!rep && root && root.from === 'them' && !root.read));
+        const preview = (root && root.content && root.content.text) ? [...root.content.text].slice(0, 24).join('') : '';
+        const avHtml = c && c.avatar
+          ? `<img src="${imgSrcAttr(c.avatar)}" alt="">`
+          : `<span class="lec-stamp-fb">${escapeHtml(name[0] || '✦')}</span>`;
+        return `
+          <div class="letter-env-cell" data-tid="${tidOf(t)}">
+            <div class="lec-env">
+              <div class="lec-body"></div>
+              <div class="lec-slip">
+                <div class="lec-slip-who">${escapeHtml(name)}</div>
+                <div class="lec-slip-text">${escapeHtml(preview || '（无文字内容）')}</div>
+              </div>
+              <div class="lec-pocket"></div>
+              <div class="lec-stamp">${avHtml}</div>
+              ${unread ? '<div class="lec-seal">✦</div>' : ''}
+            </div>
+            <div class="lec-meta">
+              ${scopeChar ? '' : `<span class="lec-name">${escapeHtml(name)}</span>`}
+              <span class="lec-time">${letterTimeStr((rep || root).time)}</span>
+            </div>
+          </div>`;
+      }).join('');
+      list.querySelectorAll('.letter-env-cell').forEach(el => {
+        // Q 弹挤压回弹（pointerdown 即触发，真机无 hover 也能弹）
+        el.addEventListener('pointerdown', () => {
+          el.classList.remove('bounce');
+          void el.offsetWidth; // 强制重排以重启动画
+          el.classList.add('bounce');
+        });
+        el.onclick = () => {
+          const t = shown.find(x => tidOf(x) === el.dataset.tid);
+          if (!t) return;
+          // 20261104：从信箱打开改为播放完整拆信动画（去掉 noAnim），信封先弹入、再翻盖抽信纸
+          if (t.root) openLetterOverlay(t.root, characters.find(x => x.id === t.root.charId));
+          else if (t.replyMsg) openLetterOverlay(t.replyMsg, characters.find(x => x.id === t.replyMsg.charId));
+        };
+      });
+      return;
+    }
+    list.classList.remove('lr-env-grid');
     list.innerHTML = shown.map(t => {
       const root = t.root, rep = t.replyMsg;
       const latest = rep || root;
@@ -24381,6 +26619,7 @@ function showWorldEntryView(e) {
     ${e.draft ? '<div style="font-size:12px;color:var(--danger);margin-bottom:10px;">这是草稿，AI 模式下不会读取</div>' : ''}
     ${body}
     <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn" style="flex:1;" id="wv-share">分享给角色</button>
       <button class="btn" style="flex:1;" id="wv-access">AI 读取权限</button>
       <button class="btn" style="flex:1;" id="wv-edit">${e.type === 'image' ? '重新OCR' : '编辑'}</button>
       <button class="btn danger" style="flex:1;" id="wv-del">删除</button>
@@ -24388,6 +26627,7 @@ function showWorldEntryView(e) {
   `);
   $('#wv-close').onclick = () => showWorldBookModal();
   $('#wv-access').onclick = () => showWorldEntryAccessModal(e);
+  $('#wv-share').onclick = () => showWorldEntryShareModal(e);
   // 删除用两段确认（showConfirm 会顶掉当前弹窗，取消后会退出到主页而不是回到世界树）
   $('#wv-del').onclick = () => {
     const b = $('#wv-del');
@@ -24406,12 +26646,69 @@ function showWorldEntryView(e) {
   };
 }
 
+/* 20261104：世界树内容分享给角色——发一张「世界树分享」卡片消息到聊天，角色能读到并回复。
+   只列出「能看到这条内容」的角色（权限三态：跟随/全部/指定访客）。 */
+async function showWorldEntryShareModal(e) {
+  // 计算哪些角色能看到这条内容（权限判定）
+  const visibleChars = characters.filter(c => {
+    // 跟随文件夹或未显式设置 → 默认可读（与 AI 上下文注入的权限判定一致，简化处理：未设限即可读）
+    if (e.allowAll === undefined && !(Array.isArray(e.allowCharIds) && e.allowCharIds.length)) return true;
+    if (e.allowAll === true) return true;
+    if (Array.isArray(e.allowCharIds) && e.allowCharIds.length) return e.allowCharIds.includes(c.id);
+    return false;
+  });
+  const title = e.type === 'image' ? '图片' : (e.title || '世界树内容');
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <div style="font-size:18px;font-weight:600;">分享给角色</div>
+      <button class="icon-btn" id="ws-close">✕</button>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:12px;">分享「${escapeHtml(title)}」给某个角色，TA 会读到并回复。仅列出能读取此内容的角色。</div>
+    <div style="display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto;">
+      ${visibleChars.length ? visibleChars.map(c => `<button class="btn" data-ws-char="${c.id}" style="justify-content:flex-start;text-align:left;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;margin-right:8px;vertical-align:middle;">` : '<span style="display:inline-block;width:22px;height:22px;border-radius:50%;background:var(--purple-glow);color:var(--purple-soft);text-align:center;line-height:22px;font-size:12px;margin-right:8px;">' + escapeHtml((c.name || '?')[0]) + '</span>'}${escapeHtml(c.name || 'TA')}</button>`).join('') : '<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0;">没有可读取此内容的角色（先在「AI 读取权限」里放行）</div>'}
+    </div>
+  `);
+  $('#ws-close').onclick = () => closeModal();
+  document.querySelectorAll('[data-ws-char]').forEach(b => {
+    b.onclick = async () => {
+      const c = characters.find(x => x.id === b.dataset.wsChar);
+      if (!c) return;
+      closeModal();
+      await shareWorldEntryToChar(e, c);
+    };
+  });
+}
+
+/* 把一条世界树内容以「世界树分享」卡片写进角色聊天流 */
+async function shareWorldEntryToChar(e, c) {
+  const text = e.type === 'image' ? (e.ocr || '') : (e.text || '');
+  const msg = {
+    id: uid('msg'), charId: c.id, from: 'me', type: 'worldshare',
+    content: {
+      entryId: e.id,
+      title: e.title || (e.type === 'image' ? '一张图片' : '世界树内容'),
+      text: text.slice(0, 800),
+      isImage: e.type === 'image',
+      img: e.type === 'image' ? (e.img || null) : null,
+    },
+    time: Date.now(), read: true,
+  };
+  await idbPut('messages', msg);
+  if (document.body.dataset.view === 'chat' && currentCharId === c.id) {
+    appendMessage(msg);
+    scrollToBottom();
+  } else {
+    renderChatList();
+  }
+  scheduleCharReply(c.id); // 角色读到后自动回复
+  miniToast('已分享给 ' + (c.name || 'TA'));
+}
+
 /* 设置某条/某文件夹内容允许哪些角色的 AI 读取（20260930bz：三态 + 跟随文件夹）
    target 为 entry 对象（含 type 字段）或 folder 对象（{id,name}，无 type 字段）。
    保存/关闭后回世界树总界面（20260929k：不再直接退出） */
 async function showWorldEntryAccessModal(target) {
   const targetIsFolder = !('type' in target);
-  const isEntry = !targetIsFolder;
   // 三态读取：allowAll===undefined=跟随；true=全部可读；false=禁读/指定
   const isFollow = target.allowAll === undefined && !(Array.isArray(target.allowCharIds) && target.allowCharIds.length);
   const allowAll = target.allowAll === true;
@@ -25083,6 +27380,7 @@ function msgBodyText(m) {
   if (t === 'emoji') return '[表情包]';
   if (t === 'redpacket' || t === 'grouppacket') return '[红包]';
   if (t === 'transfer') return '[转账]';
+  if (t === 'worldshare') return `[世界树分享：${(m.content && m.content.title) || '世界树内容'}]`;
   if (t === 'letter') return '[书信]';
   if (t === 'survey') return '[问卷]';
   if (t === 'topic') return `[话题卡：${(m.content && m.content.text) || ''}]`;
@@ -25112,6 +27410,16 @@ function shareMsgAIText(m) {
     const text = String(c.text || '').replace(/\s+/g, ' ').slice(0, 120) || '(无文字)';
     return `[分享的朋友圈] 作者：${authorName}${authorId ? `（作者标识:${authorId}）` : ''}${timeStr ? `，发布时间：${timeStr}` : ''}；内容：${text}${imgN ? `（配图${imgN}张）` : ''}${pid ? `；朋友圈标识:${pid}` : ''}`;
   } catch (e) { return '[分享的朋友圈]'; }
+}
+
+/* 20261104：世界树分享消息 → AI 可读完整描述（标题 + 正文，让角色读到完整设定内容） */
+function worldShareAIText(m) {
+  try {
+    const c = (m && m.content) || {};
+    const title = c.title || '世界树内容';
+    const text = String(c.text || '').replace(/\s+/g, ' ').slice(0, 300) || '(无文字)';
+    return `[分享的世界树内容] 标题：${title}；内容：${text}${c.isImage ? '（这是一张图片）' : ''}`;
+  } catch (e) { return '[分享的世界树内容]'; }
 }
 
 /* 20261001ci：收集最近消息里的图片/表情包 → base64 dataURL（OpenAI vision 格式）。
@@ -25616,7 +27924,7 @@ async function buildCharAIContext(charId, recentMessages) {
   if (recentMessages && recentMessages.length) {
     const tail = recentMessages.slice(-12).map(m => {
       const who = m.from === 'me' ? (playerProfile.name || '玩家') : (c ? c.name : 'TA');
-      const body = (m && m.type === 'share') ? shareMsgAIText(m) : msgBodyText(m);
+      const body = (m && m.type === 'share') ? shareMsgAIText(m) : (m && m.type === 'worldshare') ? worldShareAIText(m) : msgBodyText(m);
       return `${who}：${body}`;
     }).join('\n');
     parts.push(`【最近的对话（按时间顺序）】\n${tail}`);
@@ -26074,6 +28382,18 @@ async function generateCharReply(charId, opts = {}) {
   if (!aiOn) {
     const c = characters.find(x => x.id === charId);
     const reply = drawReply(cards, getCharBanWords(c), c ? (c.relation || null) : null, c ? (c.bannedGroups || []) : []);
+    // 20261104：字卡模式抽到「想和你一起听歌」类字卡 → 自动弹一起听邀请（概率触发防刷屏）。
+    // 只在未一起听中触发（charInviteTogether 内部已处理互斥），该角色未被禁用主动邀请时才触发。
+    try {
+      if (c && /(?:想和你?一起听|一起听歌|一起听首歌|听歌|听首歌|陪我听)/.test(reply)) {
+        const s = getCharChatSettings(c) || chatSettings;
+        if (s.musicInvite !== false && Math.random() < 0.35) {
+          setTimeout(() => {
+            try { if (window.bmMusicUI && window.bmMusicUI.charInviteTogether) window.bmMusicUI.charInviteTogether(charId); } catch (e) {}
+          }, 1500);
+        }
+      }
+    } catch (e) {}
     return { type: 'card', text: reply };
   }
   // AI 模式
@@ -26407,6 +28727,31 @@ function pickGroupMember(g, title = '选择群成员') {
 }
 
 /* 群红包卡片 HTML（msgBodyHtml 与就地刷新共用） */
+/* 20261104：单聊红包卡片（微信风——橙红包封 + 金色金额 + 开红包状态） */
+function redpacketCardHtml(m) {
+  const pc = m.content || {};
+  const st = pc.status || 'pending';
+  const isOpenable = st === 'pending';
+  const opened = st === 'claimed';
+  const whoTag = m.from === 'me' ? '我发的红包' : (characters.find(x => x.id === m.charId)?.name || 'TA') + ' 的红包';
+  // 20261104：微信风红包卡片（扁平纯色 + 左侧红包封图标 + 右侧祝福语，颜色跟随全局主题）。
+  //   拆开后图标区从「红包封」切到「已拆开金币」，右侧显示醒目金额，给明确反馈。
+  const iconHtml = opened
+    ? `<span class="rp-icon-coin">¥</span>`
+    : `<span class="rp-icon-top"></span><span class="rp-icon-seal">¥</span>`;
+  const subText = opened
+    ? `已领取 ¥${pc.amount}`
+    : (st === 'returned' ? '已退回' : (isOpenable ? '点击拆红包' : '恭喜发财，大吉大利'));
+  return `<div class="msg-card rp-card ${opened ? 'opened' : ''}" data-redpacket-card="${m.id}" data-redpacket-openable="${isOpenable ? '1' : ''}">
+    <div class="rp-icon ${opened ? 'rp-icon-opened' : ''}">${iconHtml}</div>
+    <div class="rp-body">
+      <div class="rp-main">${escapeHtml(pc.note || '恭喜发财，大吉大利')}</div>
+      <div class="rp-sub ${opened ? 'rp-sub-amt' : ''}">${subText}</div>
+    </div>
+    <div class="rp-tag">${escapeHtml(whoTag)}</div>
+  </div>`;
+}
+
 function gpacketCardHtml(m) {
   const pc = m.content || {};
   const grabs = pc.grabs || [];
@@ -27237,6 +29582,15 @@ function _surveyEtaText(sv) {
   return '预计还有 ' + remain + ' 分钟回答';
 }
 
+/* 20261103：答题时间区间化——按题数返回随机答题延迟（毫秒）
+   3 题以内 5~10 分钟；4~10 题 10~20 分钟；10 题以上 20~40 分钟（区间内随机） */
+function _surveyAnswerDelayMs(count) {
+  const n = Math.max(0, count || 0);
+  if (n <= 3) return randInt(5, 10) * 60000;
+  if (n <= 10) return randInt(10, 20) * 60000;
+  return randInt(20, 40) * 60000;
+}
+
 /* 启动问卷调度：先恢复排队队列，再每 20 秒检查一次是否有到期可答的问卷 */
 async function startSurveyTimer() {
   if (_surveyTimer) return;
@@ -27304,7 +29658,7 @@ async function _answerSurvey(sv) {
                   { role: 'user', content: `题目：${q.text}\n选项：\n${letters}` },
                 ], { temperature: 0.7, maxTokens: 30 });
                 if (r.ok && r.text) {
-                  const got = [...r.text.toUpperCase().matchAll(/[A-E]/g)].map(m => m[0]).filter(ch => ch.charCodeAt(0) - 65 < opts.length);
+                  const got = [...r.text.toUpperCase().matchAll(/[A-J]/g)].map(m => m[0]).filter(ch => ch.charCodeAt(0) - 65 < opts.length);
                   if (got.length) pickedIdx = [...new Set(got)].sort().map(ch => ch.charCodeAt(0) - 65);
                   // 单选：AI 若误给多个，只取第一个
                   if (!q.multi && pickedIdx && pickedIdx.length > 1) pickedIdx = [pickedIdx[0]];
@@ -27315,8 +29669,8 @@ async function _answerSurvey(sv) {
           // AI 未选（关闭/失败/返回异常）→ 随机回退
           if (!pickedIdx) {
             if (q.multi) {
-              // 多选：随机选 1 ~ min(5, 选项总数) 个选项
-              const maxPick = Math.min(5, opts.length);
+              // 多选：随机选 1 ~ min(10, 选项总数) 个选项
+              const maxPick = Math.min(10, opts.length);
               const k = randInt(1, maxPick);
               pickedIdx = [...Array(opts.length).keys()].sort(() => Math.random() - 0.5).slice(0, k).sort((a, b) => a - b);
             } else {
@@ -27387,8 +29741,7 @@ async function _answerSurvey(sv) {
     // 顺延下一份：从上一份完成时刻起重新计时（细则：多份问卷顺序排队，绝不并发）
     if (_surveyQueue.length) {
       const next = _surveyQueue[0];
-      const isMulti = (next.questions || []).length > 3;
-      next.queueAt = Date.now() + (isMulti ? randInt(10, 60) : randInt(15, 20)) * 60000;
+      next.queueAt = Date.now() + _surveyAnswerDelayMs((next.questions || []).length);
       await idbPut('surveys', next);
     }
 
@@ -27445,8 +29798,8 @@ async function sendSurveyToChar(charId, questions, isChoice, opts = {}) {
       options: q.options || [], multi: !!q.multi, answer: '', answeredAt: 0,
     })),
     state: 'pending',
-    // 20260929an：≤3条 → 20 分钟内答完（随机 15~20 分钟，贴近 20 分钟上限）；>3条：1小时内（随机 10~60 分钟）
-    queueAt: Date.now() + (isMulti ? randInt(10, 60) : randInt(15, 20)) * 60000,
+    // 20261103：答题时间区间化——3 题内 5~10 分钟；4~10 题 10~20 分钟；10 题以上 20~40 分钟（区间内随机）
+    queueAt: Date.now() + _surveyAnswerDelayMs(count),
     createdAt: Date.now(),
     msgId: '',
     readBack: '',
@@ -27610,12 +29963,21 @@ async function playerAnswerSurvey(surveyId, answer) {
 
 /* 20261028：玩家逐题回答角色发来的多题问卷（问卷库发出）。
    逐题填入 answer，全部未答完也允许提交（至少一题有答案），答完的发感想。 */
-async function playerAnswerSurveyAll(surveyId, answers) {
+async function playerAnswerSurveyAll(surveyId, answers, picksArr) {
   const sv = await idbGet('surveys', surveyId);
   if (!sv) { miniToast('问卷不存在'); return; }
   const qs = sv.questions || [];
   (answers || []).forEach((a, i) => {
-    if (qs[i] && a) { qs[i].answer = a; qs[i].answeredAt = Date.now(); }
+    if (qs[i] && a) {
+      qs[i].answer = a;
+      qs[i].answeredAt = Date.now();
+      // 20261103：选择题记录选中的选项索引（picks/pick），详情页高亮显示选了哪几个
+      const picks = picksArr && Array.isArray(picksArr[i]) ? picksArr[i] : null;
+      if (picks && picks.length) {
+        qs[i].picks = picks;
+        qs[i].pick = picks[0];
+      }
+    }
   });
   sv.state = 'done';
   sv.doneAt = Date.now();
@@ -27687,25 +30049,49 @@ async function openSurveyDetail(surveyId, opts = {}) {
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:12px;">${isCharAsk ? (c ? c.name : 'TA') + ' 向你提问' : '你向 ' + (c ? c.name : 'TA') + ' 提问'} · 共 ${sv.questions.length} 题 · ${done ? '已全部回答' : (_surveyEtaText(sv) || (answered > 0 ? '回答中' : '待回答'))}</div>
     <div style="display:flex;flex-direction:column;gap:10px;max-height:46vh;overflow:auto;" id="svd-list">
-      ${sv.questions.map((q, i) => `
-        <div style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-          <div style="font-size:14px;font-weight:600;margin-bottom:6px;">${i + 1}. ${escapeHtml(q.text)}</div>
-          ${q.type === 'choice' && q.options && q.options.length ? `<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:6px;">选项：${q.options.map(o => escapeHtml(o)).join(' / ')}</div>` : ''}
-          ${q.answer && q.answer.trim() ? `<div style="font-size:13px;line-height:1.55;padding:8px 10px;background:var(--bg);border-radius:8px;">${escapeHtml(q.answer)}</div>` : `<div style="font-size:12px;color:var(--text-tertiary);font-style:italic;">（未回答）</div>`}
-        </div>
-      `).join('')}
+      ${sv.questions.map((q, i) => {
+        const isChoice = q.type === 'choice' && Array.isArray(q.options) && q.options.length;
+        // 20261103：兼容旧数据——旧版单选只存 q.pick（单个索引）没存 q.picks；再老的数据只有 q.answer 文字。
+        let picks = (q.picks || []).map(Number);
+        if (!picks.length && q.pick !== undefined && q.pick !== null) picks = [Number(q.pick)];
+        if (!picks.length && q.answer && q.answer.trim()) {
+          // 用 answer 文字反查选项索引（answer 是「、」连接的文字）
+          const parts = q.answer.split('、').map(s => s.trim()).filter(Boolean);
+          picks = parts.map(t => q.options.findIndex(o => String(o).trim() === t)).filter(x => x >= 0);
+        }
+        return `
+        <div style="background:var(--bg-elevated-2);border-radius:14px;padding:12px;">
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px;">${i + 1}. ${escapeHtml(q.text)}${q.multi ? '<span style="font-size:11px;color:var(--purple-soft);margin-left:6px;">多选</span>' : ''}</div>
+          ${isChoice ? `<div style="display:flex;flex-direction:column;gap:6px;">${q.options.map((o, oi) => {
+            const sel = picks.includes(oi);
+            return `<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:12px;border:1.5px solid ${sel ? 'var(--purple)' : 'var(--border)'};background:${sel ? 'var(--purple-dim)' : 'var(--bg)'};color:var(--text-primary);font-size:13px;line-height:1.45;">
+              <span style="flex-shrink:0;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:${sel ? 'var(--purple)' : 'var(--bg-elevated-2)'};color:${sel ? '#141019' : 'var(--text-secondary)'};">${String.fromCharCode(65 + oi)}</span>
+              <span style="flex:1;min-width:0;">${escapeHtml(o)}</span>
+              ${sel ? '<span style="color:var(--purple-soft);font-weight:700;flex-shrink:0;">✓</span>' : ''}
+            </div>`;
+          }).join('')}</div>${q.answer && q.answer.trim() ? `<div style="font-size:13px;line-height:1.55;padding:8px 10px;background:var(--bg);border-radius:8px;margin-top:8px;"><span style="color:var(--text-tertiary);font-size:11px;">${c ? c.name : 'TA'} 的作答：</span>${escapeHtml(q.answer)}</div>` : ''}` : (q.answer && q.answer.trim() ? `<div style="font-size:13px;line-height:1.55;padding:8px 10px;background:var(--bg);border-radius:8px;">${escapeHtml(q.answer)}</div>` : `<div style="font-size:12px;color:var(--text-tertiary);font-style:italic;">（未回答）</div>`)}
+        </div>`;
+      }).join('')}
       ${sv.readBack ? `<div style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;"><div style="font-size:13px;font-weight:600;margin-bottom:4px;">💬 ${c ? c.name : 'TA'} 的读后感</div><div style="font-size:13px;line-height:1.55;">${escapeHtml(sv.readBack)}</div></div>` : ''}
     </div>
     ${isCharAsk && !done ? `
       <div class="field" style="margin-top:14px;">
         <label>你的回答</label>
-        <div style="display:flex;flex-direction:column;gap:10px;" id="svd-answer-wrap">
-          ${sv.questions.map((q, i) => `
-            <div>
-              <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:4px;">第 ${i + 1} 题</div>
-              <textarea class="textarea" data-svd-ans="${i}" placeholder="输入第 ${i + 1} 题的回答…" style="min-height:52px;"></textarea>
-            </div>
-          `).join('')}
+        <div style="display:flex;flex-direction:column;gap:12px;" id="svd-answer-wrap">
+          ${sv.questions.map((q, i) => {
+            const isChoice = q.type === 'choice' && Array.isArray(q.options) && q.options.length;
+            return `
+            <div style="background:var(--bg-elevated-2);border-radius:14px;padding:12px;">
+              <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:8px;font-weight:600;">第 ${i + 1} 题 · ${isChoice ? (q.multi ? '多选题（可点多个）' : '单选题') : '问答题'} · ${escapeHtml(q.text)}</div>
+              ${isChoice ? `<div style="display:flex;flex-direction:column;gap:8px;" data-svd-choice="${i}" data-svd-multi="${q.multi ? '1' : '0'}">
+                ${q.options.map((o, oi) => `
+                  <div class="svd-opt" data-svd-opt="${i}:${oi}" style="display:flex;align-items:center;gap:8px;padding:11px 12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text-primary);font-size:13.5px;line-height:1.45;cursor:pointer;transition:border-color .12s,background .12s;">
+                    <span class="svd-opt-dot" style="flex-shrink:0;width:22px;height:22px;border-radius:${q.multi ? '7px' : '50%'};display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:var(--bg-elevated-2);color:var(--text-secondary);transition:background .12s,color .12s;">${String.fromCharCode(65 + oi)}</span>
+                    <span style="flex:1;min-width:0;">${escapeHtml(o)}</span>
+                  </div>`).join('')}
+              </div>` : `<textarea class="textarea" data-svd-ans="${i}" placeholder="输入第 ${i + 1} 题的回答…" style="min-height:52px;"></textarea>`}
+            </div>`;
+          }).join('')}
         </div>
         <button class="btn primary block" id="svd-submit" style="margin-top:10px;">提交回答</button>
       </div>
@@ -27722,13 +30108,55 @@ async function openSurveyDetail(surveyId, opts = {}) {
     });
   };
   if (isCharAsk && !done) {
+    // 20261103：选择题卡片点选交互（单选点一个、多选点多个，主题色高亮）
+    const choiceSelections = {}; // { 题index: [选中的选项index] }
+    document.querySelectorAll('[data-svd-choice]').forEach(wrap => {
+      const qi = +wrap.dataset.svdChoice;
+      const multi = wrap.dataset.svdMulti === '1';
+      choiceSelections[qi] = [];
+      wrap.querySelectorAll('[data-svd-opt]').forEach(opt => {
+        opt.onclick = () => {
+          const oi = +opt.dataset.svdOpt.split(':')[1];
+          const sel = choiceSelections[qi];
+          const idx = sel.indexOf(oi);
+          if (multi) {
+            idx >= 0 ? sel.splice(idx, 1) : sel.push(oi);
+          } else {
+            sel.length = 0; sel.push(oi);
+          }
+          // 重绘该题所有选项的高亮
+          wrap.querySelectorAll('[data-svd-opt]').forEach(o => {
+            const x = +o.dataset.svdOpt.split(':')[1];
+            const on = choiceSelections[qi].includes(x);
+            o.style.borderColor = on ? 'var(--purple)' : 'var(--border)';
+            o.style.background = on ? 'var(--purple-dim)' : 'var(--bg)';
+            const dot = o.querySelector('.svd-opt-dot');
+            if (dot) {
+              dot.style.background = on ? 'var(--purple)' : 'var(--bg-elevated-2)';
+              dot.style.color = on ? '#141019' : 'var(--text-secondary)';
+            }
+          });
+        };
+      });
+    });
     $('#svd-submit').onclick = async () => {
-      // 20261028：支持多题问卷——逐题收集回答，至少答一题即可提交
-      const inputs = document.querySelectorAll('[data-svd-ans]');
+      // 20261103：逐题收集——选择题取选中的选项文字（join '、' + 写 picks），问答题取 textarea 文字
       const answers = [];
-      inputs.forEach(inp => { answers.push((inp.value || '').trim()); });
+      const picksArr = [];
+      sv.questions.forEach((q, i) => {
+        const isChoice = q.type === 'choice' && Array.isArray(q.options) && q.options.length;
+        if (isChoice) {
+          const sel = (choiceSelections[i] || []).slice().sort((a, b) => a - b);
+          picksArr.push(sel);
+          answers.push(sel.map(oi => q.options[oi]).join('、'));
+        } else {
+          picksArr.push(null);
+          const inp = document.querySelector(`[data-svd-ans="${i}"]`);
+          answers.push(inp ? (inp.value || '').trim() : '');
+        }
+      });
       if (!answers.some(a => a)) { miniToast('请至少回答一题'); return; }
-      await playerAnswerSurveyAll(surveyId, answers);
+      await playerAnswerSurveyAll(surveyId, answers, picksArr);
       openSurveyDetail(surveyId, opts);
     };
   }
@@ -27998,7 +30426,7 @@ function showSurveyLibraryCompose(owner, charId) {
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:38vh;overflow:auto;margin-bottom:10px;" id="svlc-list"></div>
     <button class="btn block" id="svlc-addq" style="padding:10px;">＋ 添加一道题</button>
-    <button class="btn block" id="svlc-addchoice" style="padding:10px;margin-top:8px;">⊕ 添加选择题（最多 5 个选项）</button>
+    <button class="btn block" id="svlc-addchoice" style="padding:10px;margin-top:8px;">⊕ 添加选择题（最多 10 个选项）</button>
     <label class="btn block" for="svlc-docx" style="padding:10px;cursor:pointer;margin-top:8px;">📄 导入 Word 文档（.docx）</label>
     <input type="file" id="svlc-docx" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
     <div style="display:flex;gap:10px;margin-top:14px;">
@@ -28025,7 +30453,7 @@ function showSurveyLibraryCompose(owner, charId) {
                 <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项">✕</button>
               </div>`).join('')}
             <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
-              ${(q.options || []).length < 5 ? `<button class="btn" data-oadd="${i}" style="padding:5px 10px;font-size:12px;flex-shrink:0;">＋ 添加选项（${(q.options || []).length}/5）</button>` : `<span style="font-size:11px;color:var(--text-tertiary);flex-shrink:0;">选项最多 5 个</span>`}
+              ${(q.options || []).length < 10 ? `<button class="btn" data-oadd="${i}" style="padding:5px 10px;font-size:12px;flex-shrink:0;">＋ 添加选项（${(q.options || []).length}/10）</button>` : `<span style="font-size:11px;color:var(--text-tertiary);flex-shrink:0;">选项最多 10 个</span>`}
               <div style="flex:1;"></div>
               <div style="display:flex;align-items:center;background:var(--bg);border-radius:999px;padding:2px;flex-shrink:0;">
                 <button type="button" data-qidx="${i}" data-mode="single" style="padding:3px 12px;font-size:11.5px;border-radius:999px;border:none;cursor:pointer;${q.multi ? 'color:var(--text-secondary);background:transparent;' : 'color:#ffffff;background:var(--purple-soft);'}">单选</button>
@@ -28162,7 +30590,7 @@ function showSurveyCompose(charIds, opts = {}) {
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:12px;">${whoLabel} · 手动输入题目，或导入 Word 文档（选择题会直接解析成选择题）</div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow:auto;margin-bottom:12px;" id="svc-list"></div>
     <button class="btn block" id="svc-addq" style="padding:10px;">＋ 添加一道题</button>
-    <button class="btn block" id="svc-addchoice" style="padding:10px;margin-top:8px;">⊕ 添加选择题（最多 5 个选项）</button>
+    <button class="btn block" id="svc-addchoice" style="padding:10px;margin-top:8px;">⊕ 添加选择题（最多 10 个选项）</button>
     <label class="btn block" for="svc-docx" style="padding:10px;cursor:pointer;margin-top:8px;">📄 导入 Word 文档（.docx）</label>
     <input type="file" id="svc-docx" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
     <div style="font-size:11px;color:#e5615c;margin-top:6px;font-weight:600;">⚠ 选择题会自动在问卷末尾增加一道「读后感」输入，由访客作答</div>
@@ -28189,9 +30617,9 @@ function showSurveyCompose(charIds, opts = {}) {
                 <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项">✕</button>
               </div>`).join('')}
             <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
-              ${(q.options || []).length < 5
-                ? `<button class="btn" data-oadd="${i}" style="padding:5px 10px;font-size:12px;flex-shrink:0;">＋ 添加选项（${(q.options || []).length}/5）</button>`
-                : `<span style="font-size:11px;color:var(--text-tertiary);flex-shrink:0;">选项最多 5 个</span>`}
+              ${(q.options || []).length < 10
+                ? `<button class="btn" data-oadd="${i}" style="padding:5px 10px;font-size:12px;flex-shrink:0;">＋ 添加选项（${(q.options || []).length}/10）</button>`
+                : `<span style="font-size:11px;color:var(--text-tertiary);flex-shrink:0;">选项最多 10 个</span>`}
               <div style="flex:1;"></div>
               <div style="display:flex;align-items:center;background:var(--bg);border-radius:999px;padding:2px;flex-shrink:0;">
                 <button type="button" data-qidx="${i}" data-mode="single" style="padding:3px 12px;font-size:11.5px;border-radius:999px;border:none;cursor:pointer;${q.multi ? 'color:var(--text-secondary);background:transparent;' : 'color:#ffffff;background:var(--purple-soft);'}">单选</button>
@@ -28212,7 +30640,7 @@ function showSurveyCompose(charIds, opts = {}) {
     document.querySelectorAll('[data-oadd]').forEach(btn => {
       btn.onclick = () => {
         const q = qs[+btn.dataset.oadd];
-        if ((q.options || []).length >= 5) { miniToast('选项最多 5 个'); return; }
+        if ((q.options || []).length >= 10) { miniToast('选项最多 10 个'); return; }
         q.options.push('');
         renderQList();
       };
