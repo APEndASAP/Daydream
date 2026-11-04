@@ -9996,7 +9996,10 @@ function parseVideoLink(url) {
     const bvRaw = id(/BV([0-9A-Za-z]+)/);       // 捕获组=纯 BV 号（不含 BV 前缀）
     const avRaw = id(/av(\d+)/i);               // 捕获组=纯 av 数字
     let bvid = bvRaw ? ('BV' + bvRaw) : (avRaw ? ('av' + avRaw) : '');
-    return { platform: 'bilibili', title: '', cover: '', playUrl: '', videoId: bvid, embed: bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}` : '' };
+    // 20261104：b23.tv 有 3 种格式——① /BVxxx ② /avxxx ③ /7位随机短链（如 zDC0kTZ）。
+    //   ①② 能直接拿到 BV/av 号 → iframe 内嵌播放；③ 前端无法跨域解析（302 到 bilibili 无 CORS），
+    //   保留原短链 url，交由 openVideoPlay 走「APP 内网页播放」兜底（Browser.open 打开短链自动跳转）。
+    return { platform: 'bilibili', title: '', cover: '', playUrl: '', videoId: bvid, embed: bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}` : '', url };
   }
   // 抖音
   if (/douyin\.com|iesdouyin\.com/i.test(url)) {
