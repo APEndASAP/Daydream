@@ -765,6 +765,17 @@
 </style>
 </head>
 <body>
+<script>
+/* 20261104：首帧防闪屏——主项目 openPomodoroLayer 会以 ?theme=xxx 传入全局主题。
+   在 body 渲染任何内容前同步读取 query 并提前上 theme-* 类，避免「浅色闪一下再切深色」。
+   映射逻辑与下方 GLOBAL_THEME_MAP 保持一致。 */
+(function(){
+  var m = { dark:'dark', lilac:'purple', lotus:'lilac', sakura:'sakura', sky:'sky', mint:'mint', cream:'cream', mist:'mist', blackred:'blackred', choco:'choco', pumpkin:'pumpkin', gray:'gray', red:'red', berry:'berry', berryBlue:'berryblue' };
+  var q = location.search.match(/[?&]theme=([^&]+)/);
+  var t = q ? (m[decodeURIComponent(q[1])] || 'lilac') : 'lilac';
+  if(t !== 'lilac') document.body.classList.add('theme-' + t);
+})();
+</script>
 <div class="phone" id="phone">
   <div class="seal tl" id="sealTL"></div>
   <div class="seal br" id="sealBR"></div>

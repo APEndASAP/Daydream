@@ -230,6 +230,7 @@ input, textarea { user-select: text; }
   transition: background 0.12s ease, transform 0.12s ease;
 }
 .icon-btn:active { transform: scale(0.9); background: var(--card); }
+.icon-btn.active { background: var(--purple-dim); color: var(--purple); }
 
 /* 底部导航栏（3.1：无毛玻璃，纯色半透明；玻璃模式下滑为透明胶囊） */
 .tabbar {
@@ -3339,7 +3340,10 @@ body.theme-light .checkin-loc-pos { color: #6a54c4; }
 .letter-env.opened .env-flap { transform: rotateX(180deg); opacity: 0; }
 .letter-env .env-paper {
   position: absolute; left: 7%; right: 7%; top: 12%; bottom: 8%;
-  background: #f6efdd; color: #4a3a1e; border-radius: 8px; z-index: 1;
+  --paper-a:#fdf8ef; --paper-b:#f3ead8; --paper-ink:#4a3a1e; --paper-line:rgba(140,110,60,.20);
+  background-color: var(--paper-a);
+  background-image: linear-gradient(170deg, var(--paper-a) 0%, var(--paper-b) 100%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9 0.45' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cfilter id='fib'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.5' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23f)' opacity='0.20'/%3E%3Crect width='240' height='240' filter='url(%23fib)' opacity='0.10'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='bump'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.05 0.14' numOctaves='3' seed='11' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' surfaceScale='1.4' diffuseConstant='1.1' lighting-color='%23ffffff' result='lit'%3E%3CfeDistantLight azimuth='235' elevation='60'/%3E%3C/feDiffuseLighting%3E%3CfeComposite in='lit' in2='n' operator='in'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23bump)' opacity='0.55'/%3E%3C/svg%3E");
+  color: var(--paper-ink); border-radius: 8px; z-index: 1;
   padding: 16px 14px 40px; font-size: 14px; line-height: 1.9; overflow-y: auto;
   transform: translateY(30%) scale(.96); opacity: 0; transition: transform .6s .18s ease, opacity .5s .18s ease;
   box-shadow: 0 8px 26px rgba(0,0,0,.4);
@@ -3350,11 +3354,11 @@ body.theme-light .checkin-loc-pos { color: #6a54c4; }
    .env-paper 原 white-space:pre-wrap 保留（老数据直渲染兼容）——但结构化渲染时
    缩进空白会被 pre-wrap 放大成大空隙，故结构化节点内改 normal，仅 .lp-body 保留换行 */
 .letter-env .env-paper.lp-rich { white-space: normal; }
-.env-paper .lp-head { text-align: center; padding-bottom: 12px; border-bottom: 1px dashed rgba(74,58,30,.28); }
-.env-paper .lp-who { font-size: 17px; font-weight: 700; letter-spacing: 4px; color: #3c2f14; }
-.env-paper .lp-sub { font-size: 10.5px; letter-spacing: 2px; color: rgba(74,58,30,.55); margin-top: 4px; }
-.env-paper .lp-body { padding: 14px 4px; font-size: 14.5px; line-height: 2; color: #4a3a1e; text-align: justify; white-space: pre-wrap; }
-.env-paper .lp-foot { text-align: center; font-size: 11px; letter-spacing: 3px; color: rgba(74,58,30,.5); padding-top: 8px; }
+.env-paper .lp-head { text-align: center; padding-bottom: 12px; border-bottom: 1px dashed var(--paper-line); }
+.env-paper .lp-who { font-size: 17px; font-weight: 700; letter-spacing: 4px; color: var(--paper-ink); }
+.env-paper .lp-sub { font-size: 10.5px; letter-spacing: 2px; color: var(--paper-ink); opacity: .55; margin-top: 4px; }
+.env-paper .lp-body { padding: 14px 4px; font-size: 14.5px; line-height: 2; color: var(--paper-ink); text-align: justify; white-space: pre-wrap; }
+.env-paper .lp-foot { text-align: center; font-size: 11px; letter-spacing: 3px; color: var(--paper-ink); opacity: .5; padding-top: 8px; }
 /* 20260929bk：拆开后信纸向上大幅抽出并加高（参考「远方来信」大信纸版式），
    内容多时信纸内部滚动；保留原过渡动画。
    20260929bl：整体下移（用户反馈拉得太高）——top -46%→-30%、translateY -24%→-6%、
@@ -3382,13 +3386,55 @@ body.theme-light .checkin-loc-pos { color: #6a54c4; }
 .letter-overlay.instant .env-paper,
 .letter-overlay.instant .env-seal { transition: none !important; animation: none !important; }
 /* 信纸书写界面 */
-.letter-compose { background: #f6efdd; color: #4a3a1e; border-radius: 12px; padding: 14px; border: 1px solid #d9c79c; }
+/* 20261104：信纸选择器（BounceCards 风格：扇形错落 + 依次弹跳入场 + hover 放大 + 点选弹前） */
+.letter-paper-pick {
+  position: relative; height: 150px; margin: 2px 0 14px; display: flex; align-items: center; justify-content: center;
+}
+.lp-paper-card {
+  position: absolute; left: 50%; top: 50%; width: 92px; height: 128px; margin-left: -46px; margin-top: -64px;
+  border-radius: 12px; border: 4px solid rgba(255,255,255,.85);
+  background: linear-gradient(168deg, var(--pp-a) 0%, var(--pp-b) 100%);
+  box-shadow: 0 6px 18px rgba(0,0,0,.22), 0 2px 5px rgba(0,0,0,.14);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent; user-select: none;
+  transform: translateX(calc(var(--spread, 0) * 1px)) rotate(var(--rot, 0deg)) scale(var(--sc, 1));
+  transform-origin: 50% 100%;
+  transition: transform .28s cubic-bezier(.34,1.56,.64,1), box-shadow .28s ease;
+  opacity: 0; animation: lpPaperIn .5s cubic-bezier(.34,1.56,.64,1) forwards;
+  animation-delay: calc(.05s * var(--i));
+  z-index: calc(1 + var(--i));
+  /* 卡片本身也呈现原浆纸质感：纤维 + 浮雕压纹（与书写区一致） */
+  background-image: linear-gradient(168deg, var(--pp-a) 0%, var(--pp-b) 100%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9 0.45' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cfilter id='fib'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.5' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23f)' opacity='0.20'/%3E%3Crect width='240' height='240' filter='url(%23fib)' opacity='0.10'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='bump'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.05 0.14' numOctaves='3' seed='11' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' surfaceScale='1.4' diffuseConstant='1.1' lighting-color='%23ffffff' result='lit'%3E%3CfeDistantLight azimuth='235' elevation='60'/%3E%3C/feDiffuseLighting%3E%3CfeComposite in='lit' in2='n' operator='in'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23bump)' opacity='0.55'/%3E%3C/svg%3E");
+}
+.lp-paper-card:active { transform: translateX(calc(var(--spread, 0) * 1px)) rotate(var(--rot, 0deg)) scale(1.06) translateY(-4px); }
+.lp-paper-card:hover, .lp-paper-card.on {
+  transform: translateX(calc(var(--spread, 0) * 1px)) rotate(var(--rot, 0deg)) scale(1.14) translateY(-8px);
+  z-index: 20; box-shadow: 0 14px 30px rgba(0,0,0,.3), 0 4px 10px rgba(0,0,0,.18);
+}
+.lp-paper-card.on { border-color: var(--purple); }
+.lp-paper-card .lp-paper-txt {
+  font-size: 12px; font-weight: 700; letter-spacing: 1px; pointer-events: none;
+  text-shadow: 0 1px 0 rgba(255,255,255,.5);
+}
+@keyframes lpPaperIn {
+  from { opacity: 0; transform: translateX(calc(var(--spread, 0) * 1px)) rotate(var(--rot, 0deg)) translateY(28px) scale(.7); }
+  to   { opacity: 1; transform: translateX(calc(var(--spread, 0) * 1px)) rotate(var(--rot, 0deg)) scale(1); }
+}
+.letter-compose {
+  --paper-a:#fdf8ef; --paper-b:#f3ead8; --paper-ink:#4a3a1e; --paper-line:rgba(140,110,60,.20);
+  color: var(--paper-ink); border-radius: 12px; padding: 14px; border: 1px solid #d9c79c;
+  background-color: var(--paper-a);
+  background-image: linear-gradient(170deg, var(--paper-a) 0%, var(--paper-b) 100%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9 0.45' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cfilter id='fib'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.5' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23f)' opacity='0.20'/%3E%3Crect width='240' height='240' filter='url(%23fib)' opacity='0.10'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='bump'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.05 0.14' numOctaves='3' seed='11' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' surfaceScale='1.4' diffuseConstant='1.1' lighting-color='%23ffffff' result='lit'%3E%3CfeDistantLight azimuth='235' elevation='60'/%3E%3C/feDiffuseLighting%3E%3CfeComposite in='lit' in2='n' operator='in'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23bump)' opacity='0.55'/%3E%3C/svg%3E");
+  transition: background-color .3s ease, color .3s ease;
+}
 .letter-compose textarea {
   width: 100%; min-height: 200px; border: none; outline: none; resize: vertical;
-  background: repeating-linear-gradient(180deg, transparent 0 27px, rgba(122,96,44,.18) 27px 28px);
-  font-size: 14.5px; line-height: 28px; color: #4a3a1e; font-family: inherit;
+  background: transparent;
+  background-image: repeating-linear-gradient(180deg, transparent 0 27px, var(--paper-line) 27px 28px);
+  font-size: 14.5px; line-height: 28px; color: var(--paper-ink); font-family: inherit;
+  transition: color .3s ease;
 }
-.letter-compose .lc-count { text-align: right; font-size: 11px; color: rgba(74,58,30,.55); margin-top: 6px; }
+.letter-compose .lc-count { text-align: right; font-size: 11px; color: var(--paper-ink); opacity: .6; margin-top: 6px; }
 /* 记事簿条目 */
 .note-item { display: flex; align-items: center; gap: 10px; padding: 11px 12px; background: var(--bg-elevated-2); border: 1px solid var(--border); border-radius: 12px; }
 .note-item.done .nt-text { text-decoration: line-through; color: var(--text-tertiary); }
@@ -3417,7 +3463,15 @@ body.theme-light .checkin-loc-pos { color: #6a54c4; }
 .lr-env-grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
 }
-.letter-env-cell { cursor: pointer; display: flex; flex-direction: column; gap: 6px; will-change: transform; }
+.letter-env-cell { cursor: pointer; display: flex; flex-direction: column; gap: 6px; will-change: transform; position: relative; }
+/* 批量管理下信封右上角勾选框 */
+.lr-env-check {
+  position: absolute; top: -6px; right: -6px; z-index: 12; width: 24px; height: 24px;
+  border-radius: 50%; background: var(--bg-elevated-2); border: 2px solid var(--text-tertiary);
+  display: flex; align-items: center; justify-content: center; font-size: 13px; color: transparent;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
+.lr-env-check.on { background: var(--purple); border-color: var(--purple); color: #141019; }
 /* Q 弹挤压回弹（纯 CSS，替代 gsap） */
 .letter-env-cell.bounce { animation: lecBounce .42s cubic-bezier(.34,1.56,.64,1); }
 @keyframes lecBounce {
@@ -7849,11 +7903,11 @@ body.theme-light .bm-music-float .bm-fly-line.on { text-shadow: none; }
 .bm-music-float.mini .bm-float-dot { display: none; }
 .bm-music-float.mini .bm-float-card { display: none; }
 .bm-music-float.mini .bm-float-mini {
-  display: flex; align-items: center; gap: 10px; width: 250px;
+  display: flex; align-items: center; gap: 9px; width: 320px;
   background: linear-gradient(160deg, var(--bm-paper-2), var(--bm-paper));
   border: 1px solid var(--bm-card-line); border-radius: 18px;
   box-shadow: 0 8px 26px rgba(0,0,0,.45);
-  padding: 10px 10px 10px 12px; color: var(--bm-ink);
+  padding: 6px 9px 6px 12px; color: var(--bm-ink);
   cursor: pointer; animation: bm-mini-in .3s cubic-bezier(.2,.8,.3,1.1);
   /* 20261104：玻璃拟态——小卡磨砂质感，与通话悬浮窗一致 */
   backdrop-filter: blur(16px) saturate(140%);
@@ -7862,26 +7916,28 @@ body.theme-light .bm-music-float .bm-fly-line.on { text-shadow: none; }
 }
 .bm-music-float.mini .bm-float-mini:hover { border-color: var(--bm-accent); }
 .bm-music-float.mini .bm-mini-avs { display: flex; align-items: center; flex-shrink: 0; }
-.bm-music-float.mini .bm-mini-av { width: 32px; height: 32px; border-radius: 50%; overflow: hidden; flex-shrink: 0; background: var(--bm-ink-faint); display: flex; align-items: center; justify-content: center; color: var(--bm-paper); font-size: 15px; border: 2px solid var(--bm-paper); }
+.bm-music-float.mini .bm-mini-av { width: 30px; height: 30px; border-radius: 50%; overflow: hidden; flex-shrink: 0; background: var(--bm-ink-faint); display: flex; align-items: center; justify-content: center; color: var(--bm-paper); font-size: 14px; border: 2px solid var(--bm-paper); }
 .bm-music-float.mini .bm-mini-av.ta { margin-left: -10px; }
 .bm-music-float.mini .bm-mini-av img { width: 100%; height: 100%; object-fit: cover; }
 .bm-music-float.mini .bm-mini-av .bm-avt-ph { font-size: 13px; }
-.bm-music-float.mini .bm-mini-info { flex: 1 1 auto; min-width: 0; }
-.bm-music-float.mini .bm-mini-title { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bm-music-float.mini .bm-mini-artist { font-size: 11px; color: var(--bm-ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 20261104 用户修正：info 区竖排三行（歌名/歌手/歌词），拉宽悬浮窗到 320px 让文字完整显示；
+   info 区 flex:1 + min-width:0，右侧播放/收起按钮 flex-shrink:0 固定，绝不外溢。
+   三行行高收紧 + padding 压缩，整体高度与旧两行基本持平（用户要求「不能再拉长」）。 */
+.bm-music-float.mini .bm-mini-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0; }
+.bm-music-float.mini .bm-mini-title { font-size: 13px; font-weight: 700; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm-music-float.mini .bm-mini-artist { font-size: 11px; color: var(--bm-ink-dim); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 二级悬浮窗滚动歌词（当前句，随播放滚动；无歌词时不占位）。
-   20261104：改为 flex:1 自适应收缩 + min-width:0，歌词再长也只会在自己区域内省略号截断，
-   绝不再把右侧播放/收起按钮挤出悬浮窗 250px 之外。 */
+   20261104：歌词并入 info 区作为第三行，整行显示当前句，超长才省略号；
+   绝不再把右侧播放/收起按钮挤出悬浮窗之外。 */
 .bm-music-float.mini .bm-mini-lyric {
-  font-size: 11px; line-height: 1.4; color: var(--bm-ink-dim);
-  flex: 1 1 auto; min-width: 0; min-height: 15px;
+  font-size: 11px; line-height: 1.25; color: var(--bm-ink-dim);
+  min-width: 0; min-height: 13px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  margin-left: auto; flex-shrink: 1;
 }
-.bm-music-float.mini .bm-mini-btn { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--bm-accent-glow); color: var(--bm-accent); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: transform .12s ease, background .15s ease, color .15s ease; }
+.bm-music-float.mini .bm-mini-btn { width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--bm-accent-glow); color: var(--bm-accent); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: transform .12s ease, background .15s ease, color .15s ease; }
 .bm-music-float.mini .bm-mini-btn:hover { background: var(--bm-accent); color: #fff; }
 .bm-music-float.mini .bm-mini-btn:active { transform: scale(.86); }
-.bm-music-float.mini .bm-mini-close { width: 30px; height: 30px; border-radius: 50%; border: none; background: transparent; color: var(--bm-ink-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; font-size: 16px; }
+.bm-music-float.mini .bm-mini-close { width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent; color: var(--bm-ink-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; font-size: 16px; }
 .bm-music-float.mini .bm-mini-close:hover { color: #c06a5a; }
 @keyframes bm-mini-in { from { opacity: 0; transform: translateY(14px) scale(.94); } to { opacity: 1; transform: none; } }
 
@@ -7981,6 +8037,22 @@ body.theme-light #bm-float-style-picker {
 /* 20261104：歌词默认色从 --bm-ink-faint（过暗）提升到 --bm-ink-dim，保证暗色下可读；当前句用亮色加粗 */
 .bm-fly-line { font-size: 12px; line-height: 1.7; color: var(--bm-ink-dim); }
 .bm-fly-line.on { color: var(--bm-ink); font-weight: 700; text-shadow: 0 0 6px var(--bm-accent-glow); }
+/* 20261104：三级悬浮窗（card）细进度条——位于底部控制按钮上方一行，不挤占歌词；
+   细条可拖动 seek，两端显示当前时间/总时长 */
+.bm-float-progress { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 0 6px; margin-bottom: 8px; }
+.bm-float-prog-time { font-size: 10px; color: var(--bm-ink-dim); font-variant-numeric: tabular-nums; min-width: 30px; text-align: center; flex-shrink: 0; }
+.bm-float-progress-slider {
+  flex: 1; height: 3px; -webkit-appearance: none; appearance: none; min-width: 0;
+  background: var(--bm-card-line, rgba(203,209,221,.2)); border-radius: 999px; outline: none; cursor: pointer;
+}
+.bm-float-progress-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--bm-accent, #a78bfa); border: 2px solid #fff; box-shadow: 0 0 6px var(--bm-accent-glow, rgba(167,139,250,.5)); cursor: pointer;
+}
+.bm-float-progress-slider::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%; background: var(--bm-accent, #a78bfa);
+  border: 2px solid #fff; box-shadow: 0 0 6px var(--bm-accent-glow, rgba(167,139,250,.5)); cursor: pointer;
+}
 .bm-float-ctrl { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .bm-float-ctrl .bm-ctrl-btn { width: 38px; height: 38px; }
 .bm-float-ctrl .bm-ctrl-btn.bm-ctrl-main { width: 46px; height: 46px; }

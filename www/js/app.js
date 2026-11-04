@@ -64,7 +64,7 @@ let chatSettings = {
   commentPickCountMin: 0,          // 20261031：行程留言/备注每次抽取字卡张数下限（默认0，0=可能不写）
   commentPickCountMax: 2,          // 20261031：行程留言/备注每次抽取字卡张数上限（默认2）
   musicFloatOn: true,              // 20261104：一起听歌悬浮窗开关（默认开；邀请/播放时自动弹悬浮窗）
-  musicAuto: false,                // 20261104：互动B（已废弃独立开关）——现改为「随一起听邀请同意自动开/关」，不再依赖此字段；保留字段仅为兼容旧数据
+  musicAuto: true,                 // 20261104：互动B——角色主动搜歌/切歌/收藏（总开关，默认开；开启后一起听期间自动触发，结束一起听自动暂停）
   musicAutoMin: 20,                // 20261104：角色主动音乐操作随机间隔下限（分钟）
   musicAutoMax: 120,               // 20261104：角色主动音乐操作随机间隔上限（分钟）
   musicInvite: false,              // 20261104：角色主动邀请玩家一起听歌（随机固定间隔，默认关）
@@ -76,6 +76,7 @@ let chatSettings = {
   videoAuto: false,                // 20261104：角色主动搜发视频给玩家（随机固定间隔，默认关）
   videoAutoMin: 60,                // 20261104：角色主动发视频随机间隔下限（分钟）
   videoAutoMax: 240,               // 20261104：角色主动发视频随机间隔上限（分钟）
+  videoCoverMode: 'local',         // 20261104：视频封面获取方式 'local'=真封面+文字占位(纯前端) / 'thirdParty'=第三方解析服务(拿小红书/抖音真封面，链接会发第三方)
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -3794,7 +3795,17 @@ function msgBodyHtml(m, oneLine = false) {
       const vc = m.content || {};
       const platMap = { bilibili: { label: 'B站', color: '#fb7299' }, douyin: { label: '抖音', color: '#1e1e1e' }, xiaohongshu: { label: '小红书', color: '#ff2442' }, youtube: { label: 'YouTube', color: '#ff0000' }, direct: { label: '本地视频', color: '#8b5cf6' }, link: { label: '链接', color: '#8b5cf6' } };
       const plat = platMap[vc.platform] || { label: '视频', color: '#8b5cf6' };
-      const coverHtml = vc.cover ? `<img src="${imgSrcAttr(vc.cover, true)}" style="width:100%;height:120px;object-fit:cover;display:block;border-radius:8px;margin-top:8px;">` : `<div style="width:100%;height:110px;border-radius:8px;margin-top:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:40px;">▶</div>`;
+      // 20261104：封面防盗链处理——B站图床(i0.hdslb.com)有 Referer 校验，加 referrerpolicy=no-referrer；
+      //   http 封面升级 https（避免混合内容被拦）。
+      const coverUrl = (vc.cover && typeof vc.cover === 'string') ? vc.cover.replace(/^http:\/\//i, 'https://') : vc.cover;
+      // 20261104：封面兜底——没有封面图时，用平台色渐变 + 标题文字 + 播放三角，做成有内容的封面占位，
+      //   不再显示纯黑空框（用户强调卡片一定要有封面感）。
+      const coverHtml = coverUrl
+        ? `<img src="${escapeHtml(imgSrc(coverUrl, true))}" referrerpolicy="no-referrer" onerror="this.parentNode.innerHTML='${escapeHtml('')}'" style="width:100%;height:120px;object-fit:cover;display:block;border-radius:8px;margin-top:8px;background:linear-gradient(135deg,${plat.color},#2a2340);">`
+        : `<div style="width:100%;height:120px;border-radius:8px;margin-top:8px;background:linear-gradient(135deg,${plat.color}dd,${plat.color}66 60%,#1a1420);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0 12px;box-sizing:border-box;">
+            <div style="font-size:28px;line-height:1;">▶</div>
+            <div style="font-size:12.5px;color:#fff;text-align:center;line-height:1.35;max-width:100%;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${escapeHtml(vc.title || '视频')}</div>
+          </div>`;
       const playable = vc.playUrl || vc.embed || vc.url || vc.videoId;
       const mottoHtml = vc.motto ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12.5px;line-height:1.6;color:var(--purple-soft);word-break:break-word;">💌 ${escapeHtml(vc.motto)}</div>` : '';
       return `<div class="msg-card msg-video-card" data-video-card="${m.id}" style="cursor:pointer;">
@@ -6015,14 +6026,15 @@ async function __proactiveScan() {
         delete _multiCardUntil[c.id]; // 关闭即清除，重开重新播种
       }
 
-      // —— 角色主动搜歌/切歌/收藏（20261104：互动B，随「一起听邀请同意」自动开/关）——
-      //     不再依赖独立 musicAuto 开关：玩家同意该角色的听歌邀请（startTogether 设置 togetherSince）
-      //     即自动开启；拒绝邀请或结束一起听（togetherSince 清空）即自动关闭。
+      // —— 角色主动搜歌/切歌/收藏（20261104：互动B，总开关 musicAuto + 随「一起听」联动）——
+      //     musicAuto=总开关（默认关，玩家在设置里勾选开启该能力）。
+      //     勾选开启后，仍需「正在一起听」（startTogether 设置 togetherSince）才真正触发；
+      //     拒绝邀请或结束一起听（togetherSince 清空）即自动暂停（不取消勾选，下次一起听自动恢复）。
       //     随机固定间隔（musicAutoMin~Max，默认 20~120 分钟）；到点调用 music.js 的 charAutoMusic
       //     （其内部仍有 togetherSince 判断兜底，只有真的正在一起听才真正动作）。
       //     不设防刷屏冷却锁（文档一·4：随机固定间隔本身即防刷屏）。
       const _togetherNow = !!(window.bmMusic && window.bmMusic.state && window.bmMusic.state.charId === c.id && window.bmMusic.state.togetherSince);
-      if (_togetherNow) {
+      if (s.musicAuto && _togetherNow) {
         const muLo = Math.max(1, Math.min(720, parseInt(s.musicAutoMin, 10) || 20));
         const muHi = Math.max(1, Math.min(720, parseInt(s.musicAutoMax, 10) || 120));
         const muIvMin = Math.min(muLo, muHi), muIvMax = Math.max(muLo, muHi);
@@ -9991,23 +10003,35 @@ function parseVideoLink(url) {
   if (/\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(url) || /^data:video\//i.test(url)) {
     return { platform: 'direct', title: '', cover: '', playUrl: url, videoId: '', embed: '' };
   }
-  // B站
+  // 纯 BV 号 / av 号（用户直接粘「BV1xxxx」或「av123」也要支持）
+  const pureBv = /^(BV[0-9A-Za-z]{8,})(?:\?.*)?$/i.exec(url);
+  const pureAv = /^(av\d+)(?:\?.*)?$/i.exec(url);
+  if (pureBv) {
+    const bvid = pureBv[1];
+    return { platform: 'bilibili', title: '', cover: '', playUrl: '', videoId: bvid, embed: `https://player.bilibili.com/player.html?bvid=${bvid}`, url: `https://www.bilibili.com/video/${bvid}/` };
+  }
+  if (pureAv) {
+    const avid = pureAv[1];
+    return { platform: 'bilibili', title: '', cover: '', playUrl: '', videoId: avid, embed: `https://player.bilibili.com/player.html?bvid=${avid}`, url: '' };
+  }
+  // B站（长链 / b23.tv 短链）
   if (/bilibili\.com|b23\.tv|bili2233/i.test(url)) {
     const bvRaw = id(/BV([0-9A-Za-z]+)/);       // 捕获组=纯 BV 号（不含 BV 前缀）
     const avRaw = id(/av(\d+)/i);               // 捕获组=纯 av 数字
     let bvid = bvRaw ? ('BV' + bvRaw) : (avRaw ? ('av' + avRaw) : '');
     // 20261104：b23.tv 有 3 种格式——① /BVxxx ② /avxxx ③ /7位随机短链（如 zDC0kTZ）。
     //   ①② 能直接拿到 BV/av 号 → iframe 内嵌播放；③ 前端无法跨域解析（302 到 bilibili 无 CORS），
-    //   保留原短链 url，交由 openVideoPlay 走「APP 内网页播放」兜底（Browser.open 打开短链自动跳转）。
+    //   保留原短链 url，交由 fetchVideoMeta 尝试解析 + openVideoPlay 走「APP 内网页播放」兜底。
     return { platform: 'bilibili', title: '', cover: '', playUrl: '', videoId: bvid, embed: bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}` : '', url };
   }
-  // 抖音
+  // 抖音（含 v.douyin.com 手机端短链）
   if (/douyin\.com|iesdouyin\.com/i.test(url)) {
-    return { platform: 'douyin', title: '', cover: '', playUrl: '', videoId: id(/video\/(\d+)/) || '', embed: '', url };
+    // 手机端短链 v.douyin.com/xxx 302 到 iesdouyin.com/share/video/{id}；长链也有 video/{id}
+    return { platform: 'douyin', title: '', cover: '', playUrl: '', videoId: id(/video\/(\d+)/) || id(/(\d{15,})/) || '', embed: '', url };
   }
-  // 小红书（20261104 新增：xhslink.com 短链 / xiaohongshu.com 长链。视频无法内嵌播放，
-  //   走「内部跳转」——点卡片在软件内新窗口打开原链接查看）
-  if (/xiaohongshu\.com|xhslink\.com/i.test(url)) {
+  // 小红书（xhslink.com / xhslink.cn 短链 + xiaohongshu.com 长链。视频/图文都无法内嵌播放，
+  //   走「内部跳转」——点卡片在 APP 内打开原链接查看，原页自然显示封面标题）
+  if (/xiaohongshu\.com|xhslink\.com|xhslink\.cn/i.test(url)) {
     return { platform: 'xiaohongshu', title: '', cover: '', playUrl: '', videoId: '', embed: '', url };
   }
   // YouTube
@@ -10019,31 +10043,182 @@ function parseVideoLink(url) {
   return { platform: 'link', title: '', cover: '', playUrl: '', videoId: '', embed: '' };
 }
 
-/* 20261104：异步补全视频封面+标题（B站/YouTube 有公开无鉴权 CORS 接口，前端可直接拿）。
-   抖音/小红书无公开接口 + 强防盗链，保持「去原站查看」真实跳转兜底。 */
+/* JSONP 请求：用 <script> 标签加载，浏览器不带 Origin，绕过 B站 view API 的跨域风控。
+   返回 Promise<json>；超时/失败 reject。 */
+function jsonp(url, callbackParam, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const cbName = '__bmjp_' + Math.random().toString(36).slice(2);
+    const sep = url.includes('?') ? '&' : '?';
+    const full = url + sep + callbackParam + '=' + cbName;
+    const s = document.createElement('script');
+    let done = false;
+    const timer = setTimeout(() => { cleanup(); reject(new Error('jsonp timeout')); }, timeoutMs || 8000);
+    function cleanup() { if (done) return; done = true; clearTimeout(timer); delete window[cbName]; if (s.parentNode) s.parentNode.removeChild(s); }
+    window[cbName] = (data) => { cleanup(); resolve(data); };
+    s.onerror = () => { cleanup(); reject(new Error('jsonp error')); };
+    s.src = full;
+    document.head.appendChild(s);
+  });
+}
+
+/* 从一段 HTML/文本里解析 title 与封面（小红书/抖音 SSR 页内嵌 JSON 字段） */
+function _extractMetaFromHtml(html, platform) {
+  const out = { title: '', cover: '' };
+  if (!html) return out;
+  try {
+    if (platform === 'xiaohongshu') {
+      // 小红书 SSR：JSON 里有 "title":"..."、og:image / notes_pre_post 封面 URL
+      let t = html.match(/"title"\s*:\s*"([^"]{2,120})"/);
+      if (t) out.title = t[1];
+      let img = html.match(/og:image[^>]*content="([^"]+)"/);
+      if (!img) img = html.match(/https?:\/\/sns-webpic[^"\s]+/);
+      if (!img) img = html.match(/https?:\/\/ci\.xiaohongshu\.com\/[^"\s]+/);
+      if (img) {
+        let u = img[1] || img[0];
+        // 去掉 ci.xiaohongshu.com/http:// 嵌套前缀，直接用 sns-webpic 直链 + 尺寸后缀
+        u = u.replace(/^https?:\/\/ci\.xiaohongshu\.com\/(?:https?:)?\/\//, 'https://');
+        if (!/!h5_\d+jpg/i.test(u) && /sns-webpic/.test(u)) u += '!h5_1080jpg';
+        out.cover = u;
+      }
+    } else if (platform === 'douyin') {
+      // 抖音分享页 SSR：window._ROUTER_DATA 里有 desc + 封面 url_list
+      let t = html.match(/"desc"\s*:\s*"([^"]{2,120})"/);
+      if (t) out.title = t[1];
+      let c = html.match(/"cover"\s*:\s*\{\s*"url_list"\s*:\s*\[\s*"([^"]+)/);
+      if (!c) c = html.match(/"url_list"\s*:\s*\[\s*"(https?:\/\/p[0-9][^"]+)"/);
+      if (c) out.cover = c[1];
+    }
+  } catch (e) {}
+  return out;
+}
+
+/* 20261104：第三方链接解析服务（玩家在聊天设置里可自选是否启用）。
+   返回结构兼容多套常见解析服务（title/thumbnail/cover/image_urls/desc 等字段名都兼容）。
+   隐私提醒：启用后链接会发送到第三方服务解析（玩家已勾选知悉）。 */
+async function _fetchMetaByThirdParty(vc) {
+  if (!vc || !vc.url) return vc;
+  try {
+    // 玩家可自定义的第三方解析服务地址（默认一个通用 GET 接口；留空则跳过）
+    const api = (typeof chatSettings !== 'undefined' && chatSettings.videoParseApi) ? chatSettings.videoParseApi : '';
+    if (!api) return vc;
+    const link = encodeURIComponent(vc.url);
+    const sep = api.includes('?') ? '&' : '?';
+    // 兼容两种传参：{url}= 与 {link}=
+    const full = api.includes('{link}') ? api.replace(/\{link\}/g, link)
+               : api.includes('{url}') ? api.replace(/\{url\}/g, link)
+               : api + sep + 'url=' + link;
+    const r = await fetch(full, { headers: { 'Accept': 'application/json' } });
+    const ct = (r.headers.get('content-type') || '');
+    if (!r.ok) return vc;
+    let j = null;
+    if (ct.includes('json')) j = await r.json();
+    else {
+      const txt = await r.text();
+      try { j = JSON.parse(txt); } catch (e) { return vc; }
+    }
+    // 递归取 data 层（多套服务都会包一层 data）
+    let d = j;
+    for (let i = 0; i < 3 && d && typeof d === 'object' && !d.title && !d.thumbnail && !d.cover && !d.desc; i++) {
+      d = d.data || d.result || d.info || d.video || d.aweme_detail || d.awemeDetail || null;
+    }
+    if (!d || typeof d !== 'object') return vc;
+    const pick = (...keys) => { for (const k of keys) { const v = (k === 'thumbnail' || k === 'cover') ? (typeof d[k] === 'string' ? d[k] : (d[k] && (d[k].url_list || d[k].urls || d[k].url))) : d[k]; if (v && typeof v === 'string') return v; } return ''; };
+    const title = pick('title', 'desc', 'description', 'nickname') || '';
+    let cover = pick('thumbnail', 'cover', 'origin_cover', 'dynamic_cover', 'image', 'poster');
+    // 图集类型：image_urls / images 数组取第一张
+    if (!cover) {
+      const imgs = d.image_urls || d.images || (d.image_list ? d.image_list : null) || (d.images_list ? d.images_list : null);
+      if (Array.isArray(imgs) && imgs.length) {
+        const first = imgs[0];
+        cover = (typeof first === 'string') ? first : (first && (first.url || first.url_list || first.src));
+      }
+    }
+    if (cover && typeof cover === 'string') vc.cover = cover.replace(/^http:\/\//i, 'https://');
+    if (title && typeof title === 'string') vc.title = vc.title || title;
+  } catch (e) {}
+  return vc;
+}
+
+/* 20261104：异步补全视频封面+标题。旧方法（fetch，真机/同源可能可用）+ 新增保底：
+   - B站：fetch 失败 → JSONP 拿 view API 的 title + pic（绕过 Origin 风控，桌面也能拿到）
+   - 小红书：短链 fetch → 302 拿 SSR HTML → 解析内嵌 title + 封面
+   - 抖音：短链 fetch → 302 拿分享页 SSR → 解析 desc + 封面
+   - 第三方解析（可选，videoCoverMode==='thirdParty' 时）：拿小红书/抖音真封面 */
 async function fetchVideoMeta(vc) {
   if (!vc) return vc;
   try {
-    if (vc.platform === 'bilibili' && vc.videoId) {
-      // B站官方 view 接口：data.title 标题 + data.pic 封面（支持 CORS）
-      const bvid = (vc.videoId.startsWith('BV') || vc.videoId.startsWith('av')) ? vc.videoId : '';
+    if (vc.platform === 'bilibili') {
+      let bvid = (vc.videoId && (vc.videoId.startsWith('BV') || vc.videoId.startsWith('av'))) ? vc.videoId : '';
+      // b23.tv 7位随机短链：fetch 拿最终 URL 提取 BV 号（跨域可能 opaque，静默失败）
+      if (!bvid && vc.url && /b23\.tv\//i.test(vc.url) && !/b23\.tv\/(BV|av)/i.test(vc.url)) {
+        try {
+          const rr = await fetch(vc.url, { redirect: 'follow' });
+          const finalUrl = (rr && rr.url) ? rr.url : '';
+          const m = finalUrl.match(/BV([0-9A-Za-z]+)/);
+          if (m) bvid = 'BV' + m[1];
+        } catch (e) {}
+      }
       if (bvid) {
-        const r = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`);
-        const j = await r.json();
-        if (j && j.code === 0 && j.data) {
-          vc.title = j.data.title || vc.title;
-          vc.cover = j.data.pic || vc.cover;
-          vc.embed = `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(bvid)}`;
+        // 旧方法：fetch view API（真机 WebView 可能无 Origin 或放行）
+        try {
+          const r = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`);
+          const j = await r.json();
+          if (j && j.code === 0 && j.data) {
+            vc.videoId = bvid;
+            vc.title = j.data.title || vc.title;
+            vc.cover = (j.data.pic || vc.cover || '').replace(/^http:\/\//i, 'https://');
+            vc.embed = `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(bvid)}`;
+          }
+        } catch (e) {}
+        // 保底：JSONP（桌面端 fetch 403 时仍能拿到 title + pic）
+        if (!vc.cover || !vc.title) {
+          try {
+            const j = await jsonp(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}&jsonp=jsonp`, 'callback', 8000);
+            if (j && j.code === 0 && j.data) {
+              vc.videoId = bvid;
+              vc.title = j.data.title || vc.title;
+              vc.cover = (j.data.pic || vc.cover || '').replace(/^http:\/\//i, 'https://');
+              vc.embed = `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(bvid)}`;
+            }
+          } catch (e) {}
         }
       }
     } else if (vc.platform === 'youtube' && vc.videoId) {
       // YouTube oEmbed：title + thumbnail_url（支持 CORS）
-      const r = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(vc.videoId)}&format=json`);
-      const j = await r.json();
-      if (j && j.title) {
-        vc.title = j.title;
-        vc.cover = j.thumbnail_url || vc.cover;
-        vc.embed = `https://www.youtube.com/embed/${encodeURIComponent(vc.videoId)}`;
+      try {
+        const r = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(vc.videoId)}&format=json`);
+        const j = await r.json();
+        if (j && j.title) {
+          vc.title = j.title;
+          vc.cover = j.thumbnail_url || vc.cover;
+          vc.embed = `https://www.youtube.com/embed/${encodeURIComponent(vc.videoId)}`;
+        }
+      } catch (e) {}
+    } else if (vc.platform === 'xiaohongshu' && vc.url) {
+      // 小红书短链：fetch 302 拿 SSR HTML（带 UA 更稳），解析内嵌 title + 封面
+      try {
+        const rr = await fetch(vc.url, { redirect: 'follow' });
+        const html = await rr.text();
+        const meta = _extractMetaFromHtml(html, 'xiaohongshu');
+        if (meta.title) vc.title = vc.title || meta.title;
+        if (meta.cover) vc.cover = vc.cover || meta.cover;
+      } catch (e) {}
+      // 第三方解析（玩家在设置里选了 thirdParty 才启用）
+      if ((typeof chatSettings !== 'undefined' && chatSettings.videoCoverMode === 'thirdParty') && (!vc.cover || !vc.title)) {
+        await _fetchMetaByThirdParty(vc);
+      }
+    } else if (vc.platform === 'douyin' && vc.url) {
+      // 抖音短链：fetch 302 拿分享页 SSR，解析 desc + 封面
+      try {
+        const rr = await fetch(vc.url, { redirect: 'follow' });
+        const html = await rr.text();
+        const meta = _extractMetaFromHtml(html, 'douyin');
+        if (meta.title) vc.title = vc.title || meta.title;
+        if (meta.cover) vc.cover = vc.cover || meta.cover;
+      } catch (e) {}
+      // 第三方解析（玩家在设置里选了 thirdParty 才启用）
+      if ((typeof chatSettings !== 'undefined' && chatSettings.videoCoverMode === 'thirdParty') && (!vc.cover || !vc.title)) {
+        await _fetchMetaByThirdParty(vc);
       }
     }
   } catch (e) {}
@@ -10134,11 +10309,19 @@ function showVideoEntry() {
   $('#ve-close').onclick = close;
   // 解析并发送链接视频
   $('#ve-send').onclick = async () => {
-    const url = $('#ve-url').value.trim();
-    if (!url) { miniToast('请先粘贴视频链接'); return; }
+    let raw = $('#ve-url').value.trim();
+    if (!raw) { miniToast('请先粘贴视频链接'); return; }
+    // 20261104：用户常粘贴「【标题】 https://b23.tv/xxx」完整分享文本——先从中提取标题和 URL。
+    let extTitle = '';
+    const titleM = raw.match(/[【\[《]([^】\]》]+)[】\]》]/);
+    if (titleM) extTitle = titleM[1].trim();
+    // 提取 URL（文本里第一个 http/https 链接；没有则把整段当 URL）
+    const urlM = raw.match(/https?:\/\/[^\s"'<>]+/);
+    const url = urlM ? urlM[0] : raw;
     const v = parseVideoLink(url);
     if (!v) { miniToast('无法识别该视频链接'); return; }
     v.url = url;
+    if (extTitle && !v.title) v.title = extTitle;  // 标题优先用粘贴文本里的「【标题】」
     await sendVideoCard(cid, v, 'me');
     close();
     miniToast('视频已分享给 TA');
@@ -10195,12 +10378,15 @@ async function charAutoSendVideo(charId) {
   try {
     const c = characters.find(x => x.id === charId);
     if (!c) return;
-    // 真实 B站视频池（bvid 可站内 iframe 播放）
+    // 真实 B站视频池（bvid 可站内 iframe 播放；封面硬编码真实图床 URL，确保卡片必显封面——
+    //   B站 view API 带 Origin 403 拿不到封面，故直接内置 pic 直链，图床 i*.hdslb.com 无防盗链）
     const pool = [
-      { platform: 'bilibili', title: '雨声 · 陪你入眠的白噪音', videoId: 'BV1GJ411x7h7' },
-      { platform: 'bilibili', title: '治愈系风景 · 云海与星空', videoId: 'BV1Jx411q7iN' },
-      { platform: 'bilibili', title: '柴犬的一天 · 慢生活', videoId: 'BV1YW411P7Kj' },
-      { platform: 'bilibili', title: '深夜钢琴 · 温柔入梦', videoId: 'BV1Ws41127iN' },
+      { platform: 'bilibili', title: '【官方MV】Never Gonna Give You Up', videoId: 'BV1GJ411x7h7', cover: 'https://i1.hdslb.com/bfs/archive/5242750857121e05146d5d5b13a47a2a6dd36e98.jpg' },
+      { platform: 'bilibili', title: '【官方MV】Mojito - 周杰伦', videoId: 'BV1PK4y1b7dt', cover: 'https://i2.hdslb.com/bfs/archive/722964117f0380b7b6c0a0fbe77028151b17472a.jpg' },
+      { platform: 'bilibili', title: '【4K60帧】经典老歌：瑞克·埃斯利', videoId: 'BV1uT4y1P7CX', cover: 'https://i1.hdslb.com/bfs/archive/47d93e3d993ce921149e181760db307ee151547e.jpg' },
+      { platform: 'bilibili', title: '【黑曜石舞团】玉生烟', videoId: 'BV1Jx411q7iN', cover: 'https://i1.hdslb.com/bfs/archive/8757d5bd72297cf7c5f53f1045a87db27b7bc8ca.jpg' },
+      { platform: 'bilibili', title: '一镜到底 · 别墅设计慢生活', videoId: 'BV1W64y1z7Y4', cover: 'https://i0.hdslb.com/bfs/archive/6fe75ba6bac0b2f0921641189a9faf07992ea418.jpg' },
+      { platform: 'bilibili', title: '树林里的放松按摩 · 慢生活', videoId: 'BV1Nb411J7Yy', cover: 'https://i0.hdslb.com/bfs/archive/bcf9446c50dc89147891d2993f9887a9b8966d1c.jpg' },
     ];
     const v = pool[Math.floor(Math.random() * pool.length)];
     await sendVideoCard(charId, v, 'them');
@@ -10218,25 +10404,27 @@ async function charAutoSendVideo(charId) {
 function openVideoPlay(vc) {
   if (!vc) return;
   const title = vc.title || '视频';
-  const coverHtml = vc.cover
-    ? `<img src="${imgSrcAttr(vc.cover, true)}" style="width:100%;max-height:220px;object-fit:cover;display:block;border-radius:10px;margin-bottom:10px;">`
+  // 20261104：封面防盗链——B站图床有 Referer 校验，http 升级 https + no-referrer 绕过
+  const coverUrl = (vc.cover && typeof vc.cover === 'string') ? vc.cover.replace(/^http:\/\//i, 'https://') : vc.cover;
+  const coverHtml = coverUrl
+    ? `<img src="${escapeHtml(imgSrc(coverUrl, true))}" referrerpolicy="no-referrer" style="width:100%;max-height:200px;object-fit:cover;display:block;border-radius:10px;margin-bottom:10px;background:#1a1420;">`
     : '';
   let playerHtml = '';
   let extLink = '';   // 需要「APP 内打开网页播放」兜底的原始链接
   if (vc.embed) {
-    // B站/YouTube：软件内 iframe 真实播放
-    playerHtml = `<iframe src="${escapeHtml(vc.embed)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+    // B站/YouTube：软件内 iframe 真实播放（封面+标题展示在上方）
+    playerHtml = `${coverHtml}<iframe src="${escapeHtml(vc.embed)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
   } else if (vc.playUrl) {
     playerHtml = `<video src="${escapeHtml(vc.playUrl)}" controls style="width:100%;max-height:300px;border-radius:10px;background:#000;"></video>`;
   } else if (vc.videoId && vc.platform === 'bilibili') {
-    playerHtml = `<iframe src="https://player.bilibili.com/player.html?bvid=${escapeHtml(vc.videoId)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+    playerHtml = `${coverHtml}<iframe src="https://player.bilibili.com/player.html?bvid=${escapeHtml(vc.videoId)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
   } else if (vc.url) {
     // 小红书/抖音/其它：无法 iframe 内嵌，改在 APP 内打开网页播放（Browser.open），
     // 展示封面 + 「在 APP 内播放」按钮
     extLink = vc.url;
     playerHtml = `${coverHtml}<div style="text-align:center;padding:16px 0;color:var(--text-secondary);font-size:13px;">该平台视频需跳转网页播放，点下方按钮在 App 内打开</div>`;
   } else {
-    playerHtml = `<div style="text-align:center;color:var(--text-tertiary);padding:40px 0;">该视频暂无可播放源</div>`;
+    playerHtml = `${coverHtml}<div style="text-align:center;color:var(--text-tertiary);padding:40px 0;">该视频暂无可播放源</div>`;
   }
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -10285,7 +10473,10 @@ function ensurePomodoroLayer() {
 function openPomodoroLayer(cid) {
   const layer = ensurePomodoroLayer();
   const frame = document.getElementById('pomodoro-frame');
-  frame.src = 'interact_proto.html';
+  // 20261104：把当前全局主题经 URL query 提前传给 iframe，让番茄钟首帧就渲染成正确主题，
+  //   消除「浅色闪一下再切深色」的闪屏（iframe 在 head 内同步读 query 提前上 theme-* 类）。
+  const gt = (typeof _globalThemeId !== 'undefined' && _globalThemeId) ? _globalThemeId : 'dark';
+  frame.src = 'interact_proto.html?theme=' + encodeURIComponent(gt);
   layer.classList.add('show');
   // 番茄钟全屏层打开=离开聊天页观感——打字卡圆点/召唤悬浮窗立即收起
   try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
@@ -16325,10 +16516,10 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🎶 角色主动搜歌/切歌（同意邀请后自动开启）</span>
-        <span style="font-size:11px;color:var(--text-tertiary);font-weight:400;">随一起听自动开/关</span>
+        <span>🎶 角色主动搜歌/切歌</span>
+        <input type="checkbox" id="cs-music-auto" ${(s.musicAuto === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">无需单独开关——你<span style="color:var(--text);font-weight:600;">同意</span>该角色的听歌邀请（进入一起听）后，角色会自动开启自主音乐操作：播放、暂停、切上一首/下一首、往列表加歌、收藏、随机选歌、主动去网上搜歌。觉得好听的会收藏（存进「访客收藏」），不好听会切歌，并在聊天里发小横条告诉你。<span style="color:var(--text);font-weight:600;">拒绝邀请</span>或结束一起听后自动关闭。随机固定间隔触发（下方可设区间），不会刷屏。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启这个总开关后，角色在<span style="color:var(--text);font-weight:600;">一起听歌期间</span>会自动做音乐操作：播放、暂停、切上一首/下一首、往列表加歌、收藏、随机选歌、主动去网上搜歌。觉得好听的会收藏（存进「访客收藏」），不好听会切歌，并在聊天里发小横条告诉你。结束一起听后自动暂停（开关保持开启，下次一起听自动恢复）。随机固定间隔触发（下方可设区间），不会刷屏。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
         <input type="number" id="cs-music-auto-min" min="1" max="720" step="1" value="${typeof s.musicAutoMin === 'number' ? s.musicAutoMin : 20}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
@@ -16340,7 +16531,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>💌 角色主动邀请一起听歌</span>
-        <input type="checkbox" id="cs-music-invite" ${(chatSettings.musicInvite === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+        <input type="checkbox" id="cs-music-invite" ${(s.musicInvite === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动弹邀请函邀请你一起听歌，你可同意（进入一起听并自动播放）或拒绝。随机固定间隔触发（下方可设区间，默认比主动操作更稀疏）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
@@ -16354,7 +16545,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>👀 角色偷偷查看你的歌单</span>
-        <input type="checkbox" id="cs-music-peek" ${(chatSettings.musicPeek === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+        <input type="checkbox" id="cs-music-peek" ${(s.musicPeek === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会随机「偷看」你的歌单，并在你的歌单里留一条足迹提醒。偷看后可能只是看看、也可能把你歌单里的某首歌顺进 TA 自己的歌单、或偷偷听你歌单里的某首歌——每一种都会在歌单里留提醒，并在聊天里发小横条告诉你。随机固定间隔触发（下方可设区间）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
@@ -16368,7 +16559,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>🎬 角色主动搜发视频</span>
-        <input type="checkbox" id="cs-video-auto" ${(chatSettings.videoAuto === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+        <input type="checkbox" id="cs-video-auto" ${(s.videoAuto === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动到网上搜视频（bilibili / 抖音 / 其他直链）发给你，发来一张视频卡片，点击可直接播放。随机固定间隔触发（下方可设区间），不会刷屏。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
@@ -16377,6 +16568,31 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span style="font-size:12px;color:var(--text-tertiary);">～</span>
         <input type="number" id="cs-video-auto-max" min="1" max="1440" step="1" value="${typeof s.videoAutoMax === 'number' ? s.videoAutoMax : 240}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
         <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🖼️ 视频/图文封面获取方式</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">决定分享到聊天里的视频、小红书图文/视频、抖音卡片，封面怎么显示。B站用公开接口可直接拿到真封面；小红书/抖音因平台风控，默认拿不到真封面图。两种方式，点选其一。</div>
+      <div id="cs-cover-mode" style="display:flex;flex-direction:column;gap:8px;">
+        <div class="cs-cover-opt" data-mode="local" style="border:1px solid var(--border);border-radius:12px;padding:10px 12px;cursor:pointer;transition:border-color .15s, background .15s;">
+          <div style="display:flex;align-items:flex-start;gap:8px;">
+            <span style="font-size:16px;line-height:1.3;flex-shrink:0;">🛡️</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;color:var(--text);">纯本地 · 真封面 + 文字占位（推荐）</div>
+              <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:3px;line-height:1.5;">B站显示真实封面；小红书/抖音拿不到真图时，显示平台色 + 标题文字的封面占位（不再是空黑框）。完全本地处理，链接不外传，无隐私风险。</div>
+            </div>
+          </div>
+        </div>
+        <div class="cs-cover-opt" data-mode="thirdParty" style="border:1px solid var(--border);border-radius:12px;padding:10px 12px;cursor:pointer;transition:border-color .15s, background .15s;">
+          <div style="display:flex;align-items:flex-start;gap:8px;">
+            <span style="font-size:16px;line-height:1.3;flex-shrink:0;">🌐</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;color:var(--text);">第三方解析服务 · 拿真实封面</div>
+              <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:3px;line-height:1.5;">通过公开的第三方链接解析服务，尝试抓取小红书/抖音的真实封面图。效果更好，但会把链接发送到第三方服务器解析。</div>
+              <div style="font-size:11px;color:var(--warning, #e8a33d);margin-top:5px;line-height:1.5;">⚠️ 隐私提醒：选择此方式后，你分享/角色发送的视频链接会发送给第三方解析服务处理，请知悉。</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     </section>
@@ -16562,9 +16778,16 @@ function bindChatSettings(s, onSave, tcChar) {
     if (fw) fw.dataset.theme = v;
     miniToast('音乐主题已切换');
   };
-  // 20261104：角色主动搜歌/切歌的随机间隔（全局设置，即时生效落库）。
-  //   注：互动B 已改为「随一起听邀请同意自动开/关」，不再需要独立 musicAuto 开关，
-  //   这里只保留随机间隔设置。
+  // 20261104：角色主动搜歌/切歌的总开关 + 随机间隔（全局设置，即时生效落库）。
+  //   总开关 musicAuto 勾选后，仍需「正在一起听」才真正触发；结束一起听自动暂停（开关保持）。
+  const maCb = $('#cs-music-auto');
+  if (maCb) maCb.onchange = async () => {
+    s.musicAuto = maCb.checked;
+    chatSettings.musicAuto = maCb.checked; // 总设置里 s 是拷贝，必须同步回全局再落库
+    await setSetting('chatSettings', chatSettings);
+    if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; if (maCb.checked !== chatSettings.musicAuto) tcChar.chatSettings.musicAuto = maCb.checked; else delete tcChar.chatSettings.musicAuto; await saveChar(tcChar); }
+    miniToast(maCb.checked ? '角色主动搜歌/切歌已开启（一起听期间生效）' : '角色主动搜歌/切歌已关闭');
+  };
   const maMinEl = $('#cs-music-auto-min');
   const maMaxEl = $('#cs-music-auto-max');
   if (maMinEl && maMaxEl) {
@@ -16587,7 +16810,9 @@ function bindChatSettings(s, onSave, tcChar) {
   const miCb = $('#cs-music-invite');
   if (miCb) miCb.onchange = async () => {
     s.musicInvite = miCb.checked;
-    if (!tcChar) { chatSettings.musicInvite = miCb.checked; await setSetting('chatSettings', chatSettings); }
+    chatSettings.musicInvite = miCb.checked; // 总设置里 s 是拷贝，必须同步回全局再落库
+    await setSetting('chatSettings', chatSettings);
+    if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; if (miCb.checked !== chatSettings.musicInvite) tcChar.chatSettings.musicInvite = miCb.checked; else delete tcChar.chatSettings.musicInvite; await saveChar(tcChar); }
     miniToast(miCb.checked ? '角色会主动邀请你一起听歌' : '角色主动邀请已关闭');
   };
   const miMinEl = $('#cs-music-invite-min');
@@ -16612,7 +16837,9 @@ function bindChatSettings(s, onSave, tcChar) {
   const mpCb = $('#cs-music-peek');
   if (mpCb) mpCb.onchange = async () => {
     s.musicPeek = mpCb.checked;
-    if (!tcChar) { chatSettings.musicPeek = mpCb.checked; await setSetting('chatSettings', chatSettings); }
+    chatSettings.musicPeek = mpCb.checked; // 总设置里 s 是拷贝，必须同步回全局再落库
+    await setSetting('chatSettings', chatSettings);
+    if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; if (mpCb.checked !== chatSettings.musicPeek) tcChar.chatSettings.musicPeek = mpCb.checked; else delete tcChar.chatSettings.musicPeek; await saveChar(tcChar); }
     miniToast(mpCb.checked ? '角色会偷偷查看你的歌单' : '角色偷看歌单已关闭');
   };
   const mpMinEl = $('#cs-music-peek-min');
@@ -16637,7 +16864,9 @@ function bindChatSettings(s, onSave, tcChar) {
   const vaCb = $('#cs-video-auto');
   if (vaCb) vaCb.onchange = async () => {
     s.videoAuto = vaCb.checked;
-    if (!tcChar) { chatSettings.videoAuto = vaCb.checked; await setSetting('chatSettings', chatSettings); }
+    chatSettings.videoAuto = vaCb.checked; // 总设置里 s 是拷贝，必须同步回全局再落库
+    await setSetting('chatSettings', chatSettings);
+    if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; if (vaCb.checked !== chatSettings.videoAuto) tcChar.chatSettings.videoAuto = vaCb.checked; else delete tcChar.chatSettings.videoAuto; await saveChar(tcChar); }
     miniToast(vaCb.checked ? '角色会主动搜发视频给你' : '角色主动发视频已关闭');
   };
   const vaMinEl = $('#cs-video-auto-min');
@@ -16657,6 +16886,31 @@ function bindChatSettings(s, onSave, tcChar) {
     };
     vaMinEl.onchange = applyVa;
     vaMaxEl.onchange = applyVa;
+  }
+  // 20261104：视频封面获取方式 Tap 式选择（local 纯本地 / thirdParty 第三方解析）
+  const coverModeOpts = $$('#cs-cover-mode .cs-cover-opt');
+  const refreshCoverModeUI = () => {
+    const cur = (typeof s.videoCoverMode === 'string' && s.videoCoverMode) ? s.videoCoverMode : 'local';
+    coverModeOpts.forEach(b => {
+      const active = (b.dataset.mode || 'local') === cur;
+      b.style.borderColor = active ? 'var(--purple-soft)' : 'var(--border)';
+      b.style.background = active ? 'var(--bg-elevated)' : 'transparent';
+      b.style.outline = active ? '2px solid var(--purple-soft)' : 'none';
+    });
+  };
+  if (coverModeOpts.length) {
+    refreshCoverModeUI();
+    coverModeOpts.forEach(b => {
+      b.onclick = async () => {
+        const mode = b.dataset.mode || 'local';
+        s.videoCoverMode = mode;
+        chatSettings.videoCoverMode = mode; // 总设置里 s 是拷贝，同步回全局再落库
+        await setSetting('chatSettings', chatSettings);
+        if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; tcChar.chatSettings.videoCoverMode = mode; await saveChar(tcChar); }
+        refreshCoverModeUI();
+        miniToast(mode === 'thirdParty' ? '已切换为第三方解析服务（链接会发第三方）' : '已切换为纯本地真封面 + 文字占位');
+      };
+    });
   }
   // 20260929bk：悬浮窗2号模式选择（软件内 / 其他应用上）——全局与访客级都渲染
   const f2ModeBtns = $$('#cs-float2-mode .float2-mode-btn');
@@ -17048,7 +17302,7 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicPeek','musicPeekMin','musicPeekMax','videoAuto','videoAutoMin','videoAutoMax']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
@@ -25197,9 +25451,36 @@ function startNotebookTimer() {
 
 /* ---------- 书信：信纸书写 → 聊天流信封卡片 → 火漆印开信动画；梦角随机来信 ----------
    charId 可选：从书信记录/开信动画里回信时指定访客（不必正在该访客的聊天里） */
+
+/* 20261104：信纸 5 色（草本纸纹理，明度高饱和）。用户定案：粉色/紫色/灰色/牛皮纸/卡纸。
+   草本纸纹理用 feTurbulence 生成纤维/颗粒 data URI（离线可用，不依赖外网贴图）。
+   key：paper 字段；每个含渐变底 a/b、墨色 ink、纹理 URI。 */
+const LETTER_PAPERS = [
+  { key: 'pink',   name: '粉笺', a: '#f7e0e6', b: '#f0c9d5', ink: '#7a3a4e', line: 'rgba(160,90,110,.22)' },
+  { key: 'purple', name: '紫笺', a: '#e9e0f5', b: '#d8c9ee', ink: '#543f78', line: 'rgba(120,95,160,.22)' },
+  { key: 'grey',   name: '灰笺', a: '#e7e6e2', b: '#d6d4ce', ink: '#46443f', line: 'rgba(90,88,80,.22)' },
+  { key: 'kraft',  name: '牛皮纸', a: '#e8d6b2', b: '#d9c193', ink: '#5f4a2a', line: 'rgba(140,110,60,.24)' },
+  { key: 'card',   name: '卡纸',   a: '#fdf8ef', b: '#f3ead8', ink: '#4a3a1e', line: 'rgba(140,110,60,.20)' },
+];
+/* 原浆纸纤维纹理（feTurbulence，全百分号编码 data URI，mix-blend multiply 叠加）。
+   20261104 升级：模拟手抄原浆纸——细密短纤维 + 横向抄纸纹理（fractalNoise 高频 + 纤维拉丝），
+   比单一噪点更接近「草本纸/原浆纸」的纤维手感。 */
+function letterPaperTex() {
+  return `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9 0.45' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cfilter id='fib'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.5' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23f)' opacity='0.20'/%3E%3Crect width='240' height='240' filter='url(%23fib)' opacity='0.10'/%3E%3C/svg%3E")`;
+}
+/* 浮雕压纹（feDiffuseLighting 定向光 + 凹凸映射）：纸上轻微凸起的抄纸纤维压痕。
+   叠加方式：soft-light 或 overlay，制造「纸张有厚度、纹路凸起」的触感。 */
+function letterPaperEmboss() {
+  return `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='bump' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.05 0.14' numOctaves='3' seed='11' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' surfaceScale='1.4' diffuseConstant='1.1' lighting-color='%23ffffff' result='lit'%3E%3CfeDistantLight azimuth='235' elevation='60'/%3E%3C/feDiffuseLighting%3E%3CfeComposite in='lit' in2='n' operator='in'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23bump)' opacity='0.55'/%3E%3C/svg%3E")`;
+}
+function letterPaperOf(key) {
+  return LETTER_PAPERS.find(p => p.key === key) || LETTER_PAPERS[4];
+}
+
 async function showLetterComposeModal(charId = null, opts = {}) {
   const c = characters.find(x => x.id === (charId || currentCharId));
   if (!c) { miniToast('先进入一个访客的聊天'); return; }
+  let paperKey = 'card'; // 默认卡纸
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">${opts.reply ? '给' + escapeHtml(c.name) + '回信' : '给' + escapeHtml(c.name) + '写信'}</div>
@@ -25208,6 +25489,7 @@ async function showLetterComposeModal(charId = null, opts = {}) {
         <button class="icon-btn" id="letterw-close">✕</button>
       </div>
     </div>
+    <div class="letter-paper-pick" id="letter-paper-pick"></div>
     <div class="letter-compose">
       <textarea id="letter-text" maxlength="2000" placeholder="提笔，把想说的话写给 TA…（纯文字，最多 2000 字）"></textarea>
       <div class="lc-count"><span id="letter-count">0</span> / 2000</div>
@@ -25217,6 +25499,42 @@ async function showLetterComposeModal(charId = null, opts = {}) {
   $('#letterw-close').onclick = closeModal;
   $('#letter-records').onclick = () => showLetterRecordsModal(c.id); // 信箱：只看与当前角色的往来
   $('#letter-text').oninput = () => { $('#letter-count').textContent = [...$('#letter-text').value].length; };
+  // 信纸选择器：BounceCards 风格（扇形错落 + 依次弹跳入场 + 点选弹前）
+  const pickEl = $('#letter-paper-pick');
+  // 5 张卡片：中心=0，向两侧错落偏移 + 轻微旋转（弧形排开）
+  const spreadArr = [-78, -40, 0, 40, 78];
+  const rotArr = [-12, -6, 0, 6, 12];
+  pickEl.innerHTML = LETTER_PAPERS.map((p, i) => `
+    <div class="lp-paper-card${i === 4 ? ' on' : ''}" data-paper="${p.key}" style="--pp-a:${p.a};--pp-b:${p.b};--pp-ink:${p.ink};--i:${i};--spread:${spreadArr[i]};--rot:${rotArr[i]}deg;">
+      <span class="lp-paper-txt" style="color:${p.ink};">${p.name}</span>
+    </div>`).join('');
+  const selectPaper = (el) => {
+    pickEl.querySelectorAll('.lp-paper-card').forEach(x => x.classList.remove('on'));
+    el.classList.add('on');
+    paperKey = el.dataset.paper;
+    // 实时联动：下方书写区（信纸）背景即时跟随所选信纸颜色 + 纹理
+    const pp = letterPaperOf(paperKey);
+    const comp = document.querySelector('#modal-content .letter-compose');
+    if (comp) {
+      comp.style.setProperty('--paper-a', pp.a);
+      comp.style.setProperty('--paper-b', pp.b);
+      comp.style.setProperty('--paper-ink', pp.ink);
+      comp.style.setProperty('--paper-line', pp.line);
+      comp.style.backgroundImage = `linear-gradient(170deg, ${pp.a} 0%, ${pp.b} 100%), ${letterPaperEmboss()}, ${letterPaperTex()}`;
+      const ta = comp.querySelector('textarea');
+      if (ta) {
+        ta.style.color = pp.ink;
+        ta.style.backgroundImage = `repeating-linear-gradient(180deg, transparent 0 27px, ${pp.line} 27px 28px)`;
+      }
+    }
+  };
+  pickEl.querySelectorAll('.lp-paper-card').forEach(el => {
+    // 移动端手感：pointerdown 即时反馈（无 300ms 点击延迟），click 兜底；防误触不拦截滚动
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); selectPaper(el); });
+    el.onclick = () => selectPaper(el);
+  });
+  // 初始化：把默认卡纸背景即时应用到书写区（与 CSS 写死的米黄色对齐）
+  selectPaper(pickEl.querySelector('.lp-paper-card.on') || pickEl.querySelector('.lp-paper-card[data-paper="card"]'));
   $('#letter-send').onclick = async () => {
     const text = $('#letter-text').value.trim();
     if (!text) { miniToast('信纸上还没有字'); return; }
@@ -25224,7 +25542,7 @@ async function showLetterComposeModal(charId = null, opts = {}) {
       id: uid('msg'), charId: c.id, from: 'me', type: 'letter',
       reply: !!opts.reply,
       threadId: opts.reply ? (opts.threadId || opts.replyToMsgId || null) : null, // 回信挂到原信线程；新写信在下面补自身 id
-      content: { text, preview: [...text].slice(0, 26).join('') },
+      content: { text, preview: [...text].slice(0, 26).join(''), paper: paperKey },
       time: Date.now(), read: true,
     };
     if (!msg.threadId) msg.threadId = msg.id; // 新线程：线程 id = 根信 id
@@ -25275,9 +25593,9 @@ async function showLetterRecordsModal(charId = null) {
         <div style="font-size:18px;font-weight:600;">信箱</div>
         <span class="badge" id="lr-count"></span>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button class="btn" style="padding:6px 10px;font-size:13px;" id="lr-view" title="切换列表/信封外观"></button>
-        <button class="btn" style="padding:6px 12px;font-size:13px;" id="lr-batch">批量管理</button>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <button class="icon-btn" id="lr-view" title="切换列表/信封外观"></button>
+        <button class="icon-btn" id="lr-batch" title="批量管理"></button>
         <button class="icon-btn" id="lr-close">✕</button>
       </div>
     </div>
@@ -25300,11 +25618,15 @@ async function showLetterRecordsModal(charId = null) {
   `);
   $('#lr-close').onclick = closeModal;
   // 20260929bh：信箱顶栏「记忆宫殿」入口按钮已删除（批量管理里的「存宫殿」保留）
-  // 20261104：信箱外观切换——列表 ⇄ 信封，记住上次选择（kv 持久化）
+  // 20261104：信箱外观切换——列表 ⇄ 信封（纯图标按钮），记住上次选择（kv 持久化）
+  // 图标：列表=三条横线，信封=开口信封（SVG，跟随主题色）
+  const ICON_LIST = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4.5" cy="6" r="1.1" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.1" fill="currentColor" stroke="none"/></svg>`;
+  const ICON_ENV = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5.5" width="18" height="13" rx="2.2"/><path d="M3.5 7.5l8.5 6 8.5-6"/><path d="M12 13.5l-3-2.1"/></svg>`;
   const renderViewBtn = () => {
     const b = $('#lr-view');
-    b.textContent = viewMode === 'env' ? '📋 列表' : '✉️ 信封';
-    b.classList.toggle('primary', viewMode === 'env');
+    // 当前是信封视图 → 显示列表图标（点了切到列表）；当前是列表 → 显示信封图标
+    b.innerHTML = viewMode === 'env' ? ICON_LIST : ICON_ENV;
+    b.classList.toggle('active', viewMode === 'env');
   };
   renderViewBtn();
   $('#lr-view').onclick = async () => {
@@ -25313,10 +25635,18 @@ async function showLetterRecordsModal(charId = null) {
     renderViewBtn();
     render();
   };
+  const renderBatchBtn = () => {
+    const b = $('#lr-batch');
+    b.innerHTML = batchMode
+      ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`
+      : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>`;
+    b.classList.toggle('active', batchMode);
+  };
+  renderBatchBtn();
   $('#lr-batch').onclick = () => {
     batchMode = !batchMode;
     selected.clear();
-    $('#lr-batch').textContent = batchMode ? '退出批量' : '批量管理';
+    renderBatchBtn();
     render();
   };
 
@@ -25401,8 +25731,9 @@ async function showLetterRecordsModal(charId = null) {
       return;
     }
     // 20261104：信封视图（viewMode='env'）——信封卡片网格，未读=封口火漆、已读=开口；
-    //   点击行为与列表一致（打开主条目，不播开信动画）。批量管理仍走列表。
-    if (viewMode === 'env' && !batchMode) {
+    //   点击行为与列表一致（打开主条目，播拆信动画）。20261104 修复：批量管理不再强制切回列表，
+    //   信封视图下批量管理保持信封外观，直接框选勾选。
+    if (viewMode === 'env') {
       list.classList.add('lr-env-grid');
       list.innerHTML = shown.map(t => {
         const root = t.root, rep = t.replyMsg;
@@ -25413,8 +25744,10 @@ async function showLetterRecordsModal(charId = null) {
         const avHtml = c && c.avatar
           ? `<img src="${imgSrcAttr(c.avatar)}" alt="">`
           : `<span class="lec-stamp-fb">${escapeHtml(name[0] || '✦')}</span>`;
+        const checked = selected.has(tidOf(t));
         return `
-          <div class="letter-env-cell" data-tid="${tidOf(t)}">
+          <div class="letter-env-cell" data-tid="${tidOf(t)}" style="${batchMode ? 'cursor:pointer;' : ''}">
+            ${batchMode ? `<div class="lr-env-check${checked ? ' on' : ''}">✓</div>` : ''}
             <div class="lec-env">
               <div class="lec-body"></div>
               <div class="lec-slip">
@@ -25434,6 +25767,7 @@ async function showLetterRecordsModal(charId = null) {
       list.querySelectorAll('.letter-env-cell').forEach(el => {
         // Q 弹挤压回弹（pointerdown 即触发，真机无 hover 也能弹）
         el.addEventListener('pointerdown', () => {
+          if (batchMode) return; // 批量模式不弹动，避免误触
           el.classList.remove('bounce');
           void el.offsetWidth; // 强制重排以重启动画
           el.classList.add('bounce');
@@ -25441,7 +25775,13 @@ async function showLetterRecordsModal(charId = null) {
         el.onclick = () => {
           const t = shown.find(x => tidOf(x) === el.dataset.tid);
           if (!t) return;
-          // 20261104：从信箱打开改为播放完整拆信动画（去掉 noAnim），信封先弹入、再翻盖抽信纸
+          if (batchMode) {
+            const id = el.dataset.tid;
+            if (selected.has(id)) selected.delete(id); else selected.add(id);
+            render();
+            return;
+          }
+          // 20261104：从信箱打开播放完整拆信动画（信封先弹入、再翻盖抽信纸）
           if (t.root) openLetterOverlay(t.root, characters.find(x => x.id === t.root.charId));
           else if (t.replyMsg) openLetterOverlay(t.replyMsg, characters.find(x => x.id === t.replyMsg.charId));
         };
@@ -25499,8 +25839,8 @@ async function showLetterRecordsModal(charId = null) {
           render();
           return;
         }
-        if (t.root) openLetterOverlay(t.root, characters.find(x => x.id === t.root.charId), { noAnim: true });
-        else if (t.replyMsg) openLetterOverlay(t.replyMsg, characters.find(x => x.id === t.replyMsg.charId), { noAnim: true });
+        if (t.root) openLetterOverlay(t.root, characters.find(x => x.id === t.root.charId));
+        else if (t.replyMsg) openLetterOverlay(t.replyMsg, characters.find(x => x.id === t.replyMsg.charId));
       };
     });
     // 「查看回信」：已回→直接看回信（不播动画）；未回→等待提示（一对一线程只会有这一封回信）
@@ -25511,7 +25851,7 @@ async function showLetterRecordsModal(charId = null) {
         if (!t) return;
         if (t.replyMsg) {
           if (!t.replyMsg.read) { t.replyMsg.read = true; await idbPut('messages', t.replyMsg); }
-          openLetterOverlay(t.replyMsg, characters.find(x => x.id === t.replyMsg.charId), { noAnim: true });
+          openLetterOverlay(t.replyMsg, characters.find(x => x.id === t.replyMsg.charId));
         } else {
           // 20260925i：显示预计送达时间（待回信队列里有到期时间）；
           // 旧版本写的信（裸 setTimeout 已随刷新丢失）在这里自动补排一封，不让玩家干等
@@ -25605,7 +25945,7 @@ async function showLetterRecordsModal(charId = null) {
   $('#lr-done').onclick = () => {
     batchMode = false;
     selected.clear();
-    $('#lr-batch').textContent = '批量管理';
+    renderBatchBtn();
     render();
   };
   $('#lr-newok').onclick = async () => {
@@ -25919,6 +26259,13 @@ async function openLetterOverlay(msg, c, opts = {}) {
   const whoName = ch ? escapeHtml(ch.name) : '梦角';
   const render = () => {
     const text = String(msg.content.text || '');
+    // 20261104：信纸颜色 + 草本纹理按 paper 字段切换（默认卡纸）
+    const pp = letterPaperOf(msg.content && msg.content.paper);
+    paper.style.setProperty('--paper-a', pp.a);
+    paper.style.setProperty('--paper-b', pp.b);
+    paper.style.setProperty('--paper-ink', pp.ink);
+    paper.style.setProperty('--paper-line', pp.line);
+    paper.style.backgroundImage = `linear-gradient(170deg, ${pp.a} 0%, ${pp.b} 100%), ${letterPaperEmboss()}, ${letterPaperTex()}`;
     paper.classList.add('lp-rich');
     paper.innerHTML = `
       <div class="lp-head">
