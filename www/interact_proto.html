@@ -1660,12 +1660,26 @@ function applyLockState(){
 }
 
 function requestLockPermission(){
-  // 原型演示：移动端调用原生锁定（真机需插件），PC 端提示无法真锁
+  // 移动端：优先调原生锁定（真机需插件）；无插件时引导跳「使用情况访问权限」设置页
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   if(isMobile){
     if(typeof window.BmOverlay !== 'undefined' && window.BmOverlay && window.BmOverlay.lock){
       window.BmOverlay.lock();
+    } else if(typeof window.Capacitor !== 'undefined' && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay && window.Capacitor.Plugins.BmOverlay.lock){
+      window.Capacitor.Plugins.BmOverlay.lock();
     } else {
+      // PACKAGE_USAGE_STATS 特殊权限：无法原生弹窗，只能引导用户到「使用情况访问权限」设置页手动开启
+      try {
+        if(window.location.protocol === 'https:' || isMobile){
+          const intent = 'android.settings.USAGE_ACCESS_SETTINGS';
+          const href = 'intent://' + intent + '#Intent;end';
+          const a = document.createElement('a');
+          a.href = href;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      } catch(e){}
       hintPill.textContent = '🔒 已进入锁机状态（原型）';
     }
   } else {
