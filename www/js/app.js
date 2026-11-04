@@ -77,6 +77,12 @@ let chatSettings = {
   videoAutoMin: 60,                // 20261104：角色主动发视频随机间隔下限（分钟）
   videoAutoMax: 240,               // 20261104：角色主动发视频随机间隔上限（分钟）
   videoCoverMode: 'local',         // 20261104：视频封面获取方式 'local'=真封面+文字占位(纯前端) / 'thirdParty'=第三方解析服务(拿小红书/抖音真封面，链接会发第三方)
+  pomodoroFocusMin: 25,            // 20261104：番茄钟默认专注时长（分钟）
+  pomodoroBreakMin: 5,             // 20261104：番茄钟默认休息时长（分钟）
+  pomodoroNoiseOn: true,           // 20261104：番茄钟默认是否播放白噪音（默认开）
+  pomodoroLockOn: false,           // 20261104：番茄钟默认是否开启锁机（默认关）
+  companionInteractMin: 8,         // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机间隔下限（分钟）
+  companionInteractMax: 20,        // 20261104：番茄钟前台互动随机间隔上限（分钟）
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -10537,6 +10543,14 @@ async function _pomodoroPushChars() {
   try { aiMode = await isAIMode(); } catch (e) { aiMode = false; }
   const curChar = (_pomodoroCurrentCharId && characters.find(x => x.id === _pomodoroCurrentCharId)) || null;
   const schedTags = curChar ? charScheduleTags(curChar) : CHAR_SCHED_DEFAULT_TAGS.slice();
+  // 20261104：番茄钟设置（专注/休息时长、白噪音、锁机）+ 前台互动间隔 + 陪伴字卡库下发
+  const cs = (typeof chatSettings !== 'undefined' && chatSettings) ? chatSettings : {};
+  const compActs = (cards && Array.isArray(cards.customCompanionActions) && cards.customCompanionActions.length)
+    ? cards.customCompanionActions.slice()
+    : [];
+  const compReplies = (cards && Array.isArray(cards.customCompanionReplies) && cards.customCompanionReplies.length)
+    ? cards.customCompanionReplies.slice()
+    : [];
   frame.contentWindow.postMessage({
     type: 'pomodoro-init',
     chars,
@@ -10544,6 +10558,14 @@ async function _pomodoroPushChars() {
     globalTheme: (typeof _globalThemeId !== 'undefined' ? _globalThemeId : 'dark'),
     aiMode,                                   // 是否 AI 模式
     charSchedTags: schedTags,                 // 当前角色行程标签（字卡模式用）
+    pomodoroFocusMin: (typeof cs.pomodoroFocusMin === 'number' ? cs.pomodoroFocusMin : 25),
+    pomodoroBreakMin: (typeof cs.pomodoroBreakMin === 'number' ? cs.pomodoroBreakMin : 5),
+    pomodoroNoiseOn: (cs.pomodoroNoiseOn !== false),
+    pomodoroLockOn: (cs.pomodoroLockOn === true),
+    companionInteractMin: (typeof cs.companionInteractMin === 'number' ? cs.companionInteractMin : 8),
+    companionInteractMax: (typeof cs.companionInteractMax === 'number' ? cs.companionInteractMax : 20),
+    companionActions: compActs,               // 字卡库「陪伴动作」预设
+    companionReplies: compReplies,            // 字卡库「陪伴回复」预设
   }, '*');
 }
 /* 角色配色：按 id 哈希取稳定淡色（原型无角色 color 字段，给每个访客固定一种柔和底色） */
@@ -16094,6 +16116,8 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       ${(isPerChar || s.overclockUnlocked) ? `<button class="btn cs-tab" data-cs-tab="超频" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">超频</button>` : ''}
       <button class="btn cs-tab" data-cs-tab="行程" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">行程</button>
       <button class="btn cs-tab" data-cs-tab="音乐" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">音乐</button>
+      <button class="btn cs-tab" data-cs-tab="视频" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">视频</button>
+      <button class="btn cs-tab" data-cs-tab="番茄钟" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">番茄钟</button>
     </div>
 
     ${!isPerChar ? `
@@ -16556,6 +16580,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
       </div>
     </div>
+    </section>
+
+    <section class="cs-panel" data-cs-panel="视频">
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>🎬 角色主动搜发视频</span>
@@ -16593,6 +16620,46 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+    </section>
+
+    <section class="cs-panel" data-cs-panel="番茄钟">
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🍅 番茄钟默认设置</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.6;">进入番茄钟（专注陪伴）时的默认值，进去后仍可随时在界面里调整。</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;">
+        <span style="font-size:13px;color:var(--text);">默认专注时长（分钟）</span>
+        <input type="number" id="cs-pomodoro-focus" min="1" max="90" step="1" value="${typeof s.pomodoroFocusMin === 'number' ? s.pomodoroFocusMin : 25}" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;text-align:center;">
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;">
+        <span style="font-size:13px;color:var(--text);">默认休息时长（分钟）</span>
+        <input type="number" id="cs-pomodoro-break" min="1" max="60" step="1" value="${typeof s.pomodoroBreakMin === 'number' ? s.pomodoroBreakMin : 5}" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;text-align:center;">
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🔊 默认播放白噪音</span>
+        <input type="checkbox" id="cs-pomodoro-noise" ${(s.pomodoroNoiseOn !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">进入专注后自动开始播放白噪音（海浪/雨夜/林间等，可在专注界面切换或关闭）。</div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🔒 默认开启锁机</span>
+        <input type="checkbox" id="cs-pomodoro-lock" ${(s.pomodoroLockOn === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">进入专注后自动开启锁机（锁住屏幕专注，退出专注自动解除）。</div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">💬 前台互动（陪伴动作 / 陪伴回复）</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">专注过程中，角色会随机「找你说句话」或「做一个陪伴小动作」，内容从字卡库的「陪伴动作」「陪伴回复」里抽。这里设触发间隔（随机固定区间）。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
+        <input type="number" id="cs-companion-interact-min" min="1" max="720" step="1" value="${typeof s.companionInteractMin === 'number' ? s.companionInteractMin : 8}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-companion-interact-max" min="1" max="720" step="1" value="${typeof s.companionInteractMax === 'number' ? s.companionInteractMax : 20}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
       </div>
     </div>
     </section>
@@ -16912,6 +16979,59 @@ function bindChatSettings(s, onSave, tcChar) {
       };
     });
   }
+  // 20261104：番茄钟默认设置（专注/休息时长 + 白噪音 + 锁机）——全局与访客级都渲染，即时落库
+  const pfMinEl = $('#cs-pomodoro-focus');
+  const pbMinEl = $('#cs-pomodoro-break');
+  if (pfMinEl) pfMinEl.onchange = () => {
+    const v = Math.min(90, Math.max(1, parseInt(pfMinEl.value, 10) || 25));
+    pfMinEl.value = String(v);
+    s.pomodoroFocusMin = v;
+    chatSettings.pomodoroFocusMin = v;
+    setSetting('chatSettings', chatSettings).catch(() => {});
+    miniToast('番茄钟默认专注时长 ' + v + ' 分钟');
+  };
+  if (pbMinEl) pbMinEl.onchange = () => {
+    const v = Math.min(60, Math.max(1, parseInt(pbMinEl.value, 10) || 5));
+    pbMinEl.value = String(v);
+    s.pomodoroBreakMin = v;
+    chatSettings.pomodoroBreakMin = v;
+    setSetting('chatSettings', chatSettings).catch(() => {});
+    miniToast('番茄钟默认休息时长 ' + v + ' 分钟');
+  };
+  const pnCb = $('#cs-pomodoro-noise');
+  if (pnCb) pnCb.onchange = () => {
+    s.pomodoroNoiseOn = pnCb.checked;
+    chatSettings.pomodoroNoiseOn = pnCb.checked;
+    setSetting('chatSettings', chatSettings).catch(() => {});
+    miniToast(pnCb.checked ? '番茄钟默认开启白噪音' : '番茄钟默认关闭白噪音');
+  };
+  const plCb = $('#cs-pomodoro-lock');
+  if (plCb) plCb.onchange = () => {
+    s.pomodoroLockOn = plCb.checked;
+    chatSettings.pomodoroLockOn = plCb.checked;
+    setSetting('chatSettings', chatSettings).catch(() => {});
+    miniToast(plCb.checked ? '番茄钟默认开启锁机' : '番茄钟默认关闭锁机');
+  };
+  // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机固定间隔——全局与访客级都渲染
+  const ciMinEl = $('#cs-companion-interact-min');
+  const ciMaxEl = $('#cs-companion-interact-max');
+  if (ciMinEl && ciMaxEl) {
+    const applyCi = () => {
+      let lo = Math.min(720, Math.max(1, parseInt(ciMinEl.value, 10) || 8));
+      let hi = Math.min(720, Math.max(1, parseInt(ciMaxEl.value, 10) || 20));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      ciMinEl.value = String(lo); ciMaxEl.value = String(hi);
+      s.companionInteractMin = lo;
+      s.companionInteractMax = hi;
+      chatSettings.companionInteractMin = lo;
+      chatSettings.companionInteractMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      miniToast('番茄钟前台互动间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    ciMinEl.onchange = applyCi;
+    ciMaxEl.onchange = applyCi;
+  }
+
   // 20260929bk：悬浮窗2号模式选择（软件内 / 其他应用上）——全局与访客级都渲染
   const f2ModeBtns = $$('#cs-float2-mode .float2-mode-btn');
   const refreshF2ModeUI = () => {

@@ -1298,6 +1298,14 @@ renderCvRing();
 let focusMin = 25, breakMin = 5, round = 1;
 let focusSet = true, breakSet = true;   // 是否设置了时长（false=未设置，正计时）
 let running = false, timerId = null, remaining = focusMin*60, curMode = 'focus';
+/* 20261104：番茄钟设置 + 前台互动字卡库（由主项目聊天设置 postMessage 下发，未下发用默认值） */
+let defaultNoiseOn = true;      // 默认是否播放白噪音
+let defaultLockOn = false;      // 默认是否开启锁机
+let compInteractMin = 8;        // 前台互动随机间隔下限（分钟）
+let compInteractMax = 20;       // 前台互动随机间隔上限（分钟）
+let compActions = [];           // 字卡库「陪伴动作」预设
+let compReplies = [];           // 字卡库「陪伴回复」预设
+let compInteractTimer = null;   // 前台互动心跳定时器
 const timerEl = document.getElementById('timer');
 const timerUnitEl = document.getElementById('timerUnit');
 const focusVal = document.getElementById('focusVal');
@@ -1551,10 +1559,18 @@ function openClearView(){
   renderCvRing();
   // 睡眠小帽：夜间模式显示，可拖走丢掉，过段时间刷新回来
   setupSleepCap();
+  // 20261104：应用聊天设置里的番茄钟默认——锁机/白噪音
+  lockOn = !!defaultLockOn;
+  renderLockBtn();
+  if(defaultNoiseOn && activeNoises.length === 0){
+    activeNoises = ['waves'];   // 默认白噪音：海浪（可在九宫格里切换/取消）
+  }
   // 锁机状态
   applyLockState();
   // 白噪音多选项（只在清屏页显示）
   renderNoiseOptions();
+  // 20261104：默认开白噪音时自动播放（进入专注即出声）
+  if(defaultNoiseOn && activeNoises.length) playNoises();
   // 互动气泡：陪伴开关开才 spawn，否则只显示"TA 安静陪着你"的静默气泡
   spawnBubbles();
   // 计时
@@ -1728,17 +1744,55 @@ function spawnBubbles(){
     b.textContent = '（TA 收到你的邀请，安静地陪着你）';
     b.style.top = '6%'; b.style.left = '2%';
     wrap.appendChild(b);
+    stopCompInteract();  // 陪伴关，停止前台互动心跳
     return;
   }
-  // 陪伴开：按专注模式决定互动频率（轻<专注<深度），原型用默认固定间隔，可在聊天设置里配
-  const msgs = ['（托着腮看着你，觉得你特别好看）','累了就歇会儿，我在这儿陪着你。','（悄悄把温水放在你手边）'];
-  msgs.forEach((m,i)=>{
+  // 陪伴开：启动前台互动——按聊天设置里可配的随机固定间隔，从字卡库「陪伴动作」「陪伴回复」抽卡发气泡
+  startCompInteract();
+  triggerCompInteract();  // 立即先互动一次，之后按间隔来
+}
+
+/* ============ 20261104 前台互动（陪伴动作/陪伴回复，字卡库抽取 + 可配间隔） ============ */
+function compInterval(){
+  const lo = Math.max(1, compInteractMin || 8);
+  const hi = Math.max(lo, compInteractMax || 20);
+  return (lo + Math.random() * (hi - lo)) * 60 * 1000;  // 分钟 → 毫秒
+}
+function startCompInteract(){
+  stopCompInteract();
+  if(!companionOn) return;
+  const loop = () => {
+    if(!focusActive || !companionOn){ compInteractTimer = null; return; }
+    triggerCompInteract();
+    compInteractTimer = setTimeout(loop, compInterval());
+  };
+  compInteractTimer = setTimeout(loop, compInterval());
+}
+function stopCompInteract(){
+  if(compInteractTimer){ clearTimeout(compInteractTimer); compInteractTimer = null; }
+}
+/* 抽一条前台互动气泡：动作描述 + 台词（从字卡库抽，无自定义则用内置兜底） */
+function triggerCompInteract(){
+  const wrap = document.getElementById('cvBubbles');
+  if(!wrap) return;
+  const acts = (compActions && compActions.length) ? compActions : [
+    '（托着腮看着你，觉得你特别好看，但又怕打扰你）',
+    '（悄悄把温水放在你手边，安静退到一旁）',
+    '（撑起一层结界，把喧嚣都挡在外面）'
+  ];
+  const reps = (compReplies && compReplies.length) ? compReplies : ['累了就歇会儿', '我一直在呢', '别太拼了'];
+  const act = acts[Math.floor(Math.random() * acts.length)];
+  const rep = reps[Math.floor(Math.random() * reps.length)];
+  // 两种气泡：动作（带括号描述）+ 台词（短句）
+  const lines = [act, rep];
+  // 清掉旧气泡，最多留 3 条（避免刷屏）
+  while(wrap.children.length >= 3){ wrap.removeChild(wrap.firstChild); }
+  lines.forEach((m, i) => {
     const b = document.createElement('div');
     b.className = 'cv-bubble';
     b.textContent = m;
-    b.style.top = `${i*30 + 6}%`;
-    b.style.left = i%2===0 ? '2%' : '24%';
-    b.style.animationDelay = `${i*0.6}s`;
+    b.style.top = `${6 + i * 30}%`;
+    b.style.left = i % 2 === 0 ? '2%' : '24%';
     wrap.appendChild(b);
   });
 }
@@ -1752,6 +1806,7 @@ function exitFocus(){
   if(cvTimer) clearInterval(cvTimer);
   if(timerId) clearInterval(timerId);
   stopHeldEventTimer();          // 停止后台互动心跳（结算读取已记录的真实事件）
+  stopCompInteract();            // 20261104：停止前台互动心跳（退出专注不再发陪伴气泡）
   stopNoises();                  // 20261104：退出专注即停止白噪音（否则主项目 BgAudio 一直播）
   if(lockOn && typeof window.BmOverlay !== 'undefined' && window.BmOverlay && window.BmOverlay.unlock){
     window.BmOverlay.unlock();
@@ -2650,6 +2705,15 @@ setInterval(updateCvClock, 1000);
         const t = GLOBAL_THEME_MAP[d.globalTheme] || 'lilac';
         applyTheme(t);
       }
+      // 20261104：番茄钟设置 + 前台互动字卡库（从主项目聊天设置下发）
+      if(typeof d.pomodoroFocusMin === 'number'){ focusMin = d.pomodoroFocusMin; }
+      if(typeof d.pomodoroBreakMin === 'number'){ breakMin = d.pomodoroBreakMin; }
+      if(typeof d.pomodoroNoiseOn === 'boolean'){ defaultNoiseOn = d.pomodoroNoiseOn; }
+      if(typeof d.pomodoroLockOn === 'boolean'){ defaultLockOn = d.pomodoroLockOn; }
+      if(typeof d.companionInteractMin === 'number'){ compInteractMin = d.companionInteractMin; }
+      if(typeof d.companionInteractMax === 'number'){ compInteractMax = d.companionInteractMax; }
+      if(Array.isArray(d.companionActions)){ compActions = d.companionActions.slice(); }
+      if(Array.isArray(d.companionReplies)){ compReplies = d.companionReplies.slice(); }
     } else if(d.type === 'pomodoro-self-event-result'){
       // 20261104：主项目 AI 生成「角色做自己的事」结果回传，回填对应事件
       if(typeof fillSelfEventResult === 'function') fillSelfEventResult(d.eventId, d.text || '');
