@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 20261105 网易云直连：原生层带 Cookie 请求网易云接口需要联网权限 -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application>
         <!-- 通知监听服务：用于获取外部音乐 App 的活跃媒体会话并发送媒体控制键 -->
@@ -20,5 +22,12 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- 20261105 网易云直连登录页（WebView 拦截 MUSIC_U Cookie） -->
+        <activity
+            android:name="com.bairimeng.remotecontrol.NeteaseLoginActivity"
+            android:label="登录网易云"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
     </application>
 </manifest>

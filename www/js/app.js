@@ -5536,10 +5536,20 @@ async function _bmImgWarmupOn(anyData) {
     await Promise.all(arr.map(r => bmImgEnsureUrl(r)));
   } catch (e) {}
 }
-/* 20261101 APP 端：冷启动后预热全局已加载的角色数据（characters）。 */
+/* 20261101 APP 端：冷启动后预热全局已加载的图片引用 URL。
+   20261105 修复「导入数据包后刷新图片加载慢」：此前只预热 characters（角色头像/卡面），
+   漏了玩家头像/背景（playerProfile）、全局背景（chatTheme.navBg/homeBg/momentsBg），
+   导致这些图要等对应界面渲染时才发现 URL 缺失、逐个异步 getUri 回填，出现「刷新后加载一会」。
+   现一次性预热三个已加载数据源（都是内存对象，getUri 轻量不读图片字节，后台异步不阻塞渲染）。 */
 async function _bmImgWarmup() {
   if (!bmImgIsApp()) return;
-  try { await _bmImgWarmupOn(characters); } catch (e) {}
+  try {
+    await Promise.all([
+      _bmImgWarmupOn(characters),
+      _bmImgWarmupOn(playerProfile),
+      _bmImgWarmupOn(chatTheme),
+    ]);
+  } catch (e) {}
 }
 /* 20261101 APP 端：同步取 ref 对应的渲染 URL（有缓存直接返回；无缓存返回空串，
    由 bmImgEnsureUrl 异步回填后触发刷新）。 */
@@ -21947,6 +21957,9 @@ let _momentsPosts = null; // 内存缓存（异步写库）
 async function loadMomentPosts() {
   if (_momentsPosts) return _momentsPosts;
   _momentsPosts = await getSetting('momentsPosts', []);
+  // 20261105：朋友圈帖子懒加载后，立即预热帖子里的图片引用 URL（配图/封面），
+  //   避免进朋友圈时图片逐个异步 getUri 回填造成「刷新后加载慢」。
+  if (bmImgIsApp()) { try { _bmImgWarmupOn(_momentsPosts).catch(() => {}); } catch (e) {} }
   return _momentsPosts;
 }
 async function saveMomentPosts() {

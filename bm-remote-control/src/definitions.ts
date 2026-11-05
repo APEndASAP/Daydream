@@ -20,6 +20,14 @@ export interface BmRemoteMediaState {
   packageName?: string;
 }
 
+/** 通用原生 HTTP 请求返回 */
+export interface BmHttpResult {
+  ok: boolean;
+  status?: number;
+  body?: string;
+  reason?: string;
+}
+
 export interface BmRemoteControlPlugin {
   /** 检测是否有活跃的外部媒体会话（正在播放音乐的 App） */
   hasActiveSession(): Promise<BmRemoteResult & { hasSession: boolean }>;
@@ -35,4 +43,14 @@ export interface BmRemoteControlPlugin {
   next(): Promise<BmRemoteResult>;
   /** 上一首 */
   prev(): Promise<BmRemoteResult>;
+  /** 通用原生 HTTP 请求（绕过 CORS），支持自定义 headers/body */
+  httpRequest(options: { url: string; method?: string; headers?: Record<string, string>; body?: string }): Promise<BmHttpResult>;
+  /** 原生层带 Cookie 请求网易云官方接口 */
+  neteaseRequest(options: { url: string; method?: string; cookie?: string }): Promise<BmHttpResult>;
+  /** 读取已保存的网易云 Cookie */
+  neteaseCookie(): Promise<{ ok: boolean; cookie?: string; loggedIn?: boolean }>;
+  /** 清除已保存的网易云 Cookie */
+  neteaseClear(): Promise<BmRemoteResult>;
+  /** 打开网易云 H5 登录页拦截 Cookie */
+  neteaseLogin(): Promise<BmRemoteResult>;
 }

@@ -60,7 +60,13 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *     singleTask launchMode，不会重建 WebView、不重播开屏、不丢通话状态）；
  *   - 图片解码全部 inJustDecodeBounds 采样压缩，杜绝大图 OOM。
  */
-@CapacitorPlugin(name = "BmOverlay")
+@CapacitorPlugin(
+    name = "BmOverlay",
+    permissions = {
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE"
+    }
+)
 public class BmOverlayPlugin extends Plugin {
 
     private WindowManager windowManager;
@@ -141,6 +147,63 @@ public class BmOverlayPlugin extends Plugin {
         }
     }
 
+    /* ============ 1b. 使用情况访问权限（PACKAGE_USAGE_STATS，锁机用） ============
+       20261104：番茄钟「锁机」功能需要此特殊权限。特殊权限无法用 requestPermissions
+       弹窗，只能跳系统「使用情况访问权限」设置页让用户手动开启。 */
+
+    /* 检查是否已开启「使用情况访问权限」 */
+    @PluginMethod
+    public void checkUsageAccess(PluginCall call) {
+        try {
+            boolean granted = hasUsageAccess(getContext());
+            JSObject ret = new JSObject();
+            ret.put("granted", granted);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("granted", false);
+            call.resolve(ret);
+        }
+    }
+
+    /* 跳系统设置页开启「使用情况访问权限」；已授权则直接返回 granted=true */
+    @PluginMethod
+    public void requestUsageAccess(PluginCall call) {
+        try {
+            if (hasUsageAccess(getContext())) {
+                JSObject ret = new JSObject();
+                ret.put("granted", true);
+                ret.put("openedSettings", false);
+                call.resolve(ret);
+                return;
+            }
+            Intent intent = new Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            JSObject ret = new JSObject();
+            ret.put("granted", false);
+            ret.put("openedSettings", true);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("granted", false);
+            ret.put("openedSettings", false);
+            call.resolve(ret);
+        }
+    }
+
+    /* 使用情况访问权限判定（Android 5.0+） */
+    private boolean hasUsageAccess(Context ctx) {
+        try {
+            android.app.AppOpsManager appOps = (android.app.AppOpsManager) ctx.getSystemService(Context.APP_OPS_SERVICE);
+            int mode = appOps.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(), ctx.getPackageName());
+            return mode == android.app.AppOpsManager.MODE_ALLOWED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /* ============ 1b. 所有文件访问权限（MANAGE_EXTERNAL_STORAGE，Android 11+） ============
        Capacitor Filesystem 写公共 Documents 目录（Directory.Documents）在 Android 11+
        分区存储下被禁，必须持有「所有文件访问权限」才能写；该权限是特殊权限，无法用
@@ -204,6 +267,160 @@ public class BmOverlayPlugin extends Plugin {
             return true; // Android 10 及以下无此限制，视为可写
         } catch (Throwable t) {
             return false;
+        }
+    }
+
+    /* ============ 1c. 系统音乐扫描（本地与解析模式「自动检测系统音乐」） ============
+       查询 MediaStore.Audio 系统音乐索引，返回手机里全部音频（歌名/歌手/专辑/时长/uri）。
+       content:// uri 直接交给 <audio> 播放，无需拷贝文件。
+       权限：Android 13+ 用 READ_MEDIA_AUDIO，旧版用 READ_EXTERNAL_STORAGE（运行时动态申请）。 */
+
+    /* 检查是否已授予读系统音频权限（Android 13+ READ_MEDIA_AUDIO，旧版 READ_EXTERNAL_STORAGE）。
+       持有 MANAGE_EXTERNAL_STORAGE（所有文件访问）时也视为已授权（该权限覆盖媒体读取）。 */
+    @PluginMethod
+    public void checkAudioPermission(PluginCall call) {
+        try {
+            boolean granted = hasAudioPermission();
+            JSObject ret = new JSObject();
+            ret.put("granted", granted);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("granted", false);
+            call.resolve(ret);
+        }
+    }
+
+    /* 请求读系统音频权限：Android 13+ 走 READ_MEDIA_AUDIO 弹窗，旧版走 READ_EXTERNAL_STORAGE 弹窗；
+       已持有「所有文件访问」或权限已授予时直接返回 granted=true。
+       用 Capacitor 6 标准 requestPermissionForAlias + @PermissionCallback 机制。 */
+    @PluginMethod
+    public void requestAudioPermission(PluginCall call) {
+        try {
+            if (hasAudioPermission()) {
+                JSObject ret = new JSObject();
+                ret.put("granted", true);
+                call.resolve(ret);
+                return;
+            }
+            String alias = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                    ? "readMediaAudio"
+                    : "readExternalStorage";
+            // 标准权限请求：回调到 audioPermCallback
+            requestPermissionForAlias(alias, call, "audioPermCallback");
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("granted", false);
+            call.resolve(ret);
+        }
+    }
+
+    /* 音频权限请求回调（requestPermissionForAlias 触发系统弹窗后，用户选择后回调） */
+    @org.apache.cordova.cordova.plugin.IPermissionRequestCallback
+    @PermissionCallback
+    private void audioPermCallback(PluginCall call) {
+        try {
+            JSObject ret = new JSObject();
+            ret.put("granted", hasAudioPermission());
+            call.resolve(ret);
+        } catch (Throwable t) {
+            try {
+                JSObject ret = new JSObject();
+                ret.put("granted", false);
+                call.resolve(ret);
+            } catch (Throwable t2) {}
+        }
+    }
+
+    private boolean hasAudioPermission() {
+        try {
+            // 「所有文件访问」覆盖媒体读取，视为已授权
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
+                return true;
+            }
+            String perm = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                    ? "android.permission.READ_MEDIA_AUDIO"
+                    : "android.permission.READ_EXTERNAL_STORAGE";
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                return getContext().checkSelfPermission(perm) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            }
+            return true; // Android 5.1 及以下无运行时权限
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /* 扫描系统音乐库，返回 { songs: [ {id, name, artist, album, duration, uri} ] }。
+       按歌名去重（同名+同歌手只留一条），并按歌名排序；不读取文件内容，只取索引元数据，速度很快。 */
+    @PluginMethod
+    public void scanSystemMusic(PluginCall call) {
+        try {
+            if (!hasAudioPermission()) {
+                JSObject ret = new JSObject();
+                ret.put("ok", false);
+                ret.put("reason", "no_permission");
+                call.resolve(ret);
+                return;
+            }
+            java.util.ArrayList<JSObject> songs = new java.util.ArrayList<JSObject>();
+            java.util.HashSet<String> seen = new java.util.HashSet<String>();
+            String[] proj = new String[]{
+                android.provider.MediaStore.Audio.Media._ID,
+                android.provider.MediaStore.Audio.Media.TITLE,
+                android.provider.MediaStore.Audio.Media.ARTIST,
+                android.provider.MediaStore.Audio.Media.ALBUM,
+                android.provider.MediaStore.Audio.Media.DURATION,
+            };
+            android.database.Cursor c = null;
+            try {
+                c = getContext().getContentResolver().query(
+                    android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    proj, null, null,
+                    android.provider.MediaStore.Audio.Media.TITLE + " ASC");
+                if (c != null) {
+                    int iId = c.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media._ID);
+                    int iTitle = c.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.TITLE);
+                    int iArtist = c.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.ARTIST);
+                    int iAlbum = c.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.ALBUM);
+                    int iDur = c.getColumnIndexOrThrow(android.provider.MediaStore.Audio.Media.DURATION);
+                    while (c.moveToNext()) {
+                        try {
+                            long id = c.getLong(iId);
+                            String title = c.getString(iTitle);
+                            if (title == null || title.trim().length() == 0) continue;
+                            String artist = c.getString(iArtist);
+                            if (artist == null) artist = "";
+                            // 去重：同名 + 同歌手只保留第一条
+                            String key = title.trim() + "|" + artist.trim();
+                            if (!seen.add(key)) continue;
+                            long dur = c.getLong(iDur);   // 毫秒
+                            android.net.Uri uri = android.content.ContentUris.withAppendedId(
+                                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id);
+                            JSObject o = new JSObject();
+                            o.put("id", String.valueOf(id));
+                            o.put("name", title.trim());
+                            o.put("artist", artist.trim());
+                            o.put("album", c.getString(iAlbum));
+                            o.put("duration", dur);
+                            o.put("uri", uri.toString());
+                            songs.add(o);
+                        } catch (Throwable tRow) { /* 单行异常跳过 */ }
+                    }
+                }
+            } finally {
+                try { if (c != null) c.close(); } catch (Throwable t) {}
+            }
+            JSObject ret = new JSObject();
+            ret.put("ok", true);
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (JSObject s : songs) arr.put(s);
+            ret.put("songs", arr);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("ok", false);
+            ret.put("reason", String.valueOf(t.getMessage()));
+            call.resolve(ret);
         }
     }
 
@@ -1028,9 +1245,13 @@ public class BmOverlayPlugin extends Plugin {
     }
 
     /** 回到应用：优先 moveToFront（不重建 Activity / WebView / 不重播开屏），
-        失败再 launchIntent 兜底；悬浮窗移除一律延后一帧。 */
+        失败再 launchIntent 兜底；悬浮窗移除一律延后一帧。
+        20261030：双击进入时先 fireJsEvent("onEnterApp") 通知 JS 恢复通话界面，
+        悬浮窗移除延后一帧（postRemove）——JS 收到事件后 hide 原生窗 + 重建软件内通话，
+        通话本体（_callActive）在 JS 内存里不丢，通话不断。 */
     private void bringAppToFront() {
         try {
+            fireJsEvent("onEnterApp", new JSObject());
             postRemove(); // 先安排移除（延后一帧，不在触摸分发中移除窗口）
             android.app.ActivityManager am = (android.app.ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
             if (am != null) {

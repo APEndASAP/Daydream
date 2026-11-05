@@ -14,7 +14,7 @@ window.bmMusic = (function () {
     //   （"前面顺畅、现在全坏"的根因），故 gdstudio 提到最前做主源，qijieya 降为备选。
     {
       key: 'gdstudio',
-      name: '镜像路径 A（网易云·新稳定源）',
+      name: '镜像路径 A（网易云·已失效 20261105）',
       search: (kw) => `https://music-api.gdstudio.xyz/api.php?types=search&source=netease&name=${encodeURIComponent(kw)}&count=20`,
       song: (song) => `https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=${encodeURIComponent(song.id)}&br=128`,
       lrc: (song) => `https://music-api.gdstudio.xyz/api.php?types=lyric&source=netease&id=${encodeURIComponent(song.id)}`,
@@ -37,7 +37,7 @@ window.bmMusic = (function () {
     //   搜索+直链+歌词一步到位，直链 302 到 music.126.net 真实 mp3，作为新的稳定网易云镜像备选。
     {
       key: 'qingyu',
-      name: '镜像路径 A（网易云·清羽）',
+      name: '镜像路径 A（网易云·清羽·默认）',
       search: (kw) => `https://met.liiiu.cn/meting/api?server=netease&type=search&id=${encodeURIComponent(kw)}&limit=20`,
       song: (song) => `https://met.liiiu.cn/meting/api?server=netease&type=url&id=${encodeURIComponent(song.id)}`,
       lrc: (song) => `https://met.liiiu.cn/meting/api?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
@@ -60,7 +60,7 @@ window.bmMusic = (function () {
     // 主源：qijieya Meting 镜像（网易云），搜索一步返回 url/lrc/pic，带 CORS，长期稳定
     {
       key: 'qijieya',
-      name: '镜像路径 A（网易云·默认）',
+      name: '镜像路径 A（网易云·已失效 20261105）',
       search: (kw) => `https://api.qijieya.cn/meting/?type=search&id=${encodeURIComponent(kw)}&limit=20&server=netease`,
       song: (song) => `https://api.qijieya.cn/meting/?server=netease&type=url&id=${encodeURIComponent(song.id)}`,
       lrc: (song) => `https://api.qijieya.cn/meting/?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
@@ -295,9 +295,12 @@ window.bmMusic = (function () {
       const hit = all.find(s => s.key === pick);
       if (hit) return [hit];
     }
-    // auto 容灾优先级：qijieya(搜索+url一步到位，最稳) > 清羽(新稳定镜像) > gdstudio(直链偶发空) > 酷我 > QQ > iTunes
-    // 20261104：官方 meting(api.i-meto.com) 已 401 挂掉，移出默认容灾顺序（仍可通过手动选源使用），避免每次容灾空耗一次请求
-    const order = ['qijieya', 'qingyu', 'gdstudio', 'kuwo', 'tang', 'itunes'];
+    // auto 容灾优先级（20261105 实测修正）：清羽(met.liiiu.cn，搜索一步返回 title/author/pic/url/lrc，稳定) 提到最前
+    //   > 酷我 > QQ > iTunes。
+    // 20261105 实测失效：qijieya(api.qijieya.cn) 返回空数组 []；gdstudio(music-api.gdstudio.xyz) HTTP 000 连接失败
+    //   ——两者已移出默认容灾顺序（仍可通过手动选源使用），避免每次容灾空耗请求、且搜索不到封面。
+    // 20261104：官方 meting(api.i-meto.com) 已 401 挂掉，移出默认容灾顺序。
+    const order = ['qingyu', 'kuwo', 'tang', 'itunes'];
     const sorted = order.map(k => all.find(s => s.key === k)).filter(Boolean);
     // 追加任何不在 order 里的源（如自定义源）
     all.forEach(s => { if (order.indexOf(s.key) < 0) sorted.push(s); });
@@ -609,6 +612,9 @@ window.bmMusic = (function () {
   let _reloadRetry = 0;
   // 20261104：断点续播进度（秒）。刷新/重进后从 saveSession 恢复，resume 时用它跳转到上次进度。
   let _resumeAt = 0;
+  // 20261105：缓存最后一次有效的音频时长（秒）。Android WebView 挂后台时可能暂停/挂起 audio，
+  //   a.duration 暂时丢失（NaN/0），时长与进度条会闪断归零。用缓存兜底，挂后台回来时长/进度不乱。
+  let _cachedDuration = 0;
   // onerror 时若直链是「会过期的网易云直链」，自动重新解析直链重播一次
   function _onAudioError() {
     if (_gainActive) { _teardownGain(); state.audio.volume = 1; }
@@ -644,6 +650,20 @@ window.bmMusic = (function () {
       state.audio.onended = () => { onEnded(); };
       state.audio.onerror = () => { _onAudioError(); };
       state.audio.ontimeupdate = () => { state.listenSec += 0; };
+      // 20261105：duration 就绪后强制刷新一次进度条/时长（此前 duration 加载慢时，进度 UI 一直停在 00:00，
+      //   要等下一次心跳才更新，用户看到「这首歌显示 0 分/00:00」）
+      state.audio.addEventListener('loadedmetadata', () => {
+        try {
+          if (state.audio && isFinite(state.audio.duration) && state.audio.duration > 0) _cachedDuration = state.audio.duration;
+          if (typeof window.__bmUpdateProgress === 'function') window.__bmUpdateProgress();
+        } catch (e) {}
+      });
+      // 20261105：durationchange 也同步缓存（某些源 metadata 分阶段就绪），挂后台回来 duration 失效时用缓存兜底
+      state.audio.addEventListener('durationchange', () => {
+        try {
+          if (state.audio && isFinite(state.audio.duration) && state.audio.duration > 0) _cachedDuration = state.audio.duration;
+        } catch (e) {}
+      });
       return state.audio;
     }
     // 复用现有元素：清空旧源、重置，但保留同一个元素实例（手势激活延续的关键）
@@ -658,6 +678,7 @@ window.bmMusic = (function () {
     // 20261104：显式切歌（play）一律从头播放，清掉断点续播进度；
     //   只有「刷新/重进后点播放键」走 resume() 才续播到上次进度。
     _resumeAt = 0;
+    _cachedDuration = 0;   // 20261105：切歌重置缓存时长，避免新歌未加载时沿用旧歌 duration
     // 20261104 修复：复用单一 state.audio（rebuildCleanAudio 现在不再新建元素），
     //   保住用户手势激活延续性，避免 autoplay 拦截导致「无声 + 动效消失」。
     const a = rebuildCleanAudio();
@@ -2068,13 +2089,15 @@ window.bmMusicUI = (function () {
     overlay.querySelector('#bm-music-back').onclick = () => closeMusicPage();
     // 20261105：一起听歌页滑动返回手势——从屏幕最左边缘向右滑（超过阈值）触发返回，
     //   与左上角「‹ 返回」按钮等价，回到上一个功能界面（栈式返回，不是退出 App）。
+    // 20261105 修复：EDGE 从 24 放宽到 56（用户反馈「手势滑动没识别」——从偏内侧起步滑动未被捕获），
+    //   且横滑阈值 THRESH 从 70 降到 50，更易触发。
     (function bindSwipeBack() {
-      const EDGE = 24, THRESH = 70;
+      const EDGE = 56, THRESH = 50;
       let sx = 0, sy = 0, tracking = false;
       overlay.addEventListener('touchstart', (e) => {
         if (e.touches.length !== 1) { tracking = false; return; }
         const t = e.touches[0];
-        // 只在页面最左边缘触发，避免与内容横向滑动（如搜索结果/进度条）冲突
+        // 只在页面最左边缘区域触发，避免与内容横向滑动（如搜索结果/进度条）冲突
         if (t.clientX <= EDGE) { tracking = true; sx = t.clientX; sy = t.clientY; }
         else tracking = false;
       }, { passive: true });
@@ -2191,7 +2214,9 @@ window.bmMusicUI = (function () {
     };
 
     // 控制键（20261104：模式二 remote 下走后台遥控）
-    const _isRemotePage = M.state.mode === 'remote';
+    // 20261105：与角色动作/悬浮窗 isRemote 判断对齐——加 && !_netEaseDirect，
+    //   开了直连后音乐页控制键也走内置播放器，不再误发外部 App。
+    const _isRemotePage = (M.state.mode === 'remote') && !_netEaseDirect;
     overlay.querySelector('#bm-music-prev').onclick = () => { if (_isRemotePage) { _remoteAction({ bridge: 'prev', local: () => M.prev() }, null); refreshPlayerUI(); } else M.prev(); };
     overlay.querySelector('#bm-music-next').onclick = () => { if (_isRemotePage) { _remoteAction({ bridge: 'next', local: () => M.next() }, null); refreshPlayerUI(); } else M.next(); };
     overlay.querySelector('#bm-music-pp').onclick = () => {
@@ -2253,15 +2278,18 @@ window.bmMusicUI = (function () {
         _seeking = true;
         const a = M.state.audio;
         const cur = document.getElementById('bm-prog-cur');
-        if (a && a.duration) {
-          const t = (parseInt(progSlider.value, 10) / 1000) * a.duration;
+        // 20261105：duration 失效时用缓存兜底
+        const d = (a && isFinite(a.duration) && a.duration > 0) ? a.duration : _cachedDuration;
+        if (a && d > 0) {
+          const t = (parseInt(progSlider.value, 10) / 1000) * d;
           if (cur) cur.textContent = _fmtTime(t);
         }
       };
       progSlider.onchange = () => {
         const a = M.state.audio;
-        if (a && a.duration) {
-          const t = (parseInt(progSlider.value, 10) / 1000) * a.duration;
+        const d = (a && isFinite(a.duration) && a.duration > 0) ? a.duration : _cachedDuration;
+        if (a && d > 0) {
+          const t = (parseInt(progSlider.value, 10) / 1000) * d;
           try { a.currentTime = t; } catch (e) {}
         }
         _seeking = false;
@@ -2377,7 +2405,10 @@ window.bmMusicUI = (function () {
         const i = parseInt(el.dataset.i, 10);
         M.state.playIndex = i;
         M.playPrepared(i);
-        panel.remove();
+        // 20261105：选歌后不自动关闭列表小窗（用户明确：选了歌它应该能继续存在，
+        //   只有点关闭按钮、或再点一次播放列表按钮才关）。选中后只更新当前曲目高亮。
+        panel.querySelectorAll('.bm-fml-item').forEach(x => x.classList.remove('on'));
+        el.classList.add('on');
       };
     });
   }
@@ -4534,7 +4565,11 @@ window.bmMusicUI = (function () {
     const core = document.getElementById('bm-planet-core');
     if (core) {
       if (cur && cur.pic) {
-        core.style.backgroundImage = `url("${String(cur.pic).replace(/"/g, '\\"')}")`;
+        // 20261105：http 封面强制转 https（WebView 里 http 图片可能被拦截/加载慢），
+        //   否则一起听歌顶部封面球显示空白。backgroundImage 无法设 referrerpolicy，
+        //   但 https + 网易云直链基本能正常加载。
+        const picUrl = String(cur.pic).replace(/^http:\/\//i, 'https://');
+        core.style.backgroundImage = `url("${picUrl.replace(/"/g, '\\"')}")`;
         core.innerHTML = '';
         core.classList.add('has-pic');   // 有封面：减轻深色遮罩，让封面清晰显示
       } else {
@@ -4605,6 +4640,10 @@ window.bmMusicUI = (function () {
     const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
     return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
   };
+  // 20261105 修复「挂后台再回来时长变 00:00」：Android WebView 挂后台时可能暂停/挂起 audio，
+  //   a.duration 会暂时丢失（NaN/0），导致时长与进度滑块全归零。这里缓存最后一次有效的 duration
+  //   （见 _cachedDuration，模块级变量，play/rebuildCleanAudio 里同步更新），
+  //   audio 的 duration 失效时用缓存兜底，时长和进度条不再闪断归零。
   window.__bmUpdateProgress = () => {
     const a = M.state.audio;
     const cur = document.getElementById('bm-prog-cur');
@@ -4614,7 +4653,10 @@ window.bmMusicUI = (function () {
     const fdur = document.getElementById('bm-float-prog-dur');
     const fslider = document.getElementById('bm-float-progress-slider');
     if (!a) return;
-    const d = a.duration;
+    // duration 优先取实时值，失效时用缓存兜底（并持续刷新缓存）
+    let d = a.duration;
+    if (isFinite(d) && d > 0) { _cachedDuration = d; }
+    else { d = _cachedDuration; }
     if (dur && isFinite(d) && d > 0) dur.textContent = _fmtTime(d);
     if (cur) cur.textContent = _fmtTime(a.currentTime || 0);
     if (fdur && isFinite(d) && d > 0) fdur.textContent = _fmtTime(d);
@@ -4960,7 +5002,7 @@ window.bmMusicUI = (function () {
     const song = cur || { name: '去点首歌吧', artist: '播放列表里的歌都能点', pic: '' };
     fw.innerHTML = `
       <div class="bm-float-dot" id="bm-float-dot">
-        ${song.pic ? `<img src="${esc(song.pic)}" alt="" draggable="false">` : '♪'}
+        ${song.pic ? coverImgHTML(song.pic) : '♪'}
       </div>
       <div class="bm-float-mini" id="bm-float-mini">
         <div class="bm-mini-avs">
@@ -4993,7 +5035,7 @@ window.bmMusicUI = (function () {
           <button class="bm-float-end" id="bm-float-end" title="结束一起听">结束</button>
         </div>
         <div class="bm-float-body">
-          <div class="bm-float-cover">${song.pic ? `<img src="${esc(song.pic)}" alt="" draggable="false">` : '♪'}</div>
+          <div class="bm-float-cover">${song.pic ? coverImgHTML(song.pic) : '♪'}</div>
           <div class="bm-float-info">
             <div class="bm-float-title">${esc(song.name)}</div>
             <div class="bm-float-artist">${esc(song.artist)}</div>
@@ -5069,7 +5111,11 @@ window.bmMusicUI = (function () {
     }
     applyFloatTextStyle();
     // 控制键（20261104：模式二 remote 下走后台遥控 _remoteAction）
-    const _isRemote = M.state.mode === 'remote';
+    // 20261105：与角色动作 isRemote 判断对齐——「真遥控外部 App」= mode=remote 且未开网易云直连。
+    //   开了直连后悬浮窗控制的是白日梦内置播放器（走 M.toggle/M.prev/M.next），
+    //   否则点播放/暂停会误发给外部 App 的 MediaSession，外部无活跃会话时报 no_active_session，
+    //   表现为「点了没反应/只刷新不播放」。
+    const _isRemote = (M.state.mode === 'remote') && !_netEaseDirect;
     fw.querySelector('#bm-float-prev').onclick = () => {
       if (_isRemote) { _remoteAction({ bridge: 'prev', local: () => M.prev() }, null); refreshPlayerUI(); return; }
       M.prev();
@@ -5099,15 +5145,18 @@ window.bmMusicUI = (function () {
       fprog.oninput = () => {
         _floatSeeking = true;
         const a = M.state.audio;
-        if (a && a.duration && fcurEl) {
-          const t = (parseInt(fprog.value, 10) / 1000) * a.duration;
+        // 20261105：duration 用实时值，失效时用缓存兜底（挂后台回来 a.duration 丢失导致 seek 失效）
+        const d = (a && isFinite(a.duration) && a.duration > 0) ? a.duration : _cachedDuration;
+        if (a && d > 0 && fcurEl) {
+          const t = (parseInt(fprog.value, 10) / 1000) * d;
           fcurEl.textContent = _fmtTime(t);
         }
       };
       fprog.onchange = () => {
         const a = M.state.audio;
-        if (a && a.duration) {
-          const t = (parseInt(fprog.value, 10) / 1000) * a.duration;
+        const d = (a && isFinite(a.duration) && a.duration > 0) ? a.duration : _cachedDuration;
+        if (a && d > 0) {
+          const t = (parseInt(fprog.value, 10) / 1000) * d;
           try { a.currentTime = t; } catch (e) {}
         }
         _floatSeeking = false;
@@ -5126,6 +5175,10 @@ window.bmMusicUI = (function () {
         // 20261104：玩家可自由上下滚动歌词（wheel/touch 不拦截），只有「唱到新一句」才跳转回当前句。
         let _flyLastActive = -1;
         const upd = () => {
+          // 20261105：悬浮窗进度条/时长独立刷新——此前只靠音乐页 rAF（startPlanetAnimation）驱动，
+          //   音乐页关闭只挂悬浮窗时，进度条与「当前/总时长」永远停在 00:00（用户反馈「显示 0 分」）。
+          //   这里每次心跳都同步刷新进度（__bmUpdateProgress 是模块级，含主进度条 + 悬浮窗进度条）。
+          if (typeof window.__bmUpdateProgress === 'function') { try { window.__bmUpdateProgress(); } catch (e) {} }
           // 20261104：同步「已一起听 X」时长——togetherText() 只在渲染时算一次，
           //   之前卡片展开后时长永远停在初始值（截图里「已一起听」后面是空的），
           //   这里每次心跳都把最新时长写回 #bm-float-time。
@@ -5168,6 +5221,13 @@ window.bmMusicUI = (function () {
       } else {
         if (fly) fly.innerHTML = '<div class="bm-music-empty">暂无歌词</div>';
         if (miniLyric) { miniLyric.textContent = ''; miniLyric.dataset.cur = ''; }
+        // 20261105：无歌词歌曲也要驱动进度条/时长刷新（此前无歌词不启动定时器 → 进度永远 00:00）
+        const updNoLrc = () => {
+          if (typeof window.__bmUpdateProgress === 'function') { try { window.__bmUpdateProgress(); } catch (e) {} }
+          const ft = fw.querySelector('#bm-float-time');
+          if (ft) { const tt = togetherText(); if (ft.textContent !== tt) ft.textContent = tt; }
+        };
+        _floatLyricTimer = setInterval(updNoLrc, 500);
       }
     }
     // 位置错开打字圆点：默认右下角，打字圆点在右下时会往上避让；支持拖拽 + 持久化

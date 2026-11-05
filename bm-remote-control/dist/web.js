@@ -21,4 +21,19 @@ export class BmRemoteControlWeb extends WebPlugin {
     async prev() {
         return { ok: false, reason: 'web_not_supported' };
     }
+    async httpRequest(_options) {
+        return { ok: false, reason: 'web_not_supported' };
+    }
+    async neteaseRequest(_options) {
+        return { ok: false, reason: 'web_not_supported' };
+    }
+    async neteaseCookie() {
+        return { ok: false, loggedIn: false };
+    }
+    async neteaseClear() {
+        return { ok: false, reason: 'web_not_supported' };
+    }
+    async neteaseLogin() {
+        return { ok: false, reason: 'web_not_supported' };
+    }
 }

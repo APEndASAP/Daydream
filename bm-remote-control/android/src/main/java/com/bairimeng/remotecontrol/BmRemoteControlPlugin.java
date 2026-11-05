@@ -308,4 +308,199 @@ public class BmRemoteControlPlugin extends Plugin {
             resolveErr(call, String.valueOf(t.getMessage()));
         }
     }
+
+    /* ============================================================
+       网易云直连（20261105 新增）：
+       · neteaseRequest(url, method, cookie)：原生层（Java，不受 CORS 限制）带上玩家
+         的网易云 Cookie 发起 HTTP 请求，返回 JSON 字符串给前端。这是「登录直连」模式
+         的核心桥接——绕过浏览器 CORS，让角色/玩家能直接搜歌、读歌单、拿直链。
+       · neteaseLogin()：打开网易云 H5 登录页（内置 WebView），拦截并提取 MUSIC_U
+         Cookie 返回给前端，前端存本地（绝不外传）。
+       · neteaseCookie()：读取当前保存的 MUSIC_U Cookie（前端可据此判断是否已登录）。
+       · neteaseClear()：清除本地保存的 Cookie（退出登录）。
+       ============================================================ */
+
+    private static final String NETEASE_PREF = "bm_netease_direct";
+    private static final String NETEASE_KEY_COOKIE = "music_u_cookie";
+
+    private android.content.SharedPreferences neteasePrefs() {
+        return getContext().getSharedPreferences(NETEASE_PREF, Context.MODE_PRIVATE);
+    }
+
+    /** 原生层 HTTP GET/POST（带 Cookie + UA + Referer，绕过 CORS），返回响应体字符串。 */
+    private String httpRequest(String url, String method, String cookie) throws Exception {
+        java.net.HttpURLConnection conn = null;
+        try {
+            java.net.URL u = new java.net.URL(url);
+            conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setConnectTimeout(12000);
+            conn.setReadTimeout(15000);
+            conn.setRequestMethod(method == null ? "GET" : method.toUpperCase());
+            conn.setRequestProperty("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36");
+            conn.setRequestProperty("Referer", "https://music.163.com/");
+            conn.setRequestProperty("Accept", "application/json,text/plain,*/*");
+            if (cookie != null && !cookie.isEmpty()) {
+                conn.setRequestProperty("Cookie", cookie);
+            }
+            int code = conn.getResponseCode();
+            java.io.InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            if (is == null) return "";
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+            is.close();
+            return bos.toString("UTF-8");
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** 原生层带 Cookie 请求（前端传入完整 URL + 可选 method + Cookie），返回 {ok,status,body}。 */
+    @PluginMethod
+    public void neteaseRequest(PluginCall call) {
+        String url = call.getString("url");
+        String method = call.getString("method", "GET");
+        String cookie = call.getString("cookie");
+        if (url == null || url.isEmpty()) { resolveErr(call, "empty_url"); return; }
+        // 未显式传 cookie 时，用本地已保存的 Cookie
+        if (cookie == null || cookie.isEmpty()) {
+            cookie = neteasePrefs().getString(NETEASE_KEY_COOKIE, "");
+        }
+        try {
+            String body = httpRequest(url, method, cookie);
+            JSObject o = new JSObject();
+            o.put("status", 200);
+            o.put("body", body);
+            resolveOk(call, o);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
+        }
+    }
+
+    /** 读取当前已保存的网易云 Cookie（前端据此判断登录态）。 */
+    @PluginMethod
+    public void neteaseCookie(PluginCall call) {
+        String cookie = neteasePrefs().getString(NETEASE_KEY_COOKIE, "");
+        JSObject o = new JSObject();
+        o.put("cookie", cookie);
+        o.put("loggedIn", cookie != null && !cookie.isEmpty());
+        resolveOk(call, o);
+    }
+
+    /** 清除本地保存的 Cookie（退出登录）。 */
+    @PluginMethod
+    public void neteaseClear(PluginCall call) {
+        neteasePrefs().edit().remove(NETEASE_KEY_COOKIE).apply();
+        resolveOk(call, null);
+    }
+
+    /** 保存 Cookie（供 WebView 登录回调使用）。 */
+    private void saveCookie(String cookie) {
+        if (cookie == null) return;
+        // 只保留 MUSIC_U 关键字段，避免把整个 Cookie 头都存下来
+        StringBuilder keep = new StringBuilder();
+        for (String part : cookie.split(";")) {
+            String p = part.trim();
+            if (p.isEmpty()) continue;
+            String key = p.split("=", 2)[0].trim();
+            if ("MUSIC_U".equalsIgnoreCase(key) || "__csrf".equalsIgnoreCase(key)) {
+                if (keep.length() > 0) keep.append("; ");
+                keep.append(p);
+            }
+        }
+        if (keep.length() == 0) keep = new StringBuilder(cookie);
+        neteasePrefs().edit().putString(NETEASE_KEY_COOKIE, keep.toString()).apply();
+    }
+
+    /** 打开网易云 H5 登录页（内置 WebView），拦截 MUSIC_U Cookie 后返回。 */
+    @PluginMethod
+    public void neteaseLogin(PluginCall call) {
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    getContext(), NeteaseLoginActivity.class);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            resolveOk(call, null);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
+        }
+    }
+
+    /* ============================================================
+       20261105 B 部分：通用原生 HTTP 请求代理（绕过 CORS）。
+       · httpRequest(url, method, headers, body)：原生层（Java，不受浏览器 CORS
+         限制）带浏览器 UA + 自定义 headers（可选 Cookie/Referer/User-Agent）发起
+         GET/POST 请求，返回 { ok, status, body }。这是 B站 WBI / 小红书 X-s /
+         抖音等「前端 fetch 被 CORS 挡住」接口的统一桥接通道。
+       · headers 参数为 JSON 对象（可选），前端可传 Referer/Cookie/X-s/X-t 等
+         自定义头。body 用于 POST。
+       ============================================================ */
+
+    /** 通用原生 HTTP 请求：绕过 CORS，带自定义 headers。 */
+    @PluginMethod
+    public void httpRequest(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || url.isEmpty()) { resolveErr(call, "empty_url"); return; }
+        String method = call.getString("method", "GET");
+        String body = call.getString("body", null);
+        JSObject headers = call.getObject("headers");
+        java.net.HttpURLConnection conn = null;
+        try {
+            java.net.URL u = new java.net.URL(url);
+            conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setConnectTimeout(12000);
+            conn.setReadTimeout(15000);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestMethod(method == null ? "GET" : method.toUpperCase());
+            // 默认浏览器 UA（若 headers 里带了则覆盖）
+            conn.setRequestProperty("User-Agent",
+                    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36");
+            conn.setRequestProperty("Accept", "application/json,text/plain,*/*");
+            // 应用前端传入的自定义 headers（Referer/Cookie/X-s/X-t 等）
+            if (headers != null) {
+                java.util.Iterator<String> it = headers.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    try {
+                        String v = headers.getString(k);
+                        if (v != null && !v.isEmpty()) {
+                            conn.setRequestProperty(k, v);
+                        }
+                    } catch (Throwable t) { /* ignore 单个 header */ }
+                }
+            }
+            // POST body
+            if (body != null && !body.isEmpty()) {
+                conn.setDoOutput(true);
+                byte[] bytes = body.getBytes("UTF-8");
+                conn.setRequestProperty("Content-Length", String.valueOf(bytes.length));
+                java.io.OutputStream os = conn.getOutputStream();
+                os.write(bytes);
+                os.flush();
+                os.close();
+            }
+            int code = conn.getResponseCode();
+            java.io.InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            String respBody = "";
+            if (is != null) {
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+                is.close();
+                respBody = bos.toString("UTF-8");
+            }
+            JSObject o = new JSObject();
+            o.put("status", code);
+            o.put("body", respBody);
+            resolveOk(call, o);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
 }
+

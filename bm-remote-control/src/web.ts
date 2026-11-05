@@ -1,5 +1,5 @@
 import { WebPlugin } from '@capacitor/core';
-import type { BmRemoteControlPlugin, BmRemoteResult, BmRemoteMediaState } from './definitions';
+import type { BmRemoteControlPlugin, BmRemoteResult, BmRemoteMediaState, BmHttpResult } from './definitions';
 
 export class BmRemoteControlWeb extends WebPlugin implements BmRemoteControlPlugin {
   async hasActiveSession(): Promise<BmRemoteResult & { hasSession: boolean }> {
@@ -21,6 +21,21 @@ export class BmRemoteControlWeb extends WebPlugin implements BmRemoteControlPlug
     return { ok: false, reason: 'web_not_supported' };
   }
   async prev(): Promise<BmRemoteResult> {
+    return { ok: false, reason: 'web_not_supported' };
+  }
+  async httpRequest(_options: { url: string; method?: string; headers?: Record<string, string>; body?: string }): Promise<BmHttpResult> {
+    return { ok: false, reason: 'web_not_supported' };
+  }
+  async neteaseRequest(_options: { url: string; method?: string; cookie?: string }): Promise<BmHttpResult> {
+    return { ok: false, reason: 'web_not_supported' };
+  }
+  async neteaseCookie(): Promise<{ ok: boolean; cookie?: string; loggedIn?: boolean }> {
+    return { ok: false, loggedIn: false };
+  }
+  async neteaseClear(): Promise<BmRemoteResult> {
+    return { ok: false, reason: 'web_not_supported' };
+  }
+  async neteaseLogin(): Promise<BmRemoteResult> {
     return { ok: false, reason: 'web_not_supported' };
   }
 }
