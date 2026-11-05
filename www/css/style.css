@@ -2528,6 +2528,10 @@ body.theme-light .callend-msg .callend-reason {
   position: relative;
   z-index: 2;
 }
+/* 20261105：头像「半叠式」伸出 hero 面板的下半部分，会被同级且靠后的 .player-info(z-index:2)
+   覆盖，导致「点击头像编辑资料」热区只有上半部分可命中。把 hero 提升到 z-index:3（仍低于顶栏 6），
+   让头像整体浮在 .player-info 之上，热区覆盖整个圆形头像。 */
+#view-home .player-hero { z-index: 3; }
 /* 备用：需要"hero 面板透明化、背景交给 #home-fullbg"的一体式形态时，给 hero 加 .bg-ghost */
 .player-hero.bg-ghost {
   background: transparent;
@@ -6745,6 +6749,10 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
   background: var(--bm-accent-glow); border-color: var(--bm-accent); color: var(--bm-ink);
 }
 .bm-mode.disabled { opacity: .4; cursor: not-allowed; }
+/* 20261104 修正：三模式按钮永远可切换——「未选中」只是普通态（不灰、可点），
+   仅「选中」态高亮。不再用 .off 灰掉按钮，避免玩家无法切换模式。 */
+.bm-mode.off { }
+.bm-mode.off:active { transform: scale(.94); }
 /* 20261104：一起听状态条——正在一起听时显示「正在和 XX 一起听 + 结束按钮」 */
 .bm-music-together {
   position: relative; z-index: 1;
@@ -7844,6 +7852,14 @@ body.theme-light .bm-music-float .bm-float-mini {
 }
 body.theme-light .bm-music-float .bm-float-title { text-shadow: none; }
 body.theme-light .bm-music-float .bm-fly-line.on { text-shadow: none; }
+/* 20261104 修复「拖动悬浮窗把图片拖走」：悬浮窗/音乐页内所有图片禁止原生拖拽 + 禁止选中 */
+.bm-music-float img,
+.bm-music-page img {
+  -webkit-user-drag: none;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;   /* 图片不拦截事件，拖拽/点击统一由容器处理 */
+}
 /* 拖动把手：封面图/头像/歌词/按钮不参与拖动，只有头部条与歌名信息区可拖（显示抓手光标提示） */
 .bm-music-float .bm-float-card-head,
 .bm-music-float .bm-float-head,
@@ -8362,3 +8378,16 @@ body .bm-music-float.fbg-dark .bm-float-card {
 .bm-remote-btn.bm-remote-pp { background: var(--bm-accent-glow); border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-remote-btn.bm-remote-blind { flex: 0 0 auto; }
 .bm-remote-tip-warn { color: var(--bm-ink-faint, #8a94ac); font-size: 11px; }
+/* 20261104 后台遥控面板：不透明背板 + 展开收起 + 权限提示 */
+.bm-remote-box-solid { background: var(--bm-card-solid, var(--bm-card)); }
+.bm-remote-headbar { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+.bm-remote-fold { background: none; border: none; color: var(--bm-ink-dim); font-size: 12px; cursor: pointer; padding: 2px 4px; }
+.bm-remote-fold:hover { color: var(--bm-accent); }
+.bm-remote-body { display: flex; flex-direction: column; gap: 10px; }
+.bm-remote-perm {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 11px; border-radius: 10px; background: rgba(232,163,61,.12);
+  border: 1px solid rgba(232,163,61,.4);
+}
+.bm-remote-perm-txt { font-size: 12px; color: var(--bm-ink); line-height: 1.5; flex: 1; min-width: 0; }
+.bm-remote-perm-btn { flex: 0 0 auto; padding: 6px 12px; font-size: 12px; }

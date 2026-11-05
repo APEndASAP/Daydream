@@ -3,6 +3,11 @@
     package="com.bairimeng.remotecontrol">
     <!-- 控制外部媒体会话所需的监听通知权限（Android 11+ 获取活跃 MediaSession 需要） -->
     <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL" />
+    <!-- 20261105 后台控制音乐权限注入：前台服务 + 媒体播放前台服务类型 + 唤醒锁，
+         保证 App 能长期驻留后台监听外部媒体会话（Doze/后台冻结下不中断遥控） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application>
         <!-- 通知监听服务：用于获取外部音乐 App 的活跃媒体会话并发送媒体控制键 -->

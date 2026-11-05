@@ -103,6 +103,35 @@ public class BmRemoteControlPlugin extends Plugin {
                 o.put("title", md.getString(android.media.MediaMetadata.METADATA_KEY_TITLE));
                 o.put("artist", md.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST));
                 o.put("album", md.getString(android.media.MediaMetadata.METADATA_KEY_ALBUM));
+                // 20261105：读封面——网易云/QQ音乐/酷狗通常把封面放进 METADATA_KEY_ALBUM_ART(Bitmap)
+                //   或 METADATA_KEY_ART(Bitmap)。读出来后转 base64 data URI 回传前端，让模式二能显示后台封面。
+                try {
+                    android.graphics.Bitmap art = md.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART);
+                    if (art == null) art = md.getBitmap(android.media.MediaMetadata.METADATA_KEY_ART);
+                    if (art == null) {
+                        // 部分 App 用 METADATA_KEY_ART_URI（Uri）或 METADATA_KEY_ALBUM_ART_URI
+                        try {
+                            String artUri = md.getString(android.media.MediaMetadata.METADATA_KEY_ART_URI);
+                            if (artUri != null && !artUri.isEmpty()) o.put("cover", artUri);
+                        } catch (Throwable t2) { /* ignore */ }
+                    }
+                    if (art != null) {
+                        // 压缩到 256px 以内，控制 base64 体积（原封面可能上千像素，直接传会爆内存/拖慢桥接）
+                        int w = art.getWidth(), h = art.getHeight();
+                        int maxSide = 256;
+                        if (w > maxSide || h > maxSide) {
+                            float scale = Math.min((float) maxSide / w, (float) maxSide / h);
+                            int nw = Math.max(1, Math.round(w * scale));
+                            int nh = Math.max(1, Math.round(h * scale));
+                            art = android.graphics.Bitmap.createScaledBitmap(art, nw, nh, true);
+                        }
+                        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                        art.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, bos);
+                        byte[] bytes = bos.toByteArray();
+                        String b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+                        o.put("cover", "data:image/jpeg;base64," + b64);
+                    }
+                } catch (Throwable t) { /* ignore */ }
             }
         } catch (Throwable t) { /* ignore */ }
         return o;
@@ -126,6 +155,68 @@ public class BmRemoteControlPlugin extends Plugin {
         ret.put("ok", false);
         ret.put("reason", reason);
         call.resolve(ret);
+    }
+
+    /** 通知监听服务是否已被授权（Android 11+ 稳定枚举第三方会话依赖此权限）。 */
+    @PluginMethod
+    public void isNotificationListenerEnabled(PluginCall call) {
+        JSObject o = new JSObject();
+        try {
+            ComponentName cn = new ComponentName(getContext(), BmRemoteNotificationListener.class);
+            String flat = android.provider.Settings.Secure.getString(
+                    getContext().getContentResolver(),
+                    "enabled_notification_listeners");
+            boolean enabled = flat != null && flat.contains(cn.flattenToString());
+            o.put("enabled", enabled);
+        } catch (Throwable t) {
+            o.put("enabled", false);
+        }
+        resolveOk(call, o);
+    }
+
+    /** 跳转系统「通知使用权」设置页，引导用户授权通知监听。 */
+    @PluginMethod
+    public void openNotificationListenerSettings(PluginCall call) {
+        try {
+            android.content.Intent intent = new android.content.Intent(SETTINGS_ACTION);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            resolveOk(call, null);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
+        }
+    }
+
+    /** 20261105：跳转系统「使用情况访问」（PACKAGE_USAGE_STATS）设置页，
+        用于锁机权限——该权限是特殊权限，无法用 requestPermissions 弹窗申请，
+        只能引导用户去系统设置手动开启。 */
+    @PluginMethod
+    public void openUsageAccessSettings(PluginCall call) {
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            resolveOk(call, null);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
+        }
+    }
+
+    /** 20261105：是否已授予「使用情况访问」权限（锁机权限）。 */
+    @PluginMethod
+    public void hasUsageAccess(PluginCall call) {
+        JSObject o = new JSObject();
+        try {
+            android.app.AppOpsManager aom = (android.app.AppOpsManager)
+                    getContext().getSystemService(Context.APP_OPS_SERVICE);
+            int mode = aom.unsafeCheckOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(), getContext().getPackageName());
+            o.put("granted", mode == android.app.AppOpsManager.MODE_ALLOWED);
+        } catch (Throwable t) {
+            o.put("granted", false);
+        }
+        resolveOk(call, o);
     }
 
     /** 是否有活跃外部媒体会话。 */

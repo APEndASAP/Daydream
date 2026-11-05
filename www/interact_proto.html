@@ -301,12 +301,21 @@
   .char-sheet .sheet h3{font-size:16px;font-weight:700;margin-bottom:16px;text-align:center;}
   .char-sheet .grid{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;}
   .char-sheet .chip{
-    width:64px;height:64px;border-radius:50%;border:3px solid transparent;cursor:pointer;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-    font-size:26px;color:#fff;transition:transform .16s, border-color .2s;
+    /* 修复：chip 是「圆形头像 + 下方名字」的纵向容器，不能本身是圆形——
+       否则 50px 头像 + 11px 名字塞不进 64px 圆，头像溢出、名字压到圆环上 */
+    width:76px;cursor:pointer;border:0;background:none;
+    display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:7px;
+    font-size:26px;color:#fff;transition:transform .16s;
   }
-  .char-sheet .chip span{font-size:11px;color:var(--ink);}
-  .char-sheet .chip.sel{border-color:var(--main);transform:scale(1.08);}
+  .char-sheet .chip .face{
+    width:56px;height:56px;border-radius:50%;overflow:hidden;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;
+    border:3px solid transparent;box-sizing:border-box;
+    transition:border-color .2s, transform .16s;
+  }
+  .char-sheet .chip .face img{width:100%;height:100%;object-fit:cover;display:block;border-radius:50%;}
+  .char-sheet .chip span{font-size:11px;color:var(--ink);line-height:1.35;text-align:center;max-width:88px;word-break:break-word;overflow-wrap:break-word;}
+  .char-sheet .chip.sel .face{border-color:var(--main);transform:scale(1.06);}
 
   /* ============ 清屏页（开屏页样式） ============ */
   .clear-view{
@@ -1149,7 +1158,8 @@ function charFaceHtml(c, size){
     return `<img src="${c.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;">`;
   }
   const ch = c ? (c.emoji || (c.name ? c.name[0] : '?')) : '✨';
-  return `<span style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:${Math.round(size*0.5)}px;">${ch}</span>`;
+  // emoji 字号放大到容器 0.8，让图标撑满圆形（原 0.5 偏小）
+  return `<span style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:${Math.round(size*0.8)}px;line-height:1;">${ch}</span>`;
 }
 
 function renderArt(){
@@ -1192,7 +1202,7 @@ function renderCharGrid(){
   CHARS.forEach((c,i)=>{
     const chip = document.createElement('div');
     chip.className = 'chip' + (selectedChar===i ? ' sel' : '');
-    chip.innerHTML = `<div style="width:50px;height:50px;border-radius:50%;background:${c.color};display:flex;align-items:center;justify-content:center;font-size:24px;overflow:hidden;">${charFaceHtml(c, 24)}</div><span>${c.name}</span>`;
+    chip.innerHTML = `<div class="face" style="background:${c.color};">${charFaceHtml(c, 24)}</div><span>${c.name}</span>`;
     chip.addEventListener('click', ()=>{
       selectedChar = i;
       renderCharGrid();
@@ -1285,7 +1295,16 @@ function renderLockBtn(){
   lockBtn.classList.toggle('on', lockOn);
   lockBtn.title = lockOn ? '锁机开关（已开）' : '锁机开关（已关）';
 }
-lockBtn.onclick = ()=>{ lockOn = !lockOn; renderLockBtn(); };
+lockBtn.onclick = ()=>{
+  // 20261104：点锁机开关时申请「使用情况访问」权限（PACKAGE_USAGE_STATS），未授权引导跳设置页
+  if(!lockOn){
+    requestLockPermission(() => {
+      lockOn = true; renderLockBtn();
+    });
+  } else {
+    lockOn = false; renderLockBtn();
+  }
+};
 renderLockBtn();
 
 createJellyRadio(document.getElementById('jr2'), { items:['轻陪伴','专注陪伴','深度陪伴'], defaultValue:'轻陪伴', activeColor:'#7c5cf0', onChange:(v)=>{ focusMode = v; } });
@@ -1306,6 +1325,7 @@ let compInteractMax = 20;       // 前台互动随机间隔上限（分钟）
 let compActions = [];           // 字卡库「陪伴动作」预设
 let compReplies = [];           // 字卡库「陪伴回复」预设
 let compInteractTimer = null;   // 前台互动心跳定时器
+let compInteractSeq = 0;        // 20261105：前台互动 AI 生成事件序号
 const timerEl = document.getElementById('timer');
 const timerUnitEl = document.getElementById('timerUnit');
 const focusVal = document.getElementById('focusVal');
@@ -1675,31 +1695,28 @@ function applyLockState(){
   }
 }
 
-function requestLockPermission(){
-  // 移动端：优先调原生锁定（真机需插件）；无插件时引导跳「使用情况访问权限」设置页
+function requestLockPermission(onGranted){
+  // 20261104：点锁机时申请「使用情况访问」权限（PACKAGE_USAGE_STATS）
+  //   · 真机走 BmOverlay.requestUsageAccess（检测 + 引导跳设置页）
+  //   · 授权后回调 onGranted 真正开启锁机；PC/Web 端演示，不真锁
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  if(isMobile){
-    if(typeof window.BmOverlay !== 'undefined' && window.BmOverlay && window.BmOverlay.lock){
-      window.BmOverlay.lock();
-    } else if(typeof window.Capacitor !== 'undefined' && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay && window.Capacitor.Plugins.BmOverlay.lock){
-      window.Capacitor.Plugins.BmOverlay.lock();
-    } else {
-      // PACKAGE_USAGE_STATS 特殊权限：无法原生弹窗，只能引导用户到「使用情况访问权限」设置页手动开启
-      try {
-        if(window.location.protocol === 'https:' || isMobile){
-          const intent = 'android.settings.USAGE_ACCESS_SETTINGS';
-          const href = 'intent://' + intent + '#Intent;end';
-          const a = document.createElement('a');
-          a.href = href;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        }
-      } catch(e){}
-      hintPill.textContent = '🔒 已进入锁机状态（原型）';
-    }
+  const Bm = (typeof window.Capacitor !== 'undefined' && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay) ? window.Capacitor.Plugins.BmOverlay : null;
+  if(isMobile && Bm && typeof Bm.requestUsageAccess === 'function'){
+    Bm.requestUsageAccess().then(r => {
+      if(r && r.granted){
+        // 已授权 → 直接开锁
+        if(onGranted) onGranted();
+      } else {
+        // 未授权 → 已跳转设置页，提示用户手动开启后回来再点一次
+        if(window.parent && window.parent.miniToast){ window.parent.miniToast('请开启「使用情况访问权限」后回来再点锁机'); }
+        else if(hintPill) hintPill.textContent = '⚠️ 请先在系统设置开启「使用情况访问权限」';
+      }
+    }).catch(() => {
+      if(onGranted) onGranted();  // 兜底：插件异常也放行（原型演示）
+    });
   } else {
-    hintPill.textContent = '🔒 锁机状态（PC 端演示，不真锁）';
+    // Web / PC 演示：不真锁，直接放行
+    if(onGranted) onGranted();
   }
 }
 
@@ -1771,10 +1788,28 @@ function startCompInteract(){
 function stopCompInteract(){
   if(compInteractTimer){ clearTimeout(compInteractTimer); compInteractTimer = null; }
 }
-/* 抽一条前台互动气泡：动作描述 + 台词（从字卡库抽，无自定义则用内置兜底） */
+/* 抽一条前台互动气泡：动作描述 + 台词
+   20261105：AI 模式下让 AI 自己生成（贴合人设），postMessage 请求主项目异步回填；
+   字卡模式从字卡库「陪伴动作」「陪伴回复」抽，无自定义用内置兜底。 */
 function triggerCompInteract(){
   const wrap = document.getElementById('cvBubbles');
   if(!wrap) return;
+  if(aiMode){
+    // AI 模式：请求主项目用 AI 生成一句「陪伴动作+台词」，异步回填气泡
+    const eid = compInteractSeq++;
+    if(window.parent && window.parent !== window){
+      const name = (selectedChar !== null && CHARS[selectedChar]) ? (CHARS[selectedChar].name || 'TA') : 'TA';
+      window.parent.postMessage({ type:'pomodoro-gen-comp-interact', payload:{ eventId:eid, charName:name } }, '*');
+    } else {
+      // 独立原型无父窗口：降级字卡抽取
+      emitCompBubbleFromPool(wrap);
+    }
+    return;
+  }
+  emitCompBubbleFromPool(wrap);
+}
+/* 字卡模式 / AI 失败兜底：从字卡库抽「动作 + 台词」气泡 */
+function emitCompBubbleFromPool(wrap){
   const acts = (compActions && compActions.length) ? compActions : [
     '（托着腮看着你，觉得你特别好看，但又怕打扰你）',
     '（悄悄把温水放在你手边，安静退到一旁）',
@@ -1784,8 +1819,10 @@ function triggerCompInteract(){
   const act = acts[Math.floor(Math.random() * acts.length)];
   const rep = reps[Math.floor(Math.random() * reps.length)];
   // 两种气泡：动作（带括号描述）+ 台词（短句）
-  const lines = [act, rep];
-  // 清掉旧气泡，最多留 3 条（避免刷屏）
+  emitCompBubbles(wrap, [act, rep]);
+}
+/* 把 lines 数组渲染成气泡（最多留 3 条） */
+function emitCompBubbles(wrap, lines){
   while(wrap.children.length >= 3){ wrap.removeChild(wrap.firstChild); }
   lines.forEach((m, i) => {
     const b = document.createElement('div');
@@ -1795,6 +1832,12 @@ function triggerCompInteract(){
     b.style.left = i % 2 === 0 ? '2%' : '24%';
     wrap.appendChild(b);
   });
+}
+/* AI 生成回填：主项目 pomodoro-comp-interact-result 回传后，填充前台互动气泡 */
+function fillCompInteractResult(eventId, lines){
+  const wrap = document.getElementById('cvBubbles');
+  if(!wrap) return;
+  emitCompBubbles(wrap, (Array.isArray(lines) && lines.length) ? lines : ['累了就歇会儿']);
 }
 
 let cvTimer = null;
@@ -2398,6 +2441,33 @@ document.querySelector('.back').onclick = ()=> {
   }
 };
 
+/* 20261104：番茄钟滑动返回手势——从屏幕最左边缘向右滑（超过阈值）触发返回，
+   与「‹ 返回」按钮等价：接入主项目时通知父窗口关闭番茄钟层。 */
+(function(){
+  const EDGE = 24;        // 左侧边缘触发区宽度（px）
+  const THRESH = 70;      // 横向滑动超过该距离才算返回
+  let sx = 0, sy = 0, tracking = false;
+  window.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    const t = e.touches[0];
+    if (t.clientX <= EDGE) { tracking = true; sx = t.clientX; sy = t.clientY; }
+    else tracking = false;
+  }, { passive: true });
+  window.addEventListener('touchmove', (e) => {
+    if (!tracking) return;
+    const t = e.touches[0];
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    // 横向为主（横向位移 > 纵向位移）才视为返回手势，避免与纵向滚动冲突
+    if (dx > THRESH && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      tracking = false;
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'pomodoro-close' }, '*');
+      }
+    }
+  }, { passive: true });
+  window.addEventListener('touchend', () => { tracking = false; }, { passive: true });
+})();
+
 /* ============ 文件夹批量管理交互 ============ */
 // 新建文件夹（居中弹窗，不再用原生 prompt）
 function openNewFolderSheet(){
@@ -2717,6 +2787,9 @@ setInterval(updateCvClock, 1000);
     } else if(d.type === 'pomodoro-self-event-result'){
       // 20261104：主项目 AI 生成「角色做自己的事」结果回传，回填对应事件
       if(typeof fillSelfEventResult === 'function') fillSelfEventResult(d.eventId, d.text || '');
+    } else if(d.type === 'pomodoro-comp-interact-result'){
+      // 20261105：主项目 AI 生成前台互动气泡结果回传，回填气泡
+      if(typeof fillCompInteractResult === 'function') fillCompInteractResult(d.eventId, d.lines || []);
     }
   });
   // 若已处于 iframe 环境，主动向父窗口请求初始化数据

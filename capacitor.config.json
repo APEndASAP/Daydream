@@ -8,7 +8,10 @@
   "android": {
     "allowMixedContent": false,
     "permissions": [
-      "android.permission.MANAGE_EXTERNAL_STORAGE"
+      "android.permission.MANAGE_EXTERNAL_STORAGE",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.PACKAGE_USAGE_STATS"
     ]
   }
 }
