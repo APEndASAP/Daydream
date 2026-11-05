@@ -63,17 +63,11 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * 闪退加固（与 bm-overlay 一致）：全路径 catch Throwable；双击回应用先 moveToFront、
  * 悬浮窗移除延后一帧；图片解码采样压缩防 OOM。
  */
-@CapacitorPlugin(
-    name = "BmMusicFloat",
-    permissions = {
-        "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.FOREGROUND_SERVICE"
-    }
-)
+@CapacitorPlugin(name = "BmMusicFloat")
 public class BmMusicFloatPlugin extends Plugin {
 
     private WindowManager windowManager;
-    private View overlayRoot;
+    private ViewGroup overlayRoot;
     private WindowManager.LayoutParams layoutParams;
     private boolean viewAttached = false;
 
@@ -105,7 +99,8 @@ public class BmMusicFloatPlugin extends Plugin {
     private int miniPlayIndex = -1;
 
     /* 三形态视图引用 */
-    private View dotView, miniView, cardView;
+    private View dotView, miniView;
+    private ViewGroup cardView;   // cardHost 是 FrameLayout，需 getChildAt/addView
     private ImageView dotCover;
     private TextView dotPlaceholder;
     private FrameLayout miniAvMine, miniAvTa, cardAvMine, cardAvTa;
