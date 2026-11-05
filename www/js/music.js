@@ -540,9 +540,10 @@ window.bmMusic = (function () {
     } catch (e) { return []; }
   }
 
-  async function createPlaylist(name) {
+  async function createPlaylist(name, cover) {
     try {
-      const rec = { id: uid('mh'), kind: 'playlist', name: name, tracks: [], createdAt: Date.now() };
+      // 20261105 修复「导入歌单封面不显示」：歌单支持 cover 字段（导入网易云歌单时把封面一起存进来）
+      const rec = { id: uid('mh'), kind: 'playlist', name: name, tracks: [], cover: cover || '', createdAt: Date.now() };
       await idbPut('musicHistory', rec);
       return rec;
     } catch (e) { return null; }
@@ -2330,7 +2331,15 @@ window.bmMusicUI = (function () {
     // 20261105 修复「外部网易云在播时点播放/暂停，内部残留旧歌与外部歌同时响（打架）」：
     //   点播放/暂停时，若检测到外部有活跃媒体会话，优先发 toggle 指令给外部 App（操控后台那首歌），
     //   而非操作内部残留 audio。无外部会话时才回落到内置播放器。
+    // 20261105 二次修复「直连模式下点播放却操控后台音乐」：直连模式（_netEaseDirect）下
+    //   必须永远操控内置播放器，绝不发 bridge 指令给外部 App——直连和遥控是二选一互斥的，
+    //   开了直连就不该再碰后台媒体会话。
     const _ppToggle = async () => {
+      if (_netEaseDirect) {
+        if (!M.state.current) { window.miniToast && miniToast('请先搜索并选择一首歌'); return; }
+        M.toggle();
+        return;
+      }
       const br = _remoteBridge();
       if (br && typeof br.hasActiveSession === 'function') {
         try {
@@ -3297,7 +3306,7 @@ window.bmMusicUI = (function () {
         <div class="bm-neimport-list" id="bm-neimport-list" style="max-height:52vh;overflow-y:auto;">
           ${pls.map(p => `
             <label class="bm-neimport-item" style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--bm-card-line, rgba(255,255,255,.08));cursor:pointer;">
-              <input type="checkbox" class="bm-neimport-cb" data-id="${p.id}" data-name="${esc(p.name)}" data-count="${p.count}" style="accent-color:var(--purple-soft);flex:0 0 auto;">
+              <input type="checkbox" class="bm-neimport-cb" data-id="${p.id}" data-name="${esc(p.name)}" data-count="${p.count}" data-cover="${esc(p.cover || '')}" style="accent-color:var(--purple-soft);flex:0 0 auto;">
               ${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" style="width:34px;height:34px;border-radius:6px;object-fit:cover;flex:0 0 auto;">` : `<span style="width:34px;height:34px;border-radius:6px;background:var(--bm-card, rgba(255,255,255,.05));display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);flex:0 0 auto;">♪</span>`}
               <div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div><div style="font-size:11px;color:var(--text-tertiary);">${p.count} 首</div></div>
             </label>`).join('')}
@@ -3325,12 +3334,12 @@ window.bmMusicUI = (function () {
       const btn = sub.querySelector('#bm-neimport-ok'); btn.disabled = true; btn.textContent = '导入中…';
       let imported = 0, failed = 0;
       for (const cb of checked) {
-        const pid = cb.dataset.id, name = cb.dataset.name;
+        const pid = cb.dataset.id, name = cb.dataset.name, cover = cb.dataset.cover || '';
         try {
           const tracks = await _netEasePlaylistTracks(pid);
           if (!tracks || !tracks.length) { failed++; continue; }
           // 每首歌存进音乐库曲库（kind:'local'，source:'netease-direct'，播放时联网取直链）
-          const rec = await M.createPlaylist(name + '（网易云）');
+          const rec = await M.createPlaylist(name + '（网易云）', cover);
           if (!rec) { failed++; continue; }
           for (const t of tracks) {
             const saved = await M.addLocalTrack({ name: t.name, artist: t.artist, pic: t.pic, url: '', source: 'netease-direct', _neteaseId: t.id });
@@ -4037,7 +4046,15 @@ window.bmMusicUI = (function () {
           const ck = el.querySelector('.bm-lib-check'); if (ck) ck.classList.toggle('on', _libSel.has(id));
           renderLibFoot();
         } else {
-          M.state.playlist = lib; M.state.playIndex = lib.indexOf(t); M.play(t); refreshPlayerUI();
+          // 20261105 修复「导入歌单无法播放」：导入的网易云歌单歌曲 url 为空（只存了 _neteaseId），
+          //   直接 M.play(t) 会因 !song.url 提前 return「未获取到播放直链」。这里先 fetchSongDetail
+          //   补直链（netease-direct 源走官方接口拿真实直链 + 封面 + 歌词），拿到 url 再播。
+          M.state.playlist = lib; M.state.playIndex = lib.indexOf(t);
+          if (!t.url) {
+            const full = await M.fetchSongDetail(t);
+            if (full) { lib[lib.indexOf(t)] = full; M.state.playlist = lib; M.play(full); refreshPlayerUI(); return; }
+          }
+          M.play(t); refreshPlayerUI();
         }
       };
     });
@@ -4046,7 +4063,13 @@ window.bmMusicUI = (function () {
       e.stopPropagation();
       const t = lib.find(x => x.id === b.dataset.id);
       if (!t) return;
-      M.state.playlist = lib; M.state.playIndex = lib.indexOf(t); M.play(t); refreshPlayerUI();
+      // 20261105 修复「导入歌单无法播放」：url 为空先补直链再播
+      M.state.playlist = lib; M.state.playIndex = lib.indexOf(t);
+      if (!t.url) {
+        const full = await M.fetchSongDetail(t);
+        if (full) { lib[lib.indexOf(t)] = full; M.state.playlist = lib; M.play(full); refreshPlayerUI(); return; }
+      }
+      M.play(t); refreshPlayerUI();
     });
     body.querySelectorAll('.bm-lib-del').forEach(b => b.onclick = async (e) => {
       e.stopPropagation();
@@ -4080,14 +4103,25 @@ window.bmMusicUI = (function () {
       el.onclick = async () => {
         const t = lib.find(x => x.id === el.dataset.id);
         if (!t) return;
-        M.state.playlist = lib; M.state.playIndex = lib.indexOf(t); M.play(t); refreshPlayerUI();
+        M.state.playlist = lib; M.state.playIndex = lib.indexOf(t);
+        if (!t.url) {
+          const full = await M.fetchSongDetail(t);
+          if (full) { lib[lib.indexOf(t)] = full; M.state.playlist = lib; M.play(full); refreshPlayerUI(); return; }
+        }
+        M.play(t); refreshPlayerUI();
       };
     });
     body.querySelectorAll('.bm-lib-play').forEach(b => b.onclick = async (e) => {
       e.stopPropagation();
       const t = lib.find(x => x.id === b.dataset.id);
       if (!t) return;
-      M.state.playlist = lib; M.state.playIndex = lib.indexOf(t); M.play(t); refreshPlayerUI();
+      // 20261105 修复「导入歌单无法播放」：url 为空先补直链再播
+      M.state.playlist = lib; M.state.playIndex = lib.indexOf(t);
+      if (!t.url) {
+        const full = await M.fetchSongDetail(t);
+        if (full) { lib[lib.indexOf(t)] = full; M.state.playlist = lib; M.play(full); refreshPlayerUI(); return; }
+      }
+      M.play(t); refreshPlayerUI();
     });
   }
 
@@ -4139,7 +4173,7 @@ window.bmMusicUI = (function () {
     const peekHtml = _buildPeekFootprints(peeks);
     const listHtml = pls.length ? pls.map(p => `
       <div class="bm-lib-row" data-id="${esc(p.id)}">
-        <span class="bm-lib-cover bm-lib-plcover">♪</span>
+        <span class="bm-lib-cover bm-lib-plcover">${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" alt="">` : '♪'}</span>
         <span class="bm-lib-info"><span class="bm-lib-name">${esc(p.name)}</span><span class="bm-lib-artist">${(p.tracks || []).length} 首</span></span>
         <button class="bm-lib-play" data-id="${esc(p.id)}" title="播放该歌单">${window.icon ? window.icon('play', 16) : '▶'}</button>
         <button class="bm-lib-del" data-id="${esc(p.id)}">✕</button>
@@ -4256,7 +4290,11 @@ window.bmMusicUI = (function () {
     M.state.playlist = tracks;
     M.state.playIndex = 0;
     const first = tracks[0];
-    if (!first.url) { const full = await M.fetchSongDetail(first); tracks[0] = full; M.state.playlist[0] = full; }
+    if (!first.url) {
+      const full = await M.fetchSongDetail(first);
+      if (full && full.url) { tracks[0] = full; M.state.playlist[0] = full; }
+      else { if (window.miniToast) miniToast('未获取到播放直链，请稍后重试或换关键词'); return; }
+    }
     M.play(M.state.playlist[0]);
     resetFloatClosed();
     refreshPlayerUI();
@@ -4483,7 +4521,14 @@ window.bmMusicUI = (function () {
     sub.querySelectorAll('.bm-lib-row').forEach(el => {
       el.onclick = async () => {
         const t = tracks.find(x => x.id === el.dataset.id);
-        if (t) { M.state.playlist = tracks; M.state.playIndex = tracks.indexOf(t); M.play(t); refreshPlayerUI(); }
+        if (!t) return;
+        // 20261105 修复「导入歌单无法播放」：url 为空先补直链再播
+        M.state.playlist = tracks; M.state.playIndex = tracks.indexOf(t);
+        if (!t.url) {
+          const full = await M.fetchSongDetail(t);
+          if (full) { tracks[tracks.indexOf(t)] = full; M.state.playlist = tracks; M.play(full); refreshPlayerUI(); return; }
+        }
+        M.play(t); refreshPlayerUI();
       };
     });
     sub.querySelectorAll('.bm-lib-del').forEach(b => b.onclick = async (e) => {
@@ -5379,7 +5424,10 @@ window.bmMusicUI = (function () {
       M.next();
     };
     // 20261105 修复「外部在播时点播放/暂停打架」：优先检测外部活跃会话，有则遥控外部。
+    // 20261105 二次修复「直连模式下点播放却操控后台音乐」：直连（_netEaseDirect）时
+    //   必须操控内置播放器，绝不查外部活跃会话（直连/遥控互斥，与 _isRemote 对齐）。
     const _floatPpToggle = async () => {
+      if (_netEaseDirect) { M.toggle(); refreshPlayerUI(); return; }
       const br = _remoteBridge();
       if (br && typeof br.hasActiveSession === 'function') {
         try {
