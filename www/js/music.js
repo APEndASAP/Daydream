@@ -4976,6 +4976,7 @@ window.bmMusicUI = (function () {
      ============================================================ */
   let _nativeFloatBound = false;   // 原生按钮回调是否已注册
   let _floatScopeCache = null;     // 同步缓存悬浮方式（init 时异步填充，切换时同步更新）
+  const _nativeImgCache = new Map();   // 图片 URL → base64 dataURL 缓存（避免 update 高频重复 fetch/压缩）
 
   // 读悬浮方式设置（默认 inApp）
   async function getFloatScope() {
@@ -5011,7 +5012,10 @@ window.bmMusicUI = (function () {
   function _floatBgMode() { return (['light', 'dark'].indexOf(_floatBgModeCache) >= 0) ? _floatBgModeCache : 'glass'; }
 
   // 把当前歌曲状态打包成原生插件需要的 MusicState（含头像 dataURL、播放列表）
-  function buildNativeState() {
+  // 20261105：改为异步——封面/头像/歌词图必须转成 base64 data URL 才能被原生层
+  //   BmMusicFloatPlugin.decodeDataUrl 解码（原生只认 base64，http/blob/capacitor/文件引用
+  //   全部解码失败 → 悬浮窗封面、玩家头像、角色头像全空白、图标变白方块）。
+  async function buildNativeState() {
     const cur = M.state.current;
     const a = M.state.audio;
     const c = currentChar();
@@ -5019,31 +5023,130 @@ window.bmMusicUI = (function () {
     const song = cur || {};
     // 当前句歌词（解析 LRC 后取当前高亮句）
     let curLyric = '';
+    let lyricLines = [];
     try {
       const lines = parseLrc(M.state.lyrics || (cur && cur.lrc) || '');
       const t = a ? a.currentTime : 0;
       for (const l of lines) { if (l.t <= t) curLyric = l.text; else break; }
+      lyricLines = lines.map(l => ({ t: Math.round(l.t * 100) / 100, text: l.text }));
     } catch (e) {}
+    // 封面 / 头像 / 播放列表图 → base64（并行转换，任一失败回退空串，走原生 ♪/字母占位）
+    const [cover, charAv, myAv] = await Promise.all([
+      _toNativeImg(song.pic || ''),
+      _toNativeImg(c && c.avatar ? (typeof c.avatar === 'string' ? c.avatar : (typeof window.imgSrc === 'function' ? window.imgSrc(c.avatar) : '')) : ''),
+      _toNativeImg(playerAvatar()),
+    ]);
+    const pl = await Promise.all((M.state.playlist || []).map(async s => ({
+      id: String(s.id), name: s.name, artist: s.artist || '',
+      pic: await _toNativeImg(s.pic || ''),
+    })));
     return {
       title: song.name || '',
       artist: song.artist || '',
-      cover: song.pic || '',
+      cover: cover,
       lyric: curLyric,
+      lyricLines: lyricLines,
       playing: !!M.state.playing,
       position: a ? Math.floor(a.currentTime || 0) : 0,
       duration: a && a.duration ? Math.floor(a.duration) : 0,
       mode: M.state.playMode,
       charName: c ? c.name : '',
-      charAvatar: c && c.avatar ? toDataUrl(c.avatar) : '',
-      myAvatar: toDataUrl(playerAvatar()),
+      charAvatar: charAv,
+      myAvatar: myAv,
       myName: playerName() || '我',
       togetherText: together ? togetherText() : '',
       together: together,
       textMode: _floatTextMode(),
       bgMode: _floatBgMode(),
-      playlist: (M.state.playlist || []).map(s => ({ id: String(s.id), name: s.name, artist: s.artist || '', pic: s.pic || '' })),
+      playlist: pl,
       playIndex: M.state.playIndex,
     };
+  }
+
+  /* 把任意图片形式（data URL / http / capacitor:// / blob: / 文件引用 {__img:5,ref}）
+     统一转成 base64 data URL，供原生层 decodeDataUrl 解码。
+     - 已是 data: 直接透传；
+     - 其余先 imgSrc 拿最终可加载 URL，再 fetch → blob → FileReader 转 base64；
+     - 任何一步失败 → 返回空串（原生层走 ♪/字母占位，绝不阻塞）。
+     maxPx 控制最大边长（原生层会再按需采样，这里先不压缩，保持清晰）。 */
+  async function _toNativeImg(v, maxPx = 512) {
+    try {
+      let url = '';
+      if (!v) return '';
+      if (typeof v === 'string') {
+        if (v.indexOf('data:') === 0) return v;   // 已是 base64 data URL，直接透传
+        url = v;
+      } else {
+        // 文件引用 / Blob 描述符 → 走 imgSrc 拿可加载 URL
+        if (typeof window.imgSrc === 'function') url = window.imgSrc(v);
+        if (!url) return '';
+      }
+      if (!url) return '';
+      // 缓存：同一 URL 已转过的直接复用，避免 update 高频调用时反复 fetch/压缩
+      const cacheKey = maxPx + '|' + url;
+      if (_nativeImgCache.has(cacheKey)) return _nativeImgCache.get(cacheKey);
+      let blob = null;
+      // blob: 直接 FileReader 读（fetch blob 也可，但 FileReader 更稳）
+      if (url.indexOf('blob:') === 0) {
+        blob = await (await fetch(url)).blob();
+      } else {
+        // http(s) / capacitor:// / 其他：fetch 拿二进制（no-referrer 绕过网易云/B站图床防盗链）
+        const resp = await fetch(url, { referrerPolicy: 'no-referrer' });
+        if (!resp.ok) return '';
+        blob = await resp.blob();
+      }
+      if (!blob) return '';
+      // 压缩到 maxPx 以内再转 base64（原生层 decodeDataUrl 也按 128/256 采样，这里先压小，
+      // 避免大图 base64 过大拖慢 PluginCall 传输 / 占用内存）
+      const dataUrl = await _blobToSizedDataUrl(blob, maxPx);
+      if (dataUrl) _nativeImgCache.set(cacheKey, dataUrl);
+      return dataUrl;
+    } catch (e) {
+      return '';
+    }
+  }
+  // blob → 压缩到 maxPx 边长内 → base64 data URL（canvas 同源安全，不会 taint）
+  function _blobToSizedDataUrl(blob, maxPx) {
+    return new Promise((resolve) => {
+      try {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onerror = () => { try { URL.revokeObjectURL(url); } catch (e) {} resolve(''); };
+        img.onload = () => {
+          try {
+            let w = img.naturalWidth || img.width;
+            let h = img.naturalHeight || img.height;
+            if (w > 0 && h > 0 && Math.max(w, h) > maxPx) {
+              const r = maxPx / Math.max(w, h);
+              w = Math.max(1, Math.round(w * r));
+              h = Math.max(1, Math.round(h * r));
+            }
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            cv.getContext('2d').drawImage(img, 0, 0, w, h);
+            const out = cv.toDataURL('image/jpeg', 0.8);
+            cv.width = cv.height = 0;
+            try { URL.revokeObjectURL(url); } catch (e) {}
+            resolve(out || '');
+          } catch (e) {
+            try { URL.revokeObjectURL(url); } catch (e2) {}
+            resolve('');
+          }
+        };
+        img.src = url;
+      } catch (e) { resolve(''); }
+    });
+  }
+  // FileReader 转 dataURL（兼容 app.js 的 blobToDataURL；此处内联一份避免跨文件依赖）
+  function blobToDataURLSafe(blob) {
+    return new Promise((resolve) => {
+      try {
+        const r = new FileReader();
+        r.onerror = () => resolve('');
+        r.onload = () => resolve(r.result || '');
+        r.readAsDataURL(blob);
+      } catch (e) { resolve(''); }
+    });
   }
 
   // 把图片地址转成 dataURL（原生层 Base64 解码需要 data URL；http 图片原生层也能加载但头像走 dataURL 最稳）
@@ -5055,7 +5158,7 @@ window.bmMusicUI = (function () {
   async function pushNativeState(forceShow) {
     if (!nativeFloat()) return;
     try {
-      const st = buildNativeState();
+      const st = await buildNativeState();
       const p = window.Capacitor.Plugins.BmMusicFloat;
       if (forceShow) {
         // 先确保权限；无权限则引导并回退到软件内
@@ -5267,7 +5370,7 @@ window.bmMusicUI = (function () {
             const p = window.Capacitor.Plugins.BmMusicFloat;
             const chk = await p.checkPermission();
             if (chk && chk.granted) {
-              await p.update(buildNativeState());
+              await p.update(await buildNativeState());
             }
           } catch (e) {}
         })();

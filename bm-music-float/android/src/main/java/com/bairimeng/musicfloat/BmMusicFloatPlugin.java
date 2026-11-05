@@ -79,6 +79,9 @@ public class BmMusicFloatPlugin extends Plugin {
     private String artist = "";
     private Bitmap coverBmp = null;
     private String lyric = "";
+    /* 20261105：完整歌词行（逐句 {t,text}），原生层本地推进高亮/滚动，复刻软件内滚动歌词 */
+    private java.util.List<float[]> lyricTimes = new java.util.ArrayList<float[]>();   // 每句开始秒
+    private java.util.List<String> lyricTexts = new java.util.ArrayList<String>();      // 每句文本
     private boolean playing = false;
     private int positionSec = 0;
     private int durationSec = 0;
@@ -108,6 +111,9 @@ public class BmMusicFloatPlugin extends Plugin {
     private TextView cardTitle, cardArtist, cardLyric, cardTogetherTime, cardEndBtn;
     private ImageView cardCover;
     private TextView cardCoverPlaceholder;
+    private android.widget.ScrollView cardLyricScroll;    // 20261105：可滚动歌词区
+    private TextView cardLyricLines;                       // 多行歌词（逐句高亮）
+    private int lyricActiveIdx = -1;                       // 当前高亮句下标
     private IconBtn modeBtn, listBtn, ppBtn, prevBtn, nextBtn;
     private IconBtn miniPpBtn, miniCollapseBtn, cardCollapseBtn;
 
@@ -247,6 +253,24 @@ public class BmMusicFloatPlugin extends Plugin {
             }
         }
         if (call.hasOption("lyric")) lyric = call.getString("lyric", "");
+        // 20261105：完整歌词行数组 [{t,text}]，原生本地推进高亮/滚动
+        if (call.hasOption("lyricLines")) {
+            lyricTimes.clear(); lyricTexts.clear();
+            try {
+                org.json.JSONArray arr = call.getArray("lyricLines");
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        try {
+                            org.json.JSONObject o = arr.optJSONObject(i);
+                            if (o != null) {
+                                lyricTimes.add(new float[]{(float) o.optDouble("t", 0)});
+                                lyricTexts.add(o.optString("text", ""));
+                            }
+                        } catch (Throwable t) {}
+                    }
+                }
+            } catch (Throwable t) {}
+        }
         if (call.hasOption("playing")) playing = call.getBoolean("playing", false);
         Integer p = call.getInt("position");
         if (p != null) positionSec = p;
@@ -434,7 +458,7 @@ public class BmMusicFloatPlugin extends Plugin {
     /* —— 3号 card：完整大卡 —— */
     private void buildCard(FrameLayout root) {
         cardNaturalW = dp(300);
-        cardNaturalH = dp(410);
+        cardNaturalH = dp(430);   // 20261105：+20 给可滚动歌词区（原 410 会被 64px 歌词区挤压裁掉控制键）
 
         FrameLayout cardHost = new FrameLayout(getContext());
         cardHost.setTag("bm-mf-cardhost");
@@ -546,12 +570,27 @@ public class BmMusicFloatPlugin extends Plugin {
         cardArtist.setGravity(Gravity.CENTER);
         cardUi.addView(cardArtist, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        /* 歌词 */
+        /* 歌词：20261105 改成可滚动歌词区——逐句渲染，当前句高亮 + 滚动居中，复刻软件内滚动歌词 */
         cardLyric = makeText(11, 0xFF9A92B5, false);
         cardLyric.setGravity(Gravity.CENTER);
+        cardLyric.setVisibility(View.GONE);   // 有逐句歌词时隐藏单行，无歌词时才用它显示「暂无歌词」
         LinearLayout.LayoutParams lyricLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lyricLp.topMargin = dp(6);
         cardUi.addView(cardLyric, lyricLp);
+
+        cardLyricScroll = new android.widget.ScrollView(getContext());
+        cardLyricScroll.setVerticalScrollBarEnabled(false);
+        cardLyricScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        cardLyricLines = new TextView(getContext());
+        cardLyricLines.setTextColor(0xFF9A92B5);
+        cardLyricLines.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        cardLyricLines.setGravity(Gravity.CENTER);
+        cardLyricLines.setLineSpacing(0f, 1.5f);
+        cardLyricLines.setPadding(0, dp(6), 0, dp(6));
+        cardLyricScroll.addView(cardLyricLines, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams lyScrollLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64));
+        lyScrollLp.topMargin = dp(2);
+        cardUi.addView(cardLyricScroll, lyScrollLp);
 
         /* 进度条 */
         buildProgress(cardUi);
@@ -734,11 +773,9 @@ public class BmMusicFloatPlugin extends Plugin {
     private static class IconView extends View {
         private Path path;
         private int color;
-        private float strokeScale;
-        IconView(Context ctx, String pathData, int color, float strokeScale) {
+        IconView(Context ctx, String pathData, int color) {
             super(ctx);
             this.color = color;
-            this.strokeScale = strokeScale;
             Path p = null;
             try { p = PathParser.createPathFromPathData(pathData); } catch (Throwable t) { p = null; }
             this.path = p != null ? p : new Path();
@@ -751,7 +788,10 @@ public class BmMusicFloatPlugin extends Plugin {
                 Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setColor(color);
-                paint.setStrokeWidth(Math.max(1f, getWidth() * strokeScale / 24f));
+                // 与软件内 icons.js 完全一致：viewBox 24、stroke-width 1.8。
+                // 之前 strokeScale 算错（iconSp*1.6 再乘 getWidth()/24），stroke 宽到几乎填满
+                // 整颗 View，图标糊成实心方块 → 用户看到「白方块」。
+                paint.setStrokeWidth(getWidth() * 1.8f / 24f);
                 paint.setStrokeCap(Paint.Cap.ROUND);
                 paint.setStrokeJoin(Paint.Join.ROUND);
                 canvas.drawPath(path, paint);
@@ -763,21 +803,17 @@ public class BmMusicFloatPlugin extends Plugin {
     private class IconBtn extends FrameLayout {
         private IconView iconView;
         private int iconColor;
-        private float strokeScale;
-        private String curPath;
 
         IconBtn(Context ctx, String pathData, int iconColor, int btnSizePx, float iconSp, int bgColor) {
             super(ctx);
             this.iconColor = iconColor;
-            this.strokeScale = iconSp * 1.6f;
-            this.curPath = pathData;
             if (bgColor != 0x00000000) {
                 GradientDrawable bg = new GradientDrawable();
                 bg.setShape(GradientDrawable.OVAL);
                 bg.setColor(bgColor);
                 setBackground(bg);
             }
-            iconView = new IconView(ctx, pathData, iconColor, strokeScale);
+            iconView = new IconView(ctx, pathData, iconColor);
             int inner = btnSizePx * 3 / 4;
             FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(inner, inner);
             lp.gravity = Gravity.CENTER;
@@ -785,7 +821,6 @@ public class BmMusicFloatPlugin extends Plugin {
         }
 
         void setIcon(String pathData) {
-            this.curPath = pathData;
             try {
                 Path p = PathParser.createPathFromPathData(pathData);
                 iconView.path = p != null ? p : new Path();
@@ -1026,6 +1061,8 @@ public class BmMusicFloatPlugin extends Plugin {
             String lyr = lyric != null ? lyric : "";
             if (miniLyric != null) miniLyric.setText(lyr);
             if (cardLyric != null) cardLyric.setText(lyr);
+            // 20261105：逐句歌词渲染（有 lyricTexts 时显示滚动区，隐藏单行；否则单行显示当前句/暂无歌词）
+            renderLyricLines();
 
             if (cardTogetherTime != null) cardTogetherTime.setText(togetherText != null ? togetherText : "");
             if (cardEndBtn != null) cardEndBtn.setVisibility(together ? View.VISIBLE : View.GONE);
@@ -1040,6 +1077,73 @@ public class BmMusicFloatPlugin extends Plugin {
             refreshModeIcon();
             updateProgressUi();
         } catch (Throwable t) {}
+    }
+
+    /* 20261105：逐句歌词渲染——高亮当前句 + 滚动居中，复刻软件内滚动歌词 */
+    private void renderLyricLines() {
+        try {
+            boolean hasLines = lyricTexts != null && !lyricTexts.isEmpty();
+            if (cardLyricScroll != null) cardLyricScroll.setVisibility(hasLines ? View.VISIBLE : View.GONE);
+            if (cardLyric != null) {
+                if (hasLines) cardLyric.setVisibility(View.GONE);
+                else cardLyric.setVisibility(View.VISIBLE);
+            }
+            if (!hasLines || cardLyricLines == null) return;
+            // 构建多行文本（当前句紫色加粗高亮）
+            int active = lyricActiveIdxForPosition();
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < lyricTexts.size(); i++) {
+                if (i > 0) sb.append('\n');
+                sb.append(lyricTexts.get(i));
+            }
+            android.text.SpannableString ss = new android.text.SpannableString(sb.toString());
+            // 逐句定位并上色
+            int offset = 0;
+            for (int i = 0; i < lyricTexts.size(); i++) {
+                String line = lyricTexts.get(i);
+                int len = line.length();
+                if (i == active) {
+                    ss.setSpan(new android.text.style.ForegroundColorSpan(0xFFB8A6FF), offset, offset + len, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    ss.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), offset, offset + len, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                }
+                offset += len + 1;   // +1 换行
+            }
+            cardLyricLines.setText(ss);
+            // 滚动居中到当前句（只在 active 变化时滚，唱同一句期间不弹回）
+            if (active != lyricActiveIdx) {
+                lyricActiveIdx = active;
+                if (cardLyricScroll != null && active >= 0) {
+                    final int idx = active;
+                    cardLyricScroll.post(new Runnable() {
+                        @Override public void run() {
+                            try {
+                                if (cardLyricLines == null || idx < 0 || idx >= lyricTexts.size()) return;
+                                android.text.Layout layout = cardLyricLines.getLayout();
+                                if (layout == null) return;
+                                int lineTop = layout.getLineTop(idx);
+                                int lineBottom = layout.getLineBottom(idx);
+                                int lineCenter = (lineTop + lineBottom) / 2;
+                                int viewCenter = cardLyricScroll.getHeight() / 2;
+                                int target = Math.max(0, lineCenter - viewCenter);
+                                cardLyricScroll.smoothScrollTo(0, target);
+                            } catch (Throwable t) {}
+                        }
+                    });
+                }
+            }
+        } catch (Throwable t) {}
+    }
+
+    /* 按当前进度算当前高亮句下标 */
+    private int lyricActiveIdxForPosition() {
+        int active = -1;
+        try {
+            for (int i = 0; i < lyricTimes.size() && i < lyricTexts.size(); i++) {
+                float t = lyricTimes.get(i)[0];
+                if (t <= positionSec) active = i; else break;
+            }
+        } catch (Throwable t) {}
+        return active;
     }
 
     private void refreshPpIcons() {
@@ -1237,6 +1341,8 @@ public class BmMusicFloatPlugin extends Plugin {
                             positionSec = tickBaseSec + (int) ((SystemClock.elapsedRealtime() - tickStartElapsed) / 1000);
                             if (positionSec >= durationSec) positionSec = durationSec;
                             updateProgressUi();
+                            // 20261105：进度推进时同步刷新歌词高亮/滚动
+                            renderLyricLines();
                         }
                         if (form == 2 && layoutParams != null && overlayRoot != null) {
                             int wantW = (int) (cardNaturalW * cardScale);
@@ -1378,6 +1484,7 @@ public class BmMusicFloatPlugin extends Plugin {
         cardTitle = null; cardArtist = null; cardLyric = null;
         cardTogetherTime = null; cardEndBtn = null;
         cardCover = null; cardCoverPlaceholder = null;
+        cardLyricScroll = null; cardLyricLines = null; lyricActiveIdx = -1;
         modeBtn = null; listBtn = null; ppBtn = null; prevBtn = null; nextBtn = null;
         miniPpBtn = null; miniCollapseBtn = null; cardCollapseBtn = null;
         progressTrack = null; progressThumb = null; progCurText = null; progDurText = null;

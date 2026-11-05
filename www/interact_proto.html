@@ -1318,7 +1318,7 @@ let focusMin = 25, breakMin = 5, round = 1;
 let focusSet = true, breakSet = true;   // 是否设置了时长（false=未设置，正计时）
 let running = false, timerId = null, remaining = focusMin*60, curMode = 'focus';
 /* 20261104：番茄钟设置 + 前台互动字卡库（由主项目聊天设置 postMessage 下发，未下发用默认值） */
-let defaultNoiseOn = true;      // 默认是否播放白噪音
+let defaultNoiseOn = false;     // 20261105：默认不播放白噪音（玩家设置才播）
 let defaultLockOn = false;      // 默认是否开启锁机
 let compInteractMin = 8;        // 前台互动随机间隔下限（分钟）
 let compInteractMax = 20;       // 前台互动随机间隔上限（分钟）
@@ -1690,8 +1690,13 @@ function applyLockState(){
   document.getElementById('clearView').classList.toggle('locked', locked);
   document.getElementById('cvUnlockBtn').style.display = locked ? '' : 'none';
   if(locked){
-    // 申请锁机权限（移动端）；PC 端降级提示
-    requestLockPermission();
+    // 申请锁机权限（移动端）；授权后真正调原生锁机覆盖层
+    requestLockPermission(() => {
+      // 20261105：真正锁机——postMessage 请求父窗口调原生 BmOverlay.lock() 全屏覆盖
+      if(window.parent && window.parent !== window){
+        window.parent.postMessage({ type: 'pomodoro-lock', hint: '专注中，请勿分心' }, '*');
+      }
+    });
   }
 }
 
@@ -1840,8 +1845,9 @@ function exitFocus(){
   stopHeldEventTimer();          // 停止后台互动心跳（结算读取已记录的真实事件）
   stopCompInteract();            // 20261104：停止前台互动心跳（退出专注不再发陪伴气泡）
   stopNoises();                  // 20261104：退出专注即停止白噪音（否则主项目 BgAudio 一直播）
-  if(lockOn && typeof window.BmOverlay !== 'undefined' && window.BmOverlay && window.BmOverlay.unlock){
-    window.BmOverlay.unlock();
+  // 20261105：退出专注=锁机结束，postMessage 请求父窗口移除全屏锁机覆盖层
+  if(lockOn && window.parent && window.parent !== window){
+    window.parent.postMessage({ type: 'pomodoro-unlock' }, '*');
   }
   addSettleRecord();              // 记一次结算（存入历史归档）
   openSessionSettle();            // 弹【本次结算页】
@@ -1853,8 +1859,9 @@ function exitLockOnly(){
   renderLockBtn();
   document.getElementById('clearView').classList.remove('locked');
   document.getElementById('cvUnlockBtn').style.display = 'none';
-  if(typeof window.BmOverlay !== 'undefined' && window.BmOverlay && window.BmOverlay.unlock){
-    window.BmOverlay.unlock();
+  // 20261105：postMessage 请求父窗口移除全屏锁机覆盖层
+  if(window.parent && window.parent !== window){
+    window.parent.postMessage({ type: 'pomodoro-unlock' }, '*');
   }
   hintPill.textContent = '🔓 已退出锁机，专注继续';
 }
@@ -2428,6 +2435,10 @@ document.querySelector('.back').onclick = ()=> {
 /* 20261105：番茄钟统一栈式返回入口——按「弹窗 → 结算页栈 → 番茄钟主页 → 通知父窗口」逐层回退。
    用户要求：点进专注结算单独页面后回退，应 详情→列表→文件夹→番茄页→聊天页，而不是一步退出整个番茄钟。 */
 function pomodoroBack(){
+  // 20261105 锁机需求：专注清屏页（focusActive=true，即「点击开始专注」后的专注页）
+  //   去掉手势识别/返回——侧滑、物理返回键都不回退，只有「退出专注」按钮能结束专注。
+  //   其他页面（番茄钟主页、结算页、弹窗等）回退逻辑保持正常。
+  if (focusActive) return;
   // 1) 各弹窗（选角色/白噪音/待办/新建文件夹/移动/成果输入）开着 → 只关弹窗
   const sheets = [
     ['charSheet', 'char-sheet'],
@@ -2506,6 +2517,9 @@ window.addEventListener('message', (ev) => {
     } else if (!d.granted) {
       if (hintPill) hintPill.textContent = '⚠️ 请先在系统设置开启「使用情况访问权限」';
     }
+  } else if (d.type === 'pomodoro-lock-exit') {
+    // 20261105：原生锁机覆盖层「退出锁机」按钮被点 → 同步退出锁机状态（专注继续）
+    exitLockOnly();
   }
 });
 

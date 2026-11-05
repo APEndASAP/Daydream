@@ -19,6 +19,8 @@ export interface MusicState {
   cover?: string;
   /** 当前歌词文本（LRC 已解析后的当前行或整段） */
   lyric?: string;
+  /** 完整歌词行（逐句 {t,text}），原生层本地推进高亮/滚动 */
+  lyricLines?: Array<{ t: number; text: string }>;
   /** 是否播放中 */
   playing?: boolean;
   /** 当前进度秒 */
