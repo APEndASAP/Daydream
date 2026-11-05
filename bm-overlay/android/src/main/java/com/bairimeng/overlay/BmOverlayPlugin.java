@@ -60,13 +60,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  *     singleTask launchMode，不会重建 WebView、不重播开屏、不丢通话状态）；
  *   - 图片解码全部 inJustDecodeBounds 采样压缩，杜绝大图 OOM。
  */
-@CapacitorPlugin(
-    name = "BmOverlay",
-    permissions = {
-        "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.READ_EXTERNAL_STORAGE"
-    }
-)
+@CapacitorPlugin(name = "BmOverlay")
 public class BmOverlayPlugin extends Plugin {
 
     private WindowManager windowManager;
@@ -316,8 +310,6 @@ public class BmOverlayPlugin extends Plugin {
     }
 
     /* 音频权限请求回调（requestPermissionForAlias 触发系统弹窗后，用户选择后回调） */
-    @org.apache.cordova.cordova.plugin.IPermissionRequestCallback
-    @PermissionCallback
     private void audioPermCallback(PluginCall call) {
         try {
             JSObject ret = new JSObject();
