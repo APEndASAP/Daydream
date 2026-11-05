@@ -10775,10 +10775,20 @@ async function fetchVideoMeta(vc) {
       // b23.tv 7位随机短链：fetch 拿最终 URL 提取 BV 号（跨域可能 opaque，静默失败）
       if (!bvid && !avid && vc.url && /b23\.tv\//i.test(vc.url) && !/b23\.tv\/(BV|av)/i.test(vc.url)) {
         try {
-          const rr = await fetch(vc.url, { redirect: 'follow' });
-          const finalUrl = (rr && rr.url) ? rr.url : '';
-          const m = finalUrl.match(/BV([0-9A-Za-z]+)/);
-          if (m) bvid = 'BV' + m[1];
+          // 20261105 修复：前端 fetch 因 CORS 拿不到 b23.tv 的 302 Location 头，
+          //   改用原生 resolveRedirect（Java 层手动跟随重定向）拿最终 URL，提取 BV 号。
+          const RC = bmRemoteControlNative();
+          if (RC && typeof RC.resolveRedirect === 'function') {
+            const rd = await RC.resolveRedirect({ url: vc.url });
+            const finalUrl = (rd && rd.finalUrl) ? rd.finalUrl : '';
+            const m = finalUrl.match(/BV([0-9A-Za-z]+)/);
+            if (m) bvid = 'BV' + m[1];
+          } else {
+            const rr = await fetch(vc.url, { redirect: 'follow' });
+            const finalUrl = (rr && rr.url) ? rr.url : '';
+            const m = finalUrl.match(/BV([0-9A-Za-z]+)/);
+            if (m) bvid = 'BV' + m[1];
+          }
         } catch (e) {}
       }
       if (bvid || avid) {

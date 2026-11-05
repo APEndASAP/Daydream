@@ -501,5 +501,52 @@ public class BmRemoteControlPlugin extends Plugin {
             if (conn != null) conn.disconnect();
         }
     }
+
+    /** 20261105：解析短链重定向（如 b23.tv/XXXX → 最终 bilibili.com/video/BVxxx）。
+        前端 fetch 因 CORS 拿不到 302 的 Location 头，这里用原生层手动跟随重定向，
+        返回 { ok, finalUrl, status }。用于视频链接解析兜底。 */
+    @PluginMethod
+    public void resolveRedirect(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || url.isEmpty()) { resolveErr(call, "empty_url"); return; }
+        java.net.HttpURLConnection conn = null;
+        try {
+            java.net.URL u = new java.net.URL(url);
+            String current = url;
+            // 最多跟 5 次重定向，避免死循环
+            for (int i = 0; i < 5; i++) {
+                conn = (java.net.HttpURLConnection) new java.net.URL(current).openConnection();
+                conn.setInstanceFollowRedirects(false);
+                conn.setConnectTimeout(12000);
+                conn.setReadTimeout(12000);
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36");
+                int code = conn.getResponseCode();
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String loc = conn.getHeaderField("Location");
+                    if (loc == null || loc.isEmpty()) break;
+                    // 处理相对路径
+                    if (loc.startsWith("/")) {
+                        java.net.URL base = new java.net.URL(current);
+                        loc = base.getProtocol() + "://" + base.getHost() + loc;
+                    }
+                    current = loc;
+                    conn.disconnect();
+                    conn = null;
+                } else {
+                    break;
+                }
+            }
+            JSObject o = new JSObject();
+            o.put("finalUrl", current);
+            o.put("status", conn != null ? 200 : 200);
+            resolveOk(call, o);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
 }
 
