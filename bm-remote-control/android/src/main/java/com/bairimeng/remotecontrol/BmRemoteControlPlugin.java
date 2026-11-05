@@ -327,10 +327,20 @@ public class BmRemoteControlPlugin extends Plugin {
         return getContext().getSharedPreferences(NETEASE_PREF, Context.MODE_PRIVATE);
     }
 
-    /** 原生层 HTTP GET/POST（带 Cookie + UA + Referer，绕过 CORS），返回响应体字符串。 */
-    private String httpRequest(String url, String method, String cookie) throws Exception {
-        java.net.HttpURLConnection conn = null;
+    /** 原生层带 Cookie 请求（前端传入完整 URL + 可选 method + Cookie），返回 {ok,status,body}。
+        20261105 修复：返回真实 HTTP 状态码，前端据此判断登录态是否有效、直链是否被 403。 */
+    @PluginMethod
+    public void neteaseRequest(PluginCall call) {
+        String url = call.getString("url");
+        String method = call.getString("method", "GET");
+        String cookie = call.getString("cookie");
+        if (url == null || url.isEmpty()) { resolveErr(call, "empty_url"); return; }
+        // 未显式传 cookie 时，用本地已保存的 Cookie
+        if (cookie == null || cookie.isEmpty()) {
+            cookie = neteasePrefs().getString(NETEASE_KEY_COOKIE, "");
+        }
         try {
+            java.net.HttpURLConnection conn = null;
             java.net.URL u = new java.net.URL(url);
             conn = (java.net.HttpURLConnection) u.openConnection();
             conn.setConnectTimeout(12000);
@@ -345,33 +355,18 @@ public class BmRemoteControlPlugin extends Plugin {
             }
             int code = conn.getResponseCode();
             java.io.InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
-            if (is == null) return "";
-            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
-            is.close();
-            return bos.toString("UTF-8");
-        } finally {
-            if (conn != null) conn.disconnect();
-        }
-    }
-
-    /** 原生层带 Cookie 请求（前端传入完整 URL + 可选 method + Cookie），返回 {ok,status,body}。 */
-    @PluginMethod
-    public void neteaseRequest(PluginCall call) {
-        String url = call.getString("url");
-        String method = call.getString("method", "GET");
-        String cookie = call.getString("cookie");
-        if (url == null || url.isEmpty()) { resolveErr(call, "empty_url"); return; }
-        // 未显式传 cookie 时，用本地已保存的 Cookie
-        if (cookie == null || cookie.isEmpty()) {
-            cookie = neteasePrefs().getString(NETEASE_KEY_COOKIE, "");
-        }
-        try {
-            String body = httpRequest(url, method, cookie);
+            String body = "";
+            if (is != null) {
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+                is.close();
+                body = bos.toString("UTF-8");
+            }
+            conn.disconnect();
             JSObject o = new JSObject();
-            o.put("status", 200);
+            o.put("status", code);
             o.put("body", body);
             resolveOk(call, o);
         } catch (Throwable t) {
@@ -385,7 +380,11 @@ public class BmRemoteControlPlugin extends Plugin {
         String cookie = neteasePrefs().getString(NETEASE_KEY_COOKIE, "");
         JSObject o = new JSObject();
         o.put("cookie", cookie);
-        o.put("loggedIn", cookie != null && !cookie.isEmpty());
+        // 20261105 修复：只有真正含 MUSIC_U 才算已登录。
+        //   之前只判「非空」，导致只有统计 cookie（Hm_lvt/Hm_lpvt）时也误报 loggedIn=true，
+        //   前端以为登录成功，实际取直链/搜歌全部无权限。
+        boolean loggedIn = cookie != null && cookie.contains("MUSIC_U=");
+        o.put("loggedIn", loggedIn);
         resolveOk(call, o);
     }
 

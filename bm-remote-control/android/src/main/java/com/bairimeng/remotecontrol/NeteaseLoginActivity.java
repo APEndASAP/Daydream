@@ -24,6 +24,8 @@ import android.widget.FrameLayout;
 public class NeteaseLoginActivity extends Activity {
 
     private WebView webView;
+    private android.os.Handler cookiePollHandler;
+    private int pollCount = 0;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -52,14 +54,58 @@ public class NeteaseLoginActivity extends Activity {
                 super.onPageFinished(view, url);
                 checkLoginCookie(url);
             }
+
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(view, url, favicon);
+                // 20261105 修复：登录成功后网易云会跳转回首页（url 变化），
+                // 此时 MUSIC_U 可能已写入 CookieManager，主动检测一次。
+                checkLoginCookie(url);
+            }
         });
+
+        // 20261105 修复：扫码登录后 MUSIC_U 写入 CookieManager 有延迟，
+        // 页面 onPageFinished 时往往还没写入（导致「登录成功但 Cookie 只有统计 cookie」）。
+        // 这里启动一个轮询，每 500ms 检测一次 MUSIC_U，最长 60 秒，检测到立即保存并关闭。
+        cookiePollHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+        startCookiePoll();
 
         // 打开网易云登录页（手机 H5 版更易登录）
         webView.loadUrl("https://music.163.com/#/login");
     }
 
+    private void startCookiePoll() {
+        cookiePollHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                pollCount++;
+                if (isFinishing() || isDestroyed()) return;
+                checkLoginCookie("https://music.163.com");
+                // 最长轮询 120 次（60 秒）
+                if (pollCount < 120) {
+                    cookiePollHandler.postDelayed(this, 500);
+                }
+            }
+        }, 500);
+    }
+
     private void checkLoginCookie(String url) {
-        String cookies = CookieManager.getInstance().getCookie("https://music.163.com");
+        // 20261105 修复：登录成功后 MUSIC_U 可能写在不同域名下，
+        // 逐个域名尝试读取，任何一处拿到 MUSIC_U 即视为登录成功。
+        String[] domains = {
+                "https://music.163.com",
+                "http://music.163.com",
+                "https://www.music.163.com",
+                "https://interface.music.163.com",
+        };
+        String cookies = null;
+        for (String d : domains) {
+            String c = CookieManager.getInstance().getCookie(d);
+            if (c != null && c.contains("MUSIC_U=")) {
+                cookies = c;
+                break;
+            }
+        }
         if (cookies == null || cookies.isEmpty()) return;
         // 检测到 MUSIC_U（登录成功的核心凭证）即拦截保存
         if (cookies.contains("MUSIC_U=")) {
@@ -79,6 +125,11 @@ public class NeteaseLoginActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        // 20261105：停止 Cookie 轮询，避免内存泄漏
+        if (cookiePollHandler != null) {
+            cookiePollHandler.removeCallbacksAndMessages(null);
+            cookiePollHandler = null;
+        }
         if (webView != null) {
             webView.destroy();
             webView = null;

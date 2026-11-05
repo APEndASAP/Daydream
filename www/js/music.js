@@ -3130,7 +3130,11 @@ window.bmMusicUI = (function () {
     if (!b || typeof b.neteaseRequest !== 'function') return null;
     try {
       const r = await b.neteaseRequest({ url });
-      if (!r || !r.ok || !r.body) return null;
+      // 20261105 修复：原生层现在返回真实 status 码。非 2xx（如 403/404）说明
+      //   登录态失效或接口拒绝，直接返回 null，不再把错误页当 JSON 解析。
+      if (!r || !r.ok) return null;
+      if (typeof r.status === 'number' && (r.status < 200 || r.status >= 300)) return null;
+      if (!r.body) return null;
       return JSON.parse(r.body);
     } catch (e) { return null; }
   }
