@@ -631,16 +631,59 @@ window.bmMusic = (function () {
           const idx = state.playlist.findIndex(s => String(s.id) === String(full.id));
           if (idx >= 0) state.playlist[idx] = full;
           const a = ensureAudio();
-          a.src = full.url;
+          a.src = _normUrl(full.url);
           state.loadedId = full.id;   // 20261105：重拉直链后同步记录，resume 精准命中
           a.play().then(() => { state.playing = true; _reloadRetry = 0; onStateChange(); }).catch(() => {});
         } else {
-          _reloadRetry = 0;
+          // 20261105 修复「重装后歌单歌曲全播不了」：旧直链/旧 id 失效时，
+          //   fetchSongDetail 按旧 id 取不到新直链，改用「歌名+歌手」重新搜索取新歌再播。
+          //   这样重装 APK 后即使直链过期，点播放也能自动重新联网取到能播的新直链。
+          _reloadByName(cur);
         }
-      }).catch(() => { _reloadRetry = 0; });
+      }).catch(() => { _reloadByName(cur); });
     } else {
       _reloadRetry = 0;
     }
+  }
+  // 20261105：统一规范化播放直链协议——网易云/部分源返回 http:// 直链，
+  //   WebView（https://localhost）加载 http 音频会被混合内容拦截 → 无声。统一转 https。
+  function _normUrl(u) {
+    if (!u) return u;
+    return String(u).replace(/^http:\/\//i, 'https://');
+  }
+  // 用「歌名+歌手」重新搜索取新直链重播（兜底，解决过期直链/失效 id）
+  function _reloadByName(cur) {
+    if (!cur || _reloadRetry >= 2) { _reloadRetry = 0; return; }
+    const kw = (cur.name || '') + (cur.artist ? ' ' + cur.artist : '');
+    if (!cur.name) { _reloadRetry = 0; return; }
+    _reloadRetry++;
+    search(kw).then((list) => {
+      if (!list || !list.length) { _reloadRetry = 0; return; }
+      // 优先匹配同歌手/同名，其次取第一首
+      let best = list[0];
+      const byName = list.find(s => String(s.name || '').trim() === String(cur.name || '').trim());
+      const byNameArtist = list.find(s => String(s.name || '').trim() === String(cur.name || '').trim() && String(s.artist || '').trim() === String(cur.artist || '').trim());
+      if (byNameArtist) best = byNameArtist;
+      else if (byName) best = byName;
+      if (!best.url) {
+        fetchSongDetail(best).then((full) => {
+          if (full && full.url) _swapAndReplay(cur, full);
+          else _reloadRetry = 0;
+        }).catch(() => { _reloadRetry = 0; });
+      } else {
+        _swapAndReplay(cur, best);
+      }
+    }).catch(() => { _reloadRetry = 0; });
+  }
+  // 用新歌曲对象替换当前曲并重播（同步更新播放列表里的旧条目）
+  function _swapAndReplay(oldSong, newSong) {
+    state.current = newSong;
+    const idx = state.playlist.findIndex(s => String(s.id) === String(oldSong.id));
+    if (idx >= 0) state.playlist[idx] = newSong;
+    const a = ensureAudio();
+    a.src = _normUrl(newSong.url);
+    state.loadedId = newSong.id;
+    a.play().then(() => { state.playing = true; _reloadRetry = 0; onStateChange(); }).catch(() => { _reloadRetry = 0; });
   }
   function rebuildCleanAudio() {
     _teardownGain();   // 增益已禁用，确保残留的 Web Audio 图拆干净（这是唯一真正需要清理的）
@@ -674,6 +717,11 @@ window.bmMusic = (function () {
   async function play(song) {
     if (!song) { if (window.miniToast) miniToast('没有可播放的歌曲'); return; }
     if (!song.url) { if (window.miniToast) miniToast('未获取到播放直链，请稍后重试或换关键词'); return; }
+    // 20261105 修复「能登录但播不出声/进度不走」：网易云 player/url 接口返回的直链多为
+    //   http://m7.music.126.net/...（http 协议）。Capacitor WebView 页面是 https://localhost，
+    //   加载 http 音频会被「混合内容」策略拦截 → 无声、进度不动。这里统一把播放直链
+    //   http→https（music.126.net 支持 https），根治直连模式播放失败。
+    song.url = _normUrl(song.url);
     state.current = song;
     // 20261104：显式切歌（play）一律从头播放，清掉断点续播进度；
     //   只有「刷新/重进后点播放键」走 resume() 才续播到上次进度。
@@ -3139,42 +3187,55 @@ window.bmMusicUI = (function () {
   //   选中歌单的歌曲逐首存入音乐库曲库 + 新建同名歌单关联，不做全量强导。
   async function _netEaseImportPlaylists(pls) {
     if (!pls || !pls.length) { if (window.miniToast) miniToast('没有可导入的歌单'); return; }
-    // 弹窗：顶部「全选」+ 每行一个歌单复选框
-    openModal(`
-      <div class="bm-lib-subhead"><span>导入网易云歌单</span><button class="bm-lib-close" id="bm-neimport-close">✕</button></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 6px;">
-        <span style="font-size:12px;color:var(--text-secondary);">勾选要导入的歌单（会存进音乐库「歌单」，可随时播放）</span>
-        <label style="font-size:12px;color:var(--purple-soft);cursor:pointer;display:flex;align-items:center;gap:4px;">
-          <input type="checkbox" id="bm-neimport-all" style="accent-color:var(--purple-soft);"> 全选
-        </label>
-      </div>
-      <div class="bm-neimport-list" id="bm-neimport-list" style="max-height:52vh;overflow-y:auto;">
-        ${pls.map(p => `
-          <label class="bm-neimport-item" style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--bm-card-line, rgba(255,255,255,.08));cursor:pointer;">
-            <input type="checkbox" class="bm-neimport-cb" data-id="${p.id}" data-name="${esc(p.name)}" data-count="${p.count}" style="accent-color:var(--purple-soft);flex:0 0 auto;">
-            ${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" style="width:34px;height:34px;border-radius:6px;object-fit:cover;flex:0 0 auto;">` : `<span style="width:34px;height:34px;border-radius:6px;background:var(--bm-card, rgba(255,255,255,.05));display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);flex:0 0 auto;">♪</span>`}
-            <div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div><div style="font-size:11px;color:var(--text-tertiary);">${p.count} 首</div></div>
-          </label>`).join('')}
-      </div>
-      <div style="display:flex;gap:10px;margin-top:12px;">
-        <button class="btn" style="flex:1;" id="bm-neimport-cancel">取消</button>
-        <button class="btn primary" style="flex:1;" id="bm-neimport-ok">导入</button>
-      </div>
-    `);
-    const listBox = $('#bm-neimport-list');
-    const allCb = $('#bm-neimport-all');
+    // 20261105 修复：弹窗必须弹在音乐页内部（bm-lib-subpanel 子浮层，挂 #bm-music-page 内），
+    //   不能用 openModal（全局 modal 的 z-index=100，远低于音乐页 z-index=2147482990，
+    //   会被音乐页整个盖住，导致「退出音乐界面才看得到弹窗」）。
+    const page = document.getElementById('bm-music-page');
+    const host = page || document.body;
+    let sub = document.getElementById('bm-neimport-panel');
+    if (sub) sub.remove();
+    sub = document.createElement('div');
+    sub.id = 'bm-neimport-panel';
+    sub.className = 'bm-lib-subpanel';
+    sub.innerHTML = `
+      <div class="bm-lib-submask"></div>
+      <div class="bm-lib-subcard">
+        <div class="bm-lib-subhead"><span>导入网易云歌单</span><button class="bm-lib-close" id="bm-neimport-close">✕</button></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 6px;">
+          <span style="font-size:12px;color:var(--text-secondary);">勾选要导入的歌单（会存进音乐库「歌单」，可随时播放）</span>
+          <label style="font-size:12px;color:var(--purple-soft);cursor:pointer;display:flex;align-items:center;gap:4px;">
+            <input type="checkbox" id="bm-neimport-all" style="accent-color:var(--purple-soft);"> 全选
+          </label>
+        </div>
+        <div class="bm-neimport-list" id="bm-neimport-list" style="max-height:52vh;overflow-y:auto;">
+          ${pls.map(p => `
+            <label class="bm-neimport-item" style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--bm-card-line, rgba(255,255,255,.08));cursor:pointer;">
+              <input type="checkbox" class="bm-neimport-cb" data-id="${p.id}" data-name="${esc(p.name)}" data-count="${p.count}" style="accent-color:var(--purple-soft);flex:0 0 auto;">
+              ${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" style="width:34px;height:34px;border-radius:6px;object-fit:cover;flex:0 0 auto;">` : `<span style="width:34px;height:34px;border-radius:6px;background:var(--bm-card, rgba(255,255,255,.05));display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);flex:0 0 auto;">♪</span>`}
+              <div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div><div style="font-size:11px;color:var(--text-tertiary);">${p.count} 首</div></div>
+            </label>`).join('')}
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px;">
+          <button class="btn" style="flex:1;" id="bm-neimport-cancel">取消</button>
+          <button class="btn primary" style="flex:1;" id="bm-neimport-ok">导入</button>
+        </div>
+      </div>`;
+    host.appendChild(sub);
+    sub.querySelector('#bm-neimport-close').onclick = () => sub.remove();
+    sub.querySelector('.bm-lib-submask').onclick = () => sub.remove();
+    sub.querySelector('#bm-neimport-cancel').onclick = () => sub.remove();
+    const listBox = sub.querySelector('#bm-neimport-list');
+    const allCb = sub.querySelector('#bm-neimport-all');
     const cbs = listBox ? listBox.querySelectorAll('.bm-neimport-cb') : [];
     // 全选
     if (allCb) allCb.onchange = () => { cbs.forEach(c => { c.checked = allCb.checked; }); };
     // 单项反选时同步全选状态
     const syncAll = () => { if (allCb) { const total = cbs.length; const checked = listBox.querySelectorAll('.bm-neimport-cb:checked').length; allCb.checked = total > 0 && checked === total; } };
     cbs.forEach(c => { c.onchange = syncAll; });
-    $('#bm-neimport-close').onclick = closeModal;
-    $('#bm-neimport-cancel').onclick = closeModal;
-    $('#bm-neimport-ok').onclick = async () => {
+    sub.querySelector('#bm-neimport-ok').onclick = async () => {
       const checked = Array.from(listBox.querySelectorAll('.bm-neimport-cb:checked'));
       if (!checked.length) { if (window.miniToast) miniToast('请先勾选要导入的歌单'); return; }
-      const btn = $('#bm-neimport-ok'); btn.disabled = true; btn.textContent = '导入中…';
+      const btn = sub.querySelector('#bm-neimport-ok'); btn.disabled = true; btn.textContent = '导入中…';
       let imported = 0, failed = 0;
       for (const cb of checked) {
         const pid = cb.dataset.id, name = cb.dataset.name;
@@ -3191,7 +3252,7 @@ window.bmMusicUI = (function () {
           imported++;
         } catch (e) { failed++; }
       }
-      closeModal();
+      sub.remove();
       if (window.miniToast) miniToast(`已导入 ${imported} 张歌单` + (failed ? `，${failed} 张失败` : '') + '，可在音乐库「歌单」里查看');
     };
   }

@@ -8492,12 +8492,30 @@ function bmInternalBack() {
   if (menu && menu.classList.contains('show')) { closeCtxMenu(); return true; }
   // 3) 聊天页多选模式 → 先退出多选
   if (multiSelectMode) { exitMultiSelect(); return true; }
-  // 4) 聊天页 → 聊天导航（与顶栏返回按钮同路径）
+  // 4) 番茄钟全屏层开着 → 关番茄钟，回到聊天页（20261105 修复：番茄钟右滑/返回键退出白屏卡死，栈式返回）
+  const pomoLayer = document.getElementById('pomodoro-layer');
+  if (pomoLayer && pomoLayer.classList.contains('show')) {
+    if (typeof closePomodoroLayer === 'function') closePomodoroLayer();
+    return true;
+  }
+  // 5) 音乐页（一起听歌）开着 → 关音乐页，回到聊天页（20261105 修复：音乐页右滑/返回键此前落到「再按一次退出应用」）
+  const musicPage = document.getElementById('bm-music-page');
+  if (musicPage) {
+    if (typeof window.bmMusicUI === 'object' && typeof window.bmMusicUI.closeMusicPage === 'function') {
+      window.bmMusicUI.closeMusicPage();
+    } else if (typeof closeMusicPage === 'function') {
+      closeMusicPage();
+    } else {
+      musicPage.remove();
+    }
+    return true;
+  }
+  // 6) 聊天页 → 聊天导航（与顶栏返回按钮同路径）
   if (document.body.dataset.view === 'chat') {
     closeModalPanels(); cancelQuote(); switchView('chatlist');
     return true;
   }
-  // 5) 已在顶层 tab（home / chatlist / moments）→ 无上一级，仅拦截退出
+  // 7) 已在顶层 tab（home / chatlist / moments）→ 无上一级，仅拦截退出
   return false;
 }
 
