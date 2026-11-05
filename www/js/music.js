@@ -2331,11 +2331,14 @@ window.bmMusicUI = (function () {
     // 20261105 修复「外部网易云在播时点播放/暂停，内部残留旧歌与外部歌同时响（打架）」：
     //   点播放/暂停时，若检测到外部有活跃媒体会话，优先发 toggle 指令给外部 App（操控后台那首歌），
     //   而非操作内部残留 audio。无外部会话时才回落到内置播放器。
-    // 20261105 二次修复「直连模式下点播放却操控后台音乐」：直连模式（_netEaseDirect）下
-    //   必须永远操控内置播放器，绝不发 bridge 指令给外部 App——直连和遥控是二选一互斥的，
-    //   开了直连就不该再碰后台媒体会话。
+    // 20261105 二次修复「直连模式下点播放却操控后台音乐」+「镜像/本地模式下也误操控后台」：
+    //   三模式互斥——只有「后台遥控」模式（mode==='remote' 且未开直连）才操控外部 App；
+    //   直连（_netEaseDirect）或镜像搜索（mirror）/本地（local）模式一律走内置播放器 M.toggle()，
+    //   绝不查外部活跃会话、绝不发 bridge 指令。之前只判 _netEaseDirect，漏了 mirror/local
+    //   也会误查 hasActiveSession 遥控外部。
+    const _isRemoteMode = (M.state.mode === 'remote') && !_netEaseDirect;
     const _ppToggle = async () => {
-      if (_netEaseDirect) {
+      if (!_isRemoteMode) {
         if (!M.state.current) { window.miniToast && miniToast('请先搜索并选择一首歌'); return; }
         M.toggle();
         return;
@@ -5424,10 +5427,10 @@ window.bmMusicUI = (function () {
       M.next();
     };
     // 20261105 修复「外部在播时点播放/暂停打架」：优先检测外部活跃会话，有则遥控外部。
-    // 20261105 二次修复「直连模式下点播放却操控后台音乐」：直连（_netEaseDirect）时
-    //   必须操控内置播放器，绝不查外部活跃会话（直连/遥控互斥，与 _isRemote 对齐）。
+    // 20261105 二次修复「直连/镜像/本地模式下点播放却操控后台音乐」：三模式互斥——
+    //   只有后台遥控模式（_isRemote）才查外部活跃会话发 toggle；其余模式一律内置播放器。
     const _floatPpToggle = async () => {
-      if (_netEaseDirect) { M.toggle(); refreshPlayerUI(); return; }
+      if (!_isRemote) { M.toggle(); refreshPlayerUI(); return; }
       const br = _remoteBridge();
       if (br && typeof br.hasActiveSession === 'function') {
         try {
