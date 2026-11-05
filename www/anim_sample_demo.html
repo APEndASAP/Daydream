@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>惊喜动画样品 · 白色方框闪屏 + 少量彩色线条/乱码</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #1a1a22; color: #eee; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 6px; color: #fff; }
+  .sub { color: #aab; font-size: 13px; margin-bottom: 20px; line-height: 1.7; }
+  .stage { position: relative; width: 100%; max-width: 420px; height: 640px; margin: 0 auto 20px; background: radial-gradient(ellipse at 50% 52%, #1d1431, #04030a); border-radius: 16px; overflow: visible; border: 1px solid #333; }
+  .btns { text-align: center; margin-bottom: 20px; }
+  .btns button { padding: 10px 20px; margin: 0 6px; border: none; border-radius: 10px; background: #4a3f8a; color: #fff; font-size: 14px; cursor: pointer; }
+  .btns button:hover { background: #5a4f9a; }
+  .slider-row { max-width: 420px; margin: 0 auto 12px; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .slider-row input { flex: 1; }
+  .slider-row .val { color: #7dffa8; min-width: 30px; text-align: right; }
+  .note { max-width: 420px; margin: 0 auto; font-size: 12px; color: #889; line-height: 1.7; border-top: 1px solid #333; padding-top: 14px; }
+  .note b { color: #ddd; }
+
+  /* ===== 白色方框闪屏（原版 oc-glt-band + side + RGB 描边）===== */
+  .oc-first-wrap { position: absolute; left: 50%; top: 46%; transform: translateX(-50%); width: 84%; z-index: 6; }
+  .oc-first-card { position: relative; padding: 24px 22px 20px; border-radius: 0; text-align: center;
+    background: linear-gradient(180deg, rgba(10,7,20,.96), rgba(16,10,32,.98));
+    border: 1px solid rgba(167,139,250,.28);
+    box-shadow: 0 0 0 1px rgba(167,139,250,.20), 0 18px 60px rgba(0,0,0,.6), inset 0 0 40px rgba(167,139,250,.08); overflow: hidden; }
+  .oc-first-glitch { color: #a78bfa; font-size: 13px; margin-bottom: 12px; letter-spacing: 2px; font-family: 'Courier New', monospace;
+    text-shadow: 0 0 8px rgba(167,139,250,.7); }
+  .oc-first-title { color: rgba(241,234,255,.96); font-size: 15px; font-weight: 600; line-height: 1.6; }
+  .btn-primary { margin-top: 16px; padding: 10px 0; width: 100%; border: none; border-radius: 8px;
+    background: #a78bfa; color: #141019; font-size: 15px; font-weight: 700; cursor: pointer; }
+
+  /* 白色方框条带（上下）+ 左右碎条 */
+  .oc-glt-band { position: absolute; left: -14px; right: -14px; height: 14px; pointer-events: none; z-index: 1; }
+  .oc-glt-band.top { top: -17px; }
+  .oc-glt-band.bot { bottom: -17px; }
+  .oc-glt-band i { position: absolute; top: 0; height: 100%;
+    background: linear-gradient(90deg, rgba(240,238,250,.95), rgba(240,238,250,.5) 55%, rgba(240,238,250,.9));
+    box-shadow: 0 0 12px rgba(232,230,242,.5); opacity: 0; animation: oc-glt-flick 2.9s steps(1) infinite; }
+  .oc-glt-band.bot i { animation-duration: 3.4s; }
+  @keyframes oc-glt-flick {
+    0%,100%{opacity:0;transform:translateX(0) scaleX(1)} 6%{opacity:.95;transform:translateX(-6px)} 11%{opacity:0}
+    26%{opacity:.8;transform:translateX(8px) scaleX(.7)} 30%{opacity:0} 52%{opacity:.9;transform:translateX(-3px) scaleX(1.2)}
+    55%{opacity:0} 71%{opacity:.75;transform:translateX(5px) scaleX(1.3)} 76%{opacity:0} }
+  .oc-glt-side { position: absolute; width: 26px; height: 5px; pointer-events: none;
+    background: rgba(240,238,250,.85); box-shadow: 0 0 8px rgba(232,230,242,.5); opacity: 0; animation: oc-glt-flick 3.7s steps(1) infinite; }
+  .oc-glt-l1 { left: -32px; top: 22%; animation-delay: .9s; }
+  .oc-glt-l2 { left: -22px; bottom: 18%; animation-delay: 2.1s; width: 18px; }
+  .oc-glt-r1 { right: -32px; top: 34%; animation-delay: 1.5s; }
+  .oc-glt-r2 { right: -22px; bottom: 26%; animation-delay: 2.8s; width: 18px; }
+  /* RGB 错位描边 */
+  .oc-first-wrap::before, .oc-first-wrap::after { content: ''; position: absolute; inset: -3px; pointer-events: none; opacity: 0; }
+  .oc-first-wrap::before { border: 1px solid rgba(229,72,77,.4); animation: oc-glt-rgb 2.2s steps(1) infinite; }
+  .oc-first-wrap::after { border: 1px solid rgba(72,229,160,.35); animation: oc-glt-rgb 2.2s steps(1) .9s infinite; }
+  @keyframes oc-glt-rgb { 0%,100%{opacity:.5;transform:translateX(2px)} 12%{opacity:0} 30%{opacity:.8;transform:translateX(4px) translateY(-1px)} 34%{opacity:0} 55%{opacity:.6;transform:translateX(-3px)} 58%{opacity:0} 80%{opacity:.7;transform:translateX(2px)} 84%{opacity:0} }
+
+  /* ===== 新增：彩色线条（每次刷新随机变换）===== */
+  .slice { position: absolute; height: 3px; z-index: 9; pointer-events: none; }
+  .slice.r { background: rgba(255,60,90,.7); }
+  .slice.c { background: rgba(90,220,255,.6); }
+
+  /* ===== 新增：随机乱码（每次刷新随机变换）===== */
+  .glyph { position: absolute; z-index: 10; pointer-events: none; font-family: 'Courier New', monospace;
+    line-height: 1; white-space: nowrap; mix-blend-mode: screen; user-select: none;
+    text-shadow: 1.5px 0 rgba(255,60,90,.6), -1.5px 0 rgba(90,220,255,.6); }
+</style>
+</head>
+<body>
+  <h1>惊喜动画样品 · 白色方框闪屏 + 少量彩色线条/乱码</h1>
+  <div class="sub"><b>白色方框闪屏</b>（上下白条带 + 左右碎条 + 红青RGB描边，黑白错位闪烁）是核心，一直保留。<br>彩色线条和乱码是额外叠加的点缀，用滑条控制数量。</div>
+
+  <div class="btns"><button onclick="replay()">▶ 重新播放</button></div>
+
+  <div class="slider-row">彩色线条数量 <input type="range" id="sliceCnt" min="0" max="8" value="8" oninput="sCnt=+this.value;this.nextElementSibling.textContent=sCnt;replay()"> <span class="val">8</span></div>
+  <div class="slider-row">随机乱码数量 <input type="range" id="glyphCnt" min="0" max="16" value="16" oninput="gCnt=+this.value;this.nextElementSibling.textContent=gCnt;replay()"> <span class="val">16</span></div>
+
+  <div class="stage" id="stage"></div>
+
+  <div class="note">
+    <b>白色方框闪屏</b>：弹窗上下两条白色条带 + 左右四个小碎条 + 红青两层 RGB 错位描边，都是黑白错位闪烁——这就是你要的「惊喜白色方框闪屏」。<br>
+    <b>彩色线条</b>：红/青细横条，错落散布在弹窗四周，数量用滑条控制（0 表示不加）。<br>
+    <b>随机乱码</b>：日文片假名/符号，数量用滑条控制。<br>
+    <b>拍板后告诉我最终数值，我再接入正式代码。</b>
+  </div>
+
+<script>
+  let sCnt = 8, gCnt = 16;
+  const glyphs = 'アイウエオカキクケコサシスセソ!@#$%^&*()_+-=[]{}|;:,.<>?/~ABCDEF0123456789ｦｧｨｩｪｫﾊﾋﾌﾍﾎ';
+  const gcols = ['#a78bfa','#ff5c8a','#5cd8ff','#ff7aff','#ffffff'];
+  const cols = [['r','rgba(255,60,90,.7)'],['c','rgba(90,220,255,.6)']];
+  const stage = document.getElementById('stage');
+  function randStr(n){ let s=''; for(let i=0;i<n;i++) s+=glyphs[Math.floor(Math.random()*glyphs.length)]; return s; }
+
+  function glt(seed){ return Array.from({length:4}, function(_,i){
+    const w = 8 + ((seed*13 + i*29)%26);
+    const l = (seed*17 + i*31)%66;
+    return '<i style="left:'+l+'%;width:'+w+'%;animation-delay:'+(((seed+i)%5)*0.37).toFixed(2)+'s"></i>';
+  }).join(''); }
+
+  // 彩色线条容器 + 乱码容器（每次刷新整体重建，位置/宽度/文字/颜色全部随机换新）
+  let sliceLayer, glyphLayer;
+
+  function renderSlices(){
+    let html = '';
+    for (let i=0;i<sCnt;i++){
+      const c = cols[Math.floor(Math.random()*cols.length)];
+      const top = (Math.random()*88+2).toFixed(1);
+      const left = (Math.random()*40+4).toFixed(1);
+      const w = (Math.random()*55+15).toFixed(0);
+      const h = (1+Math.random()*2.5).toFixed(1);
+      const op = (0.35+Math.random()*0.55).toFixed(2);
+      html += '<div class="slice '+c[0]+'" style="top:'+top+'%;left:'+left+'%;width:'+w+'%;height:'+h+'px;opacity:'+op+';"></div>';
+    }
+    sliceLayer.innerHTML = html;
+  }
+  function renderGlyphs(){
+    let html = '';
+    for (let i=0;i<gCnt;i++){
+      const x = (Math.random()*86+5).toFixed(1);
+      const y = (Math.random()*86+5).toFixed(1);
+      const fs = (11+Math.random()*7).toFixed(0);
+      const col = gcols[Math.floor(Math.random()*gcols.length)];
+      const op = (0.4+Math.random()*0.5).toFixed(2);
+      html += '<span class="glyph" style="left:'+x+'%;top:'+y+'%;font-size:'+fs+'px;color:'+col+';opacity:'+op+';">'+randStr(1+Math.floor(Math.random()*2))+'</span>';
+    }
+    glyphLayer.innerHTML = html;
+  }
+
+  function replay(){
+    // 保留 stage，重建 wrap
+    const oldWrap = stage.querySelector('.oc-first-wrap');
+    if (oldWrap) oldWrap.remove();
+
+    const wrap = document.createElement('div');
+    wrap.className = 'oc-first-wrap';
+    wrap.innerHTML = '<div class="oc-glt-band top">'+glt(2)+'</div>'+
+      '<div class="oc-glt-band bot">'+glt(5)+'</div>'+
+      '<i class="oc-glt-side oc-glt-l1"></i><i class="oc-glt-side oc-glt-l2"></i>'+
+      '<i class="oc-glt-side oc-glt-r1"></i><i class="oc-glt-side oc-glt-r2"></i>'+
+      '<div class="oc-first-card">'+
+        '<div class="oc-first-glitch">⚠ SIGNAL DETECTED</div>'+
+        '<div class="oc-first-title">好像掉出了什么奇怪的东西</div>'+
+        '<button class="btn-primary">交由系统检测</button>'+
+      '</div>';
+    stage.appendChild(wrap);
+
+    // 彩色线条层 + 乱码层（独立的绝对定位容器，每次刷新整体重建）
+    sliceLayer = document.createElement('div'); sliceLayer.className = 'slice-layer';
+    glyphLayer = document.createElement('div'); glyphLayer.className = 'glyph-layer';
+    sliceLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:9;';
+    glyphLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:10;';
+    stage.appendChild(sliceLayer);
+    stage.appendChild(glyphLayer);
+    renderSlices();
+    renderGlyphs();
+  }
+  replay();
+  // 关键：每次刷新都整体重新随机（位置/宽度/文字/颜色全换新），间隔 100ms，快速随机变换
+  setInterval(() => { renderSlices(); renderGlyphs(); }, 100);
+</script>
+</body>
+</html>

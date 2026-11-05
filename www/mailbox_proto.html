@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>信箱 · 信封原型（展开信封 · 参考图4形态）</title>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<style>
+  :root{
+    --bg:#f0ecf7;
+    --txt:#4a4060;
+    --txt2:#9a90b0;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{
+    background:linear-gradient(180deg,#f4f0fa 0%,#e9e4f3 100%);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--txt);
+    min-height:100vh;display:flex;justify-content:center;overflow-x:hidden;
+  }
+  .phone{
+    width:100%;max-width:420px;min-height:100vh;position:relative;display:flex;flex-direction:column;
+    background:linear-gradient(180deg,#f6f3fb 0%,#ede9f5 100%);
+    border-left:1px solid rgba(0,0,0,.05);border-right:1px solid rgba(0,0,0,.05);
+  }
+
+  /* ============ 顶栏 ============ */
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#f3f4f2 82%,rgba(243,244,242,0));}
+  .topbar .title{display:flex;align-items:center;gap:9px;font-size:19px;font-weight:700;letter-spacing:.5px;}
+  .badge{font-size:11px;font-weight:600;color:#8a9094;background:rgba(180,190,180,.25);padding:2px 9px;border-radius:999px;}
+  .icon-btn{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.6);border:1px solid rgba(0,0,0,.07);color:var(--txt2);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+
+  .hint{font-size:11.5px;color:var(--txt2);text-align:center;padding:4px 18px 14px;letter-spacing:2px;}
+
+  /* ============ 信封网格：一行两个 ============ */
+  .grid{padding:6px 16px 140px;display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+
+  /* 信封卡片容器 */
+  .env-card{cursor:pointer;position:relative;will-change:transform;}
+
+  /* ===== 展开信封主体：接近方形（宽高比 ~1.15:1），信封整体往左倾斜（左边低右边高） ===== */
+  .env-inner{position:relative;aspect-ratio:1.15/1;width:100%;transform:rotate(-6deg);}
+
+  /* 信封后袋（主体底，方形，圆角小，最底下一层背景） */
+  .env-body{
+    position:absolute;inset:0;z-index:1;border-radius:8px;
+    background:linear-gradient(178deg,var(--env-a) 0%,var(--env-b) 100%);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.6), 0 6px 16px rgba(90,80,120,.18), 0 2px 4px rgba(90,80,120,.12);
+  }
+
+  /* 信纸：白色卡纸，从翻盖上方抽出（在翻盖前面 z=3），往右倾斜（右边低左边高，与信封反向），下半部分被信封袋身遮住 */
+  .env-slip{
+    position:absolute;left:12px;right:12px;top:22px;height:60%;z-index:3;border-radius:5px;
+    transform:rotate(10deg);
+    padding:13px 13px 18px;background:linear-gradient(175deg,#fffdfa 0%,#faf5ee 100%);
+    box-shadow:0 2px 6px rgba(110,120,120,.14);display:flex;flex-direction:column;gap:6px;
+  }
+  .env-slip .who{font-family:"PingFangXingChenTi","TsangerYuMo",serif;font-size:13px;font-weight:700;letter-spacing:1px;color:#4a4d50;}
+  .env-slip .summary{font-family:"PingFang SC",serif;font-size:11px;line-height:1.5;color:#9a938a;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .env-slip .slip-line{position:absolute;left:13px;right:13px;bottom:8px;height:1px;background:repeating-linear-gradient(90deg,#c9bda6 0 5px, transparent 5px 10px);opacity:.45;}
+
+  /* 信封前袋（V 形口袋，下半部分，最上层 z=4，遮住信纸下半） */
+  .env-pocket{
+    position:absolute;left:0;right:0;bottom:0;height:52%;z-index:4;border-radius:0 0 8px 8px;
+    background:linear-gradient(180deg,var(--env-a) 0%,var(--env-b) 100%);
+    clip-path:polygon(0 0, 50% 38%, 100% 0, 100% 100%, 0 100%);
+    box-shadow:0 3px 8px rgba(90,105,105,.18);
+  }
+  .env-pocket::after{content:'';position:absolute;inset:0;border-radius:0 0 8px 8px;opacity:.5;mix-blend-mode:multiply;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='130' height='130'%3E%3Cfilter id='pn'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='130' height='130' filter='url(%23pn)' opacity='0.05'/%3E%3C/svg%3E");}
+
+  /* 纸质纹理（共用） */
+  .paper-noise{position:absolute;inset:0;z-index:2;pointer-events:none;border-radius:inherit;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='130' height='130'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='130' height='130' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    mix-blend-mode:multiply;}
+
+  /* 邮票：右上角，锯齿边（无黑边），图案=角色头像，往左倾斜（与信纸反向，形成错落） */
+  .stamp{
+    position:absolute;right:10px;top:10px;z-index:8;width:46px;height:56px;
+    display:flex;align-items:center;justify-content:center;
+    transform:rotate(-8deg);transform-origin:center;
+    background:#ffffff;padding:6px;
+    /* 锯齿边：用 radial-gradient 打孔，白底无黑边 */
+    -webkit-mask:radial-gradient(circle 3px at 3px 3px, transparent 97%, #000) 0 0/6px 6px,
+                radial-gradient(circle 3px at 3px 3px, transparent 97%, #000) 0 100%/6px 6px,
+                radial-gradient(circle 3px at 3px 3px, transparent 97%, #000) 100% 0/6px 6px,
+                radial-gradient(circle 3px at 3px 3px, transparent 97%, #000) 100% 100%/6px 6px,
+                linear-gradient(#000,#000) 0 3px/100% calc(100% - 6px);
+    mask-composite:exclude;
+    -webkit-mask-composite:xor;
+    box-shadow:0 2px 5px rgba(0,0,0,.18);
+  }
+  .stamp-inner{width:100%;height:100%;border-radius:2px;overflow:hidden;position:relative;background:#e8e8e8;}
+  .stamp-inner img{display:block;width:100%;height:100%;object-fit:cover;}
+
+  /* 角色头像占位（圆形渐变头像，未提供图片时） */
+  .avatar{
+    width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:16px;color:#fff;font-weight:700;
+    background:radial-gradient(circle at 32% 30%, var(--av-a), var(--av-b));
+  }
+
+  /* ============ 展开浮层 ============ */
+  .overlay{position:fixed;inset:0;z-index:100;background:rgba(60,64,60,.5);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);display:none;align-items:center;justify-content:center;flex-direction:column;padding:20px;}
+  .overlay.show{display:flex;}
+
+  .big-env{position:relative;width:78%;max-width:330px;aspect-ratio:1.15/1;margin-bottom:10vh;}
+  .big-env .env-inner{height:100%;}
+
+  .letter-paper{
+    position:absolute;left:50%;top:36%;width:88%;max-width:360px;min-height:400px;border-radius:4px;
+    transform:translate(-50%,0) scale(.7) translateY(26%);opacity:0;z-index:60;padding:38px 30px 48px;
+    box-shadow:0 24px 60px rgba(60,64,60,.35);color:var(--ink,#4a4d50);
+    background:linear-gradient(170deg,var(--paper-a,#fffdfa) 0%,var(--paper-b,#f7f0e3) 100%);
+    pointer-events:none;
+  }
+  .letter-paper::before{content:'';position:absolute;inset:0;border-radius:4px;pointer-events:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");mix-blend-mode:multiply;}
+  .lp-head{text-align:center;padding-bottom:14px;border-bottom:1px dashed rgba(120,110,90,.3);margin-bottom:14px;}
+  .lp-who{font-family:"PingFangXingChenTi",serif;font-size:21px;font-weight:700;letter-spacing:6px;}
+  .lp-sub{font-size:10px;letter-spacing:2px;opacity:.5;margin-top:5px;font-family:serif;}
+  .lp-body{font-family:"PingFang SC",serif;font-size:15.5px;line-height:2.1;text-align:justify;white-space:pre-wrap;}
+  .lp-foot{text-align:center;font-size:11px;letter-spacing:4px;opacity:.45;margin-top:18px;font-family:serif;}
+  .postmark{position:absolute;right:18px;bottom:58px;z-index:2;width:74px;height:74px;transform:rotate(-8deg);opacity:.82;pointer-events:none;}
+  .postmark svg{width:100%;height:100%;display:block;}
+  .overlay-hint{margin-top:26px;font-size:12px;color:rgba(255,255,255,.75);letter-spacing:2px;text-shadow:0 1px 3px rgba(0,0,0,.2);}
+  .close-x{position:absolute;top:18px;right:20px;z-index:80;width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.4);border:1px solid rgba(255,255,255,.6);color:#555;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="topbar">
+    <div class="title">✉️ 信箱 <span class="badge" id="cnt"></span></div>
+    <div class="actions"><button class="icon-btn" id="closeBtn">✕</button></div>
+  </div>
+  <div class="hint">✦ 点击信封拆开来信 ✦</div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<div class="overlay" id="overlay">
+  <button class="close-x" id="overlayClose">✕</button>
+  <div class="big-env" id="bigEnv">
+    <div class="env-inner">
+      <div class="env-body"></div>
+      <div class="env-slip" id="bigSlip"></div>
+      <div class="env-pocket" id="bigPocket"></div>
+      <div class="stamp" id="bigStamp"><div class="stamp-inner"><span class="avatar" id="bigAvatar">星</span></div></div>
+    </div>
+  </div>
+  <div class="letter-paper" id="letterPaper">
+    <div class="postmark" id="lpPostmark"></div>
+    <div class="lp-head"><div class="lp-who" id="lpWho"></div><div class="lp-sub">沉睡回音 ⋆｡°✩ Echoes of Slumber ✩°｡⋆</div></div>
+    <div class="lp-body" id="lpBody"></div>
+    <div class="lp-foot">· 见字如面 ·</div>
+  </div>
+</div>
+
+<script>
+  // 信封配色：统一到「白日梦」紫色天文手稿调（淡紫为主，明度高饱和度低，呼应主色 #a78bfa/#c4b5fd）
+  const ENV_COLORS = [
+    { a:'#dcd3f2', b:'#c9bce8', c:'#eae4f7' },  // 淡紫罗兰（白日梦主紫淡化）
+    { a:'#d8d0e8', b:'#c4b8de', c:'#e8e2f2' },  // 雾紫
+    { a:'#d6dcf0', b:'#c2cae6', c:'#e8ecf7' },  // 星空蓝紫
+    { a:'#ecd6e4', b:'#e0c2d4', c:'#f4e7ef' },  // 柔粉紫
+  ];
+
+  // 角色头像配色（紫调渐变，呼应白日梦星空色）
+  const AVATARS = [
+    { a:'#a78bfa', b:'#6a5a92' },
+    { a:'#c4b5fd', b:'#8a7ac0' },
+    { a:'#9a8aba', b:'#5f5380' },
+    { a:'#f07aa0', b:'#b85a80' },
+  ];
+
+  const LETTERS = [
+    { id:1, who:'林晚星', summary:'今晚的月亮很圆，我突然很想你。', text:'展信安。\n\n今晚的月亮很圆，银色的光洒在窗台上，像你笑起来时的眼睛。我突然很想你，想把这阵晚风、这片月色都寄给你。\n\n你最近还好吗？工作再忙也要记得吃饭、记得休息。\n\n—— 想念你的 晚星', time:'11月3日', unread:true, paper:'card', av:0 },
+    { id:2, who:'沈知遥', summary:'新海诚的电影重映了，我想约你一起去看。', text:'见字如面。\n\n最近《你的名字》重映了，电影院的海报让我一下子想起了我们第一次一起看它的时候。\n\n这个周末如果有空，我们再去一次好不好？就当是，替那时候的我们补一个结局。\n\n—— 等你回复的 知遥', time:'11月1日', unread:false, paper:'craft', av:1 },
+    { id:3, who:'顾南枝', summary:'院子里的桂花开了，我采了一些做成了香囊。', text:'亲爱的你：\n\n院子里的桂花开了，满院都是甜香。我采了一些晾干，做成了一个香囊，想着什么时候能亲手交给你。\n\n香囊里还放了一味安神的草，愿你夜夜好眠。\n\n—— 南枝', time:'10月28日', unread:false, paper:'pink', av:2 },
+    { id:4, who:'白露', summary:'今天路过我们常去的那家店，它还在。', text:'你好呀。\n\n今天路过我们常去的那家小店，它居然还在，招牌还是老样子。老板娘问起你，我说你最近很忙。\n\n等你不忙了，我们再去坐坐吧，那碗糖水我还想和你分着吃。\n\n—— 露', time:'10月20日', unread:false, paper:'green', av:3 },
+  ];
+
+  const PAPERS = {
+    card:   { name:'米白卡纸', a:'#fffdfa', b:'#f3ecf8', ink:'#4a4060' },
+    craft:  { name:'星雾紫',   a:'#ece4f6', b:'#ddd0ec', ink:'#5a4a78' },
+    pink:   { name:'柔粉紫',   a:'#f6e7f0', b:'#eed6e6', ink:'#7a4a68' },
+    green:  { name:'蓝紫星空', a:'#e2e6f2', b:'#d2d8ea', ink:'#4a5572' },
+    blue:   { name:'雾蓝紫',   a:'#e2e6f0', b:'#d2dae8', ink:'#4a5872' },
+  };
+
+  const grid = document.getElementById('grid');
+  const cnt = document.getElementById('cnt');
+
+  // 魔法阵/星轨式邮戳：几何圆环 + 点线星轨 + 星座连线 + 中心四芒星（透明，点线构成，非整块面）
+  function postmarkSVG(uid){
+    const ink = 'rgba(120,105,150,.62)';
+    const ink2 = 'rgba(120,105,150,.4)';
+    // 外环虚线（星轨感）
+    // 内环星座连线（星图）
+    const stars = [[50,22],[74,40],[66,68],[40,74],[22,52],[30,32],[58,30],[72,56],[30,58]];
+    const lines = 'M50 22 L58 30 L74 40 L66 68 L40 74 L22 52 L30 32 Z M30 58 L40 52 L58 54';
+    const dots = stars.map(s=>`<circle cx="${s[0]}" cy="${s[1]}" r="1.6" fill="${ink}"/>`).join('');
+    return `<svg viewBox="0 0 100 100" fill="none">
+      <circle cx="50" cy="50" r="47" stroke="${ink2}" stroke-width="1" stroke-dasharray="3 4"/>
+      <circle cx="50" cy="50" r="38" stroke="${ink}" stroke-width=".7" stroke-dasharray="1.5 3.5"/>
+      <circle cx="50" cy="50" r="30" stroke="${ink2}" stroke-width=".6"/>
+      <path d="${lines}" stroke="${ink}" stroke-width=".6" fill="none"/>
+      ${dots}
+      <circle cx="50" cy="50" r="4" stroke="${ink}" stroke-width=".7" fill="none"/>
+      <path d="M50 38 L50 62 M38 50 L62 50" stroke="${ink}" stroke-width=".7"/>
+      <path d="M50 42 L53 50 L50 58 L47 50 Z" fill="${ink}" opacity=".85"/>
+      <circle cx="50" cy="50" r="1.2" fill="${ink}"/>
+    </svg>`;
+  }
+
+  function renderGrid() {
+    const unread = LETTERS.filter(l=>l.unread).length;
+    cnt.textContent = `${LETTERS.length} 封${unread?` · ${unread} 封未读`:''}`;
+    grid.innerHTML = LETTERS.map((l, i) => {
+      const ec = ENV_COLORS[i % ENV_COLORS.length];
+      const av = AVATARS[l.av % AVATARS.length];
+      return `
+      <div class="env-card" data-id="${l.id}">
+        <div class="env-inner">
+          <div class="env-body" style="--env-a:${ec.a};--env-b:${ec.b};--env-c:${ec.c};"><div class="paper-noise"></div></div>
+          <div class="env-slip">
+            <div class="who">${l.who}</div>
+            <div class="summary">${l.summary}</div>
+            <div class="slip-line"></div>
+          </div>
+          <div class="env-pocket" style="--env-a:${ec.a};--env-b:${ec.b};--env-c:${ec.c};"></div>
+          <div class="stamp"><div class="stamp-inner"><span class="avatar" style="--av-a:${av.a};--av-b:${av.b};">${l.who[0]}</span></div></div>
+        </div>
+      </div>`;
+    }).join('');
+
+    // 每个信封：hover / 手势点击时都 Q 弹挤压跳动（真机无 hover，靠 pointerdown 触发）
+    grid.querySelectorAll('.env-card').forEach(card => {
+      card.addEventListener('mouseenter', () => bounce(card));
+      card.addEventListener('pointerdown', () => bounce(card));
+      card.addEventListener('click', () => openLetter(parseInt(card.dataset.id)));
+    });
+  }
+
+  // 单元素 Q 弹：快速挤压 + 回弹，不是整屏动画
+  function bounce(el){
+    if(el._bouncing) return;
+    el._bouncing = true;
+    gsap.timeline({ onComplete:()=>{ el._bouncing = false; } })
+      .to(el, { scale:0.94, scaleY:0.9, duration:.12, ease:'power2.in' })
+      .to(el, { scale:1.06, scaleY:1.04, duration:.16, ease:'power2.out' })
+      .to(el, { scale:1, scaleY:1, duration:.14, ease:'power2.out' });
+  }
+
+  const overlay = document.getElementById('overlay');
+  const bigEnv = document.getElementById('bigEnv');
+  const bigSlip = document.getElementById('bigSlip');
+  const bigPocket = document.getElementById('bigPocket');
+  const bigAvatar = document.getElementById('bigAvatar');
+  const letterPaper = document.getElementById('letterPaper');
+  let curPaper = 'card';
+  let opened = false;
+  let curIndex = 0;
+
+  function openLetter(id){
+    const l = LETTERS.find(x=>x.id===id);
+    curIndex = LETTERS.indexOf(l);
+    const ec = ENV_COLORS[curIndex % ENV_COLORS.length];
+    const av = AVATARS[l.av % AVATARS.length];
+    curPaper = l.paper || 'card';
+
+    bigSlip.innerHTML = `<div class="who">${l.who}</div><div class="summary">${l.summary}</div><div class="slip-line"></div>`;
+    bigEnv.querySelector('.env-body').style.cssText = `--env-a:${ec.a};--env-b:${ec.b};--env-c:${ec.c};`;
+    bigPocket.style.cssText = `--env-a:${ec.a};--env-b:${ec.b};--env-c:${ec.c};`;
+    bigAvatar.textContent = l.who[0];
+    bigAvatar.style.setProperty('--av-a', av.a);
+    bigAvatar.style.setProperty('--av-b', av.b);
+
+    document.getElementById('lpWho').textContent = l.who;
+    document.getElementById('lpBody').textContent = l.text;
+    document.getElementById('lpPostmark').innerHTML = postmarkSVG('lp');
+    applyPaper(curPaper);
+
+    overlay.classList.add('show');
+    opened = false;
+
+    gsap.set(bigEnv, {y:-60, scale:.75, opacity:0});
+    gsap.set(letterPaper, {scale:.7, y:'26%', opacity:0, transformOrigin:'50% 60%'});
+    gsap.to(bigEnv, {y:0, scale:1, opacity:1, duration:.55, ease:'back.out(1.4)'});
+  }
+
+  function applyPaper(key){
+    const p = PAPERS[key];
+    letterPaper.style.setProperty('--paper-a', p.a);
+    letterPaper.style.setProperty('--paper-b', p.b);
+    letterPaper.style.color = p.ink;
+    letterPaper.querySelectorAll('.lp-who,.lp-body,.lp-sub,.lp-foot,.postmark').forEach(el=>{
+      if(el.classList.contains('postmark')){ el.style.color = p.ink; el.style.borderColor = p.ink; }
+      else el.style.color = p.ink;
+    });
+  }
+
+  function openPaper(){
+    if(opened) return;
+    opened = true;
+    const tl = gsap.timeline();
+    tl.to(bigSlip, {y:-24, opacity:0, duration:.34, ease:'power1.in'}, 0);
+    tl.to(letterPaper, {scale:1, y:'-10%', opacity:1, duration:.6, ease:'back.out(1.15)'}, 0.26);
+    tl.to(letterPaper, {y:'-24%', duration:.45, ease:'power2.out'}, 0.82);
+    tl.to(bigEnv, {y:54, opacity:.14, scale:.96, duration:.45, ease:'power2.in'}, 0.5);
+  }
+
+  function closeOverlay(){
+    if(!opened){
+      const tl = gsap.timeline({onComplete:()=>overlay.classList.remove('show')});
+      tl.to([bigEnv, letterPaper], {opacity:0, y:-20, duration:.3, ease:'power2.in'});
+      return;
+    }
+    const tl = gsap.timeline({onComplete:()=>{ overlay.classList.remove('show'); gsap.set(letterPaper,{opacity:0}); }});
+    tl.to(letterPaper, {scale:.7, y:'26%', opacity:0, duration:.4, ease:'power2.in'}, 0);
+    tl.to(bigEnv, {y:0, opacity:1, scale:1, duration:.4, ease:'power2.out'}, 0.1);
+    tl.to(bigSlip, {y:0, opacity:1, duration:.35, ease:'power2.out'}, 0.35);
+    tl.add(()=>{ opened = false; });
+    tl.to([bigEnv], {opacity:0, y:-20, duration:.28, ease:'power2.in'}, 0.95);
+  }
+
+  bigEnv.addEventListener('click', openPaper);
+  document.getElementById('overlayClose').onclick = closeOverlay;
+  document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') closeOverlay(); });
+  document.getElementById('closeBtn').onclick = ()=>{ grid.innerHTML='<div class="hint" style="margin-top:40px;">已关闭（原型演示）</div>'; };
+
+  renderGrid();
+</script>
+</body>
+</html>

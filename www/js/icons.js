@@ -92,6 +92,26 @@ const ICONS = {
   bell: '<path d="M18 9a6 6 0 1 0-12 0c0 5-2 6-2 6h16s-2-1-2-6"/><path d="M10.3 20a2 2 0 0 0 3.4 0"/>',
   /* —— 复制（20261029）：消息菜单「复制」项 —— */
   copy: '<rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15V5.5A2.5 2.5 0 0 1 7.5 3H15"/>',
+
+  /* —— 音乐播放器（20261103）：播放/暂停/上一首/下一首/耳机/星球/音乐库 —— */
+  play: '<path d="M7 4.5l13 7.5-13 7.5z"/>',
+  pause: '<path d="M7 4.5h3.4v15H7zM13.6 4.5H17v15h-3.4z"/>',
+  prev: '<path d="M6 5.5v13"/><path d="M19 5.5L9 12l10 6.5z"/>',
+  next: '<path d="M18 5.5v13"/><path d="M5 5.5l10 6.5L5 18.5z"/>',
+  headphone: '<path d="M4 13a8 8 0 0 1 16 0"/><rect x="3" y="13" width="4" height="6" rx="2"/><rect x="17" y="13" width="4" height="6" rx="2"/>',
+  planet: '<circle cx="12" cy="12" r="4.2"/><ellipse cx="12" cy="12" rx="9" ry="3.6"/><circle cx="12" cy="12" r="9" stroke-dasharray="2.4 3"/>',
+  musiclib: '<path d="M9 18.5V6.5l10-1.6v11.6"/><circle cx="6.5" cy="18.5" r="2.6"/><circle cx="16.5" cy="16.5" r="2.6"/>',
+  volume: '<path d="M11 5.5L6.5 9H3v6h3.5l4.5 3.5"/><path d="M11 9v6"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6"/><path d="M18 6.5a8 8 0 0 1 0 11"/>',
+  mute: '<path d="M11 5.5L6.5 9H3v6h3.5l4.5 3.5z"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5"/>',
+  float: '<rect x="5" y="4" width="14" height="16" rx="3"/><rect x="9" y="8" width="6" height="4" rx="1.2"/><path d="M9 16h6"/>',
+  video: '<rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="M16 10l5-2.5v9L16 14z"/>',
+  shuffle: '<path d="M2.5 7h3.2c2.2 0 3.2 1.4 4.8 5s2.6 5 4.8 5h1.2"/><path d="M2.5 17h3.2c1 0 1.7-.3 2.4-.9l3-2.4"/><path d="M16.5 5.5L21 7l-1.5 4.5"/><path d="M16.5 15L21 17l-1.5 4.5"/>',
+  repeat: '<path d="M17 2.5l3 3-3 3"/><path d="M20 5.5H8a4 4 0 0 0-4 4v1"/><path d="M7 21.5l-3-3 3-3"/><path d="M4 18.5h12a4 4 0 0 0 4-4v-1"/>',
+  order: '<path d="M4.5 12h13"/><path d="M14 6.5l3.5 5.5L14 17.5"/><path d="M4.5 6.5h0"/><path d="M4.5 17.5h0"/>',
+  'repeat-one': '<path d="M17 2.5l3 3-3 3"/><path d="M20 5.5H8a4 4 0 0 0-4 4v1"/><path d="M7 21.5l-3-3 3-3"/><path d="M4 18.5h12a4 4 0 0 0 4-4v-1"/><path d="M11.5 10.5v3"/>',
+  list: '<path d="M8.5 6.2h12M8.5 12h12M8.5 17.8h12"/><circle cx="4.2" cy="6.2" r="1.15" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="4.2" cy="17.8" r="1.15" fill="currentColor" stroke="none"/>',
+  download: '<path d="M12 3.5v11"/><path d="M7.6 10.5L12 15l4.4-4.5"/><path d="M4.5 15.5v2.7a2.3 2.3 0 0 0 2.3 2.3h10.4a2.3 2.3 0 0 0 2.3-2.3v-2.7"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 13V8.5"/><path d="M9.5 2.5h5"/><path d="M12 5.5v-1"/>',
 };
 
 /* 取图标 SVG（内联，自动继承颜色） */

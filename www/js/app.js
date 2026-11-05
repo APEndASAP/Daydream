@@ -70,8 +70,8 @@ let chatSettings = {
   commentPickCountMax: 2,          // 20261031：行程留言/备注每次抽取字卡张数上限（默认2）
   musicFloatOn: true,              // 20261104：一起听歌悬浮窗开关（默认开；邀请/播放时自动弹悬浮窗）
   musicAuto: true,                 // 20261104：互动B——角色主动搜歌/切歌/收藏（总开关，默认开；开启后一起听期间自动触发，结束一起听自动暂停）
-  musicAutoMin: 20,                // 20261104：角色主动音乐操作随机间隔下限（分钟）
-  musicAutoMax: 120,               // 20261104：角色主动音乐操作随机间隔上限（分钟）
+  musicAutoMin: 5,                 // 20261104：角色主动音乐操作随机间隔下限（分钟）【测试临时调短为5】
+  musicAutoMax: 5,                 // 20261104：角色主动音乐操作随机间隔上限（分钟）【测试临时调短为5】
   musicInvite: false,              // 20261104：角色主动邀请玩家一起听歌（随机固定间隔，默认关）
   musicInviteMin: 120,             // 20261104：角色主动邀请一起听歌间隔下限（分钟，比主动操作更稀疏）
   musicInviteMax: 480,             // 20261104：角色主动邀请一起听歌间隔上限（分钟）
@@ -89,6 +89,8 @@ let chatSettings = {
   videoParseApi: '',               // 20261105：第三方解析服务地址（玩家可自定义；支持 {url}/{link}/{id}/{key} 宏，留空用内置默认）
   videoParseApiId: '',             // 20261105：内置默认服务（接口盒子 apihz）的用户 ID，留空用公共测试号
   videoParseApiKey: '',            // 20261105：内置默认服务（接口盒子 apihz）的通讯密钥，留空用公共测试号
+  videoParsePort: 'auto',          // 20261105：解析口选择 'auto'=自动匹配(默认) / 内置解析口 key / 'custom'=自定义解析服务地址
+  videoParsePortLastFail: 0,       // 20261105：最近一次解析失败时间戳（用于黄字/红字提醒）
   pomodoroFocusMin: 25,            // 20261104：番茄钟默认专注时长（分钟）
   pomodoroBreakMin: 5,             // 20261104：番茄钟默认休息时长（分钟）
   pomodoroNoiseOn: true,           // 20261104：番茄钟默认是否播放白噪音（默认开）
@@ -3825,13 +3827,27 @@ function msgBodyHtml(m, oneLine = false) {
             <div style="font-size:12.5px;color:#fff;text-align:center;line-height:1.35;max-width:100%;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${escapeHtml(vc.title || '视频')}</div>
           </div>`;
       const playable = vc.playUrl || vc.embed || vc.url || vc.videoId;
+      // 20261105 B 部分：小红书图文模块——纯图集（有 images 且无播放链接）渲染成多图横滑卡片；
+      //   封面识别：images 首图作封面，其余图横向滑动查看。
+      const imgs = (Array.isArray(vc.images) && vc.images.length) ? vc.images.slice(0, 9) : [];
+      const isImagePost = imgs.length > 0 && !vc.playUrl && !vc.embed && !vc.videoId;
+      let imageStripHtml = '';
+      if (imgs.length > 1) {
+        const imgList = imgs.map((u, idx) => {
+          const uu = (typeof u === 'string' ? u : '').replace(/^http:\/\//i, 'https://');
+          return `<img src="${escapeHtml(imgSrc(uu, true))}" referrerpolicy="no-referrer" data-bmimg="${idx}" style="flex:0 0 auto;width:${imgs.length === 1 ? '100%' : '72%'};height:150px;object-fit:cover;border-radius:8px;background:linear-gradient(135deg,${plat.color},#2a2340);">`;
+        }).join('');
+        imageStripHtml = `<div class="bm-img-strip" data-imgstrip="${m.id}" style="display:flex;gap:6px;overflow-x:auto;margin-top:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;">${imgList}</div>${imgs.length > 1 ? `<div style="margin-top:4px;font-size:11px;color:var(--text-tertiary);">📷 ${imgs.length} 张图 · 左右滑动查看</div>` : ''}`;
+      }
       const mottoHtml = vc.motto ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12.5px;line-height:1.6;color:var(--purple-soft);word-break:break-word;">💌 ${escapeHtml(vc.motto)}</div>` : '';
+      const tagLabel = isImagePost ? '图文分享' : '视频分享';
       return `<div class="msg-card msg-video-card" data-video-card="${m.id}" style="cursor:pointer;">
         <span class="msg-card-tag" style="background:${plat.color};color:#fff;border:none;">📹 ${escapeHtml(plat.label)}</span>
-        <span style="margin-left:6px;font-size:11.5px;color:var(--text-tertiary);">视频分享</span>
+        <span style="margin-left:6px;font-size:11.5px;color:var(--text-tertiary);">${tagLabel}</span>
         <div style="margin-top:6px;font-size:14px;font-weight:600;line-height:1.4;">${escapeHtml(vc.title || '视频')}</div>
         ${coverHtml}
-        <div style="margin-top:6px;font-size:11.5px;color:var(--text-tertiary);">${playable ? '点击播放' : '视频链接'}</div>
+        ${imageStripHtml}
+        <div style="margin-top:6px;font-size:11.5px;color:var(--text-tertiary);">${isImagePost ? '图文分享' : (playable ? '点击播放' : '视频链接')}</div>
         ${mottoHtml}
       </div>`;
     }
@@ -4064,6 +4080,34 @@ function appendMessage(m, scroll = true, container = null) {
     return;
   }
 
+  /* 20261105：角色主动音乐操作（播放/暂停/切歌/收藏/搜歌/选歌等）——聊天页居中「小圆垫片」，
+     与通话挂断（callEnd）同款中性灰蓝玻璃胶囊，但配音乐图标区分，提示「TA 做了什么」。
+     用户反馈此前角色主动操作缺这种垫片提示条（发的是普通文本气泡，不醒目、不像垫片）。 */
+  if (m.type === 'musicAction') {
+    const pc = characters.find(x => x.id === m.charId);
+    const who = pc ? pc.name : '访客';
+    const row = document.createElement('div');
+    row.className = 'msg-row callend-row musicaction-row';
+    row.dataset.msgid = m.id;
+    row.innerHTML = `<div class="callend-msg"><span class="musicaction-ico" aria-hidden="true">♪</span><div class="callend-body"><span class="callend-who">${escapeHtml(who)}</span> ${escapeHtml(typeof m.content === 'string' ? m.content : '')}</div></div>`;
+    let maPress = null;
+    const delMa = () => showConfirm('删除这条记录吗？', async () => {
+      await idbDelete('messages', m.id);
+      row.remove();
+    });
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); delMa(); });
+    row.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) return;
+      maPress = setTimeout(() => delMa(), 550);
+    });
+    row.addEventListener('touchend', () => clearTimeout(maPress));
+    row.addEventListener('touchmove', () => clearTimeout(maPress));
+    row.addEventListener('touchcancel', () => clearTimeout(maPress));
+    mount.appendChild(row);
+    if (scroll) scrollToBottom();
+    return;
+  }
+
   /* 20261103：占卜「询问访客」——聊天页中间居中卡片（非左右气泡），询问+评价同卡就地过渡 */
   if (m.type === 'divination') {
     const row = document.createElement('div');
@@ -4150,11 +4194,16 @@ function appendMessage(m, scroll = true, container = null) {
   }
 
   // 视频卡片：点击播放（20261104，不自动播放防卡顿）
+  //   20261105 B 部分：小红书图文（有 images 且无播放链接）→ 点开图集浏览器而非播放器
   const videoEl = row.querySelector('[data-video-card]');
   if (videoEl) {
     videoEl.onclick = (ev) => {
       ev.stopPropagation();
-      openVideoPlay(m.content || {});
+      const vc = m.content || {};
+      const imgs = (Array.isArray(vc.images) && vc.images.length) ? vc.images : [];
+      const isImagePost = imgs.length > 0 && !vc.playUrl && !vc.embed && !vc.videoId;
+      if (isImagePost) openImageGallery(imgs, vc.title || '图文分享');
+      else openVideoPlay(vc);
     };
   }
 
@@ -10217,9 +10266,185 @@ function jsonp(url, callbackParam, timeoutMs) {
   });
 }
 
+/* ============================================================
+   20261105 B 部分：B站 WBI 签名（纯前端，降低 search/type 接口风控）。
+   原理：B站新版接口要求在 query 里加 w_rid + wts 两个参数，其中
+     wts = 当前秒级时间戳；
+     w_rid = md5(排序后参数拼接 + imgKey + subKey 混排的盐)。
+   盐来自 nav 接口返回的 img_url / sub_url 两个图片文件名的 32 位字符，
+   每张图文件名去掉扩展名后取前 32 位，各作为一个 key（imgKey/subKey），
+   再按固定规则混排成 32 位混合 key（imgKey 取偶位、subKey 取奇位）。
+   本模块自写标准 MD5（约 50 行，公开算法），不引入外部库。
+   ============================================================ */
+
+/* 标准 MD5（RFC 1321 纯 JS 实现，输入 UTF-8 字符串，输出 32 位小写 hex） */
+function _md5(str) {
+  function rotateLeft(l, n) { return (l << n) | (l >>> (32 - n)); }
+  function addUnsigned(l, r) { return (l + r) & 0xFFFFFFFF; }
+  function md5cycle(x, k) {
+    let a = x[0], b = x[1], c = x[2], d = x[3];
+    a = md5ff(a, b, c, d, k[0], 7, -680876936); d = md5ff(d, a, b, c, k[1], 12, -389564586);
+    c = md5ff(c, d, a, b, k[2], 17, 606105819); b = md5ff(b, c, d, a, k[3], 22, -1044525330);
+    a = md5ff(a, b, c, d, k[4], 7, -176418897); d = md5ff(d, a, b, c, k[5], 12, 1200080426);
+    c = md5ff(c, d, a, b, k[6], 17, -1473231341); b = md5ff(b, c, d, a, k[7], 22, -45705983);
+    a = md5ff(a, b, c, d, k[8], 7, 1770035416); d = md5ff(d, a, b, c, k[9], 12, -1958414417);
+    c = md5ff(c, d, a, b, k[10], 17, -42063); b = md5ff(b, c, d, a, k[11], 22, -1990404162);
+    a = md5ff(a, b, c, d, k[12], 7, 1804603682); d = md5ff(d, a, b, c, k[13], 12, -40341101);
+    c = md5ff(c, d, a, b, k[14], 17, -1502002290); b = md5ff(b, c, d, a, k[15], 22, 1236535329);
+    a = md5gg(a, b, c, d, k[1], 5, -165796510); d = md5gg(d, a, b, c, k[6], 9, -1069501632);
+    c = md5gg(c, d, a, b, k[11], 14, 643717713); b = md5gg(b, c, d, a, k[0], 20, -373897302);
+    a = md5gg(a, b, c, d, k[5], 5, -701558691); d = md5gg(d, a, b, c, k[10], 9, 38016083);
+    c = md5gg(c, d, a, b, k[15], 14, -660478335); b = md5gg(b, c, d, a, k[4], 20, -405537848);
+    a = md5gg(a, b, c, d, k[9], 5, 568446438); d = md5gg(d, a, b, c, k[14], 9, -1019803690);
+    c = md5gg(c, d, a, b, k[3], 14, -187363961); b = md5gg(b, c, d, a, k[8], 20, 1163531501);
+    a = md5gg(a, b, c, d, k[13], 5, -1444681467); d = md5gg(d, a, b, c, k[2], 9, -51403784);
+    c = md5gg(c, d, a, b, k[7], 14, 1735328473); b = md5gg(b, c, d, a, k[12], 20, -1926607734);
+    a = md5hh(a, b, c, d, k[5], 4, -378558); d = md5hh(d, a, b, c, k[8], 11, -2022574463);
+    c = md5hh(c, d, a, b, k[11], 16, 1839030562); b = md5hh(b, c, d, a, k[14], 23, -35309556);
+    a = md5hh(a, b, c, d, k[1], 4, -1530992060); d = md5hh(d, a, b, c, k[4], 11, 1272893353);
+    c = md5hh(c, d, a, b, k[7], 16, -155497632); b = md5hh(b, c, d, a, k[10], 23, -1094730640);
+    a = md5hh(a, b, c, d, k[13], 4, 681279174); d = md5hh(d, a, b, c, k[0], 11, -358537222);
+    c = md5hh(c, d, a, b, k[3], 16, -722521979); b = md5hh(b, c, d, a, k[6], 23, 76029189);
+    a = md5hh(a, b, c, d, k[9], 4, -640364487); d = md5hh(d, a, b, c, k[12], 11, -421815835);
+    c = md5hh(c, d, a, b, k[15], 16, 530742520); b = md5hh(b, c, d, a, k[2], 23, -995338651);
+    a = md5ii(a, b, c, d, k[0], 6, -198630844); d = md5ii(d, a, b, c, k[7], 10, 1126891415);
+    c = md5ii(c, d, a, b, k[14], 15, -1416354905); b = md5ii(b, c, d, a, k[5], 21, -57434055);
+    a = md5ii(a, b, c, d, k[12], 6, 1700485571); d = md5ii(d, a, b, c, k[3], 10, -1894986606);
+    c = md5ii(c, d, a, b, k[10], 15, -1051523); b = md5ii(b, c, d, a, k[1], 21, -2054922799);
+    a = md5ii(a, b, c, d, k[8], 6, 1873313359); d = md5ii(d, a, b, c, k[15], 10, -30611744);
+    c = md5ii(c, d, a, b, k[6], 15, -1560198380); b = md5ii(b, c, d, a, k[13], 21, 1309151649);
+    a = md5ii(a, b, c, d, k[4], 6, -145523070); d = md5ii(d, a, b, c, k[11], 10, -1120210379);
+    c = md5ii(c, d, a, b, k[2], 15, 718787259); b = md5ii(b, c, d, a, k[9], 21, -343485551);
+    x[0] = addUnsigned(a, x[0]); x[1] = addUnsigned(b, x[1]);
+    x[2] = addUnsigned(c, x[2]); x[3] = addUnsigned(d, x[3]);
+  }
+  function cmn(q, a, b, x, s, t) { a = addUnsigned(addUnsigned(a, q), addUnsigned(x, t)); return addUnsigned(rotateLeft(a, s), b); }
+  function md5ff(a, b, c, d, x, s, t) { return cmn((b & c) | ((~b) & d), a, b, x, s, t); }
+  function md5gg(a, b, c, d, x, s, t) { return cmn((b & d) | (c & (~d)), a, b, x, s, t); }
+  function md5hh(a, b, c, d, x, s, t) { return cmn(b ^ c ^ d, a, b, x, s, t); }
+  function md5ii(a, b, c, d, x, s, t) { return cmn(c ^ (b | (~d)), a, b, x, s, t); }
+  // UTF-8 编码
+  const bytes = [];
+  for (let i = 0; i < str.length; i++) {
+    let code = str.charCodeAt(i);
+    if (code < 0x80) bytes.push(code);
+    else if (code < 0x800) { bytes.push(0xC0 | (code >> 6), 0x80 | (code & 0x3F)); }
+    else if (code < 0xD800 || code >= 0xE000) { bytes.push(0xE0 | (code >> 12), 0x80 | ((code >> 6) & 0x3F), 0x80 | (code & 0x3F)); }
+    else { i++; code = 0x10000 + (((code & 0x3FF) << 10) | (str.charCodeAt(i) & 0x3FF)); bytes.push(0xF0 | (code >> 18), 0x80 | ((code >> 12) & 0x3F), 0x80 | ((code >> 6) & 0x3F), 0x80 | (code & 0x3F)); }
+  }
+  // 填充
+  const origLen = bytes.length;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const bitLen = origLen * 8;
+  for (let i = 0; i < 4; i++) bytes.push((bitLen >>> (i * 8)) & 0xFF);
+  for (let i = 0; i < 4; i++) bytes.push((Math.floor(bitLen / 0x100000000) >>> (i * 8)) & 0xFF);
+  // 处理
+  const x = [1732584193, -271733879, -1732584194, 271733878];
+  for (let i = 0; i < bytes.length; i += 64) {
+    const k = [];
+    for (let j = 0; j < 16; j++) {
+      k[j] = (bytes[i + j * 4] | (bytes[i + j * 4 + 1] << 8) | (bytes[i + j * 4 + 2] << 16) | (bytes[i + j * 4 + 3] << 24));
+    }
+    md5cycle(x, k);
+  }
+  function toHex(n) { let s = ''; for (let i = 0; i < 4; i++) s += ((n >>> (i * 8)) & 0xFF).toString(16).padStart(2, '0'); return s; }
+  return toHex(x[0]) + toHex(x[1]) + toHex(x[2]) + toHex(x[3]);
+}
+
+/* B站 WBI 签名状态缓存：imgKey/subKey 一次拿、进程内复用（24h），失败下次重取 */
+let _wbiKeys = null;
+let _wbiKeysAt = 0;
+/* 从 nav 接口拿 wbi_img_url / wbi_sub_url 的文件名 → imgKey/subKey。
+   20261105 B 部分：优先走原生 httpRequest 代理（Java 层无 CORS，真机可拿 key）；
+   网页端 fallback 到 fetch（会被 CORS 挡，仅作降级）。 */
+async function _wbiGetKeys() {
+  if (_wbiKeys && (Date.now() - _wbiKeysAt < 24 * 3600 * 1000)) return _wbiKeys;
+  const keyFrom = (u) => {
+    const m = (u || '').match(/\/([^\/]+)\.(png|jpg|jpeg|gif|webp)$/i);
+    return m ? m[1] : '';
+  };
+  const apply = (j) => {
+    const wbi = (j && j.data && j.data.wbi_img) || {};
+    const imgKey = keyFrom(wbi.img_url), subKey = keyFrom(wbi.sub_url);
+    if (imgKey && subKey) {
+      _wbiKeys = { imgKey, subKey };
+      _wbiKeysAt = Date.now();
+      return _wbiKeys;
+    }
+    return null;
+  };
+  // 1. 原生代理（真机 APK）
+  try {
+    const RC = (typeof bmRemoteControlNative === 'function') ? bmRemoteControlNative() : null;
+    if (RC && typeof RC.httpRequest === 'function') {
+      const r = await RC.httpRequest({
+        url: 'https://api.bilibili.com/x/web-interface/nav',
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36', 'Referer': 'https://www.bilibili.com/' },
+      });
+      if (r && r.ok && r.body) {
+        const j = JSON.parse(r.body);
+        const keys = apply(j);
+        if (keys) return keys;
+      }
+    }
+  } catch (e) {}
+  // 2. 网页端 fetch 兜底（CORS 会挡，静默失败返回 null）
+  try {
+    const r = await fetch('https://api.bilibili.com/x/web-interface/nav', { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36', 'Referer': 'https://www.bilibili.com/' } });
+    if (r.ok) {
+      const j = await r.json();
+      const keys = apply(j);
+      if (keys) return keys;
+    }
+  } catch (e) {}
+  return null;
+}
+/* 用 imgKey/subKey 混排出 32 位混合 key（偶位取 imgKey、奇位取 subKey） */
+function _wbiMixKey(imgKey, subKey) {
+  const mixin = '7cd084941338484aae1ad9425b84077c'; // 官方固定混排表（公开）
+  let s = '';
+  for (let i = 0; i < 32; i++) {
+    if (mixin.charCodeAt(i) % 2 === 0) s += imgKey.charAt(i);
+    else s += subKey.charAt(i);
+  }
+  return s;
+}
+/* 给一组 query 参数加 WBI 签名，返回新参数对象（含 wts/w_rid） */
+async function _wbiSign(params) {
+  const keys = await _wbiGetKeys();
+  const p = Object.assign({}, params);
+  p.wts = Math.floor(Date.now() / 1000);
+  if (keys && keys.imgKey && keys.subKey) {
+    // 过滤 value 中属于 "!'()*" 的字符（官方规则），再排序拼接
+    const filter = (v) => String(v).replace(/[!'()*]/g, '');
+    const sorted = Object.keys(p).sort();
+    let query = '';
+    for (const k of sorted) {
+      const v = filter(p[k]);
+      if (v === undefined || v === null || v === '') continue;
+      query += (query ? '&' : '') + encodeURIComponent(k) + '=' + encodeURIComponent(v);
+    }
+    const mixKey = _wbiMixKey(keys.imgKey, keys.subKey);
+    p.w_rid = _md5(query + mixKey);
+  }
+  return p;
+}
+/* 把参数对象转成 URL query 串（含 WBI 签名参数） */
+function _wbiToQuery(params) {
+  const sorted = Object.keys(params).sort();
+  const parts = [];
+  for (const k of sorted) {
+    const v = params[k];
+    if (v === undefined || v === null) continue;
+    parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(String(v)));
+  }
+  return parts.join('&');
+}
+
 /* 从一段 HTML/文本里解析 title 与封面（小红书/抖音 SSR 页内嵌 JSON 字段） */
 function _extractMetaFromHtml(html, platform) {
-  const out = { title: '', cover: '' };
+  const out = { title: '', cover: '', images: [] };
   if (!html) return out;
   try {
     if (platform === 'xiaohongshu') {
@@ -10235,6 +10460,34 @@ function _extractMetaFromHtml(html, platform) {
         u = u.replace(/^https?:\/\/ci\.xiaohongshu\.com\/(?:https?:)?\/\//, 'https://');
         if (!/!h5_\d+jpg/i.test(u) && /sns-webpic/.test(u)) u += '!h5_1080jpg';
         out.cover = u;
+      }
+      // 20261105 B 部分：小红书图文多图——从 SSR 的 imageList / imagesList 提取图集。
+      //   常见字段：__INITIAL_STATE__ 里 "imageList":[{ "urlDefault":"..." }] 或 "images":[{"url":"..."}]
+      const normImg = (u) => {
+        if (!u || typeof u !== 'string') return '';
+        u = u.replace(/^https?:\/\/ci\.xiaohongshu\.com\/(?:https?:)?\/\//, 'https://');
+        u = u.replace(/\\u002F/g, '/').replace(/\\\//g, '/');
+        if (/sns-webpic/.test(u) && !/!h5_/i.test(u)) u += '!h5_1080jpg';
+        return u;
+      };
+      let imgs = [];
+      // 方案1：urlDefault / url 字段（小红书新版 SSR）
+      const urlDefault = html.match(/"urlDefault"\s*:\s*"([^"]+)"/g);
+      if (urlDefault && urlDefault.length > 1) {
+        imgs = urlDefault.map(x => normImg((x.match(/:\s*"([^"]+)"/) || [])[1])).filter(Boolean);
+      }
+      // 方案2：imageList 数组（老版）
+      if (!imgs.length) {
+        const ilBlock = html.match(/"imageList"\s*:\s*\[[\s\S]{0,5000}?\]/);
+        if (ilBlock) {
+          const urls = ilBlock[0].match(/"url(?:_default)?"\s*:\s*"([^"]+)"/g);
+          if (urls) imgs = urls.map(x => normImg((x.match(/:\s*"([^"]+)"/) || [])[1])).filter(Boolean);
+        }
+      }
+      // 去重
+      if (imgs.length) {
+        out.images = [...new Set(imgs)].slice(0, 9);
+        if (!out.cover && out.images.length) out.cover = out.images[0];
       }
     } else if (platform === 'douyin') {
       // 抖音分享页 SSR：window._ROUTER_DATA 里有 desc + 封面 url_list
@@ -10263,10 +10516,140 @@ const _BUILTIN_PARSE_APIS = {
 const _BUILTIN_PARSE_ID = '88888888';
 const _BUILTIN_PARSE_KEY = '88888888';
 
+/* 20261105：内置「网页跳转式」解析口清单（VIP 视频解析接口，?url= 模式）。
+   当视频无法在 APP 内直接播放（小红书/抖音/其他外链）时，用选中的解析口在 APP 内打开
+   解析播放页（Browser.open），不依赖 CORS。玩家可在聊天设置里自选解析口，默认 'auto' 自动匹配。
+   实测可用（20261105）：冰豆 bd.jx.cn / CK ckplayer.vip / 虾米 jx.xmflv.com / HLS jx.hls.one /
+   playm3u8 playm3u8.cn；七哥 nnxv 301 可用；Player-JY / 七七云已失效（保留但标记 likelyDead）。 */
+const _BUILTIN_PARSE_PORTS = [
+  { key: 'bdjx', name: '冰豆解析', url: 'https://bd.jx.cn/?url={url}' },
+  { key: 'ck', name: 'CK解析', url: 'https://www.ckplayer.vip/jiexi/?url={url}' },
+  { key: 'xiamai', name: '虾米解析', url: 'https://jx.xmflv.com/?url={url}' },
+  { key: 'hls', name: 'HLS解析', url: 'https://jx.hls.one/?url={url}' },
+  { key: 'playm3u8', name: 'playm3u8', url: 'https://www.playm3u8.cn/jiexi.php?url={url}' },
+  { key: 'qige', name: '七哥解析', url: 'https://jx.nnxv.cn/tv.php?url={url}' },
+  { key: 'playerjy', name: 'Player-JY', url: 'https://jx.playerjy.com/?url={url}', likelyDead: true },
+  { key: 'qqyun', name: '七七云解析', url: 'https://jx.77flv.cc/?url={url}', likelyDead: true },
+  { key: '789', name: '789解析', url: 'https://jiexi.789jiexi.icu:4433/?url={url}' },
+  { key: 'jisu', name: '极速解析', url: 'https://jx.2s0.cn/player/?url={url}' },
+  { key: 'pouyun', name: '剖元解析', url: 'https://www.pouyun.com/?url={url}' },
+  { key: '973', name: '973解析', url: 'https://jx.973973.xyz/?url={url}' },
+  { key: 'yparse', name: 'Yparse', url: 'https://yparse.ik9.cc/index.php?url={url}' },
+  { key: 'm1907', name: 'M1907', url: 'https://im1907.top/?jx={url}' },
+];
+// 按平台给一个默认解析口（auto 时自动匹配；实测 B站可 iframe 内嵌无需解析口，故主要给抖音/小红书/外链）
+const _PARSE_PORT_BY_PLATFORM = {
+  douyin: 'bdjx',
+  xiaohongshu: 'xiamai',
+  link: 'bdjx',
+  youtube: 'bdjx',
+};
+// 取当前生效的解析口 URL（?url= 网页跳转式）；portKey 'auto' 按平台匹配，'custom' 用玩家自定义解析服务
+function _getParsePortUrl(platform, settings) {
+  const s = settings || (typeof chatSettings !== 'undefined' ? chatSettings : {});
+  const portKey = (typeof s.videoParsePort === 'string' && s.videoParsePort) ? s.videoParsePort : 'auto';
+  if (portKey === 'custom') {
+    // 自定义：用 videoParseApi（JSON 解析服务）作为跳转地址也行，但网页式解析口更通用，这里回退 auto
+    const custom = (typeof s.videoParseApi === 'string' && s.videoParseApi.trim()) ? s.videoParseApi.trim() : '';
+    if (custom) return custom;
+  }
+  const target = (portKey !== 'auto') ? portKey : (_PARSE_PORT_BY_PLATFORM[platform] || 'bdjx');
+  const port = _BUILTIN_PARSE_PORTS.find(p => p.key === target);
+  return port ? port.url : (_BUILTIN_PARSE_PORTS[0] ? _BUILTIN_PARSE_PORTS[0].url : 'https://bd.jx.cn/?url={url}');
+}
+
+/* 20261105：视频解析失败/成功的状态标记——用于「红字提醒解析失败、黄字提醒 API 失效」。
+   _parseFailStreak 连续失败次数；连续失败 ≥2 视为「解析口/服务可能失效」，黄字提醒切换。 */
+let _parseFailStreak = 0;
+let _parseLastFailAt = 0;
+function _markParseSuccess() {
+  _parseFailStreak = 0;
+  if (typeof chatSettings !== 'undefined') chatSettings.videoParsePortLastFail = 0;
+}
+function _markParseFail() {
+  _parseFailStreak = (_parseFailStreak || 0) + 1;
+  _parseLastFailAt = Date.now();
+  try {
+    if (typeof chatSettings !== 'undefined') chatSettings.videoParsePortLastFail = Date.now();
+  } catch (e) {}
+}
+/* 解析失败时的用户提醒：红字（单次失败）+ 黄字（连续失败，疑似 API 失效）。 */
+function _notifyParseFail(platform) {
+  try {
+    const s = (typeof chatSettings !== 'undefined') ? chatSettings : {};
+    const streak = _parseFailStreak || 0;
+    if (streak >= 2) {
+      // 连续失败：黄字提醒「解析口/服务可能失效」，提示去聊天设置切换
+      if (typeof miniToast === 'function') miniToast('⚠️ 视频解析口疑似失效，去「聊天设置 → 视频」切换解析口');
+    } else if (streak === 1) {
+      // 单次失败：红字提醒解析失败，可换原链接跳转
+      if (typeof miniToast === 'function') miniToast('❌ 视频解析失败，已保留原链接可跳转播放');
+    }
+  } catch (e) {}
+}
+
+/* 20261105：apizero（极数本源）全平台视频解析——首选解析源。
+   统一处理 B站/抖音/小红书（自动识别），返回 title/desc/video_url/cover_url/imagelist。
+   带 access-control-allow-origin:*，前端可直接 fetch。免费匿名额度 3 次/天、登录 5 次/天，
+   玩家可在聊天设置里填自己的 apizero Key（X-API-Key）解锁更多额度（¥0.001/次）。
+   返回 null 表示失败/额度耗尽，调用方回退 apihz / 本地 SSR / APP 内网页跳转。 */
+let _apiZeroQuotaHit = false;   // 标记 apizero 额度是否已耗尽（本次会话内不再重复调用）
+async function _fetchMetaByApiZero(vc, key) {
+  if (!vc || !vc.url) return null;
+  if (_apiZeroQuotaHit) return null;   // 额度已耗尽，直接跳过
+  try {
+    let url = 'https://v1.apizero.cn/api/video-parse?flat=1&url=' + encodeURIComponent(vc.url);
+    const headers = { 'Accept': 'application/json' };
+    if (key && typeof key === 'string' && key.trim()) headers['X-API-Key'] = key.trim();
+    const r = await fetch(url, { headers });
+    if (!r.ok) return null;
+    const j = await r.json();
+    // code 4030 = 匿名额度用完；其他非 0 = 失败
+    if (!j || j.code !== 0) {
+      if (j && (j.code === 4030 || (j.msg && String(j.msg).indexOf('额度') >= 0))) _apiZeroQuotaHit = true;
+      return null;
+    }
+    let d = j.data;
+    // flat=1 时 d 可能再包一层（兼容双层），递归取到含 title 的层
+    for (let i = 0; i < 3 && d && typeof d === 'object'; i++) {
+      if (d.title || d.video_url || d.cover_url || (d.images && d.images.length) || d.imagelist) break;
+      d = d.data || null;
+    }
+    if (!d || typeof d !== 'object') return null;
+    const out = {};
+    if (typeof d.title === 'string' && d.title) out.title = d.title;
+    if (typeof d.cover_url === 'string' && d.cover_url) out.cover = d.cover_url;
+    else if (typeof d.cover === 'string' && d.cover) out.cover = d.cover;
+    if (typeof d.video_url === 'string' && d.video_url) out.playUrl = d.video_url;
+    // 图集（小红书图文 / 抖音图集）：imagelist 或 images
+    const imgs = Array.isArray(d.imagelist) ? d.imagelist : (Array.isArray(d.images) ? d.images : null);
+    if (imgs && imgs.length) {
+      out.images = imgs.map(x => (typeof x === 'string') ? x : (x && x.url)).filter(Boolean);
+      if (!out.cover && out.images.length) out.cover = out.images[0];
+    }
+    if (!out.title && !out.cover && !out.playUrl) return null;
+    return out;
+  } catch (e) { return null; }
+}
+
 async function _fetchMetaByThirdParty(vc) {
   if (!vc || !vc.url) return vc;
   try {
     const s = (typeof chatSettings !== 'undefined') ? chatSettings : {};
+    // 20261105：先尝试 apizero 全平台解析（最全面，B站/抖音/小红书都能拿 title/cover/直链）。
+    //   成功直接回填；失败（额度耗尽/网络）再回退到 apihz（抖音直链可用）或自定义服务。
+    const apizeroKey = (typeof s.videoParseApiKey === 'string') ? s.videoParseApiKey : '';
+    const az = await _fetchMetaByApiZero(vc, apizeroKey);
+    if (az) {
+      if (az.title && !vc.title) vc.title = az.title;
+      if (az.cover && !vc.cover) vc.cover = az.cover.replace(/^http:\/\//i, 'https://');
+      if (az.playUrl && !vc.playUrl) vc.playUrl = az.playUrl;
+      if (az.images && az.images.length) vc.images = az.images;
+      if (az.playUrl && vc.platform === 'douyin') { /* 抖音拿到直链，可 APP 内 video 直接播 */ }
+      _markParseSuccess();
+      return vc;
+    }
+    _markParseFail();
     // 玩家自定义的解析服务地址优先；留空则按平台用内置默认服务
     let api = (typeof s.videoParseApi === 'string' && s.videoParseApi.trim()) ? s.videoParseApi.trim() : '';
     let customId = (typeof s.videoParseApiId === 'string') ? s.videoParseApiId : '';
@@ -10336,6 +10719,25 @@ async function _fetchMetaByThirdParty(vc) {
    - 小红书：短链 fetch → 302 拿 SSR HTML → 解析内嵌 title + 封面
    - 抖音：短链 fetch → 302 拿分享页 SSR → 解析 desc + 封面
    - 第三方解析（可选，videoCoverMode==='thirdParty' 时）：拿小红书/抖音真封面 */
+/* 20261105 B 部分：原生代理拿网页 HTML（绕过 CORS，真机 APK 有效；网页端返回 null）。
+   用于小红书/抖音 SSR 解析——前端 fetch 跨域拿不到 body，原生 httpRequest 无 CORS 可拿完整 HTML。 */
+async function _nativeFetchHtml(url) {
+  try {
+    const RC = (typeof bmRemoteControlNative === 'function') ? bmRemoteControlNative() : null;
+    if (RC && typeof RC.httpRequest === 'function') {
+      const r = await RC.httpRequest({
+        url,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      if (r && r.ok && r.body) return r.body;
+    }
+  } catch (e) {}
+  return null;
+}
+
 async function fetchVideoMeta(vc) {
   if (!vc) return vc;
   try {
@@ -10399,23 +10801,32 @@ async function fetchVideoMeta(vc) {
         }
       } catch (e) {}
     } else if (vc.platform === 'xiaohongshu' && vc.url) {
-      // 小红书短链：fetch 302 拿 SSR HTML（带 UA 更稳），解析内嵌 title + 封面
+      // 小红书短链：20261105 B 部分——优先原生代理拿 SSR HTML（无 CORS 可拿完整图集），
+      //   前端 fetch 302 兜底（跨域拿不到 body，仅降级）。解析内嵌 title + 封面 + 多图图集。
       try {
-        const rr = await fetch(vc.url, { redirect: 'follow' });
-        const html = await rr.text();
+        let html = await _nativeFetchHtml(vc.url);
+        if (!html) {
+          const rr = await fetch(vc.url, { redirect: 'follow' });
+          html = await rr.text();
+        }
         const meta = _extractMetaFromHtml(html, 'xiaohongshu');
         if (meta.title) vc.title = vc.title || meta.title;
         if (meta.cover) vc.cover = vc.cover || meta.cover;
+        if (meta.images && meta.images.length) vc.images = meta.images;   // 图集（图文模块）
       } catch (e) {}
       // 第三方解析（玩家在设置里选了 thirdParty 才启用）
       if ((typeof chatSettings !== 'undefined' && chatSettings.videoCoverMode === 'thirdParty') && (!vc.cover || !vc.title)) {
         await _fetchMetaByThirdParty(vc);
+        if (!vc.cover && !vc.title) _notifyParseFail('xiaohongshu');
       }
     } else if (vc.platform === 'douyin' && vc.url) {
-      // 抖音短链：fetch 302 拿分享页 SSR，解析 desc + 封面
+      // 抖音短链：优先原生代理拿 SSR，前端 fetch 兜底
       try {
-        const rr = await fetch(vc.url, { redirect: 'follow' });
-        const html = await rr.text();
+        let html = await _nativeFetchHtml(vc.url);
+        if (!html) {
+          const rr = await fetch(vc.url, { redirect: 'follow' });
+          html = await rr.text();
+        }
         const meta = _extractMetaFromHtml(html, 'douyin');
         if (meta.title) vc.title = vc.title || meta.title;
         if (meta.cover) vc.cover = vc.cover || meta.cover;
@@ -10423,6 +10834,7 @@ async function fetchVideoMeta(vc) {
       // 第三方解析（玩家在设置里选了 thirdParty 才启用）
       if ((typeof chatSettings !== 'undefined' && chatSettings.videoCoverMode === 'thirdParty') && (!vc.cover || !vc.title)) {
         await _fetchMetaByThirdParty(vc);
+        if (!vc.cover && !vc.title) _notifyParseFail('douyin');
       }
     }
   } catch (e) {}
@@ -10459,10 +10871,44 @@ async function getVideoMotto(charId) {
   return fallback[Math.floor(Math.random() * fallback.length)];
 }
 
+/* 20261105 B 部分：小红书图文图集浏览弹窗——多图左右切换查看（左右箭头 + 页码指示）。
+   imgs：图 URL 数组；title：标题（可选）。 */
+function openImageGallery(imgs, title) {
+  const list = (Array.isArray(imgs) ? imgs : []).filter(Boolean);
+  if (!list.length) { if (typeof miniToast === 'function') miniToast('没有可查看的图片'); return; }
+  let idx = 0;
+  const total = list.length;
+  const render = () => {
+    const cur = String(list[idx]).replace(/^http:\/\//i, 'https://');
+    $('#bm-imgview').innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:15px;font-weight:600;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title || '图文分享')}</div>
+        <button class="icon-btn" id="bm-imgview-close">✕</button>
+      </div>
+      <div style="position:relative;width:100%;overflow:hidden;border-radius:14px;background:#000;">
+        <img src="${escapeHtml(imgSrc(cur, true))}" referrerpolicy="no-referrer" style="width:100%;max-height:60vh;object-fit:contain;display:block;" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22600%22 height=%22400%22%3E%3Crect width=%22600%22 height=%22400%22 fill=%22%232a2340%22/%3E%3Ctext x=%22300%22 y=%22210%22 fill=%22%23aaa%22 font-size=%2230%22 text-anchor=%22middle%22%3E图片加载失败%3C/text%3E%3C/svg%3E';">
+        ${idx > 0 ? `<button id="bm-img-prev" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;border:none;font-size:20px;line-height:1;cursor:pointer;">‹</button>` : ''}
+        ${idx < total - 1 ? `<button id="bm-img-next" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;border:none;font-size:20px;line-height:1;cursor:pointer;">›</button>` : ''}
+      </div>
+      <div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text-tertiary);">${idx + 1} / ${total}</div>`;
+    $('#bm-imgview-close').onclick = () => closeModal();
+    const prev = $('#bm-img-prev'); if (prev) prev.onclick = (e) => { e.stopPropagation(); if (idx > 0) { idx--; render(); } };
+    const next = $('#bm-img-next'); if (next) next.onclick = (e) => { e.stopPropagation(); if (idx < total - 1) { idx++; render(); } };
+  };
+  openModal(`<div id="bm-imgview"></div>`);
+  render();
+}
+
 /* 发一张视频卡片到聊天（玩家或角色发）。附寄语（motto，AI 模式 AI 生成 / 字卡模式字卡抽） */
 async function sendVideoCard(charId, video, from, replyTo) {
   // 20261104：先异步补全封面+标题（B站/YouTube），拿到真实标题封面再发卡片
   video = await fetchVideoMeta(video).catch(() => video);
+  // 20261105 B 部分：封面识别兜底——小红书/抖音图集，封面为空时用图集首图兜底；
+  //   图集一并存进 content.images，供图文卡片渲染（小红书图文模块）。
+  let images = (video && Array.isArray(video.images)) ? video.images : [];
+  if ((!video.cover || typeof video.cover !== 'string' || !video.cover.trim()) && images.length) {
+    video.cover = images[0];
+  }
   const motto = await getVideoMotto(charId).catch(() => '');
   const msg = {
     id: uid('msg'), charId, from, type: 'video',
@@ -10474,6 +10920,7 @@ async function sendVideoCard(charId, video, from, replyTo) {
       videoId: video.videoId || '',
       embed: video.embed || '',
       url: video.url || video.playUrl || '',
+      images: images.slice(0, 9) || [],   // 20261105：图集（小红书图文），最多存 9 张
       motto: motto || '',
       time: Date.now(),
       replyTo: replyTo || null,
@@ -10586,12 +11033,11 @@ async function charReplyVideo(charId, video) {
 
 /* 角色主动搜发视频：从真实可播放的视频池（B站公开视频）随机选一个发给玩家（不自动播放防卡顿）。
    B站 iframe 播放器（player.bilibili.com）支持站内播放，点卡片即可看；标题为陪伴/治愈向。 */
-/* B站真实搜索：JSONP 走 search/type 接口（不带 Origin 绕过风控）。
-   返回 [{ videoId, title, cover, platform:'bilibili' }]；失败返回空数组。 */
+/* B站真实搜索：20261105 B 部分——优先走 WBI 签名的正式 search/type 接口
+   （带 w_rid/wts，风控远低于裸 JSONP）。真机走原生 httpRequest 代理（无 CORS），
+   网页端 fallback fetch / 旧 JSONP。返回 [{ videoId, title, cover, platform:'bilibili' }]。 */
 async function _searchBilibili(kw, max) {
-  try {
-    const q = `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(kw)}&page=1&page_size=${max || 10}&jsonp=jsonp`;
-    const j = await jsonp(q, 'callback', 8000);
+  const toList = (j) => {
     const list = (j && j.data && j.data.result) ? j.data.result : [];
     const out = [];
     for (const it of list) {
@@ -10601,7 +11047,109 @@ async function _searchBilibili(kw, max) {
       out.push({ platform: 'bilibili', videoId: it.bvid, title: title || kw, cover });
     }
     return out;
+  };
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36';
+  const REF = 'https://www.bilibili.com/';
+  // 1. 首选：WBI 签名正式接口（原生代理 / fetch）
+  try {
+    const params = await _wbiSign({ search_type: 'video', keyword: kw, page: 1, page_size: max || 10 });
+    const q = 'https://api.bilibili.com/x/web-interface/wbi/search/type?' + _wbiToQuery(params);
+    const RC = (typeof bmRemoteControlNative === 'function') ? bmRemoteControlNative() : null;
+    if (RC && typeof RC.httpRequest === 'function') {
+      const r = await RC.httpRequest({ url: q, headers: { 'User-Agent': UA, 'Referer': REF, 'Accept': 'application/json' } });
+      if (r && r.ok && r.body) {
+        const j = JSON.parse(r.body);
+        if (j && j.code === 0) { const out = toList(j); if (out.length) return out; }
+      }
+    } else {
+      const r = await fetch(q, { headers: { 'User-Agent': UA, 'Referer': REF, 'Accept': 'application/json' } });
+      if (r.ok) { const j = await r.json(); if (j && j.code === 0) { const out = toList(j); if (out.length) return out; } }
+    }
+  } catch (e) {}
+  // 2. 回退：旧 JSONP（不带 Origin，桌面端兜底）
+  try {
+    const q = `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(kw)}&page=1&page_size=${max || 10}&jsonp=jsonp`;
+    const j = await jsonp(q, 'callback', 8000);
+    return toList(j);
   } catch (e) { return []; }
+}
+
+/* 加载「角色搜视频」真实视频库 videolib.json（B站抓取的分类视频池）。
+   20261105：本地 IndexedDB 缓存，没网/首次加载失败用缓存；联网时每天刷新一次。
+   返回 { categories: {分类名: [视频...] } } 或 null。 */
+let _videoLibCache = null;
+let _videoLibCacheAt = 0;
+const _VIDEOLIB_CACHE_KEY = 'videolib_cache';
+const _VIDEOLIB_URL = 'js/videolib.json';
+async function _loadVideoLib(force) {
+  const now = Date.now();
+  // 1. 内存缓存（1 天内有效）
+  if (_videoLibCache && !force && (now - _videoLibCacheAt < 24 * 3600 * 1000)) {
+    return _videoLibCache;
+  }
+  // 2. 先读 IndexedDB 缓存（离线兜底）
+  let cached = null;
+  try {
+    cached = await idbGet('kv', _VIDEOLIB_CACHE_KEY).catch(() => null);
+  } catch (e) {}
+  // 3. 尝试联网抓最新（fetch 本地 JSON）
+  try {
+    const r = await fetch(_VIDEOLIB_URL + '?v=' + now, { cache: 'no-store' });
+    if (r && r.ok) {
+      const j = await r.json();
+      if (j && j.categories && Object.keys(j.categories).length) {
+        _videoLibCache = j;
+        _videoLibCacheAt = now;
+        try { await idbPut('kv', { key: _VIDEOLIB_CACHE_KEY, value: j }).catch(() => {}); } catch (e) {}
+        return j;
+      }
+    }
+  } catch (e) {}
+  // 4. 联网失败 → 用本地缓存（可能稍旧）
+  if (cached && cached.value && cached.value.categories) {
+    _videoLibCache = cached.value;
+    _videoLibCacheAt = now;
+    return cached.value;
+  }
+  return null;
+}
+
+/* 从视频库按搜索词匹配：先看搜索词是否命中某分类关键词，命中则优先该分类；
+   否则从「知识/生活」等泛类兜底随机取。返回视频对象或 null。 */
+function _matchVideoFromLib(lib, kw) {
+  if (!lib || !lib.categories) return null;
+  const cats = lib.categories;
+  const k = (kw || '').toLowerCase();
+  // 分类关键词映射（命中搜索词 → 优先该分类）
+  const KW_MAP = [
+    ['传讯梦占', ['传讯', '天使', '讯息', '解梦', '梦', '预言', '周公']],
+    ['塔罗玄学', ['塔罗', '占卜', '灵性', '玄学', '星座', '命运', '命理']],
+    ['水晶', ['水晶', '晶石', '宝石', '疗愈', '能量']],
+    ['治愈陪伴', ['治愈', '陪伴', '睡前', '助眠', '白噪音', '温暖', '安心']],
+    ['搞笑娱乐', ['搞笑', '沙雕', '爆笑', '整活', '名场面', '脱口秀', '相声', '笑']],
+    ['小说', ['小说', '网文', '故事', '有声', '推文', '听书', '爽文']],
+    ['社会历史', ['历史', '社会', '时事', '人文', '考古', '王朝', '纪录片', '讲史']],
+    ['动漫', ['动漫', '动画', '番', '二次元', '手书', '同人']],
+    ['音乐', ['音乐', '歌', '翻唱', 'MV', '乐队', '曲']],
+  ];
+  // 1. 命中分类关键词 → 从该分类随机取
+  let bestCat = null;
+  for (const [cat, kws] of KW_MAP) {
+    for (const w of kws) {
+      if (k && k.indexOf(w) >= 0) { bestCat = cat; break; }
+    }
+    if (bestCat) break;
+  }
+  if (bestCat && cats[bestCat] && cats[bestCat].length) {
+    return cats[bestCat][Math.floor(Math.random() * cats[bestCat].length)];
+  }
+  // 2. 未命中 → 从全部分类随机取一条（保证总有视频可发）
+  const all = [];
+  for (const cat in cats) {
+    if (Array.isArray(cats[cat])) all.push(...cats[cat]);
+  }
+  if (!all.length) return null;
+  return all[Math.floor(Math.random() * all.length)];
 }
 
 /* 角色「自己搜视频」：抽回复字卡 → 多字卡拼接 / 拼音拼字 → 生成搜索词 → 真实搜索。
@@ -10669,16 +11217,38 @@ async function charAutoSendVideo(charId) {
       }
     }
 
-    // 4. 兜底：内置池（仅搜索彻底失败时，保证卡片必显真实封面）
+    // 4. 兜底：从「真实视频库 videolib.json」按搜索词匹配分类取一条真实视频。
+    //    20261105：替换旧的硬编码 BV 池，改为读取每天自动更新的 B站分类视频库，
+    //    保证角色发出来的是真实、近期、可播放的视频（封面+标题+BV号全真实）。
+    const lib = await _loadVideoLib(false);
+    const matched = _matchVideoFromLib(lib, kw);
+    if (matched && matched.bvid) {
+      const v = {
+        platform: 'bilibili',
+        videoId: matched.bvid,
+        title: matched.title || kw,
+        cover: matched.cover || '',
+        embed: `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(matched.bvid)}`,
+      };
+      await sendVideoCard(charId, v, 'them');
+      return;
+    }
+    // 5. 视频库也没加载到（极端情况）→ 最后硬编码 BV 兜底
     const pool = [
-      { platform: 'bilibili', title: '【官方MV】Never Gonna Give You Up', videoId: 'BV1GJ411x7h7', cover: 'https://i1.hdslb.com/bfs/archive/5242750857121e05146d5d5b13a47a2a6dd36e98.jpg' },
-      { platform: 'bilibili', title: '【官方MV】Mojito - 周杰伦', videoId: 'BV1PK4y1b7dt', cover: 'https://i2.hdslb.com/bfs/archive/722964117f0380b7b6c0a0fbe77028151b17472a.jpg' },
-      { platform: 'bilibili', title: '【4K60帧】经典老歌：瑞克·埃斯利', videoId: 'BV1uT4y1P7CX', cover: 'https://i1.hdslb.com/bfs/archive/47d93e3d993ce921149e181760db307ee151547e.jpg' },
-      { platform: 'bilibili', title: '【黑曜石舞团】玉生烟', videoId: 'BV1Jx411q7iN', cover: 'https://i1.hdslb.com/bfs/archive/8757d5bd72297cf7c5f53f1045a87db27b7bc8ca.jpg' },
-      { platform: 'bilibili', title: '一镜到底 · 别墅设计慢生活', videoId: 'BV1W64y1z7Y4', cover: 'https://i0.hdslb.com/bfs/archive/6fe75ba6bac0b2f0921641189a9faf07992ea418.jpg' },
-      { platform: 'bilibili', title: '树林里的放松按摩 · 慢生活', videoId: 'BV1Nb411J7Yy', cover: 'https://i0.hdslb.com/bfs/archive/bcf9446c50dc89147891d2993f9887a9b8966d1c.jpg' },
+      { platform: 'bilibili', videoId: 'BV1GJ411x7h7' },
+      { platform: 'bilibili', videoId: 'BV1PK4y1b7dt' },
+      { platform: 'bilibili', videoId: 'BV1jZ4y1h7zY' },
     ];
     const v = pool[Math.floor(Math.random() * pool.length)];
+    // 用 apizero 实时解析补全真实 title/cover/直链（失败则回退 iframe 播放，封面用 B站公开封面）
+    try {
+      const resolved = await _fetchMetaByApiZero({ url: `https://www.bilibili.com/video/${v.videoId}` }, '');
+      if (resolved && resolved.title) v.title = resolved.title;
+      if (resolved && resolved.cover) v.cover = resolved.cover;
+      if (resolved && resolved.playUrl) v.playUrl = resolved.playUrl;
+    } catch (e) {}
+    if (!v.cover) v.cover = `https://i1.hdslb.com/bfs/archive/5242750857121e05146d5d5b13a47a2a6dd36e98.jpg`;
+    if (!v.embed) v.embed = `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(v.videoId)}`;
     await sendVideoCard(charId, v, 'them');
   } catch (e) {}
 }
@@ -10710,9 +11280,9 @@ function openVideoPlay(vc) {
     playerHtml = `${coverHtml}<iframe src="https://player.bilibili.com/player.html?bvid=${escapeHtml(vc.videoId)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
   } else if (vc.url) {
     // 小红书/抖音/其它：无法 iframe 内嵌，改在 APP 内打开网页播放（Browser.open），
-    // 展示封面 + 「在 APP 内播放」按钮
+    // 展示封面 + 「解析口播放」+「原链接跳转」两个按钮（解析口用玩家自选的解析接口）
     extLink = vc.url;
-    playerHtml = `${coverHtml}<div style="text-align:center;padding:16px 0;color:var(--text-secondary);font-size:13px;">该平台视频需跳转网页播放，点下方按钮在 App 内打开</div>`;
+    playerHtml = `${coverHtml}<div style="text-align:center;padding:14px 0;color:var(--text-secondary);font-size:13px;line-height:1.6;">该平台视频需跳转网页播放<br>优先用「解析口」尝试解析，失败可换「原链接」或去设置切换解析口</div>`;
   } else {
     playerHtml = `${coverHtml}<div style="text-align:center;color:var(--text-tertiary);padding:40px 0;">该视频暂无可播放源</div>`;
   }
@@ -10722,11 +11292,21 @@ function openVideoPlay(vc) {
       <button class="icon-btn" id="vp-close">✕</button>
     </div>
     ${playerHtml}
-    ${extLink ? `<div style="margin-top:10px;text-align:center;"><button id="vp-open" style="display:inline-block;padding:10px 20px;border-radius:10px;background:var(--purple);color:#141019;font-size:14px;font-weight:600;border:0;cursor:pointer;">▶ 在 App 内播放</button></div>` : ''}
+    ${extLink ? `<div style="margin-top:10px;display:flex;gap:10px;justify-content:center;">
+      <button id="vp-open" style="display:inline-block;padding:10px 18px;border-radius:10px;background:var(--purple);color:#141019;font-size:14px;font-weight:600;border:0;cursor:pointer;">▶ 解析口播放</button>
+      <button id="vp-open-raw" style="display:inline-block;padding:10px 18px;border-radius:10px;background:transparent;color:var(--text-secondary);font-size:13px;border:1px solid var(--border);cursor:pointer;">原链接跳转</button>
+    </div>` : ''}
   `);
   $('#vp-close').onclick = () => closeModal();
   if (extLink) {
-    $('#vp-open').onclick = () => openVideoInApp(extLink, title);
+    // 解析口播放：用玩家选中的解析口（默认 auto 自动匹配平台）包装原始链接
+    $('#vp-open').onclick = () => {
+      const portUrl = _getParsePortUrl(vc.platform);
+      const wrapped = portUrl.replace(/\{url\}/g, encodeURIComponent(extLink));
+      openVideoInApp(wrapped, title);
+    };
+    // 原链接跳转：直接打开原始链接（小红书/抖音 APP 页）
+    $('#vp-open-raw').onclick = () => openVideoInApp(extLink, title);
   }
 }
 
@@ -11444,9 +12024,25 @@ function _worldMapSvg(opts) {
   </svg>`;
 }
 
-/* 定位结果（玩家真实 GPS）：返回 { ok, lat, lng, error } */
+/* 定位结果（玩家真实 GPS）：返回 { ok, lat, lng, error }
+   APK 端优先 @capacitor/geolocation 原生定位（WebView 的 navigator.geolocation 默认被禁，
+   只有原生插件才能拿到真实 GPS）；网页端回退 navigator.geolocation。 */
 function _getPlayerLocation() {
-  return new Promise(resolve => {
+  return new Promise(async resolve => {
+    // APK 端：@capacitor/geolocation 原生定位（无需 WebView 的 geolocation 权限）
+    const Geo = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Geolocation;
+    if (Geo && typeof Geo.getCurrentPosition === 'function') {
+      try {
+        const pos = await Geo.getCurrentPosition({ enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
+        const lat = pos && pos.coords && pos.coords.latitude;
+        const lng = pos && pos.coords && pos.coords.longitude;
+        if (typeof lat === 'number' && typeof lng === 'number') {
+          resolve({ ok: true, lat: +lat.toFixed(4), lng: +lng.toFixed(4) });
+          return;
+        }
+      } catch (e) { /* 落到网页端分支 */ }
+    }
+    // 网页端：navigator.geolocation
     if (!navigator.geolocation) { resolve({ ok: false, error: 'unsupported' }); return; }
     navigator.geolocation.getCurrentPosition(
       pos => resolve({ ok: true, lat: +pos.coords.latitude.toFixed(4), lng: +pos.coords.longitude.toFixed(4) }),
@@ -16961,6 +17557,14 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </select>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">📍 悬浮方式</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">一起听歌悬浮窗显示在哪里：「软件内」只在 App 内浮动；「其他应用」悬浮到系统桌面 / 其他 App 上（需要悬浮窗权限，未授权会自动跳转申请）。与音乐页右上角的「悬浮方式」按钮是同一份设置，两边同步。</div>
+      <select class="input" id="cs-music-floatscope" style="width:100%;">
+        <option value="inApp" ${((typeof s.musicFloatScope === 'string' ? s.musicFloatScope : 'inApp') === 'inApp') ? 'selected' : ''}>软件内悬浮</option>
+        <option value="overlay" ${((typeof s.musicFloatScope === 'string' ? s.musicFloatScope : 'inApp') === 'overlay') ? 'selected' : ''}>其他应用悬浮</option>
+      </select>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>🎶 角色主动搜歌/切歌</span>
         <input type="checkbox" id="cs-music-auto" ${(s.musicAuto === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
@@ -17083,6 +17687,18 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
           </div>
         </div>
       </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🔌 解析口选择（跳转播放用）</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">小红书/抖音等平台无法在软件内直接播放时，会跳转到「解析口」网页播放。默认「自动匹配」会按平台选最稳定的解析口；用不了时可在这里手动切换到其他内置解析口，或选「自定义」用你自己填的解析服务。</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select id="cs-parse-port" style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;">
+          <option value="auto" ${(s.videoParsePort !== 'custom' && s.videoParsePort !== 'auto' && !_BUILTIN_PARSE_PORTS.some(p => p.key === s.videoParsePort)) || s.videoParsePort === 'auto' ? 'selected' : ''}>🔄 自动匹配（默认）</option>
+          ${_BUILTIN_PARSE_PORTS.map(p => `<option value="${p.key}" ${s.videoParsePort === p.key ? 'selected' : ''}>${p.name}${p.likelyDead ? '（可能失效）' : ''}</option>`).join('')}
+          <option value="custom" ${s.videoParsePort === 'custom' ? 'selected' : ''}>✏️ 自定义（用上方解析服务地址）</option>
+        </select>
+      </div>
+      <div style="font-size:11px;color:var(--text-tertiary);margin-top:7px;line-height:1.5;">若解析失败，会在聊天里用<span style="color:#e5484d;">红字</span>提示；若选中的解析口/服务本身失效（连续失败），会用<span style="color:#e8a33d;">黄字</span>提醒你切换解析口。</div>
     </div>
     </section>
 
@@ -17308,6 +17924,20 @@ function bindChatSettings(s, onSave, tcChar) {
     if (fw) fw.dataset.theme = v;
     miniToast('音乐主题已切换');
   };
+  // 20261105：一起听歌悬浮方式（软件内 / 其他应用原生悬浮）——全局 App 行为，统一写 musicFloatScope，
+  //   与音乐页右上角「悬浮方式」按钮同一份。切到「其他应用」时自动检测悬浮窗权限，未授权自动跳系统设置页。
+  const fsScopeSel = $('#cs-music-floatscope');
+  if (fsScopeSel) fsScopeSel.onchange = async () => {
+    const v = fsScopeSel.value === 'overlay' ? 'overlay' : 'inApp';
+    await setSetting('musicFloatScope', v);
+    if (window.bmMusicUI) {
+      try {
+        // 同步到音乐模块：更新悬浮方式缓存 + 触发原生悬浮窗切换（含权限自动检测/跳转）
+        if (window.bmMusicUI.setFloatScopeAndApply) window.bmMusicUI.setFloatScopeAndApply(v);
+      } catch (e) {}
+    }
+    miniToast(v === 'overlay' ? '一起听悬浮窗：其他应用悬浮' : '一起听悬浮窗：软件内悬浮');
+  };
   // 20261104：角色主动搜歌/切歌的总开关 + 随机间隔（全局设置，即时生效落库）。
   //   总开关 musicAuto 勾选后，仍需「正在一起听」才真正触发；结束一起听自动暂停（开关保持）。
   const maCb = $('#cs-music-auto');
@@ -17512,6 +18142,19 @@ function bindChatSettings(s, onSave, tcChar) {
       await setSetting('chatSettings', chatSettings);
       if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; tcChar.chatSettings.videoParseApiId = idVal; tcChar.chatSettings.videoParseApiKey = keyVal; await saveChar(tcChar); }
       miniToast('已保存内置服务的鉴权信息（去 apihz.cn 免费注册获取）');
+    };
+  }
+  // 20261105：解析口选择（跳转播放用）——即时落库
+  const parsePortEl = $('#cs-parse-port');
+  if (parsePortEl) {
+    parsePortEl.onchange = async () => {
+      const val = parsePortEl.value || 'auto';
+      chatSettings.videoParsePort = val;
+      chatSettings.videoParsePortLastFail = 0;   // 切换解析口时清空失败标记
+      await setSetting('chatSettings', chatSettings);
+      if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; tcChar.chatSettings.videoParsePort = val; await saveChar(tcChar); }
+      const name = val === 'auto' ? '自动匹配' : (val === 'custom' ? '自定义解析服务' : ((_BUILTIN_PARSE_PORTS.find(p => p.key === val) || {}).name || val));
+      miniToast('已切换解析口：' + name);
     };
   }
   // 20261104：番茄钟默认设置（专注/休息时长 + 白噪音 + 锁机）——全局与访客级都渲染，即时落库
@@ -17989,6 +18632,7 @@ function bindChatSettings(s, onSave, tcChar) {
 
 async function showChatSettingsModal() {
   const settingsView = Object.assign({}, chatSettings, { overclockUnlocked: await isOverclockUnlocked() });
+  try { settingsView.musicFloatScope = await getSetting('musicFloatScope', 'inApp'); } catch (e) {}
   openModal(chatSettingsHtml(settingsView, '聊天设置', '这里是总设置，对所有访客生效；单个访客可在其主页单独覆盖'));
   bindChatSettings(chatSettings, async () => {
     await setSetting('chatSettings', chatSettings);
@@ -18005,6 +18649,7 @@ async function showCharChatSettingsModal(c) {
   s.overclockUnlocked = unlocked;
   s._char = c;                              // 20261028：行程标签编辑需要角色引用
   s.scheduleTags = charScheduleTags(c);     // 20261028：角色行程标签
+  try { s.musicFloatScope = await getSetting('musicFloatScope', 'inApp'); } catch (e) {}   // 20261105：悬浮方式（全局，角色级设置里也显示/改同一份）
   openModal(chatSettingsHtml(s, '聊天设置', `针对「${escapeHtml(c.name)}」的独立设置，仅影响 TA 一人`, true));
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
@@ -26392,7 +27037,7 @@ async function showLetterRecordsModal(charId = null) {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div style="display:flex;align-items:center;gap:10px;min-width:0;">
         <div style="font-size:18px;font-weight:600;">信箱</div>
-        <span class="badge" id="lr-count"></span>
+        <button class="badge" id="lr-count" title="点击全部标记已读" style="cursor:pointer;border:none;font-size:12px;padding:3px 10px;border-radius:999px;background:var(--bg-elevated-2);color:var(--text-secondary);"></button>
       </div>
       <div style="display:flex;align-items:center;gap:6px;">
         <button class="icon-btn" id="lr-view" title="切换列表/信封外观"></button>
@@ -26418,6 +27063,20 @@ async function showLetterRecordsModal(charId = null) {
     </div>
   `);
   $('#lr-close').onclick = closeModal;
+  // 20261105：信箱未读标识做成按钮——点击把全部未读书信标记为已读（回信 + 未回根信都处理）
+  $('#lr-count').onclick = async () => {
+    const unread = threads.filter(t => (t.replyMsg && !t.replyMsg.read) || (!t.replyMsg && t.root && t.root.from === 'them' && !t.root.read));
+    if (!unread.length) { if (window.miniToast) miniToast('没有未读的书信'); return; }
+    let n = 0;
+    for (const t of unread) {
+      try {
+        if (t.replyMsg && !t.replyMsg.read) { t.replyMsg.read = true; await idbPut('messages', t.replyMsg); n++; }
+        else if (!t.replyMsg && t.root && !t.root.read) { t.root.read = true; await idbPut('messages', t.root); n++; }
+      } catch (e) {}
+    }
+    render();
+    if (window.miniToast) miniToast(`已标记 ${n} 封书信为已读`);
+  };
   // 20260929bh：信箱顶栏「记忆宫殿」入口按钮已删除（批量管理里的「存宫殿」保留）
   // 20261104：信箱外观切换——列表 ⇄ 信封（纯图标按钮），记住上次选择（kv 持久化）
   // 图标：列表=三条横线，信封=开口信封（SVG，跟随主题色）
@@ -26521,7 +27180,13 @@ async function showLetterRecordsModal(charId = null) {
   function renderList() {
     const list = $('#lr-list');
     const shown = shownThreads();
-    $('#lr-count').textContent = `${shown.length} 封${unreadCount ? ` · ${unreadCount} 封未读` : ''}`;
+    $('#lr-count').textContent = `${shown.length} 封${unreadCount ? ` · ${unreadCount} 封未读（点击全部已读）` : ''}`;
+    // 20261105：未读标识做成按钮——有未读时高亮可点，点击全部标记已读；无未读时置灰
+    const lrCountBtn = $('#lr-count');
+    if (lrCountBtn) {
+      lrCountBtn.style.background = unreadCount > 0 ? 'var(--purple)' : 'var(--bg-elevated-2)';
+      lrCountBtn.style.color = unreadCount > 0 ? '#141019' : 'var(--text-secondary)';
+    }
     if (shown.length === 0) {
       list.innerHTML = `
         <div class="empty" style="padding:30px 0;">

@@ -1258,6 +1258,8 @@
     // 点「跳过」的 click 会穿透到入梦签等弹窗的透明遮罩，误触「点遮罩关闭」；
     // app.js 据此在开屏结束后 600ms 内忽略遮罩点击，避免入梦签被跳过的手指误关。
     try { window.__bmSplashEndAt = Date.now(); } catch (e) {}
+    // 20261104：开屏结束派发事件，通知 music.js 等模块让「开屏后才出现的」悬浮窗此刻上场
+    try { window.dispatchEvent(new CustomEvent('bm-splash-end')); } catch (e) {}
     if (!bgmEndFired && !AUTO_MUSIC) bgmStop(1.6);   // 跳过时淡出（延至 1.6s，音乐余韵收尾不戛然而止）；开关开=音乐继续播放不停（bx）
     // 20260930cb：继续播放进软件 → 音乐音量平滑切到「软件内音乐音量」条（与开屏音量条互不影响）
     if (AUTO_MUSIC && BGM.gain && BGM.started) {

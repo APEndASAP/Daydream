@@ -4,7 +4,7 @@
    ============================================================ */
 
 const DB_NAME = 'bairimeng';
-const DB_VERSION = 6; // 20261028：+1 新增 surveyLibrary store（问卷库：玩家库+角色库，预存问卷模板）
+const DB_VERSION = 8; // 20261104：+1 新增 focus_session store（番茄钟陪伴结算记录）
 
 let _db = null;
 
@@ -48,6 +48,21 @@ function openDB() {
         // 按 owner+charId 索引，便于快速取某一角色（或全局）的问卷
         const sl = db.createObjectStore('surveyLibrary', { keyPath: 'id' });
         sl.createIndex('owner_charId', ['owner', 'charId'], { unique: false });
+      }
+      if (!db.objectStoreNames.contains('musicHistory')) {
+        // 音乐（20261103）：播放记录 / 本地曲库 / Ta的耳机 / 听歌时长
+        // kind: 'history'（播放记录）/ 'local'（本地曲库曲目）/ 'ear'（Ta的耳机，角色在玩家不在时听的歌）
+        // 按 charId 索引，便于查某一角色的听歌记录
+        const mh = db.createObjectStore('musicHistory', { keyPath: 'id' });
+        mh.createIndex('charId', 'charId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('focus_session')) {
+        // 番茄钟陪伴结算（20261104）：每次专注一条记录，按角色索引，角色间结算不互通
+        // 字段：id/charId/taskName/durSec/sentCount(发了多少条)/heldCount(忍住了)/blurtedCount(没忍住)/
+        //        handledThings(处理了哪些事,来自待办库)/messages(消息明细数组)/time(开始时间戳)
+        const fs = db.createObjectStore('focus_session', { keyPath: 'id' });
+        fs.createIndex('charId', 'charId', { unique: false });
+        fs.createIndex('charId_time', ['charId', 'time'], { unique: false });
       }
     };
     req.onsuccess = (e) => { _db = e.target.result; resolve(_db); };

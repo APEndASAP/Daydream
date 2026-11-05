@@ -196,7 +196,7 @@ const PRESET_REPLY_GROUPS = [
 /* 默认字卡数据（符合第十九章 JSON 标准） */
 const DEFAULT_CARDS = {
   exportDate: new Date().toISOString(),
-  modules: ["replies", "pokes", "playerPokes", "statuses", "mottos", "intros", "emojis", "announcementConfig", "groups", "pokeGroups", "statusGroups", "momentPresets"],
+  modules: ["replies", "pokes", "playerPokes", "statuses", "mottos", "intros", "emojis", "announcementConfig", "groups", "pokeGroups", "statusGroups", "momentPresets", "companionActions", "companionReplies"],
   /* az：预设回复字卡全部按文档分组（customReplyGroups），未分组默认为空；
      抽取池 = 未分组 + 启用分组，总量不变，且每个分组可在字卡库单独禁用 */
   customReplies: [],
@@ -268,6 +268,33 @@ const DEFAULT_CARDS = {
     customData: { titles: [], notes: [] },
     statusPool: [],
   },
+  /* 番茄钟「陪伴」动作字卡（20261104）：专注期间角色随机抽取的陪伴动作描述，
+     需求文档第五节的 10 条内置预设。玩家可增删/批量管理/自定义添加。
+     用途：字卡模式下，专注中角色「没忍住」互动时，从这里抽一条动作描述。 */
+  customCompanionActions: [
+    "（托着腮看着你，觉得你特别好看，但又怕打扰你，只是安静地当一个盯盯怪）",
+    "（悄悄去倒了一杯温水，轻轻放在你手边，然后安静地退到一旁）",
+    "（看你皱了皱眉，忍不住伸出手想揉揉你的头，但手停在半空又收了回去）",
+    "（拿了一本书坐在你旁边，其实半天没翻一页，余光全在你身上）",
+    "（虽然已经很困了，但还是强撑着精神，默默陪着你）",
+    "（伸出手指想戳戳你的脸颊，快碰到时又怕惊动你，缩了回来）",
+    "（在你周围撑起一层隔绝外界的结界，把所有的喧嚣都挡在外面）",
+    "（在旁边小声嘀咕：快去歇歇！不可以这么拼！）",
+    "（怕你着凉，轻手轻脚地把一件外套披在了你肩上）",
+    "（什么都没做，但视线一直没有从你身上移开过）",
+  ],
+  /* 番茄钟「陪伴回复」台词字卡（20261104）：专注期间角色「没忍住」发消息时，
+     搭配上一条动作描述一起抽的台词（如「累了就歇会儿」）。初始给几条开箱体验。 */
+  customCompanionReplies: [
+    "累了就歇会儿",
+    "我一直在呢",
+    "别太拼了",
+    "喝口水休息一下吧",
+    "你已经很棒了",
+    "慢慢来，不着急",
+    "我在旁边陪着你",
+    "有我在，别怕",
+  ],
   customPokeGroups: [],
   customStatusGroups: [],
   /* 全局字卡禁词（5.11：区别于角色禁词，抽取时全局过滤） */
@@ -360,6 +387,18 @@ async function loadCards() {
         saved.customMomentPresets = (DEFAULT_CARDS.customMomentPresets || []).slice();
         await setSetting('cards', saved);
         await setSetting('momentPresetsRevised_20261028cz', true);
+      }
+    } catch (e) {}
+    // 20261104：番茄钟「陪伴」动作/回复字段补种——老库没有这两个字段时一次性写入预设；
+    // 字段一旦存在（哪怕玩家清空成空数组）就不再补，尊重玩家的增删
+    try {
+      if (!Array.isArray(saved.customCompanionActions)) {
+        saved.customCompanionActions = (DEFAULT_CARDS.customCompanionActions || []).slice();
+        await setSetting('cards', saved);
+      }
+      if (!Array.isArray(saved.customCompanionReplies)) {
+        saved.customCompanionReplies = (DEFAULT_CARDS.customCompanionReplies || []).slice();
+        await setSetting('cards', saved);
       }
     } catch (e) {}
     return saved;
@@ -472,6 +511,8 @@ function dedupeCards(cards) {
   cards.customMottos = dedupeList(cards.customMottos);
   cards.customIntros = dedupeList(cards.customIntros);
   cards.customEmojis = dedupeList(cards.customEmojis);
+  cards.customCompanionActions = dedupeList(cards.customCompanionActions);
+  cards.customCompanionReplies = dedupeList(cards.customCompanionReplies);
   // 各分组 items 内部去重（不跨分组、不与 customReplies 比较）
   for (const g of (cards.customReplyGroups || [])) {
     g.items = dedupeList(g.items);
@@ -494,6 +535,8 @@ const CARD_LIST_KEYS = [
   ['customMottos', ['customMottos', 'mottos']],
   ['customIntros', ['customIntros', 'intros']],
   ['customEmojis', ['customEmojis', 'emojis']],
+  ['customCompanionActions', ['customCompanionActions', 'companionActions']],
+  ['customCompanionReplies', ['customCompanionReplies', 'companionReplies']],
 ];
 const CARD_GROUP_KEYS = [
   ['customReplyGroups', ['customReplyGroups', 'groups']],
@@ -508,6 +551,7 @@ function detectCardModules(data) {
     customReplies: '回复字卡', customPokes: '角色戳一戳', customPlayerPokes: '玩家戳一戳', customStatuses: '状态',
     customMottos: '寄语', customIntros: '简介', customEmojis: '表情',
     customReplyGroups: '回复分组', customPokeGroups: '戳一戳分组', customStatusGroups: '状态分组',
+    customCompanionActions: '陪伴动作', customCompanionReplies: '陪伴回复',
   };
   for (const [key, aliases] of CARD_LIST_KEYS) {
     for (const a of aliases) {

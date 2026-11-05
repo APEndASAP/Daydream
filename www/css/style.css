@@ -2324,6 +2324,23 @@ body.theme-light .callend-msg .callend-reason {
   color: rgba(42, 35, 64, 0.66);
   text-shadow: none;
 }
+/* 20261105：角色主动音乐操作垫片（musicAction）——复用 callend 玻璃胶囊，配音乐图标区分 */
+.callend-msg .musicaction-ico {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  color: #fff;
+  background: linear-gradient(135deg, #8b6ef7, #b06ff0);
+  box-shadow: 0 1px 3px rgba(90, 60, 180, 0.45);
+  text-shadow: none;
+}
 
 /* ============================================================
    背景定制 + 星星增强 + 玻璃拟态（可选模式）
@@ -6893,6 +6910,7 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 .bm-tool-source,
 .bm-tool-share,
 .bm-tool-float,
+.bm-tool-scope,
 .bm-tool-vol,
 .bm-tool-invite {
   display: inline-flex; align-items: center; gap: 5px; padding: 5px 14px; border-radius: 999px;
@@ -6905,6 +6923,8 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 .bm-tool-comment:active, .bm-tool-source:active, .bm-tool-dl:active, .bm-tool-share:active, .bm-tool-float:active, .bm-tool-vol:active, .bm-tool-invite:active { transform: scale(.92); background: var(--bm-accent-glow); border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-tool-share:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-tool-float:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
+.bm-tool-scope:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
+.bm-tool-scope.on { background: var(--bm-accent); color: #fff; border-color: var(--bm-accent); }
 .bm-tool-vol:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-tool-invite:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
 /* 邀请一起听按钮：玩家头像 + 右下角加号（点击选角色发邀请） */
@@ -7079,7 +7099,9 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 .bm-lib-visitor-hint { font-size: 12px; color: var(--bm-ink-dim, #7b84a0); padding: 4px 2px 8px; }
 /* 20261104：访客偷看歌单足迹提醒区 */
 .bm-peek-box { border: 1px solid var(--bm-accent-glow, rgba(167,139,250,.22)); background: var(--bm-accent-glow, rgba(167,139,250,.08)); border-radius: 12px; padding: 10px 12px; margin: 2px 2px 12px; }
-.bm-peek-head { font-size: 12px; font-weight: 700; color: var(--bm-accent, #a78bfa); margin-bottom: 6px; }
+.bm-peek-head { font-size: 12px; font-weight: 700; color: var(--bm-accent, #a78bfa); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
+.bm-peek-hist-btn { background: transparent; border: none; color: var(--bm-ink-faint, #8b93a8); cursor: pointer; padding: 2px 4px; border-radius: 6px; font-size: 13px; line-height: 1; display: inline-flex; align-items: center; }
+.bm-peek-hist-btn:hover { color: var(--bm-accent, #a78bfa); background: rgba(167,139,250,.12); }
 .bm-peek-item { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; }
 .bm-peek-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--bm-accent, #a78bfa); margin-top: 6px; flex-shrink: 0; }
 .bm-peek-text { font-size: 12px; color: var(--bm-ink, #d8dff0); line-height: 1.5; }
@@ -7252,6 +7274,72 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 }
 .bm-ctrl-btn.bm-ctrl-side.on { background: var(--bm-accent-glow); border-color: var(--bm-accent); color: var(--bm-accent); }
 /* 播放列表弹层：右下角小浮层（滑入） */
+/* 20261105：悬浮窗专用迷你播放列表——独立浮层，默认停在「一起听歌」悬浮窗正上方；
+   表头可拖动整个列表；跟随悬浮窗主题（ftext / fbg 档位），小且细、可滚动，不遮其他画面。 */
+.bm-float-minilist {
+  position: fixed; z-index: 2147483010;   /* 高于悬浮窗（2147483005） */
+  width: min(240px, 68vw);
+  max-height: 176px;
+  display: flex; flex-direction: column;
+  background: var(--bm-paper, #0a0e1a);
+  background-color: var(--bm-paper, #0a0e1a);
+  border: 1px solid var(--bm-card-line, rgba(190,205,240,.16));
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.10);
+  overflow: hidden;
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  animation: bm-fade-in .16s ease;
+  touch-action: none;   /* 拖动时不触发页面滚动 */
+  -webkit-tap-highlight-color: transparent;
+  /* 默认深空配色，跟随悬浮窗 */
+  --bm-paper: #0a0e1a; --bm-ink: #eef2fc; --bm-ink-dim: #a6b0c8; --bm-card: rgba(255,255,255,.04); --bm-card-line: rgba(190,205,240,.14); --bm-accent: var(--purple, #a78bfa); --bm-accent-glow: var(--purple-glow, rgba(167,139,250,.35));
+}
+.bm-float-minilist.dragging { transition: none; user-select: none; cursor: grabbing; }
+/* 跟随悬浮窗文字深浅设置 */
+.bm-float-minilist.ftext-light { color: #f2f5ff; }
+.bm-float-minilist.ftext-dark { color: #23211c; }
+/* 跟随悬浮窗背景设置：玻璃底用半透明磨砂，浅底/深底用实色跟随预设 */
+.bm-float-minilist.fbg-light {
+  --bm-paper: #f7f4ec; --bm-ink: #2a2a28; --bm-ink-dim: #6f6b5e; --bm-card: rgba(42,42,40,.05); --bm-card-line: rgba(42,42,40,.18);
+  background: #fbf9f3; background-color: #f5f1e6; border-color: rgba(42,42,40,.2);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.bm-float-minilist.fbg-dark {
+  --bm-paper: #0a0e1a; --bm-ink: #eef2fc; --bm-ink-dim: #a6b0c8; --bm-card: rgba(255,255,255,.04); --bm-card-line: rgba(190,205,240,.24);
+  background: linear-gradient(160deg, #1a2036, #0b1020); background-color: #0a0e1a; border-color: rgba(190,205,240,.24);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.bm-fml-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; border-bottom: 1px solid var(--bm-card-line, rgba(190,205,240,.12));
+  font-size: 11px; font-weight: 700; color: var(--bm-ink, #eef2fc); flex-shrink: 0;
+  cursor: grab; user-select: none; -webkit-user-select: none;
+}
+.bm-fml-head:active { cursor: grabbing; }
+.bm-fml-title { flex: 1; min-width: 0; }
+.bm-fml-head button { background: transparent; border: none; color: var(--bm-ink-dim, #a6b0c8); cursor: pointer; padding: 0; line-height: 1; display: flex; align-items: center; flex-shrink: 0; }
+.bm-fml-body { overflow-y: auto; padding: 3px 0; }
+.bm-fml-item {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.bm-fml-item:hover { background: var(--bm-card, rgba(255,255,255,.04)); }
+.bm-fml-item.on { background: var(--bm-accent-glow, rgba(167,139,250,.25)); }
+.bm-fml-item.on .bm-fml-name { color: var(--bm-accent, #a78bfa); }
+.bm-fml-cover {
+  width: 28px; height: 28px; border-radius: 5px; overflow: hidden; flex-shrink: 0;
+  background: var(--bm-card, rgba(255,255,255,.04)); color: var(--bm-ink-dim, #a6b0c8);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 14px;
+}
+.bm-fml-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bm-fml-info { flex: 1; min-width: 0; }
+.bm-fml-name { font-size: 12px; color: var(--bm-ink, #eef2fc); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm-fml-artist { font-size: 10px; color: var(--bm-ink-dim, #a6b0c8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm-fml-empty { padding: 16px; text-align: center; font-size: 12px; color: var(--bm-ink-dim, #a6b0c8); }
+/* 全局浅色主题下，小列表默认跟随浅底深字 */
+body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --bm-ink-dim: #6f6b5e; --bm-card: rgba(42,42,40,.05); --bm-card-line: rgba(42,42,40,.18); }
+
 .bm-playlist-panel {
   position: fixed; inset: 0; z-index: 5000;
   display: flex; align-items: center; justify-content: center;
@@ -7401,8 +7489,19 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
   background-color: #e8e2d2;
   box-shadow: 0 6px 26px rgba(20,16,10,.28), inset 0 0 0 1px rgba(60,54,44,.18);
 }
-.bm-music-page[data-theme="paper"] .bm-magic-circle { display: none; }
-.bm-music-page[data-theme="paper"] .bm-wave-ring { display: none; }
+.bm-music-page[data-theme="paper"] .bm-magic-circle { display: block; }
+/* 20261105：手稿主题加回水波纹（跟随音乐律动）——之前被 display:none 藏掉。
+   适配纸墨浅色配色：墨色波纹 + 金褐光晕，深字，不刺眼。 */
+.bm-music-page[data-theme="paper"] .bm-wave-ring { display: block; }
+.bm-music-page[data-theme="paper"] .bm-wave-ring span {
+  border-color: rgba(90,72,44,.5);
+  box-shadow: 0 0 10px rgba(138,109,59,.28), inset 0 0 10px rgba(138,109,59,.18);
+}
+.bm-music-page[data-theme="paper"] .bm-con-poly { stroke: rgba(90,72,44,.55); }
+.bm-music-page[data-theme="paper"] .bm-node {
+  background: rgba(70,58,36,.9);
+  box-shadow: 0 0 8px rgba(138,109,59,.75), 0 0 16px rgba(138,109,59,.35);
+}
 .bm-music-page[data-theme="paper"] .bm-planet-ring { border-color: var(--bm-ink); box-shadow: none; }
 .bm-music-page[data-theme="paper"] .bm-planet-ring.r2 { border-color: var(--bm-ink-dim); }
 .bm-music-page[data-theme="paper"] .bm-planet-ring.r3 { border-color: var(--bm-ink-faint); }
@@ -7771,7 +7870,7 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 
 /* ---------- 黑胶唱片主题（vinyl）20261104：封面球变黑胶盘面 + 唱针 + 播放旋转 ---------- */
 .bm-music-page[data-theme="vinyl"] {
-  --bm-paper: #0e0b10; --bm-paper-2: #070608; --bm-ink: #e8e2d8; --bm-ink-dim: #a89f92; --bm-ink-faint: #5d574e; --bm-card: rgba(255,255,255,.03); --bm-card-line: rgba(200,190,170,.16); --bm-accent: #d9a441; --bm-accent-glow: rgba(217,164,65,.3);
+  --bm-paper: #0e0b10; --bm-paper-2: #070608; --bm-ink: #e8e2d8; --bm-ink-dim: #a89f92; --bm-ink-faint: #5d574e; --bm-card: rgba(255,255,255,.03); --bm-card-line: rgba(200,190,170,.16); --bm-accent: #5bc2ad; --bm-accent-glow: rgba(91,194,173,.3);
 }
 .bm-music-page[data-theme="vinyl"] .bm-planet-core {
   background-color: #0a0a0c;
@@ -7786,8 +7885,8 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 }
 .bm-music-page[data-theme="vinyl"] .bm-planet-core::before {
   content: ''; position: absolute; inset: 34%; z-index: 1; border-radius: 50%;
-  background: #d9a441;
-  box-shadow: inset 0 0 0 2px #b57f2a, 0 0 0 4px rgba(0,0,0,.35);
+  background: #5bc2ad;
+  box-shadow: inset 0 0 0 2px #3aa894, 0 0 0 4px rgba(0,0,0,.35);
 }
 .bm-music-page[data-theme="vinyl"] .bm-planet-core::after {
   content: ''; position: absolute; inset: 46%; z-index: 2; border-radius: 50%;
@@ -7803,16 +7902,16 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 .bm-music-page[data-theme="vinyl"] .bm-planet-core.has-pic::before { display: none; }
 .bm-music-page[data-theme="vinyl"] .bm-planet-core.has-pic::after { display: none; }
 .bm-music-page[data-theme="vinyl"] .bm-magic-circle { display: none; }
-.bm-music-page[data-theme="vinyl"] .bm-planet-ring { border-color: rgba(217,164,65,.35); }
+.bm-music-page[data-theme="vinyl"] .bm-planet-ring { border-color: rgba(91,194,173,.35); }
 .bm-music-page[data-theme="vinyl"] .bm-planet.playing .bm-planet-core { animation: bm-vinyl-spin 4s linear infinite; }
-.bm-music-page[data-theme="vinyl"] .bm-music-title2 { color: #e8d9a8; }
-.bm-music-page[data-theme="vinyl"] .bm-music-artist { color: #b8a678; }
-.bm-music-page[data-theme="vinyl"] .bm-lrc-line.on { color: #e8d9a8; font-weight: 700; }
+.bm-music-page[data-theme="vinyl"] .bm-music-title2 { color: #a8e6da; }
+.bm-music-page[data-theme="vinyl"] .bm-music-artist { color: #7fb8ad; }
+.bm-music-page[data-theme="vinyl"] .bm-lrc-line.on { color: #a8e6da; font-weight: 700; }
 @keyframes bm-vinyl-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 /* 悬浮窗黑胶主题 */
 .bm-music-float[data-theme="vinyl"] {
-  --bm-paper: #0e0b10; --bm-paper-2: #070608; --bm-ink: #e8e2d8; --bm-ink-dim: #a89f92; --bm-ink-faint: #5d574e; --bm-card: rgba(255,255,255,.03); --bm-card-line: rgba(200,190,170,.16); --bm-accent: #d9a441; --bm-accent-glow: rgba(217,164,65,.3);
+  --bm-paper: #0e0b10; --bm-paper-2: #070608; --bm-ink: #e8e2d8; --bm-ink-dim: #a89f92; --bm-ink-faint: #5d574e; --bm-card: rgba(255,255,255,.03); --bm-card-line: rgba(200,190,170,.16); --bm-accent: #5bc2ad; --bm-accent-glow: rgba(91,194,173,.3);
 }
 .bm-music-float[data-theme="vinyl"] .bm-float-cover {
   border-radius: 50%;
@@ -8014,6 +8113,35 @@ body.theme-light .bm-music-float .bm-fly-line.on { text-shadow: none; }
   transition: background .12s ease, color .12s ease;
 }
 #bm-float-style-picker .fsp-opt:active { transform: scale(.95); }
+/* 20261105：悬浮方式选择小浮层（软件内 / 其他应用） */
+#bm-float-scope-picker, #bm-float-panel {
+  position: fixed; z-index: 2147483006;
+  width: 190px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background-color: rgba(20,24,40,.96);
+  border: 1px solid var(--bm-card-line);
+  box-shadow: 0 8px 28px rgba(0,0,0,.5);
+  color: var(--bm-ink);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+}
+#bm-float-scope-picker .fsp-title, #bm-float-panel .fsp-title { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+#bm-float-scope-picker .fsp-opt, #bm-float-panel .fsp-opt {
+  display: block; width: 100%; padding: 8px 0; margin-bottom: 6px; border-radius: 8px;
+  border: 1px solid var(--bm-card-line); background: transparent; color: var(--bm-ink);
+  font-size: 12px; cursor: pointer; transition: background .12s ease, color .12s ease;
+  text-align: center;
+}
+#bm-float-scope-picker .fsp-opt:active, #bm-float-panel .fsp-opt:active { transform: scale(.97); }
+#bm-float-scope-picker .fsp-tip, #bm-float-panel .fsp-tip { font-size: 10px; color: var(--bm-ink-faint); line-height: 1.4; }
+/* 20261105：合并面板——开关项 + 分隔线 */
+#bm-float-panel .fsp-toggle { font-weight: 600; }
+#bm-float-panel .fsp-divider { height: 1px; background: var(--bm-card-line); margin: 2px 0 10px; }
+body.theme-light #bm-float-scope-picker, body.theme-light #bm-float-panel {
+  background-color: rgba(250,248,242,.97);
+  border-color: rgba(42,42,40,.18);
+}
 /* 浅色主题下小浮层翻转为浅底深字 */
 body.theme-light #bm-float-style-picker {
   background-color: rgba(250,248,242,.97);
@@ -8391,3 +8519,43 @@ body .bm-music-float.fbg-dark .bm-float-card {
 }
 .bm-remote-perm-txt { font-size: 12px; color: var(--bm-ink); line-height: 1.5; flex: 1; min-width: 0; }
 .bm-remote-perm-btn { flex: 0 0 auto; padding: 6px 12px; font-size: 12px; }
+/* 20261105 网易云直连：直连/遥控开关 + 登录 + 搜歌 + 歌单 */
+.bm-remote-mode-switch { display: flex; align-items: center; gap: 6px; }
+.bm-remote-mode-label { font-size: 11px; color: var(--bm-ink-dim); white-space: nowrap; }
+.bm-remote-mode-btn {
+  position: relative; width: 34px; height: 19px; border-radius: 20px; cursor: pointer;
+  background: #3a4052; border: 1px solid var(--bm-card-line); transition: background .2s ease; padding: 0; flex: 0 0 auto;
+}
+.bm-remote-mode-btn.on { background: var(--bm-accent); border-color: var(--bm-accent); }
+.bm-remote-mode-knob {
+  position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+  background: #fff; transition: left .2s ease;
+}
+.bm-remote-mode-btn.on .bm-remote-mode-knob { left: 17px; }
+.bm-netease-box { display: flex; flex-direction: column; gap: 10px; padding: 10px 11px; border-radius: 12px; background: rgba(120,90,220,.08); border: 1px solid rgba(120,90,220,.25); }
+.bm-netease-login-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bm-netease-status { font-size: 12px; color: var(--bm-ink-dim); }
+.bm-netease-status.on { color: #4cd964; }
+.bm-netease-login { flex: 0 0 auto; }
+/* 20261105 固定「导入歌单」按钮：登录行下方整行宽，登录与否都显示 */
+.bm-netease-import-row { display: flex; gap: 8px; }
+.bm-netease-import-fixed { flex: 1; min-width: 0; padding: 9px 12px; font-size: 13px; }
+.bm-netease-search-row { display: flex; gap: 8px; }
+.bm-netease-input {
+  flex: 1; min-width: 0; padding: 8px 11px; border-radius: 9px; font-size: 13px;
+  background: var(--bm-card); border: 1px solid var(--bm-card-line); color: var(--bm-ink); outline: none;
+}
+.bm-netease-input:focus { border-color: var(--bm-accent); }
+.bm-netease-playlists, .bm-netease-results { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.bm-netease-results-head { font-size: 12px; color: var(--bm-ink-dim); margin-bottom: 2px; }
+.bm-netease-empty { font-size: 12px; color: var(--bm-ink-faint, #8a94ac); }
+.bm-netease-result, .bm-netease-playlist {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 9px; cursor: pointer;
+  background: var(--bm-card); border: 1px solid var(--bm-card-line); transition: border-color .15s ease;
+}
+.bm-netease-result:hover, .bm-netease-playlist:hover { border-color: var(--bm-accent); }
+.bm-netease-result img, .bm-netease-playlist img { width: 38px; height: 38px; border-radius: 7px; object-fit: cover; flex-shrink: 0; background: #1a1420; }
+.bm-netease-result-ph { width: 38px; height: 38px; border-radius: 7px; display: flex; align-items: center; justify-content: center; background: var(--bm-card); color: var(--bm-ink-dim); flex-shrink: 0; }
+.bm-netease-result-info { flex: 1; min-width: 0; }
+.bm-netease-result-name { font-size: 13px; color: var(--bm-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-netease-result-artist { font-size: 11px; color: var(--bm-ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
