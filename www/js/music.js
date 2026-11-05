@@ -321,7 +321,39 @@ window.bmMusic = (function () {
   }
 
   /* ---------- 获取单曲详情（播放直链 + 封面 + 歌词） ---------- */
+  // 20261105：直连拿网易云歌词（官方接口，需 MUSIC_U 登录态）
+  async function _netEaseLyric(id) {
+    if (!id) return '';
+    try {
+      const j = await _netEaseReq('https://music.163.com/api/song/lyric?id=' + id + '&lv=1&kv=1&tv=-1');
+      if (j && j.lrc && j.lrc.lyric) return j.lrc.lyric;
+      return '';
+    } catch (e) { return ''; }
+  }
   async function fetchSongDetail(song) {
+    // 20261105 修复「导入歌单无法播放」：netease-direct 源（导入的网易云歌单歌曲，
+    //   url 为空、带 _neteaseId）必须走网易云官方接口拿真实直链 + 封面 + 滚动歌词，
+    //   不能落回镜像源（镜像源搜不到网易云 id，导致「未获取到播放直链」）。
+    if (song && song._neteaseId && ((song.source === 'netease-direct') || !song.url)) {
+      const id = String(song._neteaseId);
+      const u = await _netEaseSongUrl(id);
+      if (u && u.url) {
+        song.url = u.url;
+        if (!song.pic) {
+          // 封面缺失时从网易云歌曲详情接口补 picUrl（http 转 https）
+          try {
+            const dj = await _netEaseReq('https://music.163.com/api/song/detail?ids=[' + id + ']');
+            const s0 = dj && dj.songs && dj.songs[0];
+            if (s0 && s0.album && s0.album.picUrl) song.pic = String(s0.album.picUrl).replace(/^http:\/\//i, 'https://');
+          } catch (e) {}
+        }
+        if (song.pic) song.pic = String(song.pic).replace(/^http:\/\//i, 'https://');
+        if (!song.lrc) { const lrc = await _netEaseLyric(id); if (lrc) song.lrc = lrc; }
+        song.source = 'netease-direct';
+        return song;
+      }
+      // 直连拿不到（无登录态/VIP），再落回镜像源按名搜兜底
+    }
     const sources = await getActiveSources();
     for (const src of sources) {
       try {
@@ -755,6 +787,30 @@ window.bmMusic = (function () {
     });
     // 20261104 统一记录播放历史（此前只在 playSong 里记，悬浮窗/角色主动等路径漏记，导致"播放了但没记录"）
     addHistory({ kind: 'history', charId: state.charId, songId: song.id, name: song.name, artist: song.artist || '', album: song.album || '', pic: song.pic || '' });
+    // 20261105 修复「网易云直连歌词/封面不显示」：直连播放（搜歌点播/歌单点播/导入歌单）时
+    //   song 往往只有 url 没有 lrc/pic（_netEaseSongUrl 不返回歌词、部分路径 pic 缺失）。
+    //   这里异步补拉歌词 + 封面，补齐后刷新播放器/悬浮窗，让滚动歌词和封面都能显示。
+    if (song.source === 'netease-direct' && song.id) {
+      (async () => {
+        let changed = false;
+        try {
+          if (!song.lrc) {
+            const lrc = await _netEaseLyric(song.id);
+            if (lrc) { song.lrc = lrc; changed = true; }
+          }
+        } catch (e) {}
+        try {
+          if (!song.pic) {
+            const dj = await _netEaseReq('https://music.163.com/api/song/detail?ids=[' + song.id + ']');
+            const s0 = dj && dj.songs && dj.songs[0];
+            if (s0 && s0.album && s0.album.picUrl) { song.pic = String(s0.album.picUrl).replace(/^http:\/\//i, 'https://'); changed = true; }
+          } else if (String(song.pic).indexOf('http://') === 0) {
+            song.pic = String(song.pic).replace(/^http:\/\//i, 'https://'); changed = true;
+          }
+        } catch (e) {}
+        if (changed) { try { refreshPlayerUI(); } catch (e) {} try { renderFloat(); } catch (e) {} }
+      })();
+    }
   }
 
   function pause() { const a = ensureAudio(); a.pause(); state.playing = false; saveSession(); onStateChange(); }
@@ -1129,7 +1185,11 @@ window.bmMusicUI = (function () {
 
   /* ---------- 当前一起听歌的角色 ---------- */
   function currentChar() {
-    const id = M.state.charId;
+    // 20261105 修复「角色数据串台」：优先取正在一起听的角色（M.state.charId），
+    //   没有一起听时回退到「当前聊天页的角色」（app.js 全局 currentCharId）。
+    //   否则从某角色聊天页进入音乐页、尚未一起听时，耳机/访客收藏会拿到上一个一起听角色
+    //   或空，导致显示「另一个角色还没听过歌/收藏」。
+    const id = M.state.charId || (typeof currentCharId !== 'undefined' ? currentCharId : null);
     if (!id) return null;
     return (typeof characters !== 'undefined' && characters.find) ? (characters.find(x => x.id === id) || null) : null;
   }
@@ -2133,8 +2193,8 @@ window.bmMusicUI = (function () {
     });
     setMode(M.state.mode);
 
-    // 返回
-    overlay.querySelector('#bm-music-back').onclick = () => closeMusicPage();
+    // 返回（20261105：先关子层弹窗，子层关完才退音乐页，栈式返回）
+    overlay.querySelector('#bm-music-back').onclick = () => backMusicPage();
     // 20261105：一起听歌页滑动返回手势——从屏幕最左边缘向右滑（超过阈值）触发返回，
     //   与左上角「‹ 返回」按钮等价，回到上一个功能界面（栈式返回，不是退出 App）。
     // 20261105 修复：EDGE 从 24 放宽到 56（用户反馈「手势滑动没识别」——从偏内侧起步滑动未被捕获），
@@ -2156,7 +2216,7 @@ window.bmMusicUI = (function () {
         // 横向为主才算返回手势，避免与纵向滚动冲突
         if (dx > THRESH && Math.abs(dx) > Math.abs(dy) * 1.2) {
           tracking = false;
-          closeMusicPage();
+          backMusicPage();
         }
       }, { passive: true });
       overlay.addEventListener('touchend', () => { tracking = false; }, { passive: true });
@@ -2267,10 +2327,25 @@ window.bmMusicUI = (function () {
     const _isRemotePage = (M.state.mode === 'remote') && !_netEaseDirect;
     overlay.querySelector('#bm-music-prev').onclick = () => { if (_isRemotePage) { _remoteAction({ bridge: 'prev', local: () => M.prev() }, null); refreshPlayerUI(); } else M.prev(); };
     overlay.querySelector('#bm-music-next').onclick = () => { if (_isRemotePage) { _remoteAction({ bridge: 'next', local: () => M.next() }, null); refreshPlayerUI(); } else M.next(); };
-    overlay.querySelector('#bm-music-pp').onclick = () => {
-      if (_isRemotePage) { _remoteAction({ bridge: 'toggle', local: () => M.toggle() }, null); refreshPlayerUI(); return; }
-      if (!M.state.current) { window.miniToast && miniToast('请先搜索并选择一首歌'); return; } M.toggle();
+    // 20261105 修复「外部网易云在播时点播放/暂停，内部残留旧歌与外部歌同时响（打架）」：
+    //   点播放/暂停时，若检测到外部有活跃媒体会话，优先发 toggle 指令给外部 App（操控后台那首歌），
+    //   而非操作内部残留 audio。无外部会话时才回落到内置播放器。
+    const _ppToggle = async () => {
+      const br = _remoteBridge();
+      if (br && typeof br.hasActiveSession === 'function') {
+        try {
+          const r = await br.hasActiveSession();
+          if (r && r.hasSession) {
+            await _remoteAction({ bridge: 'toggle', local: () => M.toggle() }, null);
+            refreshPlayerUI();
+            return;
+          }
+        } catch (e) {}
+      }
+      if (!M.state.current) { window.miniToast && miniToast('请先搜索并选择一首歌'); return; }
+      M.toggle();
     };
+    overlay.querySelector('#bm-music-pp').onclick = _ppToggle;
     overlay.querySelector('#bm-music-mode').onclick = () => { M.cyclePlayMode(); updateCtrlState(); };
     overlay.querySelector('#bm-music-list').onclick = () => showPlaylist();
     // 音量：点击音量按钮 → 弹出竖条音量拖动浮层，拖动调节音量（0~100%），实时生效并持久化
@@ -3092,6 +3167,14 @@ window.bmMusicUI = (function () {
     const bridge = _remoteBridge();
     // 有原生插件 → 直接发指令给外部 App（后台操控）
     if (bridge && act.bridge && typeof bridge[act.bridge] === 'function') {
+      // 20261105 修复「外部在播 + 内部残留旧歌同时响（打架）」：
+      //   遥控外部 App 前，先把内置播放器彻底停掉（pause + 清 src），
+      //   否则内部残留的上一首歌会跟外部 App 的歌同时响。
+      try {
+        const a = M.state.audio;
+        if (a) { a.pause(); }
+        M.state.playing = false;
+      } catch (e) {}
       try { await bridge[act.bridge](); } catch (e) { if (window.miniToast) miniToast('原生遥控指令失败'); }
       // 20261105：遥控外部 App 时同步本地 playing 状态，驱动星球律动/水波纹动效。
       //   next/prev = 一定有歌在播（切到下一首仍在播）；toggle = 翻转播放/暂停。
@@ -3173,7 +3256,7 @@ window.bmMusicUI = (function () {
     if (!uid) return [];
     const j = await _netEaseReq('https://music.163.com/api/user/playlist?uid=' + uid + '&limit=50&offset=0');
     if (!j || !j.playlist) return [];
-    return j.playlist.map(p => ({ id: String(p.id), name: p.name || '', cover: (p.coverImgUrl || ''), count: p.trackCount || 0 }));
+    return j.playlist.map(p => ({ id: String(p.id), name: p.name || '', cover: String(p.coverImgUrl || '').replace(/^http:\/\//i, 'https://'), count: p.trackCount || 0 }));
   }
   // 直连读某张歌单的歌曲列表
   async function _netEasePlaylistTracks(pid) {
@@ -3183,7 +3266,7 @@ window.bmMusicUI = (function () {
       id: String(t.id),
       name: t.name || '',
       artist: (t.ar && t.ar.length) ? t.ar.map(a => a.name).join(' / ') : '',
-      pic: (t.al && t.al.picUrl) ? t.al.picUrl : '',
+      pic: (t.al && t.al.picUrl) ? String(t.al.picUrl).replace(/^http:\/\//i, 'https://') : '',
       source: 'netease-direct',
     }));
   }
@@ -3266,6 +3349,26 @@ window.bmMusicUI = (function () {
      这是白日梦自己的播放能力（本地搜歌整批播），不依赖遥控外部 App。 */
   const _dailyKwPool = ['每日推荐', '今日热歌', '新歌速递', '流行精选', '热歌榜', '华语新歌'];
   async function _dailyRecommend(say) {
+    // 20261105 直连模式：镜像源已失效（qijieya/gdstudio/meting 均挂），改用网易云官方搜索
+    //   拿真实可播直链，根治「每日推荐暂时没抓到歌」。
+    if (_netEaseDirect) {
+      const fulls = [];
+      for (const kw of _dailyKwPool) {
+        const list = await _netEaseSearch(kw);
+        if (!list || !list.length) continue;
+        for (const s of list.slice(0, 12)) {
+          const u = await _netEaseSongUrl(s.id);
+          if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+        }
+        if (fulls.length) break;
+      }
+      if (!fulls.length) { if (say) say('每日推荐暂时没抓到可播的歌'); if (window.miniToast) miniToast('每日推荐暂时没抓到歌'); return; }
+      M.state.playlist = fulls;
+      M.state.playIndex = 0;
+      try { await M.play(fulls[0]); } catch (e) {}
+      if (say) say(`播放了每日推荐，共 ${fulls.length} 首`);
+      return;
+    }
     // 本地：随机推荐关键词搜歌，整批入队列播放；某关键词抓不到歌则换下一个重试
     let fulls = [];
     for (const kw of _dailyKwPool) {
@@ -3289,6 +3392,29 @@ window.bmMusicUI = (function () {
      点「漫游」→ 随机一个风格/心情关键词搜歌，整批随机化后播放，营造「随机漫游」感。 */
   const _roamKwPool = ['轻音乐', '民谣', '古风', '纯音乐', '爵士', '摇滚', '电子', '治愈系', '雨声', '星空', '钢琴', '慢歌', '回忆', '夏日', '晚安曲'];
   async function _roamPlay(say) {
+    // 20261105 直连模式：镜像源失效，改用网易云官方搜索，根治「漫游暂时没抓到歌」。
+    if (_netEaseDirect) {
+      const pool = [..._roamKwPool];
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+      let fulls = [];
+      for (const kw of pool) {
+        const list = await _netEaseSearch(kw);
+        if (!list || !list.length) continue;
+        const batch = list.slice(0, 15);
+        for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
+        for (const s of batch) {
+          const u = await _netEaseSongUrl(s.id);
+          if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+        }
+        if (fulls.length) break;
+      }
+      if (!fulls.length) { if (say) say('漫游暂时没抓到可播的歌'); if (window.miniToast) miniToast('漫游暂时没抓到歌'); return; }
+      M.state.playlist = fulls;
+      M.state.playIndex = 0;
+      try { await M.play(fulls[0]); } catch (e) {}
+      if (say) say(`开启了音乐漫游，随机漫游 ${fulls.length} 首`);
+      return;
+    }
     // 随机风格搜歌，洗牌后整批播；某风格抓不到歌则换下一个重试
     const pool = [..._roamKwPool];
     for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
@@ -3678,6 +3804,20 @@ window.bmMusicUI = (function () {
         if (window.miniToast) miniToast(`正在搜索：${title}${artist ? ' · ' + artist : ''}`);
         // 用歌名+歌手搜同款，白日梦自己播这首
         const kw = title + (artist ? ' ' + artist : '');
+        // 20261105 直连模式优先走网易云官方搜索（镜像源失效，搜不到会误报「没搜到这首」）
+        if (_netEaseDirect) {
+          const list = await _netEaseSearch(kw);
+          if (!list || !list.length) { if (window.miniToast) miniToast('白日梦没搜到这首《' + title + '》'); renderRemotePanel(box); return; }
+          const s = list[0];
+          const u = await _netEaseSongUrl(s.id);
+          if (!u || !u.url) { if (window.miniToast) miniToast('未获取到播放直链'); renderRemotePanel(box); return; }
+          const full = { id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' };
+          M.state.playlist = [full]; M.state.playIndex = 0;
+          try { await M.play(full); } catch (e) {}
+          if (window.miniToast) miniToast('正在播放：' + full.name);
+          renderRemotePanel(box);
+          return;
+        }
         const res = await M.search(kw);
         if (!res || !res.length) { if (window.miniToast) miniToast('白日梦音源没搜到这首《' + title + '》'); renderRemotePanel(box); return; }
         const s = res[0];
@@ -4531,6 +4671,34 @@ window.bmMusicUI = (function () {
     stopPlanetAnimation();
   }
 
+  /* 20261105 修复「音乐页内开弹窗后，手势回退/返回按钮直接退出整个音乐页」：
+     栈式返回——音乐页内若有打开的子浮层（.bm-lib-subpanel：导入歌单/解析歌单/主题/音乐库等，
+     或 .bm-volume-pop 音量浮层、.bm-float-minilist 迷你播放列表），先关闭最上面那层，
+     回到音乐页本身；只有没有任何子层时才真正退出音乐页。返回 true=已关闭子层，false=无子层可关。 */
+  function _closeTopMusicLayer() {
+    const page = document.getElementById('bm-music-page');
+    if (!page) return false;
+    // 1) 音量浮层（挂在 body）
+    const volPop = document.getElementById('bm-volume-pop');
+    if (volPop) { volPop.remove(); return true; }
+    // 2) 迷你播放列表（挂在 body，悬浮窗正上方）
+    const minilist = document.getElementById('bm-float-minilist');
+    if (minilist) { minilist.remove(); return true; }
+    // 3) 音乐页内的子浮层（.bm-lib-subpanel）——可能有多个，关最上面的（DOM 最后一个）
+    const subs = page.querySelectorAll('.bm-lib-subpanel');
+    if (subs && subs.length) {
+      const top = subs[subs.length - 1];
+      top.remove();
+      return true;
+    }
+    return false;
+  }
+  /* 统一的「音乐页返回」入口：先关子层，关完了才退音乐页 */
+  function backMusicPage() {
+    if (_closeTopMusicLayer()) return;
+    closeMusicPage();
+  }
+
   /* ---------- 三主题（星轨 / 手稿 / 像素） ---------- */
   async function applyMusicTheme() {
     const page = document.getElementById('bm-music-page');
@@ -5189,14 +5357,25 @@ window.bmMusicUI = (function () {
       if (_isRemote) { _remoteAction({ bridge: 'next', local: () => M.next() }, null); refreshPlayerUI(); return; }
       M.next();
     };
-    fw.querySelector('#bm-float-pp').onclick = () => {
-      if (_isRemote) { _remoteAction({ bridge: 'toggle', local: () => M.toggle() }, null); refreshPlayerUI(); return; }
+    // 20261105 修复「外部在播时点播放/暂停打架」：优先检测外部活跃会话，有则遥控外部。
+    const _floatPpToggle = async () => {
+      const br = _remoteBridge();
+      if (br && typeof br.hasActiveSession === 'function') {
+        try {
+          const r = await br.hasActiveSession();
+          if (r && r.hasSession) {
+            await _remoteAction({ bridge: 'toggle', local: () => M.toggle() }, null);
+            refreshPlayerUI();
+            return;
+          }
+        } catch (e) {}
+      }
       M.toggle(); refreshPlayerUI();
     };
+    fw.querySelector('#bm-float-pp').onclick = _floatPpToggle;
     fw.querySelector('#bm-mini-pp').onclick = (e) => {
       e.stopPropagation();
-      if (_isRemote) { _remoteAction({ bridge: 'toggle', local: () => M.toggle() }, null); refreshPlayerUI(); return; }
-      M.toggle(); refreshPlayerUI();
+      _floatPpToggle();
     };
     // 20261104：三级悬浮窗播放模式切换 + 播放列表按钮
     const fmBtn = fw.querySelector('#bm-float-mode');
@@ -5594,7 +5773,7 @@ window.bmMusicUI = (function () {
     renderFloat();
   });
 
-  return { showMusicPage, refreshPlayerUI, renderFloat, closeMusicPage, showMusicLib, showThemePicker, resetFloatClosed, showInviteCard, startTogether, endTogether, charAutoMusic, charInviteTogether, charPeekPlaylist, charEarListen, charCollect, getTogetherTotal, setFloatScopeAndApply };
+  return { showMusicPage, refreshPlayerUI, renderFloat, closeMusicPage, backMusicPage, showMusicLib, showThemePicker, resetFloatClosed, showInviteCard, startTogether, endTogether, charAutoMusic, charInviteTogether, charPeekPlaylist, charEarListen, charCollect, getTogetherTotal, setFloatScopeAndApply };
 })();
 
 /* app.js 引用的全局入口 */

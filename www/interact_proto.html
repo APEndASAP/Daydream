@@ -1696,28 +1696,17 @@ function applyLockState(){
 }
 
 function requestLockPermission(onGranted){
-  // 20261104：点锁机时申请「使用情况访问」权限（PACKAGE_USAGE_STATS）
-  //   · 真机走 BmOverlay.requestUsageAccess（检测 + 引导跳设置页）
-  //   · 授权后回调 onGranted 真正开启锁机；PC/Web 端演示，不真锁
+  // 20261105 修复「锁机按钮点不了」：iframe 里访问不到 Capacitor 插件（BmOverlay.requestUsageAccess
+  //   根本不存在，锁机权限实际在父窗口的 BmRemoteControl 插件 hasUsageAccess/openUsageAccessSettings）。
+  //   改为 postMessage 请求父窗口申请权限，父窗口授权后回传结果，iframe 收到 granted 再真正开锁。
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const Bm = (typeof window.Capacitor !== 'undefined' && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay) ? window.Capacitor.Plugins.BmOverlay : null;
-  if(isMobile && Bm && typeof Bm.requestUsageAccess === 'function'){
-    Bm.requestUsageAccess().then(r => {
-      if(r && r.granted){
-        // 已授权 → 直接开锁
-        if(onGranted) onGranted();
-      } else {
-        // 未授权 → 已跳转设置页，提示用户手动开启后回来再点一次
-        if(window.parent && window.parent.miniToast){ window.parent.miniToast('请开启「使用情况访问权限」后回来再点锁机'); }
-        else if(hintPill) hintPill.textContent = '⚠️ 请先在系统设置开启「使用情况访问权限」';
-      }
-    }).catch(() => {
-      if(onGranted) onGranted();  // 兜底：插件异常也放行（原型演示）
-    });
-  } else {
-    // Web / PC 演示：不真锁，直接放行
-    if(onGranted) onGranted();
+  if(isMobile && window.parent && window.parent !== window){
+    window._pomoLockGrantedCb = onGranted || null;
+    window.parent.postMessage({ type: 'pomodoro-lock-perm' }, '*');
+    return;
   }
+  // Web / PC 演示：不真锁，直接放行
+  if(onGranted) onGranted();
 }
 
 function startFocusTimer(){
@@ -2433,16 +2422,50 @@ document.getElementById('settleClose').onclick = ()=>{
   }
 };
 document.querySelector('.back').onclick = ()=> {
-  // 20261104：iframe 接入主项目时，返回按钮通知父窗口关闭番茄钟层；独立原型时退回提示
+  pomodoroBack();
+};
+
+/* 20261105：番茄钟统一栈式返回入口——按「弹窗 → 结算页栈 → 番茄钟主页 → 通知父窗口」逐层回退。
+   用户要求：点进专注结算单独页面后回退，应 详情→列表→文件夹→番茄页→聊天页，而不是一步退出整个番茄钟。 */
+function pomodoroBack(){
+  // 1) 各弹窗（选角色/白噪音/待办/新建文件夹/移动/成果输入）开着 → 只关弹窗
+  const sheets = [
+    ['charSheet', 'char-sheet'],
+    ['noiseSheet', 'noise-sheet'],
+    ['todoSheet', 'todo-sheet'],
+    ['nfoldSheet', 'nfold-sheet'],
+    ['moveSheet', 'move-sheet'],
+    ['resultDialog', 'dialog'],
+  ];
+  for (const [id] of sheets) {
+    const el = document.getElementById(id);
+    if (el && el.classList.contains('show')) { el.classList.remove('show'); return; }
+  }
+  // 2) 本次结算页（信纸风卡片）开着 → 关闭，回到番茄钟主页
+  const ss = document.getElementById('sessionSettle');
+  if (ss && ss.classList.contains('show')) { ss.classList.remove('show'); return; }
+  // 3) 结算页开着 → 栈式返回：栈里有层级就回上一级，栈空则关结算页回番茄钟主页
+  const sv = document.getElementById('settleView');
+  if (sv && sv.classList.contains('show')) {
+    if (settleStack.length > 0) {
+      const back = settleStack.pop();
+      back();
+    } else {
+      sv.classList.remove('show');
+      resetBatch();
+    }
+    return;
+  }
+  // 4) 番茄钟主页（无任何子层）→ 通知父窗口关闭番茄钟层（栈式返回上一层 = 聊天页）
   if (window.parent && window.parent !== window) {
     window.parent.postMessage({ type: 'pomodoro-close' }, '*');
   } else {
     alert('返回（原型演示）');
   }
-};
+}
 
 /* 20261104：番茄钟滑动返回手势——从屏幕最左边缘向右滑（超过阈值）触发返回，
-   与「‹ 返回」按钮等价：接入主项目时通知父窗口关闭番茄钟层。 */
+   与「‹ 返回」按钮等价，统一走 pomodoroBack() 栈式返回。 */
 (function(){
   const EDGE = 56;        // 左侧边缘触发区宽度（px）；20261105 从 24 放宽到 56，与音乐页一致，修「手势没识别」
   const THRESH = 50;      // 横向滑动超过该距离才算返回；20261105 从 70 降到 50，更易触发
@@ -2460,13 +2483,31 @@ document.querySelector('.back').onclick = ()=> {
     // 横向为主（横向位移 > 纵向位移）才视为返回手势，避免与纵向滚动冲突
     if (dx > THRESH && Math.abs(dx) > Math.abs(dy) * 1.2) {
       tracking = false;
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({ type: 'pomodoro-close' }, '*');
-      }
+      pomodoroBack();
     }
   }, { passive: true });
   window.addEventListener('touchend', () => { tracking = false; }, { passive: true });
 })();
+
+/* 20261105：接收父窗口（app.js）的系统返回键/侧滑返回指令，统一走 pomodoroBack 栈式返回。
+   父窗口无法感知 iframe 内部的弹窗/结算页层级，所以把「返回」交给 iframe 自己处理：
+   内部有弹窗/结算页就逐层回退，回到主页后再回发 pomodoro-close 通知父窗口关闭番茄钟层。 */
+window.addEventListener('message', (ev) => {
+  const d = ev.data;
+  if (!d) return;
+  if (d.type === 'pomodoro-back') {
+    pomodoroBack();
+  } else if (d.type === 'pomodoro-lock-perm-result') {
+    // 20261105：父窗口申请完「使用情况访问」权限后回传结果
+    const cb = window._pomoLockGrantedCb;
+    window._pomoLockGrantedCb = null;
+    if (d.granted && typeof cb === 'function') {
+      cb();
+    } else if (!d.granted) {
+      if (hintPill) hintPill.textContent = '⚠️ 请先在系统设置开启「使用情况访问权限」';
+    }
+  }
+});
 
 /* ============ 文件夹批量管理交互 ============ */
 // 新建文件夹（居中弹窗，不再用原生 prompt）

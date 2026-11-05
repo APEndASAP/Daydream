@@ -21,7 +21,7 @@ let chatSettings = {
   notifyMerge: 'each',           // 20261002cg：消息通知方式 each=逐条通知 / merge=合并通知（玩家在聊天设置最顶端自主选择）
   notifyConversationEnabled: false, // 20261004dk：会话式通知（MessagingStyle）开关，默认关；开启后消息通知改走 BmConversationNotify 会话式出口，失败自动回退旧通知
   proactive: false,              // 访客主动发消息 5.3
-  proactiveMin: 10,              // 主动消息间隔（分钟）1~120
+  proactiveMin: 5,               // 主动消息间隔（分钟）1~120【20261105 角色交互测试临时调为5】
   proactiveRandom: false,        // 随机主动发消息：开启后在下方区间内随机时刻发，不再按固定间隔
   proactiveRandMin: 10,          // 20260929bf 随机发消息区间·最小（分钟）
   proactiveRandMax: 120,         // 20260929bf 随机发消息区间·最大（分钟）
@@ -59,11 +59,11 @@ let chatSettings = {
   typecardSummonIntervalMin: 40,   // 20261009：召唤自动发消息随机区间下限（分钟）；上限 240 与查岗区间惯例一致，玩家可在召唤开关旁自设
   typecardSummonIntervalMax: 240,  // 20261009：召唤自动发消息随机区间上限（分钟）；每次触发后在 [min,max] 内随机取下一次间隔
   bmSchedDetect: true,             // 20261029：聊天日程+闹钟自动检测总开关（默认开；全局开关，聊天设置里读写）
-  multiCardOn: false,              // 20261031：多字卡组合回复总开关（独立新功能，与打字卡无关；默认关）
-  multiCardCountMin: 1,            // 20261031：组合字卡条数下限（1~10）
-  multiCardCountMax: 3,            // 20261031：组合字卡条数上限（1~10，最多10）
-  multiCardIntervalMin: 40,        // 20261031：多字卡组合独立随机固定间隔下限（分钟）
-  multiCardIntervalMax: 240,       // 20261031：多字卡组合独立随机固定间隔上限（分钟）
+  multiCardOn: true,               // 20261031：多字卡组合回复总开关（独立新功能，与打字卡无关；默认关）【20261105 测试临时开】
+  multiCardCountMin: 2,            // 20261031：组合字卡条数下限（1~10）【测试临时2】
+  multiCardCountMax: 3,            // 20261031：组合字卡条数上限（1~10，最多10）【测试临时3】
+  multiCardIntervalMin: 5,         // 20261031：多字卡组合独立随机固定间隔下限（分钟）【测试临时5】
+  multiCardIntervalMax: 5,         // 20261031：多字卡组合独立随机固定间隔上限（分钟）【测试临时5】
   charSchedCountMin: 2,            // 20261031：角色每天随机写入行程条数下限（默认2）
   charSchedCountMax: 3,            // 20261031：角色每天随机写入行程条数上限（默认3）
   commentPickCountMin: 0,          // 20261031：行程留言/备注每次抽取字卡张数下限（默认0，0=可能不写）
@@ -72,19 +72,19 @@ let chatSettings = {
   musicAuto: true,                 // 20261104：互动B——角色主动搜歌/切歌/收藏（总开关，默认开；开启后一起听期间自动触发，结束一起听自动暂停）
   musicAutoMin: 5,                 // 20261104：角色主动音乐操作随机间隔下限（分钟）【测试临时调短为5】
   musicAutoMax: 5,                 // 20261104：角色主动音乐操作随机间隔上限（分钟）【测试临时调短为5】
-  musicInvite: false,              // 20261104：角色主动邀请玩家一起听歌（随机固定间隔，默认关）
-  musicInviteMin: 120,             // 20261104：角色主动邀请一起听歌间隔下限（分钟，比主动操作更稀疏）
-  musicInviteMax: 480,             // 20261104：角色主动邀请一起听歌间隔上限（分钟）
+  musicInvite: true,               // 20261104：角色主动邀请玩家一起听歌（随机固定间隔，默认关）【20261105 测试临时开】
+  musicInviteMin: 5,               // 20261104：角色主动邀请一起听歌间隔下限（分钟）【测试临时5】
+  musicInviteMax: 5,               // 20261104：角色主动邀请一起听歌间隔上限（分钟）【测试临时5】
   musicPeek: true,                 // 20261104：互动A——角色偷偷查看玩家歌单/随机收藏/后台随机听歌记录（默认开启）
-  musicPeekMin: 60,                // 20261104：角色偷看玩家歌单间隔下限（分钟）
-  musicPeekMax: 240,               // 20261104：角色偷看玩家歌单间隔上限（分钟）
-  earListenMin: 40,                // 20261105：角色「戴耳机听自己歌单」生成幽灵听歌记录间隔下限（分钟，拉长更稀疏）
-  earListenMax: 360,               // 20261105：角色「戴耳机听自己歌单」间隔上限（分钟）
-  charCollectMin: 40,              // 20261105：一起听歌时角色随机收藏歌曲间隔下限（分钟）
-  charCollectMax: 180,             // 20261105：一起听歌时角色随机收藏歌曲间隔上限（分钟）
-  videoAuto: false,                // 20261104：角色主动搜发视频给玩家（随机固定间隔，默认关）
-  videoAutoMin: 60,                // 20261104：角色主动发视频随机间隔下限（分钟）
-  videoAutoMax: 240,               // 20261104：角色主动发视频随机间隔上限（分钟）
+  musicPeekMin: 5,                 // 20261104：角色偷看玩家歌单间隔下限（分钟）【测试临时5】
+  musicPeekMax: 5,                 // 20261104：角色偷看玩家歌单间隔上限（分钟）【测试临时5】
+  earListenMin: 5,                 // 20261105：角色「戴耳机听自己歌单」生成幽灵听歌记录间隔下限（分钟）【测试临时5】
+  earListenMax: 5,                 // 20261105：角色「戴耳机听自己歌单」间隔上限（分钟）【测试临时5】
+  charCollectMin: 5,               // 20261105：一起听歌时角色随机收藏歌曲间隔下限（分钟）【测试临时5】
+  charCollectMax: 5,               // 20261105：一起听歌时角色随机收藏歌曲间隔上限（分钟）【测试临时5】
+  videoAuto: true,                 // 20261104：角色主动搜发视频给玩家（随机固定间隔，默认关）【20261105 测试临时开】
+  videoAutoMin: 5,                 // 20261104：角色主动发视频随机间隔下限（分钟）【测试临时5】
+  videoAutoMax: 5,                 // 20261104：角色主动发视频随机间隔上限（分钟）【测试临时5】
   videoCoverMode: 'local',         // 20261104：视频封面获取方式 'local'=真封面+文字占位(纯前端) / 'thirdParty'=第三方解析服务(拿小红书/抖音真封面，链接会发第三方)
   videoParseApi: '',               // 20261105：第三方解析服务地址（玩家可自定义；支持 {url}/{link}/{id}/{key} 宏，留空用内置默认）
   videoParseApiId: '',             // 20261105：内置默认服务（接口盒子 apihz）的用户 ID，留空用公共测试号
@@ -95,8 +95,8 @@ let chatSettings = {
   pomodoroBreakMin: 5,             // 20261104：番茄钟默认休息时长（分钟）
   pomodoroNoiseOn: true,           // 20261104：番茄钟默认是否播放白噪音（默认开）
   pomodoroLockOn: false,           // 20261104：番茄钟默认是否开启锁机（默认关）
-  companionInteractMin: 8,         // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机间隔下限（分钟）
-  companionInteractMax: 20,        // 20261104：番茄钟前台互动随机间隔上限（分钟）
+  companionInteractMin: 5,         // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机间隔下限（分钟）【测试临时5】
+  companionInteractMax: 5,         // 20261104：番茄钟前台互动随机间隔上限（分钟）【测试临时5】
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -8492,16 +8492,26 @@ function bmInternalBack() {
   if (menu && menu.classList.contains('show')) { closeCtxMenu(); return true; }
   // 3) 聊天页多选模式 → 先退出多选
   if (multiSelectMode) { exitMultiSelect(); return true; }
-  // 4) 番茄钟全屏层开着 → 关番茄钟，回到聊天页（20261105 修复：番茄钟右滑/返回键退出白屏卡死，栈式返回）
+  // 4) 番茄钟全屏层开着 → 栈式返回：先让 iframe 内部处理（关弹窗→结算页逐层→主页），
+  //   内部回到主页后会回发 pomodoro-close 通知真正关闭番茄钟层（20261105 修复：此前直接关番茄钟，跳过内部层级）
   const pomoLayer = document.getElementById('pomodoro-layer');
   if (pomoLayer && pomoLayer.classList.contains('show')) {
-    if (typeof closePomodoroLayer === 'function') closePomodoroLayer();
+    const frame = document.getElementById('pomodoro-frame');
+    if (frame && frame.contentWindow) {
+      try { frame.contentWindow.postMessage({ type: 'pomodoro-back' }, '*'); }
+      catch (e) { if (typeof closePomodoroLayer === 'function') closePomodoroLayer(); }
+    } else if (typeof closePomodoroLayer === 'function') {
+      closePomodoroLayer();
+    }
     return true;
   }
-  // 5) 音乐页（一起听歌）开着 → 关音乐页，回到聊天页（20261105 修复：音乐页右滑/返回键此前落到「再按一次退出应用」）
+  // 5) 音乐页（一起听歌）开着 → 栈式返回：先关音乐页内子层弹窗，子层关完才退音乐页回聊天页
+  //   （20261105 修复：音乐页内开弹窗时按返回键/右滑，此前直接退出整个音乐页，应改为先关弹窗）
   const musicPage = document.getElementById('bm-music-page');
   if (musicPage) {
-    if (typeof window.bmMusicUI === 'object' && typeof window.bmMusicUI.closeMusicPage === 'function') {
+    if (typeof window.bmMusicUI === 'object' && typeof window.bmMusicUI.backMusicPage === 'function') {
+      window.bmMusicUI.backMusicPage();
+    } else if (typeof window.bmMusicUI === 'object' && typeof window.bmMusicUI.closeMusicPage === 'function') {
       window.bmMusicUI.closeMusicPage();
     } else if (typeof closeMusicPage === 'function') {
       closeMusicPage();
@@ -11533,6 +11543,15 @@ async function _pomodoroSaveSettle(data) {
       // 20261105：番茄钟前台互动气泡 AI 模式——iframe 请求主项目用 AI 生成
       //   「一句陪伴动作 + 一句台词」，生成后回传 pomodoro-comp-interact-result
       _pomodoroGenCompInteract(d.payload || {});
+    } else if (d.type === 'pomodoro-lock-perm') {
+      // 20261105：番茄钟锁机——iframe 请求主项目申请「使用情况访问」权限（BmRemoteControl 插件），
+      //   授权结果回传 pomodoro-lock-perm-result。修「锁机按钮点不了」（iframe 拿不到 Capacitor 插件）。
+      const frame = document.getElementById('pomodoro-frame');
+      requestUsageAccessPermission().then((granted) => {
+        try {
+          if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'pomodoro-lock-perm-result', granted: !!granted }, '*');
+        } catch (e) {}
+      });
     }
   });
 })();

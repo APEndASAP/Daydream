@@ -7259,7 +7259,11 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 }
 .bm-ctrl-btn {
   width: 46px; height: 46px; border-radius: 50%;
-  background: var(--bm-card); border: 1px solid var(--bm-card-line);
+  /* 20261105 修复「按钮背板透明透底」：--bm-card 默认是 rgba(255,255,255,.03) 几乎全透明，
+     按钮背板透出背景文字。改用不透明深色实底（--bm-paper-2 次底色），
+     确保任何主题下按钮都有清晰不透明背板，不再透出后面的歌名/歌手文字。 */
+  background: var(--bm-paper-2, #05070d);
+  border: 1px solid var(--bm-card-line);
   color: var(--bm-ink); display: flex; align-items: center; justify-content: center; cursor: pointer;
   transition: transform .12s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
   -webkit-tap-highlight-color: transparent;
