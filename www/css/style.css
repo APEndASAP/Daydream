@@ -7218,6 +7218,13 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
   position: relative; z-index: 1;
   flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 20px;
   padding: 12px 16px 8px;
+  /* 20261105 二次修复「按钮后方面板透明透底」：控制栏容器本身也要有不透明背板，
+     不能只有按钮本身实底——否则按钮之间、按钮与页面边缘之间的空隙会透出后面的
+     歌名/歌手文字（如 "M3"、"Les Apollo" 穿过播放键可见）。用 --bm-card-solid 实色铺底，
+     让整条控制栏成为一块独立不透明的底栏，按钮「坐在」上面，不再透底。 */
+  background: var(--bm-card-solid, #1b1c22);
+  margin: 0 12px;
+  border-radius: 18px;
 }
 /* 音量条 */
 /* 20261104：音量 + 音调竖条控件区（两个竖条并排） */
@@ -7272,7 +7279,10 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 .bm-ctrl-btn:active { transform: scale(.88); background: var(--bm-accent-glow); border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-ctrl-btn.bm-ctrl-main {
   width: 58px; height: 58px;
-  background: var(--bm-accent-glow); border: 1px solid var(--bm-accent); color: #fff;
+  /* 20261105 二次修复：主播放按钮背景原为 --bm-accent-glow（rgba .35 半透明），
+     透出后面的歌名/歌手文字。改为不透明实色 --bm-accent，光晕仅作外发光（box-shadow），
+     按钮本体完全实底不再透字。 */
+  background: var(--bm-accent, #a78bfa); border: 1px solid var(--bm-accent); color: #fff;
   box-shadow: 0 0 20px var(--bm-accent-glow);
 }
 .bm-ctrl-btn.bm-ctrl-main:hover { background: var(--bm-accent); color: #fff; }
@@ -7561,7 +7571,7 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 .bm-music-page[data-theme="pixel"] .bm-music-gobtn { border-radius: 0; font-family: inherit; }
 .bm-music-page[data-theme="pixel"] .bm-music-gobtn { background: var(--bm-card); border: 1px solid var(--bm-card-line); }
 .bm-music-page[data-theme="pixel"] .bm-ctrl-btn { border-radius: 0; }
-.bm-music-page[data-theme="pixel"] .bm-ctrl-btn.bm-ctrl-main { border-radius: 0; background: var(--bm-card); box-shadow: 0 0 14px var(--bm-accent-glow); }
+.bm-music-page[data-theme="pixel"] .bm-ctrl-btn.bm-ctrl-main { border-radius: 0; background: var(--bm-accent); color: #fff; box-shadow: 0 0 14px var(--bm-accent-glow); }
 .bm-music-page[data-theme="pixel"] .bm-result { border-radius: 0; }
 .bm-music-page[data-theme="pixel"] .bm-result-cover { border-radius: 0; }
 .bm-music-page[data-theme="pixel"] .bm-planet-core {

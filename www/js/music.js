@@ -4672,24 +4672,45 @@ window.bmMusicUI = (function () {
   }
 
   /* 20261105 修复「音乐页内开弹窗后，手势回退/返回按钮直接退出整个音乐页」：
-     栈式返回——音乐页内若有打开的子浮层（.bm-lib-subpanel：导入歌单/解析歌单/主题/音乐库等，
-     或 .bm-volume-pop 音量浮层、.bm-float-minilist 迷你播放列表），先关闭最上面那层，
-     回到音乐页本身；只有没有任何子层时才真正退出音乐页。返回 true=已关闭子层，false=无子层可关。 */
+     栈式返回——音乐页内若有打开的子浮层（音乐库/导入歌单/解析歌单/主题/播放列表/评论/
+     邀请/分享/音量/迷你列表等），先关闭最上面那层，回到音乐页本身；
+     只有没有任何子层时才真正退出音乐页。返回 true=已关闭子层，false=无子层可关。
+
+     20261105 二次修复：原实现只检测了 3 种浮层（bm-volume-pop/bm-float-minilist/.bm-lib-subpanel），
+     漏掉了音乐页里真正会打开的评论面板、播放列表面板、音乐库面板、邀请/分享弹窗等一大票浮层，
+     导致「按返回键直接退出整个音乐页」而非「先关弹窗」。现改为统一按 id 清单检测所有音乐浮层，
+     按 z-index 从高到低关闭最上面那层（各浮层 id 已与 showXxx 函数一一核对）。 */
   function _closeTopMusicLayer() {
+    // 所有音乐相关的浮层容器 id，按「层级从高到低」排列（越靠前 z-index 越高，先关）
+    const LAYERS = [
+      'bm-comment-panel',      // 评论面板（z=2147483005，最高）
+      'bm-invite-card',        // 一起听歌邀请（角色发起 / 玩家发出）
+      'bm-share-picker',       // 分享给谁 / 邀请谁（选角色）
+      'bm-playlist-panel',     // 播放列表面板
+      'bm-volume-pop',         // 音量浮层
+      'bm-float-minilist',     // 迷你播放列表（悬浮窗上方）
+      'bm-music-lib-panel',    // 音乐库面板（歌曲/歌单/访客收藏/Ta的耳机）
+      'bm-lib-pldetail-panel', // 歌单详情
+      'bm-lib-addpl-panel',    // 新建歌单
+      'bm-lib-add-panel',      // 添加歌曲
+      'bm-neimport-panel',     // 导入网易云歌单
+      'bm-parse-playlist-pop', // 解析歌单
+    ];
+    for (let i = 0; i < LAYERS.length; i++) {
+      const el = document.getElementById(LAYERS[i]);
+      if (el) { el.remove(); return true; }
+    }
+    // 兜底：音乐页内残留的 .bm-lib-subpanel / 主题遮罩等子浮层（DOM 最后一个=最上面）
     const page = document.getElementById('bm-music-page');
-    if (!page) return false;
-    // 1) 音量浮层（挂在 body）
-    const volPop = document.getElementById('bm-volume-pop');
-    if (volPop) { volPop.remove(); return true; }
-    // 2) 迷你播放列表（挂在 body，悬浮窗正上方）
-    const minilist = document.getElementById('bm-float-minilist');
-    if (minilist) { minilist.remove(); return true; }
-    // 3) 音乐页内的子浮层（.bm-lib-subpanel）——可能有多个，关最上面的（DOM 最后一个）
-    const subs = page.querySelectorAll('.bm-lib-subpanel');
-    if (subs && subs.length) {
-      const top = subs[subs.length - 1];
-      top.remove();
-      return true;
+    if (page) {
+      const subs = page.querySelectorAll('.bm-lib-subpanel, .bm-theme-mask, .bm-bg-picker-mask');
+      if (subs && subs.length) {
+        const top = subs[subs.length - 1];
+        // 主题遮罩/背景选择遮罩可能是子元素的 mask，直接移除其父浮层容器
+        const host = top.closest('.bm-lib-subpanel, .bm-theme-panel, .bm-bg-picker') || top;
+        host.remove();
+        return true;
+      }
     }
     return false;
   }
