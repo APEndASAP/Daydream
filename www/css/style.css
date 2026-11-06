@@ -7361,7 +7361,7 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 
 .bm-playlist-panel {
   position: fixed; inset: 0; z-index: 5000;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: stretch; justify-content: flex-end;
   pointer-events: none;
 }
 .bm-playlist-mask {
@@ -7370,16 +7370,17 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   animation: bm-fade-in .2s ease;
 }
 .bm-playlist-card {
-  position: relative; width: min(380px, 88vw); max-height: min(640px, 82vh);
+  /* 20261106：从居中弹窗改为「右侧抽屉」——贴右边缘滑出，宽度约页面 2/5，高度全屏 */
+  position: relative; width: 40vw; min-width: 160px; max-width: 420px; height: 100%;
   background: var(--bm-bg1, #0a0e1a); color: var(--bm-ink, #d8dff0);
-  border: 1px solid var(--bm-card-line, rgba(190,205,240,.16));
-  border-radius: 16px;
-  box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  border-left: 1px solid var(--bm-card-line, rgba(190,205,240,.16));
+  border-radius: 16px 0 0 16px;
+  box-shadow: -12px 0 40px rgba(0,0,0,.5);
   display: flex; flex-direction: column; overflow: hidden;
   pointer-events: auto;
-  animation: bm-playlist-pop .28s cubic-bezier(.2,.9,.3,1.1);
+  animation: bm-playlist-drawer .28s cubic-bezier(.2,.9,.3,1);
 }
-@keyframes bm-playlist-pop { from { opacity: 0; transform: scale(.92) translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes bm-playlist-drawer { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @keyframes bm-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .bm-playlist-head {
   display: flex; align-items: center; justify-content: space-between;
