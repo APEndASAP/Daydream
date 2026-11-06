@@ -6,6 +6,9 @@ on:
     branches: [ main ]
     paths:
       - 'www/**'
+      # 20261106：排除 videolib.json——它每天凌晨 3 点由 fetch-videolib 自动更新，
+      #   不应触发 APK 重建（APP 端改为联网拉线上最新视频池，无需每天重打包）。
+      - '!www/js/videolib.json'
       - 'assets/**'
       - 'keystore/**'
       - 'capacitor.config.json'

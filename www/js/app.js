@@ -403,6 +403,7 @@ async function showSoftwareNotice(opts = {}) {
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所制作的传讯字卡网站中字卡部分的代码，兼容其字卡导入</div>
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所设计的每日弹卡功能，本软件「入梦签 · 每日弹卡」即参考该创意制作</div>
         <div class="nt-sub" style="margin-top:4px;">参考使用了小红书 @VII（Septem6439_cccg）老师所开源的真拟态玻璃（hyalite 液态玻璃）源码，本软件「玻璃美化预设 · 2号液态玻璃」即基于该开源库制作</div>
+        <div class="nt-sub" style="margin-top:4px;">本软件「角色主动视频搜发」功能的灵感来自小红书 @我要学英语 老师（4356852316），该功能的思路与代码均为本软件自研</div>
         ${isReview ? '<button class="icon-btn" id="notice-close" style="position:absolute;top:0;right:0;color:rgba(230,222,255,0.9);">✕</button>' : ''}
         <div class="nt-line"></div>
         <p class="nt-lead">感谢你来到《白日梦》。为了维护良好的创作与交流环境，请在下载、使用或分享本软件前，仔细阅读以下声明。</p>
@@ -449,6 +450,11 @@ async function showSoftwareNotice(opts = {}) {
 
         ${sec('07', '写在最后', 'Finally', [
           prose('《白日梦》是一个纯粹的个人创作。希望在这里，你能卸下现实的重担，与访客们一起做一场好梦。感谢你的理解与支持。'),
+        ])}
+
+        ${sec('08', '关于「角色主动视频搜发」功能', 'Inspiration', [
+          cl('<b>灵感来源：</b>本软件「角色主动视频搜发」功能（角色主动搜索并发送视频）的灵感，来自小红书 @我要学英语 老师（老师的小红书号：4356852316）。'),
+          cl('<b>思路与代码均为本软件自研：</b>本人仅是提取了这一灵感，该功能实现的思路与代码均为本软件自研，与其并不相同。'),
         ])}
 
         <div class="nt-sign">—— 本声明最终解释权归作者 @蓝色鸽子窝 所有</div>
@@ -11130,7 +11136,13 @@ async function _searchBilibili(kw, max) {
 let _videoLibCache = null;
 let _videoLibCacheAt = 0;
 const _VIDEOLIB_CACHE_KEY = 'videolib_cache';
-const _VIDEOLIB_URL = 'js/videolib.json';
+// 20261106：视频池 URL 按环境区分——
+//   APK（Capacitor）：走线上 GitHub Pages 的 videolib.json，这样每天凌晨 3 点
+//     GitHub 抓取更新后，APP 每次打开（每天一次）就能拉到最新视频池，无需重建 APK；
+//   网页端：走本地相对路径（与站点同源）。
+const _VIDEOLIB_URL = (window.Capacitor && window.Capacitor.getPlatform)
+  ? 'https://apendasap.github.io/Daydream/js/videolib.json'
+  : 'js/videolib.json';
 async function _loadVideoLib(force) {
   const now = Date.now();
   // 1. 内存缓存（1 天内有效）
@@ -11142,7 +11154,7 @@ async function _loadVideoLib(force) {
   try {
     cached = await idbGet('kv', _VIDEOLIB_CACHE_KEY).catch(() => null);
   } catch (e) {}
-  // 3. 尝试联网抓最新（fetch 本地 JSON）
+  // 3. 尝试联网抓最新（APK 走线上 / 网页走本地）
   try {
     const r = await fetch(_VIDEOLIB_URL + '?v=' + now, { cache: 'no-store' });
     if (r && r.ok) {
@@ -11176,7 +11188,8 @@ function _matchVideoFromLib(lib, kw) {
     ['塔罗玄学', ['塔罗', '占卜', '灵性', '玄学', '星座', '命运', '命理']],
     ['水晶', ['水晶', '晶石', '宝石', '疗愈', '能量']],
     ['治愈陪伴', ['治愈', '陪伴', '睡前', '助眠', '白噪音', '温暖', '安心']],
-    ['搞笑娱乐', ['搞笑', '沙雕', '爆笑', '整活', '名场面', '脱口秀', '相声', '笑']],
+    ['vlog', ['vlog', 'Vlog', 'VLOG', '日常vlog', '我的一天', '一日vlog']],
+    ['生活记录', ['生活记录', '记录生活', '生活日常', '日常记录', '我的日常', '平凡的一天']],
     ['小说', ['小说', '网文', '故事', '有声', '推文', '听书', '爽文']],
     ['社会历史', ['历史', '社会', '时事', '人文', '考古', '王朝', '纪录片', '讲史']],
     ['动漫', ['动漫', '动画', '番', '二次元', '手书', '同人']],

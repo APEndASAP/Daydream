@@ -749,6 +749,15 @@
     background:var(--card-bg);border:1px solid var(--line);border-radius:14px;padding:14px 16px;
     cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:0 2px 8px var(--shadow-color);
   }
+  /* 20261106：记录列表页批量管理——勾选框（默认隐藏，批量模式 selecting 时显示） */
+  .record .r-check{
+    width:24px;height:24px;border-radius:50%;border:2px solid var(--line);background:var(--card-bg);
+    display:none;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;flex-shrink:0;
+  }
+  .record.selecting .r-check{display:flex;}
+  .record.selected .r-check{background:var(--main);border-color:var(--main);}
+  .record.selected{border-color:var(--main);}
+  .record .r-l{flex:1;min-width:0;}
   .record .r-l .r-t{font-size:14px;font-weight:600;color:var(--ink);}
   .record .r-l .r-d{font-size:12px;color:var(--ink2);margin-top:3px;}
   .record .r-dur{font-size:16px;font-weight:700;color:var(--main-deep);font-variant-numeric:tabular-nums;}
@@ -2335,27 +2344,36 @@ function genReply(charIdx){
 }
 /* ============ 批量管理模式状态 ============ */
 let batchMode = false;          // 是否处于批量管理（多选）模式
+let batchScope = 'folder';      // 批量作用域：'folder'=顶层文件夹 | 'record'=记录列表页的记录
 let selectedFolderIds = new Set();  // 批量选中的文件夹 id
+let selectedRecordIds = new Set();  // 批量选中的记录 id（记录列表页）
+let settleLevel = 'folders';    // 当前结算页层级：'folders' | 'records' | 'detail'（精确区分，避免误判）
 
 function resetBatch(){
   batchMode = false;
   selectedFolderIds.clear();
+  selectedRecordIds.clear();
   syncToolbar();
   hideBulkBar();
 }
+/* 20261106：批量管理位置调整——顶层「专注结算」只保留「新建文件夹」，去掉批量管理；
+   「结算记录列表」页才显示批量管理（对记录做批量删除/移动）。用 settleLevel 精确区分三层层级。 */
 function syncToolbar(){
-  const isFolders = document.getElementById('settleTitle').textContent.includes('专注结算');
+  const lv = settleLevel;
+  const isFolders = (lv === 'folders');       // 顶层：只显示「新建文件夹」
+  const isRecords = (lv === 'records');       // 记录列表页：显示「批量管理」
   document.getElementById('newFolderBtn').classList.toggle('hidden', !isFolders);
-  document.getElementById('batchModeBtn').classList.toggle('hidden', !isFolders);
-  document.getElementById('batchDoneBtn').classList.toggle('hidden', !(isFolders && batchMode));
+  document.getElementById('batchModeBtn').classList.toggle('hidden', !isRecords);
+  document.getElementById('batchDoneBtn').classList.toggle('hidden', !(isRecords && batchMode));
   document.getElementById('batchModeBtn').textContent = batchMode ? '退出批量' : '☑ 批量管理';
 }
 function hideBulkBar(){ document.getElementById('bulkBar').classList.remove('show'); }
 function updateBulkBar(){
-  const n = selectedFolderIds.size;
+  const n = (batchScope === 'record') ? selectedRecordIds.size : selectedFolderIds.size;
+  const unit = (batchScope === 'record') ? '条记录' : '个文件夹';
   const bar = document.getElementById('bulkBar');
   bar.classList.toggle('show', batchMode);
-  document.getElementById('bulkCount').textContent = `已选 ${n} 个文件夹`;
+  document.getElementById('bulkCount').textContent = `已选 ${n} ${unit}`;
   document.getElementById('bulkMoveBtn').disabled = n===0;
   document.getElementById('bulkDelBtn').disabled = n===0;
 }
@@ -2366,6 +2384,8 @@ let settleStack = [];
 function openSettleFolders(){
   settleStack = [];   // 顶层，清空返回栈
   resetBatch();
+  settleLevel = 'folders';
+  batchScope = 'folder';
   document.getElementById('settleTitle').textContent = '专注结算';
   document.getElementById('settleSub').textContent = '按角色归档 · 可自定义分类';
   syncToolbar();
@@ -2468,11 +2488,15 @@ function toggleSelectFolder(fid, fEl){
   }
   updateBulkBar();
 }
+let currentRecordsFid = null;   // 20261106：当前正在看的文件夹 id（记录列表页），批量删除后用它重渲染
 function openSettleRecords(fid){
   resetBatch();
   const f = folders.find(x=>x.id===fid);
   if(!f) return;
+  currentRecordsFid = fid;
   settleStack = [()=>openSettleFolders()];   // 记录层级：返回文件夹列表
+  settleLevel = 'records';
+  batchScope = 'record';
   // 20261104：标题不再拼 ✨ emoji 占位（角色头像由文件夹卡片 fold-avatar 展示）
   document.getElementById('settleTitle').textContent = f.name;
   document.getElementById('settleSub').textContent = '点一条查看结算详情';
@@ -2513,17 +2537,37 @@ function openSettleRecords(fid){
   recs.slice().reverse().forEach((r)=>{
     const rec = document.createElement('div');
     rec.className = 'record';
-    rec.innerHTML = `<div class="r-l"><div class="r-t">${r.task}</div><div class="r-d">${r.date} ${r.time}</div></div><div class="r-dur">${r.durMin} 分</div>`;
-    rec.onclick = ()=> openSettleDetail(fid, r.id);
+    rec.dataset.rid = r.id;
+    rec.innerHTML = `<div class="r-check">✓</div><div class="r-l"><div class="r-t">${r.task}</div><div class="r-d">${r.date} ${r.time}</div></div><div class="r-dur">${r.durMin} 分</div>`;
+    // 批量模式：点记录=勾选；非批量：点开详情
+    rec.addEventListener('click', ()=>{
+      if(batchMode){
+        toggleSelectRecord(r.id, rec);
+        return;
+      }
+      openSettleDetail(fid, r.id);
+    });
     list.appendChild(rec);
   });
   body.appendChild(list);
+}
+/* 20261106：记录级批量选择（记录列表页） */
+function toggleSelectRecord(rid, recEl){
+  if(selectedRecordIds.has(rid)){
+    selectedRecordIds.delete(rid);
+    recEl.classList.remove('selected');
+  } else {
+    selectedRecordIds.add(rid);
+    recEl.classList.add('selected');
+  }
+  updateBulkBar();
 }
 function openSettleDetail(fid, rid){
   const f = folders.find(x=>x.id===fid);
   const r = settleRecords.find(x=>x.id===rid);
   if(!r) return;
   settleStack = [()=>openSettleRecords(fid)];   // 记录层级：返回记录列表
+  settleLevel = 'detail';
   const c = r.charIdx>=0 ? CHARS[r.charIdx] : { name:'自由', color:'#8b7a66', emoji:'✨' };
   document.getElementById('settleTitle').textContent = '专注结算';
   document.getElementById('settleSub').textContent = `${c.name} · ${r.date} ${r.time}`;
@@ -2777,10 +2821,17 @@ document.getElementById('batchModeBtn').onclick = ()=>{
   batchMode = !batchMode;
   if(batchMode){
     selectedFolderIds.clear();
-    document.querySelectorAll('.folder').forEach(el=>el.classList.add('selecting'));
+    selectedRecordIds.clear();
+    if(batchScope === 'record'){
+      document.querySelectorAll('.record').forEach(el=>el.classList.add('selecting'));
+    } else {
+      document.querySelectorAll('.folder').forEach(el=>el.classList.add('selecting'));
+    }
   } else {
     selectedFolderIds.clear();
+    selectedRecordIds.clear();
     document.querySelectorAll('.folder').forEach(el=>{ el.classList.remove('selecting','selected'); });
+    document.querySelectorAll('.record').forEach(el=>{ el.classList.remove('selecting','selected'); });
     hideBulkBar();
   }
   syncToolbar();
@@ -2789,12 +2840,27 @@ document.getElementById('batchModeBtn').onclick = ()=>{
 document.getElementById('batchDoneBtn').onclick = ()=>{
   batchMode = false;
   selectedFolderIds.clear();
+  selectedRecordIds.clear();
   document.querySelectorAll('.folder').forEach(el=>el.classList.remove('selecting','selected'));
+  document.querySelectorAll('.record').forEach(el=>el.classList.remove('selecting','selected'));
   hideBulkBar();
   syncToolbar();
 };
-// 批量删除
+// 批量删除（按 batchScope 分发：记录级 / 文件夹级）
 document.getElementById('bulkDelBtn').onclick = ()=>{
+  if(batchScope === 'record'){
+    const n = selectedRecordIds.size;
+    if(n===0) return;
+    if(!confirm(`确定删除选中的 ${n} 条结算记录吗？删除后不可恢复。`)) return;
+    for(let i=settleRecords.length-1;i>=0;i--){
+      if(selectedRecordIds.has(settleRecords[i].id)) settleRecords.splice(i,1);
+    }
+    // 删除后回到当前文件夹的记录列表（currentRecordsFid 保留当前上下文）
+    const curFid = currentRecordsFid;
+    if(curFid && folders.some(x=>x.id===curFid)) openSettleRecords(curFid);
+    else openSettleFolders();
+    return;
+  }
   const n = selectedFolderIds.size;
   if(n===0) return;
   if(!confirm(`确定删除选中的 ${n} 个文件夹及其中的结算记录吗？角色默认文件夹不会被真正删除（会清空）。`)) return;
@@ -2819,10 +2885,16 @@ document.getElementById('bulkDelBtn').onclick = ()=>{
   openSettleFolders();
 };
 // 批量移动：打开目标文件夹选择层
-let moveMode = 'bulk';   // 'bulk' 批量移动 | 'folder' 移动整个文件夹记录 | 'single' 单条移动
+let moveMode = 'bulk';   // 'bulk' 批量移动文件夹 | 'record' 批量移动记录 | 'folder' 移动整个文件夹记录 | 'single' 单条移动
 let moveSingleRid = null;
 let moveFolderFid = null;   // folder 模式：源文件夹 id
 document.getElementById('bulkMoveBtn').onclick = ()=>{
+  if(batchScope === 'record'){
+    if(selectedRecordIds.size===0) return;
+    moveMode = 'record';
+    openMoveSheet();
+    return;
+  }
   if(selectedFolderIds.size===0) return;
   moveMode = 'bulk';
   openMoveSheet();
@@ -2841,6 +2913,8 @@ function openMoveSheet(){
   root.innerHTML = '';
   if(moveMode==='bulk'){
     document.getElementById('moveSub').textContent = `将选中的 ${selectedFolderIds.size} 个文件夹移动到…（文件夹不可移动自身）`;
+  } else if(moveMode==='record'){
+    document.getElementById('moveSub').textContent = `将选中的 ${selectedRecordIds.size} 条记录移动到…`;
   } else if(moveMode==='folder'){
     const src = folders.find(x=>x.id===moveFolderFid);
     document.getElementById('moveSub').textContent = `将「${src?src.name:''}」里的记录移动到…`;
@@ -2849,6 +2923,7 @@ function openMoveSheet(){
   }
   let candidates = folders;
   if(moveMode==='bulk') candidates = folders.filter(f=> !selectedFolderIds.has(f.id));
+  else if(moveMode==='record') candidates = folders.filter(f=> f.id!==currentRecordsFid);
   else if(moveMode==='folder') candidates = folders.filter(f=> f.id!==moveFolderFid);
   if(candidates.length===0){
     root.innerHTML = `<div style="font-size:13px;color:var(--ink2);padding:10px;">没有可移动到的文件夹</div>`;
@@ -2880,6 +2955,16 @@ function openMoveSheet(){
       });
       document.getElementById('moveSheet').classList.remove('show');
       openSettleFolders();
+    } else if(moveMode==='record'){
+      // 把选中的记录批量移到目标文件夹（跨文件夹移动，不删除源文件夹）
+      let moved = 0;
+      selectedRecordIds.forEach(rid=>{
+        const r = settleRecords.find(x=>x.id===rid);
+        if(r && r.folderId!==f.id){ r.folderId = f.id; moved++; }
+      });
+      document.getElementById('moveSheet').classList.remove('show');
+      if(currentRecordsFid && folders.some(x=>x.id===currentRecordsFid)) openSettleRecords(currentRecordsFid);
+      else openSettleFolders();
     } else if(moveMode==='folder'){
       settleRecords.forEach(r=>{ if(r.folderId===moveFolderFid){ r.folderId = f.id; } });
       const src = folders.find(x=>x.id===moveFolderFid);

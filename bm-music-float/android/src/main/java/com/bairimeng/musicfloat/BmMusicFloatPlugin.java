@@ -215,6 +215,29 @@ public class BmMusicFloatPlugin extends Plugin {
     @PluginMethod
     public void update(PluginCall call) {
         try {
+            // 20261106 修复闪屏：心跳只推 position（不含 title/cover/lyric/playing 等）时，
+            //   只做进度增量更新（updateProgressUi），绝不走 refreshAll() 重建歌词/封面，
+            //   否则每 500ms 一次 SpannableString 重建 + setText 会造成悬浮窗持续闪屏。
+            boolean onlyProgress = call.hasOption("position")
+                    && !call.hasOption("title")
+                    && !call.hasOption("artist")
+                    && !call.hasOption("cover")
+                    && !call.hasOption("lyric")
+                    && !call.hasOption("lyricLines")
+                    && !call.hasOption("playing")
+                    && !call.hasOption("mode")
+                    && !call.hasOption("charName")
+                    && !call.hasOption("charAvatar")
+                    && !call.hasOption("myAvatar")
+                    && !call.hasOption("duration");
+            Integer p = call.getInt("position");
+            if (onlyProgress && p != null) {
+                // 仅进度：改位置 + 只刷进度 UI，不重排视图
+                positionSec = p;
+                updateProgressUi();
+                resolve(call, true, null);
+                return;
+            }
             applyState(call);
             refreshAll();
             resolve(call, true, null);

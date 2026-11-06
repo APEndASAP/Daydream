@@ -532,25 +532,28 @@ public class BmOverlayPlugin extends Plugin {
 
         FrameLayout root = new FrameLayout(getContext());
         root.setTag("bm-lock-root");
-        root.setBackgroundColor(0xEE0B0E16);   // 近黑不透明底，盖住后面所有内容
+        // 20261106 修复：锁机页面应就是「专注页面」本身，不做全屏黑遮罩。
+        //   这里只用极轻的半透明磨砂底（约 18% 深色），专注页内容清晰透出，
+        //   仅在顶部放一枚小锁 + 底部一枚「退出锁机」按钮，锁定拦截仍保留。
+        root.setBackgroundColor(0x2E0B0E16);
 
-        /* 中央纵向容器：锁图标 + 提示 + 退出锁机按钮 */
+        /* 顶部中央：小锁图标 + 提示（不再居中占满，专注页主体内容透出） */
         LinearLayout col = new LinearLayout(getContext());
         col.setOrientation(LinearLayout.VERTICAL);
         col.setGravity(Gravity.CENTER);
 
         TextView icon = new TextView(getContext());
         icon.setText("🔒");
-        icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 44);
+        icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
         icon.setGravity(Gravity.CENTER);
         col.addView(icon, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView tip = new TextView(getContext());
         tip.setText(hint != null && hint.length() > 0 ? hint : "专注中，请勿分心");
         tip.setTextColor(0xFFC9CDD8);
-        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tip.setGravity(Gravity.CENTER);
-        tip.setPadding(dp(24), dp(14), dp(24), dp(8));
+        tip.setPadding(dp(24), dp(6), dp(24), dp(8));
         col.addView(tip, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView unlockBtn = new TextView(getContext());
@@ -572,13 +575,19 @@ public class BmOverlayPlugin extends Plugin {
                 fireJsEvent("onLockExit", new JSObject());
             } catch (Throwable t) {}
         });
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnLp.topMargin = dp(18);
-        col.addView(unlockBtn, btnLp);
+        // 20261106：退出按钮单独钉底部居中，不塞进顶部 col。
+        FrameLayout.LayoutParams btnLp2 = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        btnLp2.bottomMargin = dp(90);
+        root.addView(unlockBtn, btnLp2);
 
+        // 20261106：锁图标 + 提示放到顶部（TOP），退出按钮单独钉底部，
+        //   中间整块留给专注页内容透出，不做「中央大黑屏」。
         FrameLayout.LayoutParams colLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER);
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        colLp.topMargin = dp(80);
         root.addView(col, colLp);
 
         lockRoot = root;

@@ -326,6 +326,23 @@ window.bmMusic = (function () {
     return [];
   }
 
+  /* ---------- 跨闭包桥接（方案A）：闭包2 的网易云直连函数注入到这里 ----------
+     20261106 修复根因：fetchSongDetail/_netEaseLyric 在闭包1（bmMusic），
+     而 _netEaseSongUrl/_netEaseReq 等网易云直连函数在闭包2（bmMusicUI），
+     跨闭包调用直接 ReferenceError → 导入歌单无法播放、漫游/每日推荐/角色搜歌选歌全崩。
+     方案A：闭包2 初始化时把网易云直连函数注入到这里，闭包1 经代理调用。 */
+  let _neteaseBridgeFns = null;
+  function setNeteaseBridge(fns) { _neteaseBridgeFns = fns || null; }
+  // 代理：优先用注入的网易云直连函数；未注入（闭包2 尚未初始化）时返回空，绝不抛 ReferenceError
+  async function _netEaseReq(url) {
+    if (_neteaseBridgeFns && _neteaseBridgeFns._netEaseReq) return _neteaseBridgeFns._netEaseReq(url);
+    return null;
+  }
+  async function _netEaseSongUrl(id) {
+    if (_neteaseBridgeFns && _neteaseBridgeFns._netEaseSongUrl) return _neteaseBridgeFns._netEaseSongUrl(id);
+    return { url: null };
+  }
+
   /* ---------- 获取单曲详情（播放直链 + 封面 + 歌词） ---------- */
   // 20261105：直连拿网易云歌词（官方接口，需 MUSIC_U 登录态）
   async function _netEaseLyric(id) {
@@ -1126,6 +1143,7 @@ window.bmMusic = (function () {
   return {
     state,
     isApp,
+    setNeteaseBridge,   // 20261106 方案A：闭包2 注入网易云直连函数（修跨闭包 ReferenceError）
     search,
     fetchSongDetail,
     parsePlaylistLink,
@@ -6294,6 +6312,18 @@ window.bmMusicUI = (function () {
   // renderFloat 内部已用 __bmSplashEndAt 是否打点来判开屏是否结束（end 里已先打点）。
   window.addEventListener('bm-splash-end', () => {
     renderFloat();
+  });
+
+  /* ---------- 方案A：把网易云直连函数注入到闭包1（修跨闭包 ReferenceError） ----------
+     20261106：fetchSongDetail/_netEaseLyric 在闭包1，_netEaseSongUrl/_netEaseReq 在闭包2，
+     跨闭包调用崩。这里初始化即注入，闭包1 经代理调用。 */
+  M.setNeteaseBridge({
+    _netEaseReq,
+    _netEaseSongUrl,
+    _netEaseSearch,
+    _netEaseMyPlaylists,
+    _netEasePlaylistTracks,
+    _netEaseLoggedIn,
   });
 
   return { showMusicPage, refreshPlayerUI, renderFloat, closeMusicPage, backMusicPage, showMusicLib, showThemePicker, resetFloatClosed, showInviteCard, startTogether, endTogether, charAutoMusic, charInviteTogether, charPeekPlaylist, charEarListen, charCollect, getTogetherTotal, setFloatScopeAndApply };
