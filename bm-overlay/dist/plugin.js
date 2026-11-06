@@ -8,4 +8,6 @@ exports.BmOverlay = {
   show: function () { return Promise.resolve({ ok: false, reason: 'web_not_supported' }); },
   updateSub: function () { return Promise.resolve({ ok: false }); },
   hide: function () { return Promise.resolve({ ok: true }); },
+  lock: function () { return Promise.resolve({ ok: false, reason: 'web_not_supported' }); },
+  unlock: function () { return Promise.resolve({ ok: true }); },
 };

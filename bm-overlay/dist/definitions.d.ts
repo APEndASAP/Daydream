@@ -6,4 +6,6 @@ export interface BmOverlayPlugin {
   show(options: { name: string; sub?: string }): Promise<ShowResult>;
   updateSub(options: { sub: string }): Promise<ShowResult>;
   hide(): Promise<ShowResult>;
+  lock(options: { hint?: string }): Promise<ShowResult>;
+  unlock(): Promise<ShowResult>;
 }

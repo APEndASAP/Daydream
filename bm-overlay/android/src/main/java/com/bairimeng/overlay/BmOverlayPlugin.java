@@ -99,6 +99,11 @@ public class BmOverlayPlugin extends Plugin {
     private float cardScale = 1f;
     private int cardNaturalW = 0, cardNaturalH = 0;
 
+    /* 锁机全屏覆盖层（番茄钟「锁机」用，独立于通话悬浮窗） */
+    private View lockRoot = null;
+    private WindowManager.LayoutParams lockParams = null;
+    private boolean lockAttached = false;
+
     /* ============ 1. 权限 ============ */
 
     @PluginMethod
@@ -474,6 +479,161 @@ public class BmOverlayPlugin extends Plugin {
         } catch (Throwable t) {
             call.resolve(new JSObject().put("ok", false));
         }
+    }
+
+    /* ============ 锁机（番茄钟「锁机」全屏覆盖层） ============
+       20261105：用户明确要求——开启专注+锁机后，手机必须全面锁住、不能切任何界面，
+       除非点「退出锁机」按钮。实现：全屏系统级覆盖层（TYPE_APPLICATION_OVERLAY），
+       深色不透明底铺满整屏，消费掉所有触摸事件，拦截返回键；中央只有一个「退出锁机」按钮。
+       局限（普通 App 非 Device Owner 的硬性限制）：Home 键 / 系统手势上滑仍可能切回桌面，
+       悬浮窗无法拦截系统导航手势；但能挡住屏幕内所有点击、返回键、切应用操作。 */
+
+    /** 开启锁机全屏覆盖层。data: { hint? } */
+    @PluginMethod
+    public void lock(PluginCall call) {
+        try {
+            if (!canDrawOverlay(getContext())) {
+                JSObject ret = new JSObject();
+                ret.put("ok", false);
+                ret.put("reason", "no_permission");
+                call.resolve(ret);
+                return;
+            }
+            String hint = call.getString("hint", "专注中，请勿分心");
+            showLockOverlay(hint);
+            JSObject ret = new JSObject();
+            ret.put("ok", true);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            JSObject ret = new JSObject();
+            ret.put("ok", false);
+            ret.put("reason", String.valueOf(t.getMessage()));
+            call.resolve(ret);
+        }
+    }
+
+    /** 关闭锁机全屏覆盖层。 */
+    @PluginMethod
+    public void unlock(PluginCall call) {
+        try {
+            removeLockOverlay();
+            call.resolve(new JSObject().put("ok", true));
+        } catch (Throwable t) {
+            call.resolve(new JSObject().put("ok", false));
+        }
+    }
+
+    /* —— 锁机覆盖层内部实现 —— */
+    private void showLockOverlay(String hint) {
+        removeLockOverlay();
+        if (windowManager == null) {
+            windowManager = (WindowManager) getContext().getSystemService(Context.WINDOW_SERVICE);
+        }
+
+        FrameLayout root = new FrameLayout(getContext());
+        root.setTag("bm-lock-root");
+        root.setBackgroundColor(0xEE0B0E16);   // 近黑不透明底，盖住后面所有内容
+
+        /* 中央纵向容器：锁图标 + 提示 + 退出锁机按钮 */
+        LinearLayout col = new LinearLayout(getContext());
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER);
+
+        TextView icon = new TextView(getContext());
+        icon.setText("🔒");
+        icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 44);
+        icon.setGravity(Gravity.CENTER);
+        col.addView(icon, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView tip = new TextView(getContext());
+        tip.setText(hint != null && hint.length() > 0 ? hint : "专注中，请勿分心");
+        tip.setTextColor(0xFFC9CDD8);
+        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        tip.setGravity(Gravity.CENTER);
+        tip.setPadding(dp(24), dp(14), dp(24), dp(8));
+        col.addView(tip, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView unlockBtn = new TextView(getContext());
+        unlockBtn.setText("退出锁机");
+        unlockBtn.setTextColor(Color.WHITE);
+        unlockBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        unlockBtn.setGravity(Gravity.CENTER);
+        unlockBtn.setTypeface(null, android.graphics.Typeface.BOLD);
+        GradientDrawable ubg = new GradientDrawable();
+        ubg.setCornerRadius(dp(26));
+        ubg.setColor(0xFF7C5CFC);
+        unlockBtn.setBackground(ubg);
+        unlockBtn.setPadding(dp(36), dp(14), dp(36), dp(14));
+        unlockBtn.setClickable(true);
+        unlockBtn.setOnClickListener(v -> {
+            try {
+                // 原生直接移除覆盖层（JS 卡死也能退出），再通知 JS 同步状态
+                removeLockOverlay();
+                fireJsEvent("onLockExit", new JSObject());
+            } catch (Throwable t) {}
+        });
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnLp.topMargin = dp(18);
+        col.addView(unlockBtn, btnLp);
+
+        FrameLayout.LayoutParams colLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER);
+        root.addView(col, colLp);
+
+        lockRoot = root;
+
+        int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                : WindowManager.LayoutParams.TYPE_PHONE;
+        // 不加 FLAG_NOT_FOCUSABLE：让覆盖层可聚焦，从而拦截返回键
+        lockParams = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                type,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lockParams.gravity = Gravity.TOP | Gravity.START;
+        lockParams.x = 0;
+        lockParams.y = 0;
+
+        // 拦截返回键（消费掉，不让它退出/切走）
+        root.setFocusable(true);
+        root.setFocusableInTouchMode(true);
+        root.setOnKeyListener((v, keyCode, event) -> {
+            try {
+                if (keyCode == android.view.KeyEvent.KEYCODE_BACK && event.getAction() == android.view.KeyEvent.ACTION_UP) {
+                    return true;   // 消费返回键
+                }
+                return false;
+            } catch (Throwable t) {
+                return false;
+            }
+        });
+        // 拦截整屏触摸（除「退出锁机」按钮外全部消费掉）
+        root.setOnTouchListener((v, e) -> {
+            try { return true; } catch (Throwable t) { return false; }
+        });
+
+        try {
+            windowManager.addView(root, lockParams);
+            lockAttached = true;
+        } catch (Throwable t) {
+            lockRoot = null;
+            lockParams = null;
+            lockAttached = false;
+        }
+    }
+
+    private void removeLockOverlay() {
+        try {
+            if (lockAttached && lockRoot != null && windowManager != null) {
+                windowManager.removeView(lockRoot);
+            }
+        } catch (Throwable t) {}
+        lockRoot = null;
+        lockParams = null;
+        lockAttached = false;
     }
 
     /* ============ 内部实现 ============ */

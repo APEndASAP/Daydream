@@ -93,7 +93,7 @@ let chatSettings = {
   videoParsePortLastFail: 0,       // 20261105：最近一次解析失败时间戳（用于黄字/红字提醒）
   pomodoroFocusMin: 25,            // 20261104：番茄钟默认专注时长（分钟）
   pomodoroBreakMin: 5,             // 20261104：番茄钟默认休息时长（分钟）
-  pomodoroNoiseOn: true,           // 20261104：番茄钟默认是否播放白噪音（默认开）
+  pomodoroNoiseOn: false,          // 20261105：番茄钟默认是否播放白噪音（改为默认关，玩家设置才播）
   pomodoroLockOn: false,           // 20261104：番茄钟默认是否开启锁机（默认关）
   companionInteractMin: 5,         // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机间隔下限（分钟）【测试临时5】
   companionInteractMax: 5,         // 20261104：番茄钟前台互动随机间隔上限（分钟）【测试临时5】
@@ -11396,6 +11396,8 @@ function openPomodoroLayer(cid) {
   const gt = (typeof _globalThemeId !== 'undefined' && _globalThemeId) ? _globalThemeId : 'dark';
   frame.src = 'interact_proto.html?theme=' + encodeURIComponent(gt);
   layer.classList.add('show');
+  // 20261105：绑定原生锁机覆盖层「退出锁机」按钮事件（一次绑定，常驻）
+  _bindPomodoroLockExit();
   // 番茄钟全屏层打开=离开聊天页观感——打字卡圆点/召唤悬浮窗立即收起
   try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
   _pomodoroCurrentCharId = cid || null;
@@ -11406,6 +11408,8 @@ function closePomodoroLayer() {
   layer.classList.remove('show');
   // 20261104：关闭番茄钟层即停止白噪音（防止退出后 BgAudio 仍后台播）
   _pomodoroStopNoise();
+  // 20261105：关闭番茄钟层兜底移除锁机覆盖层（防止残留锁死屏幕）
+  _pomodoroUnlock();
   try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
 }
 let _pomodoroCurrentCharId = null;
@@ -11472,7 +11476,7 @@ async function _pomodoroPushChars() {
     charSchedTags: schedTags,                 // 当前角色行程标签（字卡模式用）
     pomodoroFocusMin: (typeof cs.pomodoroFocusMin === 'number' ? cs.pomodoroFocusMin : 25),
     pomodoroBreakMin: (typeof cs.pomodoroBreakMin === 'number' ? cs.pomodoroBreakMin : 5),
-    pomodoroNoiseOn: (cs.pomodoroNoiseOn !== false),
+    pomodoroNoiseOn: (cs.pomodoroNoiseOn === true),
     pomodoroLockOn: (cs.pomodoroLockOn === true),
     companionInteractMin: (typeof cs.companionInteractMin === 'number' ? cs.companionInteractMin : 8),
     companionInteractMax: (typeof cs.companionInteractMax === 'number' ? cs.companionInteractMax : 20),
@@ -11552,6 +11556,12 @@ async function _pomodoroSaveSettle(data) {
           if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'pomodoro-lock-perm-result', granted: !!granted }, '*');
         } catch (e) {}
       });
+    } else if (d.type === 'pomodoro-lock') {
+      // 20261105：番茄钟真正锁机——iframe 请求主项目调原生 BmOverlay.lock() 显示全屏锁机覆盖层
+      _pomodoroLock(d.hint || '');
+    } else if (d.type === 'pomodoro-unlock') {
+      // 20261105：退出锁机/退出专注——移除全屏锁机覆盖层
+      _pomodoroUnlock();
     }
   });
 })();
@@ -11670,6 +11680,42 @@ function _pomodoroStopNoise() {
   try {
     const BgAudio = window.BgAudio;
     if (BgAudio && typeof BgAudio.stop === 'function') BgAudio.stop();
+  } catch (e) {}
+}
+
+/* 20261105：番茄钟锁机——调原生 BmOverlay.lock() 显示全屏锁机覆盖层 */
+function _pomodoroLock(hint) {
+  try {
+    const BO = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay;
+    if (BO && typeof BO.lock === 'function') {
+      BO.lock({ hint: hint || '专注中，请勿分心' }).catch(() => {});
+    }
+  } catch (e) {}
+}
+
+/* 20261105：退出锁机——调原生 BmOverlay.unlock() 移除全屏锁机覆盖层 */
+function _pomodoroUnlock() {
+  try {
+    const BO = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay;
+    if (BO && typeof BO.unlock === 'function') {
+      BO.unlock().catch(() => {});
+    }
+  } catch (e) {}
+}
+
+/* 20261105：原生锁机覆盖层「退出锁机」按钮被点 → 同步通知 iframe 退出锁机状态 */
+function _bindPomodoroLockExit() {
+  try {
+    if (window.__pomoLockExitBound) return;
+    window.__pomoLockExitBound = true;
+    const BO = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay;
+    if (!BO || typeof BO.addListener !== 'function') return;
+    BO.addListener('onLockExit', () => {
+      try {
+        const frame = document.getElementById('pomodoro-frame');
+        if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'pomodoro-lock-exit' }, '*');
+      } catch (e) {}
+    });
   } catch (e) {}
 }
 
@@ -17775,7 +17821,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>🔊 默认播放白噪音</span>
-        <input type="checkbox" id="cs-pomodoro-noise" ${(s.pomodoroNoiseOn !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+        <input type="checkbox" id="cs-pomodoro-noise" ${(s.pomodoroNoiseOn === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">进入专注后自动开始播放白噪音（海浪/雨夜/林间等，可在专注界面切换或关闭）。</div>
     </div>

@@ -21,4 +21,10 @@ export class BmOverlayWeb extends WebPlugin implements BmOverlayPlugin {
   async hide(): Promise<ShowResult> {
     return { ok: true };
   }
+  async lock(_options: { hint?: string }): Promise<ShowResult> {
+    return { ok: false, reason: 'web_not_supported' };
+  }
+  async unlock(): Promise<ShowResult> {
+    return { ok: true };
+  }
 }

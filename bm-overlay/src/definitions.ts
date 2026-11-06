@@ -20,4 +20,8 @@ export interface BmOverlayPlugin {
   updateSub(options: { sub: string }): Promise<ShowResult>;
   /** 隐藏/移除悬浮窗 */
   hide(): Promise<ShowResult>;
+  /** 20261105：锁机——显示全屏锁机覆盖层（番茄钟锁机用） */
+  lock(options: { hint?: string }): Promise<ShowResult>;
+  /** 20261105：解锁——移除全屏锁机覆盖层 */
+  unlock(): Promise<ShowResult>;
 }

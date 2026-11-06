@@ -4931,6 +4931,7 @@ window.bmMusicUI = (function () {
   let _floatDragging = false;       // 拖拽中标记（hover 展开/缩回在拖拽中禁止）
   let _floatLyricTimer = null;      // 悬浮窗歌词滚动定时器（防重复堆积导致卡死）
   let _floatSeeking = false;        // 20261104：悬浮窗进度条拖动中标记（拖动时暂停进度条自动刷新，避免回跳）
+  let _nativeHeartbeatTimer = null; // 20261106：overlay 原生悬浮窗进度/歌词心跳同步定时器
 
   // 20261105 修复「悬浮窗进度条总时长永远 00:00」根因：
   //   __bmUpdateProgress 此前定义在 showMusicPage() 内部 if(progSlider) 块里，
@@ -5190,6 +5191,31 @@ window.bmMusicUI = (function () {
     try { await window.Capacitor.Plugins.BmMusicFloat.hide(); } catch (e) {}
   }
 
+  // 20261106：overlay 原生悬浮窗的进度/歌词心跳——每 500ms 把真实 position 推给原生层，
+  //   让原生进度条/滚动歌词与软件内真实播放严格同步（根治进度条、歌词、播放条错位）。
+  //   只推 position 一个字段（轻量），歌词高亮由原生层按 positionSec 本地推进。
+  function _startNativeHeartbeat() {
+    _stopNativeHeartbeat();
+    if (!nativeFloat()) return;
+    const p = window.Capacitor.Plugins.BmMusicFloat;
+    const beat = async () => {
+      try {
+        const a = M.state.audio;
+        if (!a) return;
+        const cur = a.currentTime;
+        if (!isFinite(cur) || cur < 0) return;
+        // 拖动/seek 期间（原生层 onSeek 已把新 position 回写 audio.currentTime），
+        // 仍持续推送校准，避免本地计时漂移
+        await p.update({ position: Math.floor(cur) });
+      } catch (e) { /* 原生层已销毁等异常，静默忽略 */ }
+    };
+    _nativeHeartbeatTimer = setInterval(beat, 500);
+  }
+
+  function _stopNativeHeartbeat() {
+    if (_nativeHeartbeatTimer) { clearInterval(_nativeHeartbeatTimer); _nativeHeartbeatTimer = null; }
+  }
+
   // 注册原生按钮回调（只注册一次）
   function bindNativeFloat() {
     if (_nativeFloatBound || !nativeFloat()) return;
@@ -5374,6 +5400,12 @@ window.bmMusicUI = (function () {
             }
           } catch (e) {}
         })();
+        // 20261106 根因修复：原生悬浮窗进度/歌词此前只在 renderFloat 时 update 一次，
+        //   之后原生层 startTicking 用本地 elapsedRealtime 每秒 +1 自增，与 JS 端真实
+        //   audio.currentTime（受暂停/seek/缓冲/后台挂起影响）逐渐错位 → 进度条、滚动歌词、
+        //   播放条三者脱节。这里加一个 500ms 心跳，把真实 position 持续推给原生层，
+        //   原生层收到 position 即校准（见 applyState 里 positionSec = position）。
+        _startNativeHeartbeat();
       }
       return;
     }

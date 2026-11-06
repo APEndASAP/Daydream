@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
@@ -123,6 +124,7 @@ public class BmMusicFloatPlugin extends Plugin {
     /* 进度条 */
     private View progressTrack;
     private FrameLayout progressThumb;
+    private FrameLayout progressTrackWrap;   // 20261106：提升为字段，供 root 手势放行判断
     private TextView progCurText, progDurText;
     private boolean seeking = false;
 
@@ -691,6 +693,7 @@ public class BmMusicFloatPlugin extends Plugin {
 
         final FrameLayout trackWrap = new FrameLayout(getContext());
         trackWrap.setPadding(dp(4), 0, dp(4), 0);
+        progressTrackWrap = trackWrap;   // 20261106：记录字段，供 root 手势放行
         LinearLayout.LayoutParams twLp = new LinearLayout.LayoutParams(0, dp(24), 1f);
         twLp.leftMargin = dp(8);
         twLp.rightMargin = dp(8);
@@ -788,13 +791,22 @@ public class BmMusicFloatPlugin extends Plugin {
                 Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setColor(color);
-                // 与软件内 icons.js 完全一致：viewBox 24、stroke-width 1.8。
-                // 之前 strokeScale 算错（iconSp*1.6 再乘 getWidth()/24），stroke 宽到几乎填满
-                // 整颗 View，图标糊成实心方块 → 用户看到「白方块」。
-                paint.setStrokeWidth(getWidth() * 1.8f / 24f);
+                // 根因修复（20261106）：path 数据是 24x24 viewBox 坐标，之前直接把 0~24 的坐标
+                // 当像素画在几十 px 的 View 里 → 图标缩在左上角、非常小（用户看到「大方块里
+                // 左上角一个小方块」）。现在用 Matrix 把 24 单位 path 缩放到 View 实际尺寸、
+                // 留 12% 边距居中，stroke 同步按 scale 缩放，与浏览器 icons.js 的 viewBox 缩放一致。
+                float viewW = getWidth(), viewH = getHeight();
+                if (viewW <= 0 || viewH <= 0) return;
+                float scale = Math.min(viewW, viewH) * 0.88f / 24f;   // 留 12% 边距
+                Matrix m = new Matrix();
+                m.setScale(scale, scale);
+                m.postTranslate((viewW - 24f * scale) / 2f, (viewH - 24f * scale) / 2f);
+                Path scaled = new Path();
+                scaled.addPath(path, m);
+                paint.setStrokeWidth(scale * 1.8f);   // stroke 1.8/24 随 scale 等比缩放
                 paint.setStrokeCap(Paint.Cap.ROUND);
                 paint.setStrokeJoin(Paint.Join.ROUND);
-                canvas.drawPath(path, paint);
+                canvas.drawPath(scaled, paint);
             } catch (Throwable t) {}
         }
     }
@@ -1273,6 +1285,9 @@ public class BmMusicFloatPlugin extends Plugin {
                 try {
                     switch (e.getAction()) {
                         case MotionEvent.ACTION_DOWN:
+                            // 20261106：若按下点落在「进度条 trackWrap」或「可滚动歌词区」上，
+                            // 放行（return false）让子视图自己处理，否则进度条拖不动、歌词滚不动。
+                            if (isOnInteractiveChild(e)) return false;
                             startX = layoutParams.x;
                             startY = layoutParams.y;
                             touchX = e.getRawX();
@@ -1321,6 +1336,31 @@ public class BmMusicFloatPlugin extends Plugin {
                 } catch (Throwable t) {
                     return true;
                 }
+            }
+
+            /* 判断按下点是否落在需要交互的子视图上（进度条 / 歌词滚动区） */
+            private boolean isOnInteractiveChild(MotionEvent e) {
+                try {
+                    if (progressTrackWrap != null && progressTrackWrap.getVisibility() == View.VISIBLE) {
+                        int[] loc = new int[2];
+                        progressTrackWrap.getLocationOnScreen(loc);
+                        float x = e.getRawX(), y = e.getRawY();
+                        if (x >= loc[0] && x <= loc[0] + progressTrackWrap.getWidth()
+                                && y >= loc[1] && y <= loc[1] + progressTrackWrap.getHeight()) {
+                            return true;
+                        }
+                    }
+                    if (cardLyricScroll != null && cardLyricScroll.getVisibility() == View.VISIBLE) {
+                        int[] loc = new int[2];
+                        cardLyricScroll.getLocationOnScreen(loc);
+                        float x = e.getRawX(), y = e.getRawY();
+                        if (x >= loc[0] && x <= loc[0] + cardLyricScroll.getWidth()
+                                && y >= loc[1] && y <= loc[1] + cardLyricScroll.getHeight()) {
+                            return true;
+                        }
+                    }
+                } catch (Throwable t) {}
+                return false;
             }
         });
     }
