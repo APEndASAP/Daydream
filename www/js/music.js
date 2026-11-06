@@ -1517,6 +1517,23 @@ window.bmMusicUI = (function () {
   }
   function _sayMusicAction(c, text) {
     try {
+      // 20261106：剥离文本开头重复的角色名——渲染层（callend-who / toast 的 .bm-ma-who）已单独显示
+      //   角色名，若 content 里再带一次 `${nm}` 前缀或「名字」包裹，会变成「名字 名字 动作」重复两次。
+      //   这里统一去掉文本开头的角色名（裸前缀 + 「」包裹两种形式），只保留纯动作文本。
+      let pure = typeof text === 'string' ? text : '';
+      const nm = (c && c.name) ? c.name : 'TA';
+      if (nm && pure) {
+        const escNm = nm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // 转义正则特殊字符
+        // ① 裸前缀：`厉言霄（Raven）播放了音乐`
+        pure = pure.replace(new RegExp('^' + escNm), '');
+        // ② 「」包裹前缀：`「厉言霄（Raven）」听着《…》`
+        pure = pure.replace(new RegExp('^[「『\u300c\u300e]?' + escNm + '[」』\u300d\u300f]?'), '');
+        // ③ 若剥离后开头是「听着/把头/闭上/指尖/笑」等续句但残留引号，再清一次残留引号
+        pure = pure.replace(/^[「」『』\u300c\u300d\u300e\u300f]+/, '');
+        // ④ 清掉剥离后开头的空白（如 `TA 播放了音乐` 剥掉 `TA` 后残留的空格）
+        pure = pure.replace(/^[\s\u3000]+/, '');
+        text = pure;
+      }
       // 读「小垫片形式」开关：'chat' | 'toast' | 'off'（默认 'chat' 发聊天框，保持原行为）
       //   优先级：角色个人主页覆盖(c.chatSettings) > 全局 chatSettings
       let style = 'chat';
