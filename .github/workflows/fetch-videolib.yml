@@ -1,0 +1,41 @@
+name: 每日抓取B站视频池
+
+on:
+  schedule:
+    # 每天北京时间凌晨 3:00（UTC 19:00）抓取，避开白天高峰
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-videolib
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 运行抓取脚本
+        run: python .github/scripts/fetch_videolib.py
+
+      - name: 提交并推送更新
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add www/js/videolib.json
+          if git diff --cached --quiet; then
+            echo "视频池无变化，跳过提交"
+          else
+            git commit -m "chore: 每日更新B站视频池 $(date -u +%Y-%m-%d)"
+            git push
+          fi
