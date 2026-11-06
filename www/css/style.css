@@ -7370,7 +7370,9 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   animation: bm-fade-in .2s ease;
 }
 .bm-playlist-card {
-  /* 20261106：从居中弹窗改为「右侧抽屉」——贴右边缘滑出，宽度约页面 2/5，高度全屏 */
+  /* 20261106：从居中弹窗改为「右侧抽屉」——贴右边缘滑出，宽度约页面 2/5，高度全屏。
+     滑入/滑出均用 transform 位移（GPU 加速），缓动曲线 cubic-bezier(.16,1,.3,1)
+     （近似 easeOutExpo，前快后慢，丝滑不顿挫）。 */
   position: relative; width: 40vw; min-width: 160px; max-width: 420px; height: 100%;
   background: var(--bm-bg1, #0a0e1a); color: var(--bm-ink, #d8dff0);
   border-left: 1px solid var(--bm-card-line, rgba(190,205,240,.16));
@@ -7378,9 +7380,15 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   box-shadow: -12px 0 40px rgba(0,0,0,.5);
   display: flex; flex-direction: column; overflow: hidden;
   pointer-events: auto;
-  animation: bm-playlist-drawer .28s cubic-bezier(.2,.9,.3,1);
+  will-change: transform;
+  animation: bm-playlist-drawer-in .32s cubic-bezier(.16,1,.3,1) forwards;
 }
-@keyframes bm-playlist-drawer { from { transform: translateX(100%); } to { transform: translateX(0); } }
+/* 滑出（关闭）动画：由 JS 加 .bm-playlist-closing 触发，结束后 remove */
+.bm-playlist-card.bm-playlist-closing {
+  animation: bm-playlist-drawer-out .28s cubic-bezier(.55,0,.55,.2) forwards;
+}
+@keyframes bm-playlist-drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes bm-playlist-drawer-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
 @keyframes bm-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .bm-playlist-head {
   display: flex; align-items: center; justify-content: space-between;

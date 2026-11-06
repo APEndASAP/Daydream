@@ -2589,8 +2589,25 @@ window.bmMusicUI = (function () {
       </div>`;
     host.appendChild(panel);
 
-    // 关闭弹窗（仅点关闭按钮/遮罩/切歌时调用）
-    const close = () => { panel.remove(); setListBtnOn(false); };
+    // 关闭弹窗（仅点关闭按钮/遮罩/切歌时调用）——先播滑出动画，动画结束后再 remove（丝滑关闭）
+    let closing = false;
+    const close = () => {
+      if (closing) return;
+      closing = true;
+      const card = panel.querySelector('.bm-playlist-card');
+      const mask = panel.querySelector('.bm-playlist-mask');
+      // 遮罩淡出
+      if (mask) { mask.style.transition = 'opacity .28s ease'; mask.style.opacity = '0'; }
+      if (card) {
+        card.classList.add('bm-playlist-closing');
+        const onEnd = () => { panel.remove(); setListBtnOn(false); };
+        card.addEventListener('animationend', onEnd, { once: true });
+        // 兜底：万一 animationend 不触发（极端情况），500ms 后强制移除
+        setTimeout(() => { if (panel.parentNode) { panel.remove(); setListBtnOn(false); } }, 500);
+      } else {
+        panel.remove(); setListBtnOn(false);
+      }
+    };
     // 重渲染列表主体（操作后保持弹窗打开）
     const rerender = () => {
       const body = panel.querySelector('#bm-playlist-body');
