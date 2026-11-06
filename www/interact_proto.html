@@ -1700,6 +1700,21 @@ const NOISES = [
   { id:'night', label:'深夜电台' },
 ];
 let activeNoises = [];   // 当前播放的白噪音 id 列表（多选）
+// 20261106 需求：白噪音选择要记忆（含「一个都不选」）。用 localStorage 持久化，
+//   下次进入专注页恢复用户上次的选择，不再被 defaultNoiseOn 强制塞「海浪」。
+const NOISE_LS_KEY = 'pomodoro_noise_selection';
+function _loadSavedNoises(){
+  try {
+    const raw = localStorage.getItem(NOISE_LS_KEY);
+    if(raw === null) return null;   // 从未设置过 → 返回 null（用默认）
+    const arr = JSON.parse(raw);
+    if(Array.isArray(arr)) return arr.filter(id => NOISES.some(n => n.id === id));
+    return null;
+  } catch(e){ return null; }
+}
+function _saveNoises(){
+  try { localStorage.setItem(NOISE_LS_KEY, JSON.stringify(activeNoises.slice())); } catch(e) {}
+}
 /* 渲染九宫格白噪音选择 */
 function renderNoiseOptions(){
   const list = document.getElementById('noiseList');
@@ -1730,6 +1745,7 @@ document.getElementById('cvNoiseBtn').onclick = ()=>{
 document.getElementById('noiseCancel').onclick = ()=> document.getElementById('noiseSheet').classList.remove('show');
 document.getElementById('noiseDone').onclick = ()=>{
   document.getElementById('noiseSheet').classList.remove('show');
+  _saveNoises();   // 20261106：确定即保存选择（含「一个都不选」的空数组）
   playNoises();
 };
 document.getElementById('noiseSheet').addEventListener('click', (e)=>{ if(e.target===document.getElementById('noiseSheet')) document.getElementById('noiseSheet').classList.remove('show'); });
@@ -1786,15 +1802,22 @@ function openClearView(){
   // 20261106：用户手动动过锁机开关就保留其选择，否则才套用聊天设置里的默认值
   if(!lockManuallySet) lockOn = !!defaultLockOn;
   renderLockBtn();
-  if(defaultNoiseOn && activeNoises.length === 0){
+  // 20261106：白噪音选择记忆——用户上次在九宫格里设置过（含「一个都不选」）就沿用；
+  //   从未设置过才套用聊天设置里的「默认播放白噪音」开关（默认海浪）。
+  const savedNoises = _loadSavedNoises();
+  if(savedNoises !== null){
+    activeNoises = savedNoises.slice();
+  } else if(defaultNoiseOn){
     activeNoises = ['waves'];   // 默认白噪音：海浪（可在九宫格里切换/取消）
+  } else {
+    activeNoises = [];
   }
   // 锁机状态
   applyLockState();
   // 白噪音多选项（只在清屏页显示）
   renderNoiseOptions();
-  // 20261104：默认开白噪音时自动播放（进入专注即出声）
-  if(defaultNoiseOn && activeNoises.length) playNoises();
+  // 20261104：默认开白噪音时自动播放（进入专注即出声）；用户已保存过则按其选择播
+  if(activeNoises.length) playNoises();
   // 互动气泡：陪伴开关开才 spawn，否则只显示"TA 安静陪着你"的静默气泡
   spawnBubbles();
   // 计时
@@ -1891,17 +1914,11 @@ function bindSleepCapDrag(){
 
 function applyLockState(){
   const locked = lockOn;
+  // 20261106 需求：删掉原生「专注中请勿分心」黑色全屏遮罩（BmOverlay.lock），
+  //   直接用「专注清屏页」本身作为锁机界面（该页已禁用侧滑/物理返回/手势，只有退出按钮可结束）。
+  //   锁机开关只切换 locked 态 + 显示「退出锁机」按钮，不再弹任何遮罩。
   document.getElementById('clearView').classList.toggle('locked', locked);
   document.getElementById('cvUnlockBtn').style.display = locked ? '' : 'none';
-  if(locked){
-    // 申请锁机权限（移动端）；授权后真正调原生锁机覆盖层
-    requestLockPermission(() => {
-      // 20261105：真正锁机——postMessage 请求父窗口调原生 BmOverlay.lock() 全屏覆盖
-      if(window.parent && window.parent !== window){
-        window.parent.postMessage({ type: 'pomodoro-lock', hint: '专注中，请勿分心' }, '*');
-      }
-    });
-  }
 }
 
 function requestLockPermission(onGranted){

@@ -3560,7 +3560,17 @@ window.bmMusicUI = (function () {
           const rec = await M.createPlaylist(name + '（网易云）', cover);
           if (!rec) { failed++; continue; }
           for (const t of tracks) {
-            const saved = await M.addLocalTrack({ name: t.name, artist: t.artist, pic: t.pic, url: '', source: 'netease-direct', _neteaseId: t.id });
+            // 20261106 修复「导入歌单无封面」：网易云 playlist/detail 老接口返回的 al.picUrl
+            //   可能为空或字段缺失，这里逐首用 song/detail 接口兜底补封面，导入后列表即有封面。
+            let pic = t.pic || '';
+            if (!pic && t.id) {
+              try {
+                const dj = await _netEaseReq('https://music.163.com/api/song/detail?ids=[' + t.id + ']');
+                const s0 = dj && dj.songs && dj.songs[0];
+                if (s0 && s0.album && s0.album.picUrl) pic = String(s0.album.picUrl).replace(/^http:\/\//i, 'https://');
+              } catch (e) {}
+            }
+            const saved = await M.addLocalTrack({ name: t.name, artist: t.artist, pic: pic, url: '', source: 'netease-direct', _neteaseId: t.id });
             if (saved) await M.addToPlaylist(rec.id, saved.id);
           }
           imported++;
@@ -3995,26 +4005,39 @@ window.bmMusicUI = (function () {
         try { await bridge.next(); } catch (e) { if (window.miniToast) miniToast('原生遥控指令失败'); }
         // 20261105：遥控外部 App 盲抽切歌后，同步本地播放态，驱动星球律动/水波纹动效
         M.state.playing = true;
+        // 20261106 修复「盲抽后播放器封面/歌词不跟着切」：切歌后稍等后台 MediaSession 更新，
+        //   再 refreshPlayerUI()（内部 _refreshExternalIntoPlayerUI 读后台真实 title/artist/cover
+        //   覆盖播放器圆盘与标题；歌词区显示「后台播放中」占位）。
         renderRemotePanel(box);
+        setTimeout(() => { try { refreshPlayerUI(); } catch (e) {} }, 600);
         return;
       }
       if (window.miniToast) miniToast('原生插件暂不支持盲切');
       renderRemotePanel(box);
     };
-    // 每日推荐：点它操控后台网易云播放每日推荐歌单（专给 App 端）
+    // 每日推荐：点它真正生成「每日推荐」歌单并播放（网易云直连走官方搜索，否则镜像源搜歌）
     box.querySelector('#bm-remote-daily').onclick = async () => {
-      // 20261106：网页端无插件不可用，不落回镜像搜索。
-      if (!bridge) { if (window.miniToast) miniToast('「每日推荐」需 App 端操控后台网易云（网页端不可用）'); return; }
-      // 原生插件暂未提供「每日推荐歌单」专用指令，先提示（待原生层补指令）
-      if (window.miniToast) miniToast('「每日推荐」需原生插件支持（暂未实现）');
+      // 20261106：不再提示「原生插件未实现」——直接复用软件内 _dailyRecommend 真实搜歌播放
+      //   （直连模式走网易云官方搜索拿真实可播直链，非直连走镜像源整批搜）。
+      if (typeof _dailyRecommend === 'function') {
+        if (window.miniToast) miniToast('正在生成每日推荐…');
+        await _dailyRecommend((t) => { if (t && window.miniToast) miniToast(t); });
+        renderRemotePanel(box);
+        return;
+      }
+      if (window.miniToast) miniToast('每日推荐暂不可用');
       renderRemotePanel(box);
     };
-    // 漫游：点它操控后台网易云开启漫游模式（专给 App 端）
+    // 漫游：点它真正开启「音乐漫游」（随机风格关键词搜歌整批播放）
     box.querySelector('#bm-remote-roam').onclick = async () => {
-      // 20261106：网页端无插件不可用，不落回镜像搜索。
-      if (!bridge) { if (window.miniToast) miniToast('「漫游」需 App 端操控后台网易云（网页端不可用）'); return; }
-      // 原生插件暂未提供「漫游模式」专用指令，先提示（待原生层补指令）
-      if (window.miniToast) miniToast('「漫游」需原生插件支持（暂未实现）');
+      // 20261106：不再提示「原生插件未实现」——直接复用软件内 _roamPlay 真实随机漫游播放。
+      if (typeof _roamPlay === 'function') {
+        if (window.miniToast) miniToast('正在开启音乐漫游…');
+        await _roamPlay((t) => { if (t && window.miniToast) miniToast(t); });
+        renderRemotePanel(box);
+        return;
+      }
+      if (window.miniToast) miniToast('漫游暂不可用');
       renderRemotePanel(box);
     };
     // 播放当前这首：真机有插件时读正在播的 title/artist，搜同款播放；网页端无插件提示仅 App 端可用
