@@ -2342,6 +2342,60 @@ body.theme-light .callend-msg .callend-reason {
   text-shadow: none;
 }
 
+/* 20261106：角色主动音乐操作「提示条」（toast 形式，短暂显示后消散）——
+   居中顶部胶囊，带 ♪ 图标 + 角色名 + 动作文字，2.6s 后淡出。 */
+#bm-ma-toast {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translate(-50%, -16px);
+  z-index: 9990;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 88vw;
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: linear-gradient(rgba(70, 74, 94, 0.72), rgba(48, 52, 70, 0.72));
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  border: 1px solid rgba(170, 176, 196, 0.30);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 6px 22px rgba(20, 16, 40, 0.30);
+  color: #eef1fb;
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .28s ease, transform .28s cubic-bezier(.16, 1, .3, 1);
+  text-shadow: 0 1px 2px rgba(20, 16, 40, 0.35);
+}
+#bm-ma-toast.bm-ma-show { opacity: 1; transform: translate(-50%, 0); }
+#bm-ma-toast.bm-ma-hide { opacity: 0; transform: translate(-50%, -16px); }
+#bm-ma-toast .bm-ma-ico {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  color: #fff;
+  background: linear-gradient(135deg, #8b6ef7, #b06ff0);
+  box-shadow: 0 1px 3px rgba(90, 60, 180, 0.45);
+}
+#bm-ma-toast .bm-ma-who { font-weight: 700; flex: none; }
+#bm-ma-toast .bm-ma-txt { word-break: break-word; }
+/* 浅色主题：浅底玻璃 + 深字 */
+body.theme-light #bm-ma-toast {
+  background: linear-gradient(rgba(255, 255, 255, 0.82), rgba(240, 240, 248, 0.82));
+  border-color: rgba(120, 126, 146, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 6px 22px rgba(60, 50, 100, 0.16);
+  color: #3a3350;
+  text-shadow: none;
+}
+
 /* ============================================================
    背景定制 + 星星增强 + 玻璃拟态（可选模式）
    ============================================================ */
@@ -6697,6 +6751,10 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
   /* 20261105：不透明背板色——面板/搜索列表等需要遮挡后面滚动字幕与播放条的容器，一律用实色，
      不能再用 --bm-card（rgba .03 半透明会透出后面的歌词/进度条，用户明确要求背板不可透明） */
   --bm-card-solid: #1b1c22;
+  --bm-paper-2: #05070d;
+  /* 20261106 毛玻璃：控制栏/按钮的半透明玻璃底（深色主题用半透明白，浅色主题各自覆盖） */
+  --bm-glass: rgba(255,255,255,.08);
+  --bm-btn-glass: rgba(255,255,255,.10);
   --bm-accent: var(--purple, #a78bfa);
   --bm-accent-soft: var(--purple-soft, #c4b5fd);
   --bm-accent-glow: var(--purple-glow, rgba(167,139,250,.35));
@@ -6863,18 +6921,21 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
   position: relative; z-index: 2;
   flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 10px 16px;
   max-width: 560px; width: 100%; margin: 0 auto; box-sizing: border-box;
-  /* 20261104：搜索栏加实底背景，不再透明透出后面的舞台/歌词 */
-  background: var(--bm-bg1, #17181e);
-  border: 1px solid var(--bm-card-line, rgba(203,209,221,.16));
-  border-radius: 12px;
+  /* 20261106 毛玻璃修复：搜索栏从「纯实色 bg1 + 边框」的卡片状，改为无边界毛玻璃——
+     半透明遮罩 + backdrop-filter 磨砂，跟背景融合、不显卡片边框，同时挡住后面透出的字。 */
+  background: var(--bm-glass, rgba(255,255,255,.08));
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  backdrop-filter: blur(18px) saturate(1.3);
+  border: 0;
+  border-radius: 14px;
 }
-.bm-music-input { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bm-card-line); background: var(--bm-card); color: var(--bm-ink); font-size: 13px; outline: none; }
-.bm-music-input:focus { border-color: var(--bm-accent); }
+.bm-music-input { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 8px; border: 0; background: var(--bm-btn-glass, rgba(255,255,255,.10)); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: var(--bm-ink); font-size: 13px; outline: none; }
+.bm-music-input:focus { box-shadow: 0 0 0 1.5px var(--bm-accent); }
 .bm-music-gobtn { flex-shrink: 0; height: 36px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--bm-accent); background: var(--bm-accent); color: #fff; font-size: 13px; cursor: pointer; transition: background .15s ease, transform .12s ease; }
 .bm-music-gobtn:hover { background: var(--bm-accent-soft); }
 .bm-music-gobtn:active { transform: scale(.95); }
 /* 20261104：搜索框旁的「解析歌单」按钮（歌单解析入口前置） */
-.bm-music-parsebtn { flex-shrink: 0; height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bm-accent); background: transparent; color: var(--bm-accent); font-size: 13px; cursor: pointer; white-space: nowrap; transition: background .15s ease, transform .12s ease; }
+.bm-music-parsebtn { flex-shrink: 0; height: 36px; padding: 0 12px; border-radius: 8px; border: 0; background: var(--bm-btn-glass, rgba(255,255,255,.10)); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: var(--bm-accent); font-size: 13px; cursor: pointer; white-space: nowrap; transition: background .15s ease, transform .12s ease; }
 .bm-music-parsebtn:hover { background: var(--bm-accent-glow); }
 .bm-music-parsebtn:active { transform: scale(.95); }
 /* 竖条音量浮层：点击音量按钮弹出，竖向拖动条 */
@@ -6918,11 +6979,16 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 .bm-tool-invite {
   display: inline-flex; align-items: center; gap: 5px; padding: 5px 14px; border-radius: 999px;
   font-size: 12.5px; cursor: pointer; color: var(--bm-ink, #cbd1dd);
-  background: var(--bm-card); border: 1px solid var(--bm-card-line);
-  transition: transform .12s ease, background .15s ease, border-color .15s ease, color .15s ease;
+  /* 20261106 毛玻璃修复：工具按钮（评论/收藏/下载/音源/分享/悬浮/音量/邀请）从「实底卡片」
+     改为无边界毛玻璃——半透明遮罩 + backdrop-filter 磨砂，跟背景融合。 */
+  background: var(--bm-btn-glass, rgba(255,255,255,.10));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 0;
+  transition: transform .12s ease, background .15s ease, color .15s ease;
   -webkit-tap-highlight-color: transparent;
 }
-.bm-tool-comment:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
+.bm-tool-comment:hover { color: var(--bm-accent); }
 .bm-tool-comment:active, .bm-tool-source:active, .bm-tool-dl:active, .bm-tool-share:active, .bm-tool-float:active, .bm-tool-vol:active, .bm-tool-invite:active { transform: scale(.92); background: var(--bm-accent-glow); border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-tool-share:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-tool-float:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
@@ -6984,13 +7050,18 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 .bm-source-addbtn:hover { background: var(--bm-accent); color: #fff; }
 .bm-music-input {
   flex: 1; height: 42px; border-radius: 21px; padding: 0 16px; font-size: 14px;
-  background: var(--bm-card); border: 1px solid var(--bm-card-line);
+  /* 20261106 毛玻璃修复：去掉旧版 --bm-card 半透明底 + 边框（卡片状根因），
+     改用无边界毛玻璃（半透明遮罩 + backdrop-filter 磨砂）。 */
+  background: var(--bm-btn-glass, rgba(255,255,255,.10));
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border: 0;
   color: var(--bm-ink); outline: none;
 }
 .bm-music-input::placeholder { color: var(--bm-ink-faint); }
 .bm-music-gobtn {
   height: 42px; padding: 0 18px; border-radius: 21px; font-size: 14px;
-  background: var(--bm-accent-glow); color: var(--bm-ink); border: 1px solid var(--bm-card-line); cursor: pointer; letter-spacing: 1px;
+  /* 20261106：搜索按钮改为实色强调按钮（accent 主色），去旧版半透明 + 边框卡片感 */
+  background: var(--bm-accent); color: #fff; border: 0; cursor: pointer; letter-spacing: 1px;
 }
 .bm-music-results {
   position: relative; z-index: 1;
@@ -7218,11 +7289,14 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
   position: relative; z-index: 1;
   flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 20px;
   padding: 12px 16px 8px;
-  /* 20261105 二次修复「按钮后方面板透明透底」：控制栏容器本身也要有不透明背板，
-     不能只有按钮本身实底——否则按钮之间、按钮与页面边缘之间的空隙会透出后面的
-     歌名/歌手文字（如 "M3"、"Les Apollo" 穿过播放键可见）。用 --bm-card-solid 实色铺底，
-     让整条控制栏成为一块独立不透明的底栏，按钮「坐在」上面，不再透底。 */
-  background: var(--bm-card-solid, #1b1c22);
+  /* 20261106 毛玻璃修复：不再用纯实色（--bm-card-solid 深色导致浅色主题「大黑坨」、
+     且与主题色不契合）。改用毛玻璃——半透明主题色底 + backdrop-filter 磨砂，
+     既挡住后面透出的歌名/歌手文字，又跟随各主题颜色，深浅主题都自然。
+     用 --bm-glass 变量（各主题块已定义为主题色半透明），叠一层深/浅中性底保证可读。 */
+  background: var(--bm-glass, rgba(255,255,255,.08));
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  backdrop-filter: blur(18px) saturate(1.3);
+  border: 0;   /* 20261106：去边框，无边界毛玻璃，跟背景融合 */
   margin: 0 12px;
   border-radius: 18px;
 }
@@ -7266,17 +7340,18 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 }
 .bm-ctrl-btn {
   width: 46px; height: 46px; border-radius: 50%;
-  /* 20261105 修复「按钮背板透明透底」：--bm-card 默认是 rgba(255,255,255,.03) 几乎全透明，
-     按钮背板透出背景文字。改用不透明深色实底（--bm-paper-2 次底色），
-     确保任何主题下按钮都有清晰不透明背板，不再透出后面的歌名/歌手文字。 */
-  background: var(--bm-paper-2, #05070d);
-  border: 1px solid var(--bm-card-line);
+  /* 20261106 毛玻璃修复：按钮背板改为半透明主题色 + 磨砂，不再用纯实色 --bm-paper-2
+     深色实底（浅色主题下形成「黑底白按钮」突兀观感）。半透明底 + blur 既挡透字又跟随主题。 */
+  background: var(--bm-btn-glass, rgba(255,255,255,.10));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 0;
   color: var(--bm-ink); display: flex; align-items: center; justify-content: center; cursor: pointer;
-  transition: transform .12s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+  transition: transform .12s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
   -webkit-tap-highlight-color: transparent;
 }
-.bm-ctrl-btn:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
-.bm-ctrl-btn:active { transform: scale(.88); background: var(--bm-accent-glow); border-color: var(--bm-accent); color: var(--bm-accent); }
+.bm-ctrl-btn:hover { color: var(--bm-accent); }
+.bm-ctrl-btn:active { transform: scale(.88); background: var(--bm-accent-glow); color: var(--bm-accent); }
 .bm-ctrl-btn.bm-ctrl-main {
   width: 58px; height: 58px;
   /* 20261105 二次修复：主播放按钮背景原为 --bm-accent-glow（rgba .35 半透明），
@@ -7361,7 +7436,7 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 
 .bm-playlist-panel {
   position: fixed; inset: 0; z-index: 5000;
-  display: flex; align-items: stretch; justify-content: flex-end;
+  display: flex; align-items: flex-end; justify-content: center;
   pointer-events: none;
 }
 .bm-playlist-mask {
@@ -7370,14 +7445,13 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   animation: bm-fade-in .2s ease;
 }
 .bm-playlist-card {
-  /* 20261106：从居中弹窗改为「右侧抽屉」——贴右边缘滑出，宽度约页面 2/5，高度全屏。
-     滑入/滑出均用 transform 位移（GPU 加速），缓动曲线 cubic-bezier(.16,1,.3,1)
-     （近似 easeOutExpo，前快后慢，丝滑不顿挫）。 */
-  position: relative; width: 40vw; min-width: 160px; max-width: 420px; height: 100%;
+  /* 20261106：从「右侧抽屉」改为网易云式「底部半屏歌单面板」——
+     从底部滑出、顶部圆角、全宽、最高约 72vh，贴合网易云「当前播放」歌单样式。 */
+  position: relative; width: 100%; max-width: 720px; max-height: 72vh;
   background: var(--bm-bg1, #0a0e1a); color: var(--bm-ink, #d8dff0);
-  border-left: 1px solid var(--bm-card-line, rgba(190,205,240,.16));
-  border-radius: 16px 0 0 16px;
-  box-shadow: -12px 0 40px rgba(0,0,0,.5);
+  border-top: 1px solid var(--bm-card-line, rgba(190,205,240,.16));
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -12px 40px rgba(0,0,0,.5);
   display: flex; flex-direction: column; overflow: hidden;
   pointer-events: auto;
   will-change: transform;
@@ -7387,23 +7461,90 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 .bm-playlist-card.bm-playlist-closing {
   animation: bm-playlist-drawer-out .28s cubic-bezier(.55,0,.55,.2) forwards;
 }
-@keyframes bm-playlist-drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
-@keyframes bm-playlist-drawer-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
+@keyframes bm-playlist-drawer-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes bm-playlist-drawer-out { from { transform: translateY(0); } to { transform: translateY(100%); } }
 @keyframes bm-fade-in { from { opacity: 0; } to { opacity: 1; } }
+/* 顶部拖拽把手（网易云式小横条） */
+.bm-playlist-grip {
+  width: 40px; height: 4px; border-radius: 999px; margin: 10px auto 2px;
+  background: var(--bm-card-line, rgba(190,205,240,.3)); flex-shrink: 0; cursor: grab;
+}
 .bm-playlist-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px; border-bottom: 1px solid var(--bm-card-line, rgba(190,205,240,.14));
-  font-size: 14px; font-weight: 700; flex-shrink: 0;
+  padding: 8px 16px 6px; flex-shrink: 0;
 }
-.bm-playlist-head button { background: transparent; border: none; color: var(--bm-ink-dim, #7b84a0); font-size: 18px; cursor: pointer; }
-.bm-playlist-headbtns { display: flex; align-items: center; gap: 8px; }
-.bm-playlist-manage {
-  background: transparent; border: 1px solid var(--bm-card-line, rgba(190,205,240,.18)); border-radius: 999px;
-  color: var(--bm-ink-dim, #7b84a0); font-size: 12px; padding: 4px 12px; cursor: pointer;
+.bm-playlist-tabs { display: flex; align-items: center; gap: 18px; }
+.bm-playlist-tab {
+  font-size: 16px; font-weight: 700; color: var(--bm-ink-dim, #7b84a0); cursor: pointer;
+  display: inline-flex; align-items: baseline; gap: 5px; padding-bottom: 2px;
+  transition: color .15s ease; -webkit-tap-highlight-color: transparent;
+}
+.bm-playlist-tab.on { color: var(--bm-ink, #d8dff0); }
+.bm-playlist-count { font-size: 12px; font-weight: 400; color: var(--bm-ink-dim, #7b84a0); }
+.bm-playlist-headbtns { display: flex; align-items: center; gap: 4px; }
+.bm-playlist-icon {
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--bm-ink-dim, #7b84a0); cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.bm-playlist-icon:hover { background: var(--bm-accent-glow, rgba(167,139,250,.2)); color: var(--bm-accent, #a78bfa); }
+.bm-playlist-icon.on { color: var(--bm-accent, #a78bfa); }
+/* 来源行：「来自：XXX」 */
+.bm-playlist-src {
+  padding: 2px 16px 8px; font-size: 12px; color: var(--bm-ink-dim, #7b84a0); flex-shrink: 0;
+}
+.bm-playlist-src b { color: var(--bm-ink, #d8dff0); font-weight: 500; }
+.bm-playlist-body { flex: 1; overflow-y: auto; padding: 4px 0; }
+.bm-playlist-item {
+  display: flex; align-items: center; gap: 6px; padding: 12px 14px 12px 16px; cursor: pointer;
+  transition: background .15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.bm-playlist-item:hover { background: var(--bm-card, rgba(255,255,255,.04)); }
+.bm-playlist-item:active { background: var(--bm-accent-glow, rgba(167,139,250,.18)); }
+.bm-playlist-item.on { background: var(--bm-accent-glow, rgba(167,139,250,.14)); }
+.bm-playlist-item.on .bm-pl-name { color: var(--bm-accent, #a78bfa); font-weight: 600; }
+/* 行首播放动画小图标（正在播放行显示） */
+.bm-pl-playing {
+  width: 14px; height: 14px; flex-shrink: 0; display: none; align-items: flex-end; justify-content: center; gap: 1.5px;
+}
+.bm-playlist-item.on .bm-pl-playing { display: inline-flex; }
+.bm-pl-playing i {
+  width: 2.5px; border-radius: 1px; background: var(--bm-accent, #a78bfa);
+  animation: bm-pl-eq 1s ease-in-out infinite;
+}
+.bm-pl-playing i:nth-child(1) { height: 6px; animation-delay: 0s; }
+.bm-pl-playing i:nth-child(2) { height: 12px; animation-delay: .2s; }
+.bm-pl-playing i:nth-child(3) { height: 8px; animation-delay: .4s; }
+@keyframes bm-pl-eq { 0%,100% { transform: scaleY(.5); } 50% { transform: scaleY(1); } }
+.bm-pl-name { min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
+.bm-pl-sep { color: var(--bm-ink-dim, #7b84a0); flex-shrink: 0; }
+.bm-pl-artist { font-size: 12px; color: var(--bm-ink-dim, #7b84a0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30%; flex-shrink: 0; }
+.bm-pl-time { font-size: 11px; color: var(--bm-ink-faint, #3c4458); flex-shrink: 0; margin-left: auto; }
+.bm-pl-del, .bm-pl-drag {
+  width: 28px; height: 28px; flex-shrink: 0; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--bm-ink-dim, #7b84a0); cursor: pointer;
+  font-size: 15px; line-height: 1; transition: background .15s ease, color .15s ease;
+}
+.bm-pl-del:hover { background: rgba(192,106,90,.16); color: #c06a5a; }
+.bm-pl-drag { cursor: grab; }
+.bm-pl-drag:hover { background: var(--bm-accent-glow, rgba(167,139,250,.2)); color: var(--bm-accent, #a78bfa); }
+/* 底部推荐提示 + 胶囊按钮 */
+.bm-playlist-tip {
+  text-align: center; font-size: 11px; color: var(--bm-ink-faint, #3c4458); padding: 4px 16px; flex-shrink: 0;
+}
+.bm-playlist-foot { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 8px 16px 18px; flex-shrink: 0; }
+.bm-playlist-pill {
+  background: var(--bm-card, rgba(255,255,255,.05)); border: 1px solid var(--bm-card-line, rgba(190,205,240,.18));
+  border-radius: 999px; color: var(--bm-ink, #d8dff0); font-size: 13px; padding: 8px 22px; cursor: pointer;
   transition: background .15s ease, color .15s ease, border-color .15s ease;
 }
-.bm-playlist-manage:hover { color: var(--bm-accent, #a78bfa); border-color: var(--bm-accent, #a78bfa); }
-.bm-playlist-foot { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--bm-card-line, rgba(190,205,240,.14)); flex-shrink: 0; }
+.bm-playlist-pill.on { background: var(--bm-accent-glow, rgba(167,139,250,.22)); color: var(--bm-accent, #a78bfa); border-color: var(--bm-accent, #a78bfa); }
+.bm-playlist-pill:hover { color: var(--bm-accent, #a78bfa); border-color: var(--bm-accent, #a78bfa); }
+/* 管理模式底部（全选 / 删除所选） */
+.bm-playlist-foot-manage { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 10px 16px 18px; border-top: 1px solid var(--bm-card-line, rgba(190,205,240,.14)); flex-shrink: 0; }
 .bm-playlist-selall {
   background: transparent; border: 1px solid var(--bm-card-line, rgba(190,205,240,.18)); border-radius: 999px;
   color: var(--bm-ink-dim, #7b84a0); font-size: 12px; padding: 6px 16px; cursor: pointer;
@@ -7416,31 +7557,8 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   transition: background .15s ease, color .15s ease;
 }
 .bm-playlist-delall:hover { background: rgba(192,106,90,.14); }
-.bm-playlist-body { flex: 1; overflow-y: auto; padding: 6px 0; }
-.bm-playlist-item {
-  display: flex; align-items: center; gap: 10px; padding: 9px 12px 9px 16px; cursor: pointer;
-  transition: background .15s ease;
-  -webkit-tap-highlight-color: transparent;
-}
-.bm-playlist-item:hover { background: var(--bm-card, rgba(255,255,255,.04)); }
-.bm-playlist-item:active { background: var(--bm-accent-glow, rgba(167,139,250,.18)); }
-.bm-playlist-item.on { background: var(--bm-accent-glow, rgba(167,139,250,.2)); }
-.bm-playlist-item.on .bm-pl-name { color: var(--bm-accent, #a78bfa); }
-.bm-pl-index { width: 20px; text-align: center; color: var(--bm-ink-faint, #3c4458); font-size: 12px; flex-shrink: 0; }
-.bm-pl-cover { width: 34px; height: 34px; border-radius: 6px; overflow: hidden; flex-shrink: 0; background: var(--bm-card, rgba(255,255,255,.04)); }
-.bm-pl-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.bm-pl-name { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bm-pl-artist { font-size: 12px; color: var(--bm-ink-dim, #7b84a0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 34%; flex-shrink: 0; }
-.bm-pl-plus, .bm-pl-more, .bm-pl-fav, .bm-pl-del {
-  width: 30px; height: 30px; flex-shrink: 0; border-radius: 8px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: none; color: var(--bm-ink-dim, #7b84a0); cursor: pointer;
-  transition: background .15s ease, color .15s ease;
-}
 .bm-pl-check { width: 22px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
 .bm-pl-check input { width: 16px; height: 16px; accent-color: var(--bm-accent, #a78bfa); cursor: pointer; margin: 0; }
-.bm-pl-plus:hover, .bm-pl-more:hover, .bm-pl-fav:hover { background: var(--bm-accent-glow, rgba(167,139,250,.2)); color: var(--bm-accent, #a78bfa); }
-.bm-pl-del:hover { background: rgba(192,106,90,.16); color: #c06a5a; }
 /* 歌曲操作菜单（收藏/加歌单/下一首播放/删除） */
 .bm-song-menu {
   position: fixed; z-index: 2147483005; min-width: 176px;
@@ -7497,6 +7615,11 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   --bm-accent: var(--purple, #8a6d3b);
   --bm-accent-soft: var(--purple-soft, #6f5a2e);
   --bm-accent-glow: var(--purple-glow, rgba(138,109,59,.22));
+  /* 浅色主题：控制条背板与按钮底跟随浅色，不再用默认深色（修复黑坨） */
+  --bm-card-solid: #ece6d6;
+  --bm-paper-2: #dfd8c4;
+  --bm-glass: rgba(236,230,214,.30);
+  --bm-btn-glass: rgba(236,230,214,.34);
   color: var(--bm-ink);
 }
 .bm-music-page[data-theme="paper"]::before {
@@ -7550,6 +7673,10 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   --bm-accent: #0a3a6a;
   --bm-accent-soft: #1a5a94;
   --bm-accent-glow: rgba(10,58,106,.28);
+  --bm-card-solid: #8fc0f0;
+  --bm-paper-2: #a8d2f8;
+  --bm-glass: rgba(143,192,240,.30);
+  --bm-btn-glass: rgba(168,210,248,.34);
   color: var(--bm-ink);
   font-family: "Courier New", "Consolas", monospace;
 }
@@ -7668,6 +7795,10 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   --bm-accent: var(--purple, #4a2a8a);
   --bm-accent-soft: var(--purple-soft, #6a4ab8);
   --bm-accent-glow: rgba(74,42,138,.3);
+  --bm-card-solid: #d8d0e8;
+  --bm-paper-2: #c8c0e0;
+  --bm-glass: rgba(216,208,232,.30);
+  --bm-btn-glass: rgba(200,192,224,.34);
   color: var(--bm-ink);
   font-family: "Tahoma", "MS Sans Serif", "Segoe UI", sans-serif;
 }
@@ -7751,6 +7882,10 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   --bm-accent: #1a1a1a;
   --bm-accent-soft: #4a4a4a;
   --bm-accent-glow: rgba(0,0,0,.16);
+  --bm-card-solid: #ece8e0;
+  --bm-paper-2: #e2ddd2;
+  --bm-glass: rgba(236,232,224,.30);
+  --bm-btn-glass: rgba(226,221,210,.34);
   color: var(--bm-ink);
 }
 /* 米白纸质感背景：纸纤维颗粒 + 极淡纸张阴影 */
@@ -7835,6 +7970,10 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   --bm-accent: var(--purple, #f07aa0);
   --bm-accent-soft: var(--purple-soft, #f59ab8);
   --bm-accent-glow: rgba(240,122,160,.3);
+  --bm-card-solid: #ffe9df;
+  --bm-paper-2: #ffdcc8;
+  --bm-glass: rgba(255,233,223,.30);
+  --bm-btn-glass: rgba(255,220,200,.34);
   color: var(--bm-ink);
 }
 /* 粉彩底 + 波点/斜纹胶带 */
@@ -8100,14 +8239,17 @@ body.theme-light .bm-music-float .bm-fly-line.on { text-shadow: none; }
   color: var(--bm-ink);
 }
 .bm-music-float .bm-float-resize {
-  position: absolute; right: 4px; bottom: 4px;
-  width: 18px; height: 18px; line-height: 16px;
-  text-align: center; font-size: 14px;
-  color: var(--bm-ink-dim);
+  /* 20261106 修复「缩放锚点太大挡住后面的播放列表按钮」：缩小到 12px、贴最右下角边缘，
+     降低 opacity 与 z-index，不遮挡控制排按钮；保留可拖拽缩放热区（视觉小、热区略大）。 */
+  position: absolute; right: 1px; bottom: 1px;
+  width: 12px; height: 12px; line-height: 12px;
+  text-align: center; font-size: 11px;
+  color: var(--bm-ink-faint);
   cursor: nwse-resize;
-  opacity: .65; transition: opacity .15s ease, color .15s ease;
+  opacity: .45; transition: opacity .15s ease, color .15s ease;
   user-select: none; -webkit-user-select: none;
-  z-index: 5;
+  z-index: 3;
+  pointer-events: auto;
 }
 .bm-music-float .bm-float-resize:hover { opacity: 1; color: var(--bm-accent); }
 .bm-music-float.card .bm-float-card { position: relative; }
@@ -8225,8 +8367,11 @@ body.theme-light #bm-float-style-picker {
   width: 12px; height: 12px; border-radius: 50%; background: var(--bm-accent, #a78bfa);
   border: 2px solid #fff; box-shadow: 0 0 6px var(--bm-accent-glow, rgba(167,139,250,.5)); cursor: pointer;
 }
-.bm-float-ctrl { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.bm-float-ctrl .bm-ctrl-btn { width: 38px; height: 38px; }
+.bm-float-ctrl {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  position: relative; z-index: 4;   /* 20261106：确保控制排按钮浮在缩放锚点/装饰层之上，点击不被遮挡 */
+}
+.bm-float-ctrl .bm-ctrl-btn { width: 38px; height: 38px; pointer-events: auto; position: relative; z-index: 4; }
 .bm-float-ctrl .bm-ctrl-btn.bm-ctrl-main { width: 46px; height: 46px; }
 .bm-float-ctrl .bm-ctrl-btn.bm-ctrl-side { width: 32px; height: 32px; }
 
@@ -8535,8 +8680,12 @@ body .bm-music-float.fbg-dark .bm-float-card {
 .bm-remote-btn.bm-remote-blind { flex: 0 0 auto; }
 .bm-remote-tip-warn { color: var(--bm-ink-faint, #8a94ac); font-size: 11px; }
 /* 20261104 后台遥控面板：不透明背板 + 展开收起 + 权限提示 */
-/* 20261105：面板背板必须不透明（实色），不能透出后面的滚动字幕/播放进度条 */
-.bm-remote-box-solid, .bm-remote-box { background: var(--bm-card-solid, #1b1c22); }
+/* 20261106：面板背板改毛玻璃——半透明主题色底 + 磨砂，挡字又跟随主题，不再用纯深色实色 */
+.bm-remote-box-solid, .bm-remote-box {
+  background: var(--bm-glass, rgba(255,255,255,.08));
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
 .bm-remote-headbar { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
 .bm-remote-fold { background: none; border: none; color: var(--bm-ink-dim); font-size: 12px; cursor: pointer; padding: 2px 4px; }
 .bm-remote-fold:hover { color: var(--bm-accent); }
@@ -8561,7 +8710,7 @@ body .bm-music-float.fbg-dark .bm-float-card {
   background: #fff; transition: left .2s ease;
 }
 .bm-remote-mode-btn.on .bm-remote-mode-knob { left: 17px; }
-.bm-netease-box { display: flex; flex-direction: column; gap: 10px; padding: 10px 11px; border-radius: 12px; background: var(--bm-card-solid, #1b1c22); border: 1px solid rgba(120,90,220,.25); }
+.bm-netease-box { display: flex; flex-direction: column; gap: 10px; padding: 10px 11px; border-radius: 12px; background: var(--bm-glass, rgba(255,255,255,.08)); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1px solid rgba(120,90,220,.25); }
 .bm-netease-login-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .bm-netease-status { font-size: 12px; color: var(--bm-ink-dim); }
 .bm-netease-status.on { color: #4cd964; }
@@ -8588,3 +8737,40 @@ body .bm-music-float.fbg-dark .bm-float-card {
 .bm-netease-result-info { flex: 1; min-width: 0; }
 .bm-netease-result-name { font-size: 13px; color: var(--bm-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bm-netease-result-artist { font-size: 11px; color: var(--bm-ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ============================================================
+   20261106：轻量粒子/弹性交互动效（配合 js/fx.js）
+   ① 点赞/收藏粒子爆炸 ② 未读红点粒子消散 ③ 弹性开关 ④ 下拉刷新 ⑤ 切页过渡
+   ============================================================ */
+
+/* —— 粒子图层（fixed 全屏，指针穿透，z 最高层） —— */
+#bm-fx-layer { position: fixed; inset: 0; pointer-events: none; z-index: 2147480000; }
+
+/* —— 下拉刷新指示器 —— */
+.bm-pull-refresh {
+  position: fixed; left: 50%; z-index: 2147480000;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 16px; border-radius: 999px;
+  background: rgba(20, 16, 30, 0.9); color: #cfd6ee;
+  border: 1px solid rgba(160, 140, 220, 0.25);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  font-size: 12px; opacity: 0; pointer-events: none;
+  transition: opacity .2s ease, top .05s linear;
+  will-change: transform, opacity;
+}
+.bm-pull-refresh .bm-pr-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.25);
+  border-top-color: var(--purple, #a78bfa);
+}
+@keyframes bm-pr-spin { to { transform: rotate(360deg); } }
+
+/* —— 弹性开关旋钮（拉长成胶囊→回弹，squash & stretch） —— */
+#btn-chat-aimode svg .ai-knob,
+#btn-moments-aimode svg .ai-knob,
+.bm-remote-mode-knob {
+  transform-origin: center;
+}
+
+/* —— 切页过渡（底部导航切换时 view 淡入上移） —— */
+.view { transition: opacity .26s ease, transform .26s cubic-bezier(.16,1,.3,1); }

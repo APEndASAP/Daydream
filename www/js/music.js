@@ -138,9 +138,12 @@ window.bmMusic = (function () {
       },
     },
     // 副源：iTunes Search API（国际曲库，英文/海外歌）
+    // 20261106：iTunes 只给 30 秒试听（previewUrl），非「完整音源」，不符合「优先能播整首歌」需求，
+    //   故 full:false 标记，自动容灾时不再参与匹配（仅玩家手动选「iTunes」源时才用）。
     {
       key: 'itunes',
-      name: '路径 D（iTunes 国际）',
+      name: '路径 D（iTunes 国际·30秒试听）',
+      full: false,
       search: (kw) => `https://itunes.apple.com/search?term=${encodeURIComponent(kw)}&media=music&limit=20`,
       song: (song) => `https://itunes.apple.com/lookup?id=${encodeURIComponent(song.id)}`,
       lrc: () => '',
@@ -198,6 +201,7 @@ window.bmMusic = (function () {
     floatState: 'dot',         // 'dot' | 'mini' | 'card' 悬浮窗三级
     listenSec: 0,              // 本次累计听歌秒数
     playMode: 'order',         // 播放模式：'once' 顺序播放(播完停) | 'order' 列表循环 | 'one' 单曲循环 | 'shuffle' 随机
+    crossfade: false,          // 20261106：智能过渡（交叉淡入淡出）开关，默认关
     loadedId: null,            // 20261105：state.audio 当前加载的曲目 id（根治续播 src 匹配失败）
   };
 
@@ -296,14 +300,16 @@ window.bmMusic = (function () {
       if (hit) return [hit];
     }
     // auto 容灾优先级（20261105 实测修正）：清羽(met.liiiu.cn，搜索一步返回 title/author/pic/url/lrc，稳定) 提到最前
-    //   > 酷我 > QQ > iTunes。
+    //   > 酷我 > QQ。
     // 20261105 实测失效：qijieya(api.qijieya.cn) 返回空数组 []；gdstudio(music-api.gdstudio.xyz) HTTP 000 连接失败
     //   ——两者已移出默认容灾顺序（仍可通过手动选源使用），避免每次容灾空耗请求、且搜索不到封面。
     // 20261104：官方 meting(api.i-meto.com) 已 401 挂掉，移出默认容灾顺序。
-    const order = ['qingyu', 'kuwo', 'tang', 'itunes'];
+    // 20261106：自动匹配优先「完整音源」渠道——iTunes 只给 30 秒试听（full:false），不参与自动容灾，
+    //   避免自动匹配到 30 秒试听导致「只能听一段」。iTunes 仅在玩家手动选源时使用。
+    const order = ['qingyu', 'kuwo', 'tang'];
     const sorted = order.map(k => all.find(s => s.key === k)).filter(Boolean);
-    // 追加任何不在 order 里的源（如自定义源）
-    all.forEach(s => { if (order.indexOf(s.key) < 0) sorted.push(s); });
+    // 追加任何不在 order 里的源（如自定义源）；但 full:false 的 30 秒试听源(iTunes)自动模式跳过
+    all.forEach(s => { if (order.indexOf(s.key) < 0 && s.full !== false) sorted.push(s); });
     return sorted;
   }
 
@@ -768,7 +774,14 @@ window.bmMusic = (function () {
     try { a.crossOrigin = null; } catch (e) {}
     a.src = song.url;
     state.loadedId = song.id;   // 20261105：记录当前加载的曲目，根治 resume 的 src 匹配失败
-    a.volume = vol;
+    // 20261106：智能过渡（交叉淡入淡出）——开启时新歌从 0 音量渐变到目标音量，平滑衔接；
+    //   关闭时直接设目标音量。渐变用 requestAnimationFrame 轻量实现，避免引入额外元素。
+    if (state.crossfade) {
+      a.volume = 0;
+      _crossfadeTo(a, vol);
+    } else {
+      a.volume = vol;
+    }
     ensureAnalyser();          // 建立频谱分析（失败自动降级）
     // 20261104 乐观播放：先置 playing=true 并刷新 UI（点播放立即有反馈，不等音频缓冲），
     //   后台 a.play() 成功/失败再纠正。之前 await a.play() 会等音频真正出声才返回，
@@ -812,6 +825,26 @@ window.bmMusic = (function () {
         if (changed) { try { refreshPlayerUI(); } catch (e) {} try { renderFloat(); } catch (e) {} }
       })();
     }
+  }
+
+  // 20261106：智能过渡——把 audio 音量从当前值平滑渐变到目标值（约 1.2s），
+  //   每次调用先取消上一次未完成的渐变，避免叠加抖动。
+  let _cfRaf = null;
+  function _crossfadeTo(audio, target) {
+    if (!audio) return;
+    if (_cfRaf) { cancelAnimationFrame(_cfRaf); _cfRaf = null; }
+    const from = audio.volume || 0;
+    if (Math.abs(from - target) < 0.01) { audio.volume = target; return; }
+    const t0 = performance.now();
+    const dur = 1200;
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - p, 3);   // easeOutCubic，先快后缓
+      audio.volume = from + (target - from) * e;
+      if (p < 1) { _cfRaf = requestAnimationFrame(step); }
+      else { audio.volume = target; _cfRaf = null; }
+    };
+    _cfRaf = requestAnimationFrame(step);
   }
 
   function pause() { const a = ensureAudio(); a.pause(); state.playing = false; saveSession(); onStateChange(); }
@@ -1039,6 +1072,8 @@ window.bmMusic = (function () {
         playlist: (state.playlist || []).map(s => ({ id: s.id, name: s.name, artist: s.artist || '', album: s.album || '', pic: s.pic || '', url: s.url || '', lrc: s.lrc || '' })),
         playIndex: state.playIndex,
         playMode: state.playMode,
+        crossfade: !!state.crossfade,   // 20261106：智能过渡开关持久化
+        mode: state.mode || 'mirror',   // 20261106：持久化三模式（镜像/后台遥控/本地），重进记住上次选的模式
         playing: state.playing,
         // 20261104：一起听状态一并持久化（charId + togetherSince）。
         //   此前只存播放列表/曲目，不存一起听状态，导致刷新/重进 App 后
@@ -1072,6 +1107,9 @@ window.bmMusic = (function () {
         state.current = d.current;
       }
       if (d.playMode) state.playMode = d.playMode;
+      if (typeof d.crossfade === 'boolean') state.crossfade = d.crossfade;   // 20261106：恢复智能过渡开关
+      // 20261106：恢复三模式（镜像/后台遥控/本地），重进记住上次选的模式
+      if (d.mode === 'mirror' || d.mode === 'remote' || d.mode === 'local') state.mode = d.mode;
       // 20261104：恢复一起听状态（charId + togetherSince），使一起听时长在
       //   刷新/重进 App 后继续正确显示与累加（togetherSince 是时间戳，恢复后
       //   Date.now()-togetherSince 仍能算准已听时长）。
@@ -1454,24 +1492,62 @@ window.bmMusicUI = (function () {
     } catch (e) { return ''; }
   }
 
-  // 20261105：角色主动音乐操作「小圆垫片」消息——不再发普通文本气泡，而是发
-  //   type:'musicAction' 居中玻璃胶囊垫片（app.js appendMessage 已加对应渲染分支）。
-  //   与通话挂断（callEnd）同款视觉，配 ♪ 图标，提示「TA 播放/暂停/切歌/收藏/搜歌…」。
+  // 20261106：角色主动音乐操作「小垫片」——支持玩家自选形式：
+  //   musicActionStyle = 'chat'  发到聊天框（type:'musicAction' 居中玻璃胶囊垫片，会沉淀进聊天记录）
+  //                   = 'toast'  短暂提示条（带角色名 + ♪，2.6s 后自动消散，不沉淀）
+  //                   = 'off'    不提示
+  //   受聊天设置开关控制，总设置/个人主页均可覆盖（读 window.__chatSettings 同步值兜底）。
+  let _maToastTimer = null;
+  function _musicActionToast(c, text) {
+    let el = document.getElementById('bm-ma-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'bm-ma-toast';
+      document.body.appendChild(el);
+    }
+    const who = (c && c.name) ? c.name : '访客';
+    el.innerHTML = `<span class="bm-ma-ico">♪</span><span class="bm-ma-who">${who}</span><span class="bm-ma-txt">${text || ''}</span>`;
+    el.classList.remove('bm-ma-hide');
+    el.classList.add('bm-ma-show');
+    if (_maToastTimer) clearTimeout(_maToastTimer);
+    _maToastTimer = setTimeout(() => {
+      el.classList.remove('bm-ma-show');
+      el.classList.add('bm-ma-hide');
+    }, 2600);
+  }
   function _sayMusicAction(c, text) {
-    if (typeof idbPut !== 'function') return;
-    const m = { id: uid('msg'), charId: c.id, from: 'them', type: 'musicAction', content: text, time: Date.now() };
-    idbPut('messages', m).then(() => {
-      if (typeof appendMessage === 'function' && document.body.dataset.view === 'chat' && typeof currentCharId !== 'undefined' && currentCharId === c.id) appendMessage(m);
-      else if (typeof renderChatList === 'function') renderChatList();
-      // 不在聊天页时累计未读 + 必要时系统通知（与 deliverCharMessage 一致）
-      if (typeof _ev === 'function' && typeof _saveUnreadEvents === 'function' && !(document.body.dataset.view === 'chat' && typeof currentCharId !== 'undefined' && currentCharId === c.id)) {
-        try {
-          const e = _ev(c.id);
-          e.msgs = (e.msgs || 0) + 1;
-          _saveUnreadEvents();
-        } catch (err) {}
+    try {
+      // 读「小垫片形式」开关：'chat' | 'toast' | 'off'（默认 'chat' 发聊天框，保持原行为）
+      //   优先级：角色个人主页覆盖(c.chatSettings) > 全局 chatSettings
+      let style = 'chat';
+      try {
+        if (c && c.chatSettings && typeof c.chatSettings.musicActionStyle === 'string') {
+          style = c.chatSettings.musicActionStyle;
+        } else if (typeof window.__chatSettings === 'object' && window.__chatSettings) {
+          style = window.__chatSettings.musicActionStyle || 'chat';
+        } else if (typeof chatSettings === 'object' && chatSettings) {
+          style = chatSettings.musicActionStyle || 'chat';
+        }
+      } catch (e) {}
+      if (style === 'off') return;
+
+      if (style === 'toast') {
+        _musicActionToast(c, text);
+        return;
       }
-    }).catch(() => {});
+
+      // 默认（'chat'）：发 type:'musicAction' 居中玻璃胶囊垫片消息，沉淀进聊天记录
+      if (typeof idbPut !== 'function') { _musicActionToast(c, text); return; }
+      const m = { id: (typeof uid === 'function' ? uid('msg') : ('ma' + Date.now() + Math.random())), charId: c.id, from: 'them', type: 'musicAction', content: text, time: Date.now() };
+      idbPut('messages', m).then(() => {
+        const onChat = document.body.dataset.view === 'chat' && typeof currentCharId !== 'undefined' && currentCharId === c.id;
+        if (typeof appendMessage === 'function' && onChat) appendMessage(m);
+        else if (typeof renderChatList === 'function') renderChatList();
+        if (typeof _ev === 'function' && typeof _saveUnreadEvents === 'function' && !onChat) {
+          try { const e = _ev(c.id); e.msgs = (e.msgs || 0) + 1; _saveUnreadEvents(); } catch (err) {}
+        }
+      }).catch(() => {});
+    } catch (e) {}
   }
 
   // 动作池：每项 { w: 权重, act: 执行函数 }
@@ -1486,12 +1562,12 @@ window.bmMusicUI = (function () {
     const actions = [
       // 主动播放（有歌时继续/从头播）
       { w: hasCur ? 2 : 0, act: async () => {
-          if (isRemote) { await _remoteAction({ bridge: 'toggle', local: () => { if (!M.state.playing) M.resume(); } }, (t) => say(t)); }
+          if (isRemote) { await _remoteAction({ bridge: 'toggle', sayText: `${nm} 播放了音乐`, local: () => { if (!M.state.playing) M.resume(); } }, (t) => say(t)); }
           else { try { M.resume(); } catch(e){} say(`${nm} 播放了音乐`); }
         } },
       // 主动暂停（正在播时）
       { w: (M.state.playing && hasCur) ? 2 : 0, act: async () => {
-          if (isRemote) { await _remoteAction({ bridge: 'toggle', local: () => { if (M.state.playing) M.pause(); } }, (t) => say(t)); }
+          if (isRemote) { await _remoteAction({ bridge: 'toggle', sayText: `${nm} 暂停了音乐`, local: () => { if (M.state.playing) M.pause(); } }, (t) => say(t)); }
           else { try { M.pause(); } catch(e){} say(`${nm} 暂停了音乐`); }
         } },
       // 下一首（嫌弃切歌：角色觉得不好听/不符合心境，于是切歌）
@@ -1500,17 +1576,17 @@ window.bmMusicUI = (function () {
           const sayNext = dislike
             ? `${nm} 觉得这首歌不好听，于是切换了一首歌`
             : `${nm} 觉得这首歌不符合 TA 当前的心境，于是切换了一首歌`;
-          if (isRemote) { await _remoteAction({ bridge: 'next', local: () => M.next() }, (t) => say(t || sayNext)); }
+          if (isRemote) { await _remoteAction({ bridge: 'next', sayText: sayNext, local: () => M.next() }, (t) => say(t || sayNext)); }
           else { try { await M.next(); } catch(e) {} say(sayNext); }
         } },
       // 上一首
       { w: hasList && M.state.playlist.length > 1 ? 1 : 0, act: async () => {
-          if (isRemote) { await _remoteAction({ bridge: 'prev', local: () => M.prev() }, (t) => say(t || `${nm} 切换回上一首`)); }
+          if (isRemote) { await _remoteAction({ bridge: 'prev', sayText: `${nm} 切换回上一首`, local: () => M.prev() }, (t) => say(t || `${nm} 切换回上一首`)); }
           else { try { await M.prev(); } catch(e){} say(`${nm} 切换回上一首`); }
         } },
       // 盲抽一首（模式二：角色随机抽外部 App 歌单里的一首来放）
       { w: isRemote ? 3 : 0, act: async () => {
-          await _remoteAction({ bridge: 'next', local: async () => {
+          await _remoteAction({ bridge: 'next', sayText: `${nm} 随手抽了一首来听`, local: async () => {
             const lib = await M.getLocalLibrary();
             if (!lib.length) { const kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)]; const r = await M.search(kw); if (r && r.length) { const f = await M.fetchSongDetail(r[0]); if (f && f.url) { M.state.playlist = [f]; M.state.playIndex = 0; M.play(f); } } return; }
             const s = lib[Math.floor(Math.random() * lib.length)]; let f = s; if (!f.url) f = await M.fetchSongDetail(s); if (f && f.url) { M.state.playlist = [f]; M.state.playIndex = 0; M.play(f); }
@@ -2184,6 +2260,8 @@ window.bmMusicUI = (function () {
         b.disabled = false;              // 按钮永远可点
         b.title = isOn ? '当前模式' : '切换到「' + modeLabel(b.dataset.mode) + '」';
       });
+      // 20261106：切换模式立即落库，重进记住上次选的模式
+      M.saveSession();
       renderModePanel(mode);
     }
     function modeLabel(mode) {
@@ -2311,6 +2389,11 @@ window.bmMusicUI = (function () {
         return;
       }
       await M.addLocalTrack({ id: full.id, name: full.name, artist: full.artist, album: full.album, pic: full.pic, url: full.url, lrc: full.lrc, source: src });
+      // 20261106：收藏成功 → 图标放大回弹 + 粒子炸开
+      if (window.bmFx) {
+        const btn = overlay.querySelector('#bm-music-fav');
+        if (btn) window.bmFx.burst(btn.querySelector('svg') || btn, { color: '#f5c97b' });
+      }
       if (window.miniToast) miniToast(`《${full.name}》已加入音乐库`);
     };
     // 下载按钮：下载当前播放的歌曲音频
@@ -2548,6 +2631,22 @@ window.bmMusicUI = (function () {
     });
   }
 
+  /* 相对时间：把时间戳转成「x分钟前 / x小时前 / x天前 / 日期」短文案（历史播放用） */
+  function _relTime(ts) {
+    if (!ts) return '';
+    const diff = Date.now() - ts;
+    if (diff < 0) return '';
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return '刚刚';
+    if (m < 60) return m + '分钟前';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + '小时前';
+    const d = Math.floor(h / 24);
+    if (d < 7) return d + '天前';
+    const dt = new Date(ts);
+    return (dt.getMonth() + 1) + '月' + dt.getDate() + '日';
+  }
+
   function showPlaylist() {
     let panel = document.getElementById('bm-playlist-panel');
     if (panel) { panel.remove(); setListBtnOn(false); return; }
@@ -2560,134 +2659,156 @@ window.bmMusicUI = (function () {
     // 管理模式状态（本次打开期间，全选勾选集合）
     let manageMode = false;
     const selected = new Set();
+    // 当前 Tab：'now'（当前播放）/'history'（历史播放）
+    let tab = 'now';
+    // 来源标签（当前播放列表的来源）：镜像/本地/网易云直连/遥控
+    const srcLabel = (() => {
+      const m = M.state.mode;
+      if (_netEaseDirect) return '网易云 · 私人漫游';
+      if (m === 'remote') return '后台音乐 App';
+      if (m === 'local') return '本地与解析';
+      return '镜像搜索';
+    })();
     panel.innerHTML = `
       <div class="bm-playlist-mask" id="bm-playlist-mask"></div>
       <div class="bm-playlist-card">
+        <div class="bm-playlist-grip"></div>
         <div class="bm-playlist-head">
-          <span id="bm-playlist-title">播放列表（${list.length}）</span>
+          <div class="bm-playlist-tabs">
+            <span class="bm-playlist-tab on" data-tab="now">当前播放<span class="bm-playlist-count" id="bm-playlist-count">${list.length}</span></span>
+            <span class="bm-playlist-tab" data-tab="history">历史播放</span>
+          </div>
           <div class="bm-playlist-headbtns">
-            <button class="bm-playlist-manage" id="bm-playlist-manage">管理</button>
-            <button id="bm-playlist-close">✕</button>
+            <button class="bm-playlist-icon" id="bm-playlist-manage" title="管理">${window.icon ? window.icon('listview', 18) : '☰'}</button>
+            <button class="bm-playlist-icon" id="bm-playlist-trash" title="清空播放列表">${window.icon ? window.icon('trash', 18) : '🗑'}</button>
           </div>
         </div>
-        <div class="bm-playlist-body" id="bm-playlist-body">
-          ${list.length ? list.map((s, i) => `
-            <div class="bm-playlist-item ${i === M.state.playIndex ? 'on' : ''}" data-i="${i}">
-              <span class="bm-pl-check" style="display:none;"><input type="checkbox" data-i="${i}"></span>
-              <span class="bm-pl-index">${i + 1}</span>
-              ${s.pic ? `<span class="bm-pl-cover">${coverImgHTML(s.pic)}</span>` : ''}
-              <span class="bm-pl-name">${esc(s.name)}</span>
-              <span class="bm-pl-artist">${esc(s.artist || '')}</span>
-              <button class="bm-pl-fav" data-i="${i}" title="增加到音乐库">${window.icon ? window.icon('star', 15) : '☆'}</button>
-              <button class="bm-pl-del" data-i="${i}" title="从播放列表删除">${window.icon ? window.icon('close', 15) : '✕'}</button>
-            </div>`).join('') : '<div class="bm-music-empty">暂无播放列表，点搜索结果行的「+」添加</div>'}
+        <div class="bm-playlist-src" id="bm-playlist-src">来自：<b>${esc(srcLabel)}</b></div>
+        <div class="bm-playlist-body" id="bm-playlist-body"></div>
+        <div class="bm-playlist-tip">— 边听边推荐，越听越精准 —</div>
+        <div class="bm-playlist-foot" id="bm-playlist-foot">
+          <button class="bm-playlist-pill" id="bm-playlist-inf">∞ 无限播放</button>
+          <button class="bm-playlist-pill" id="bm-playlist-crossfade">智能过渡</button>
         </div>
-        <div class="bm-playlist-foot" id="bm-playlist-foot" style="display:none;">
+        <div class="bm-playlist-foot-manage" id="bm-playlist-foot-manage" style="display:none;">
           <button class="bm-playlist-selall" id="bm-playlist-selall">全选</button>
           <button class="bm-playlist-delall" id="bm-playlist-delall">删除所选</button>
         </div>
       </div>`;
     host.appendChild(panel);
 
-    // 关闭弹窗（仅点关闭按钮/遮罩/切歌时调用）——先播滑出动画，动画结束后再 remove（丝滑关闭）
+    // 关闭弹窗（点遮罩/下滑/切歌时调用）——先播滑出动画，动画结束后再 remove
     let closing = false;
     const close = () => {
       if (closing) return;
       closing = true;
       const card = panel.querySelector('.bm-playlist-card');
       const mask = panel.querySelector('.bm-playlist-mask');
-      // 遮罩淡出
       if (mask) { mask.style.transition = 'opacity .28s ease'; mask.style.opacity = '0'; }
       if (card) {
         card.classList.add('bm-playlist-closing');
         const onEnd = () => { panel.remove(); setListBtnOn(false); };
         card.addEventListener('animationend', onEnd, { once: true });
-        // 兜底：万一 animationend 不触发（极端情况），500ms 后强制移除
         setTimeout(() => { if (panel.parentNode) { panel.remove(); setListBtnOn(false); } }, 500);
       } else {
         panel.remove(); setListBtnOn(false);
       }
     };
+    // 渲染当前播放 Tab 的单行（照网易云：歌名 · 歌手 + 删除× + 拖动≡）
+    const nowRow = (s, i) => `
+      <div class="bm-playlist-item ${i === M.state.playIndex ? 'on' : ''}" data-i="${i}">
+        <span class="bm-pl-check" style="display:${manageMode ? 'inline-flex' : 'none'};"><input type="checkbox" data-i="${i}" ${selected.has(i) ? 'checked' : ''}></span>
+        <span class="bm-pl-playing"></span>
+        <span class="bm-pl-name">${esc(s.name)}</span>
+        ${s.artist ? `<span class="bm-pl-sep">·</span><span class="bm-pl-artist">${esc(s.artist)}</span>` : ''}
+        <button class="bm-pl-del" data-i="${i}" title="从列表移除">${window.icon ? window.icon('close', 14) : '×'}</button>
+        <button class="bm-pl-drag" data-i="${i}" title="下一首播放">≡</button>
+      </div>`;
+    // 渲染历史播放 Tab 的单行
+    const historyRow = (h, i) => `
+      <div class="bm-playlist-item" data-id="${esc(h.songId || '')}">
+        <span class="bm-pl-name">${esc(h.name || '')}</span>
+        ${h.artist ? `<span class="bm-pl-sep">·</span><span class="bm-pl-artist">${esc(h.artist)}</span>` : ''}
+        <span class="bm-pl-time">${_relTime(h.ts || 0)}</span>
+      </div>`;
     // 重渲染列表主体（操作后保持弹窗打开）
-    const rerender = () => {
+    const rerender = async () => {
       const body = panel.querySelector('#bm-playlist-body');
+      const count = panel.querySelector('#bm-playlist-count');
+      if (tab === 'history') {
+        const his = await getHistory('history');
+        const cur = his.sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 100);
+        if (count) count.textContent = cur.length;
+        body.innerHTML = cur.length ? cur.map(historyRow).join('') : '<div class="bm-music-empty">暂无播放历史</div>';
+        bindBody(body);
+        return;
+      }
       const cur = M.state.playlist || [];
-      const title = panel.querySelector('#bm-playlist-title');
-      if (title) title.textContent = `播放列表（${cur.length}）`;
-      body.innerHTML = cur.length ? cur.map((s, i) => `
-        <div class="bm-playlist-item ${i === M.state.playIndex ? 'on' : ''}" data-i="${i}">
-          <span class="bm-pl-check" style="display:${manageMode ? 'inline-flex' : 'none'};"><input type="checkbox" data-i="${i}" ${selected.has(i) ? 'checked' : ''}></span>
-          <span class="bm-pl-index">${i + 1}</span>
-          ${s.pic ? `<span class="bm-pl-cover">${coverImgHTML(s.pic)}</span>` : ''}
-          <span class="bm-pl-name">${esc(s.name)}</span>
-          <span class="bm-pl-artist">${esc(s.artist || '')}</span>
-          <button class="bm-pl-fav" data-i="${i}" title="增加到音乐库" style="display:${manageMode ? 'none' : 'inline-flex'};">${window.icon ? window.icon('star', 15) : '☆'}</button>
-          <button class="bm-pl-del" data-i="${i}" title="从播放列表删除" style="display:${manageMode ? 'none' : 'inline-flex'};">${window.icon ? window.icon('close', 15) : '✕'}</button>
-        </div>`).join('') : '<div class="bm-music-empty">暂无播放列表，点搜索结果行的「+」添加</div>';
+      if (count) count.textContent = cur.length;
+      body.innerHTML = cur.length ? cur.map(nowRow).join('') : '<div class="bm-music-empty">暂无播放列表，点搜索结果行的「+」添加</div>';
       bindBody(body);
     };
-    // 绑定列表主体事件（点击切歌 / 收藏到音乐库 / 删除 / 勾选）
+    // 绑定列表主体事件（点击切歌 / 删除 / 勾选）
     const bindBody = (body) => {
       body.querySelectorAll('.bm-playlist-item').forEach(el => {
         el.onclick = (e) => {
-          // 管理模式：点勾选框或整行都切换勾选，不切歌
-          if (manageMode) {
+          // 管理模式：整行切换勾选，不切歌
+          if (manageMode && tab === 'now') {
             const cb = el.querySelector('.bm-pl-check input');
             if (cb) { cb.checked = !cb.checked; onCheckToggle(cb); }
             return;
           }
-          if (e.target.closest('.bm-pl-fav') || e.target.closest('.bm-pl-del')) return;
+          if (e.target.closest('.bm-pl-del') || e.target.closest('.bm-pl-drag')) return;
+          if (tab === 'history') return;
           const i = parseInt(el.dataset.i, 10);
           M.state.playIndex = i;
-          M.playPrepared(i);   // 暂停/播放中都切歌（乐观播放，暂停状态也会重新开播）
-          close();
+          M.playPrepared(i);
+          rerender();   // 只更新高亮，不关闭（用户明确：选歌后列表保持存在）
         };
       });
       body.querySelectorAll('.bm-pl-check input').forEach(cb => {
         cb.onclick = (e) => { e.stopPropagation(); onCheckToggle(cb); };
       });
-      // 增加到音乐库按钮（直接收藏，不弹菜单）
-      body.querySelectorAll('.bm-pl-fav').forEach(btn => {
-        btn.onclick = async (e) => {
+      // 每行「三条杠」按钮：设为「下一首播放」（把这首插队到当前播放的下一首位置）
+      body.querySelectorAll('.bm-pl-drag').forEach(btn => {
+        btn.onclick = (e) => {
           e.stopPropagation();
           const i = parseInt(btn.dataset.i, 10);
-          const song = M.state.playlist[i];
-          if (!song) return;
-          try {
-            const full = (song.url) ? song : await M.fetchSongDetail(song);
-            if (!full || !full.id) { if (window.miniToast) miniToast('增加到音乐库失败'); return; }
-            let already = false;
-            try {
-              const lib = await M.getLocalLibrary('mirror');
-              already = (lib || []).some(x => String(x.id) === String(full.id));
-            } catch (e) {}
-            if (already) { if (window.miniToast) miniToast(`《${full.name}》已经在音乐库了`); return; }
-            await M.addLocalTrack({ id: full.id, name: full.name, artist: full.artist || '', album: full.album || '', pic: full.pic || '', url: full.url || '', lrc: full.lrc || '', source: 'mirror' });
-            if (window.miniToast) miniToast(`《${full.name}》已加入音乐库`);
-          } catch (err) { if (window.miniToast) miniToast('增加到音乐库失败'); }
+          const pl = M.state.playlist;
+          if (!pl[i]) return;
+          const cur = M.state.playIndex;
+          if (i === cur) { if (window.miniToast) miniToast('当前正在播放这首歌'); return; }
+          const [s] = pl.splice(i, 1);
+          let insertAt = cur + 1;
+          if (i < cur) insertAt = cur;
+          pl.splice(insertAt, 0, s);
+          M.state.playIndex = pl.indexOf(M.state.current);
+          if (M.state.playIndex < 0) M.state.playIndex = 0;
+          M.saveSession();
+          rerender();
+          if (window.miniToast) miniToast('已排到下一首播放');
         };
       });
-      // 删除按钮（直接从播放列表删除，不弹菜单）
+      // 每行「删除」按钮：从播放列表移除这一首
       body.querySelectorAll('.bm-pl-del').forEach(btn => {
         btn.onclick = (e) => {
           e.stopPropagation();
           const i = parseInt(btn.dataset.i, 10);
           const pl = M.state.playlist;
+          if (!pl[i]) return;
           const removed = pl[i];
-          if (!removed) return;
           pl.splice(i, 1);
-          // 若删的是当前播放的歌，跳到下一首（或上一首）
-          if (M.state.current && String(M.state.current.id) === String(removed.id)) {
-            M.state.playIndex = pl.length ? Math.min(i, pl.length - 1) : -1;
-            if (pl.length) M.play(pl[M.state.playIndex]); else { M.state.current = null; M.state.playing = false; try { const a = M.state.audio; if (a) { a.pause(); a.src = ''; } M.state.loadedId = null; } catch (e) {} }
+          const removedCurrent = M.state.current && String(M.state.current.id) === String(removed.id);
+          if (removedCurrent) {
+            if (pl.length) { M.state.playIndex = Math.min(i, pl.length - 1); M.playPrepared(M.state.playIndex); }
+            else { M.state.playIndex = -1; M.state.current = null; M.state.playing = false; try { const a = M.state.audio; if (a) { a.pause(); a.src = ''; } M.state.loadedId = null; } catch (e) {} }
           } else {
             M.state.playIndex = pl.indexOf(M.state.current);
             if (M.state.playIndex < 0) M.state.playIndex = pl.length ? 0 : -1;
           }
           M.saveSession();
-          if (!pl.length) { const p = document.getElementById('bm-playlist-panel'); if (p) p.remove(); setListBtnOn(false); }
-          else rerender();
-          if (window.miniToast) miniToast('已从播放列表删除');
+          rerender();
+          if (window.miniToast) miniToast('已从列表移除');
         };
       });
     };
@@ -2704,21 +2825,78 @@ window.bmMusicUI = (function () {
       const cur = M.state.playlist || [];
       if (selAll) selAll.textContent = (selected.size === cur.length && cur.length) ? '取消全选' : '全选';
     };
-    // 管理模式下隐藏 index 序号、显勾选框
-    panel.querySelector('#bm-playlist-close').onclick = close;
+    // 切换 Tab（当前播放 / 历史播放）
+    const switchTab = async (t) => {
+      tab = t;
+      manageMode = false;
+      selected.clear();
+      panel.querySelectorAll('.bm-playlist-tab').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
+      panel.querySelector('#bm-playlist-foot-manage').style.display = 'none';
+      panel.querySelector('#bm-playlist-foot').style.display = (t === 'now') ? 'flex' : 'none';
+      panel.querySelector('#bm-playlist-src').style.display = (t === 'now') ? 'block' : 'none';
+      await rerender();
+    };
     panel.querySelector('#bm-playlist-mask').onclick = close;
-    bindBody(panel.querySelector('#bm-playlist-body'));
-
-    // 管理按钮：进入/退出批量管理模式
+    panel.querySelectorAll('.bm-playlist-tab').forEach(t => {
+      t.onclick = () => switchTab(t.dataset.tab);
+    });
+    // 下拉把手：点击或向下拖动关闭
+    const grip = panel.querySelector('.bm-playlist-grip');
+    if (grip) {
+      let gStartY = null;
+      grip.onpointerdown = (e) => { gStartY = e.clientY; };
+      grip.onpointerup = (e) => { if (gStartY !== null && e.clientY - gStartY > 24) close(); gStartY = null; };
+    }
+    // 垃圾桶按钮：一键清空播放列表
+    panel.querySelector('#bm-playlist-trash').onclick = () => {
+      if (!M.state.playlist.length) { if (window.miniToast) miniToast('播放列表已是空的'); return; }
+      if (!window.confirm) { M.state.playlist = []; M.state.playIndex = -1; M.state.current = null; M.state.playing = false; try { const a = M.state.audio; if (a) { a.pause(); a.src = ''; } M.state.loadedId = null; } catch (e) {} M.saveSession(); rerender(); return; }
+      if (window.confirm('确定清空整个播放列表？')) {
+        M.state.playlist = []; M.state.playIndex = -1; M.state.current = null; M.state.playing = false;
+        try { const a = M.state.audio; if (a) { a.pause(); a.src = ''; } M.state.loadedId = null; } catch (e) {}
+        M.saveSession(); rerender();
+      }
+    };
+    // 无限播放：绑定真实播放模式——开=列表循环(order)，关=播完即停(once)。
+    //   单曲循环(one)/随机(shuffle)由悬浮窗循环按钮控制，这里只在 order/once 之间切换。
+    const infBtn = panel.querySelector('#bm-playlist-inf');
+    const _syncInf = () => {
+      if (!infBtn) return;
+      const loop = (M.state.playMode === 'order') || (M.state.playMode === 'shuffle');
+      infBtn.classList.toggle('on', loop);
+    };
+    _syncInf();
+    if (infBtn) infBtn.onclick = () => {
+      const loop = (M.state.playMode === 'order') || (M.state.playMode === 'shuffle');
+      // 开启 → 列表循环；关闭 → 播完即停
+      M.state.playMode = loop ? 'once' : 'order';
+      M.saveSession();
+      _syncInf();
+      if (typeof updateCtrlState === 'function') updateCtrlState();
+      if (window.miniToast) miniToast(loop ? '已关闭无限播放' : '已开启无限播放（列表循环）');
+    };
+    // 智能过渡：交叉淡入淡出开关
+    const fadeBtn = panel.querySelector('#bm-playlist-crossfade');
+    if (fadeBtn) fadeBtn.classList.toggle('on', !!M.state.crossfade);
+    if (fadeBtn) fadeBtn.onclick = () => {
+      M.state.crossfade = !M.state.crossfade;
+      M.saveSession();
+      fadeBtn.classList.toggle('on', !!M.state.crossfade);
+      if (window.miniToast) miniToast(M.state.crossfade ? '已开启智能过渡（歌曲间淡入淡出）' : '已关闭智能过渡');
+    };
+    // 管理按钮：进入/退出批量管理模式（仅「当前播放」Tab）
     const manageBtn = panel.querySelector('#bm-playlist-manage');
     if (manageBtn) {
       manageBtn.onclick = (e) => {
         e.stopPropagation();
+        if (tab !== 'now') return;
         manageMode = !manageMode;
         selected.clear();
-        const foot = panel.querySelector('#bm-playlist-foot');
+        const foot = panel.querySelector('#bm-playlist-foot-manage');
+        const footNormal = panel.querySelector('#bm-playlist-foot');
         foot.style.display = manageMode ? 'flex' : 'none';
-        manageBtn.textContent = manageMode ? '完成' : '管理';
+        footNormal.style.display = manageMode ? 'none' : 'flex';
+        manageBtn.classList.toggle('on', manageMode);
         updateFoot();
         rerender();
       };
@@ -2744,7 +2922,7 @@ window.bmMusicUI = (function () {
       delAll.onclick = () => {
         if (!selected.size) { if (window.miniToast) miniToast('请先勾选要删除的歌曲'); return; }
         const pl = M.state.playlist;
-        const idxs = Array.from(selected).sort((a, b) => b - a); // 从后往前删，避免下标错位
+        const idxs = Array.from(selected).sort((a, b) => b - a);
         const removedIds = idxs.map(i => pl[i] && pl[i].id);
         const removedCurrent = removedIds.some(id => M.state.current && String(M.state.current.id) === String(id));
         for (const i of idxs) pl.splice(i, 1);
@@ -2763,6 +2941,7 @@ window.bmMusicUI = (function () {
         if (window.miniToast) miniToast(`已删除 ${idxs.length} 首`);
       };
     }
+    rerender();
     setListBtnOn(true);
   }
 
@@ -3062,6 +3241,8 @@ window.bmMusicUI = (function () {
         await M.addLocalTrack({ id: full.id, name: full.name, artist: full.artist, album: full.album, pic: full.pic, url: full.url, lrc: full.lrc, source: 'mirror' });
         b.classList.add('on');
         setTimeout(() => b.classList.remove('on'), 600);
+        // 20261106：收藏成功 → 粒子炸开
+        if (window.bmFx) window.bmFx.burst(b.querySelector('svg') || b, { color: '#f5c97b' });
         if (window.miniToast) miniToast('已收藏到音乐库');
       };
     });
@@ -3601,6 +3782,11 @@ window.bmMusicUI = (function () {
     const modeBtn = box.querySelector('#bm-remote-mode-btn');
     if (modeBtn) modeBtn.onclick = async (e) => {
       e.stopPropagation();
+      // 20261106：切换时旋钮弹性拉伸（拉长成胶囊→回弹）
+      if (window.bmFx) {
+        const knob = modeBtn.querySelector('.bm-remote-mode-knob');
+        if (knob) window.bmFx.elasticKnob(knob, 'left');
+      }
       await _netEaseSetDirect(!_netEaseDirect);
       renderRemotePanel(box);
     };
@@ -3783,47 +3969,45 @@ window.bmMusicUI = (function () {
       if (bridge && bridge.setTarget) { try { bridge.setTarget(_remoteTargetApp); } catch (err) {} }
       renderRemotePanel(box);
     };
-    // 盲抽：真机走原生插件盲切（发 next 给外部 App），否则本地曲库盲抽
+    // 盲抽：真机走原生插件盲切（发 next 给外部 App）。网页端无插件时禁止 fallback 到镜像搜索/本地曲库。
     box.querySelector('#bm-remote-blind').onclick = async () => {
-      if (bridge && bridge.next) {
+      // 20261106：后台遥控（盲抽/每日推荐/漫游/播放当前这首）专给 App 端操控后台音乐 App 用；
+      //   网页端没有原生插件（bridge），不能落回镜像搜索/本地解析播放——直接提示不可用。
+      if (!bridge) { if (window.miniToast) miniToast('「盲抽一首」需 App 端操控后台音乐 App（网页端不可用）'); return; }
+      if (bridge.next) {
         try { await bridge.next(); } catch (e) { if (window.miniToast) miniToast('原生遥控指令失败'); }
         // 20261105：遥控外部 App 盲抽切歌后，同步本地播放态，驱动星球律动/水波纹动效
         M.state.playing = true;
         renderRemotePanel(box);
         return;
       }
-      // 本地模拟：从本地收藏曲库盲抽
-      const lib = await M.getLocalLibrary();
-      if (!lib.length) {
-        const kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)];
-        const res = await M.search(kw);
-        if (!res || !res.length) { if (window.miniToast) miniToast('没找到可播的歌'); return; }
-        const s = res[Math.floor(Math.random() * res.length)];
-        const full = await M.fetchSongDetail(s);
-        if (!full || !full.url) { if (window.miniToast) miniToast('未获取到播放直链'); return; }
-        M.state.playlist = [full]; M.state.playIndex = 0; M.play(full);
-      } else {
-        const s = lib[Math.floor(Math.random() * lib.length)];
-        let full = s;
-        if (!full.url) full = await M.fetchSongDetail(s);
-        if (!full || !full.url) { if (window.miniToast) miniToast('未获取到播放直链'); return; }
-        M.state.playlist = [full]; M.state.playIndex = 0; M.play(full);
-      }
+      if (window.miniToast) miniToast('原生插件暂不支持盲切');
       renderRemotePanel(box);
     };
-    // 每日推荐：点它播放每日推荐歌单（后台发指令 / 本地搜歌整批播）
+    // 每日推荐：点它操控后台网易云播放每日推荐歌单（专给 App 端）
     box.querySelector('#bm-remote-daily').onclick = async () => {
-      await _dailyRecommend(null);
+      // 20261106：网页端无插件不可用，不落回镜像搜索。
+      if (!bridge) { if (window.miniToast) miniToast('「每日推荐」需 App 端操控后台网易云（网页端不可用）'); return; }
+      // 原生插件暂未提供「每日推荐歌单」专用指令，先提示（待原生层补指令）
+      if (window.miniToast) miniToast('「每日推荐」需原生插件支持（暂未实现）');
       renderRemotePanel(box);
     };
-    // 漫游：点它开启随机漫游（后台发指令 / 本地随机风格搜歌洗牌播）
+    // 漫游：点它操控后台网易云开启漫游模式（专给 App 端）
     box.querySelector('#bm-remote-roam').onclick = async () => {
-      await _roamPlay(null);
+      // 20261106：网页端无插件不可用，不落回镜像搜索。
+      if (!bridge) { if (window.miniToast) miniToast('「漫游」需 App 端操控后台网易云（网页端不可用）'); return; }
+      // 原生插件暂未提供「漫游模式」专用指令，先提示（待原生层补指令）
+      if (window.miniToast) miniToast('「漫游」需原生插件支持（暂未实现）');
       renderRemotePanel(box);
     };
-    // 播放当前这首：真机有插件时读正在播的 title/artist，搜同款播放；无插件降级提示
+    // 播放当前这首：真机有插件时读正在播的 title/artist，搜同款播放；网页端无插件提示仅 App 端可用
     box.querySelector('#bm-remote-readnow').onclick = async () => {
-      if (bridge && typeof bridge.getMediaState === 'function') {
+      // 20261106：网页端无插件不可用，不落回镜像搜索。
+      if (!bridge || typeof bridge.getMediaState !== 'function') {
+        if (window.miniToast) miniToast('「播放当前这首」需 App 端读取后台音乐 App（网页端不可用）');
+        return;
+      }
+      {
         let st = null;
         try { st = await bridge.getMediaState(); } catch (e) {}
         if (!st || !st.hasSession) { if (window.miniToast) miniToast('外部 App 暂无活跃播放会话'); renderRemotePanel(box); return; }
@@ -3858,9 +4042,6 @@ window.bmMusicUI = (function () {
         renderRemotePanel(box);
         return;
       }
-      // 无插件（Web 演示）：提示需要真机插件
-      if (window.miniToast) miniToast('读取外部 App 当前歌曲需真机原生插件（当前为 Web 演示）');
-      renderRemotePanel(box);
     };
   }
 
@@ -4909,6 +5090,33 @@ window.bmMusicUI = (function () {
     }
     // 悬浮窗同步
     renderFloat();
+    // 20261106：后台遥控模式下，异步用外部 App 真实歌信息覆盖播放器圆盘/标题
+    _refreshExternalIntoPlayerUI();
+  }
+
+  /* 20261106 修复「后台遥控时播放器圆盘封面/标题不替换」：
+     后台遥控模式（mode==='remote' 且未开直连）下，真正在播的是外部 App 的歌，
+     M.state.current 是内部残留旧歌，导致播放器圆盘封面/标题/歌词显示错误。
+     这里用原生 getMediaState() 读外部真实 title/artist/cover，覆盖到播放器圆盘与标题。
+     歌词：外部 MediaSession 拿不到逐句歌词，圆盘歌词区显示「后台播放中」占位。 */
+  async function _refreshExternalIntoPlayerUI() {
+    if (!((M.state.mode === 'remote') && !_netEaseDirect)) return;
+    try {
+      const br = _remoteBridge();
+      if (!br || typeof br.getMediaState !== 'function') return;
+      const st = await br.getMediaState();
+      if (!st || !st.hasSession) return;
+      const title2 = document.getElementById('bm-music-title2');
+      const artist = document.getElementById('bm-music-artist');
+      if (title2) title2.textContent = (st.title || '').trim() || '未知歌曲';
+      if (artist) artist.textContent = (st.artist || '').trim() || '未知歌手';
+      const core = document.getElementById('bm-planet-core');
+      if (core && st.cover && typeof st.cover === 'string' && st.cover) {
+        core.style.backgroundImage = `url("${String(st.cover).replace(/"/g, '\\"')}")`;
+        core.innerHTML = '';
+        core.classList.add('has-pic');
+      }
+    } catch (e) {}
   }
 
   let _lyricRaf = null;
@@ -5038,7 +5246,28 @@ window.bmMusicUI = (function () {
     const a = M.state.audio;
     const c = currentChar();
     const together = !!M.state.charId && !!M.state.togetherSince;
-    const song = cur || {};
+    let song = cur || {};
+    // 20261106 修复「后台遥控/网易云直连时悬浮窗封面歌词不替换」：
+    //   后台遥控模式（mode==='remote' 且未开直连）下，真正在播的是外部 App 的歌，
+    //   M.state.current 是内部残留旧歌。这里用原生 getMediaState() 读外部真实
+    //   title/artist/cover，覆盖到悬浮窗，让悬浮窗显示后台正在播的那首。
+    if ((M.state.mode === 'remote') && !_netEaseDirect) {
+      try {
+        const br = _remoteBridge();
+        if (br && typeof br.getMediaState === 'function') {
+          const st = await br.getMediaState();
+          if (st && st.hasSession) {
+            song = {
+              name: (st.title || '').trim() || song.name || '未知歌曲',
+              artist: (st.artist || '').trim() || song.artist || '未知歌手',
+              pic: (st.cover && typeof st.cover === 'string' && st.cover) ? st.cover : (song.pic || ''),
+              url: song.url || '',
+              lrc: song.lrc || '',
+            };
+          }
+        }
+      } catch (e) {}
+    }
     // 当前句歌词（解析 LRC 后取当前高亮句）
     let curLyric = '';
     let lyricLines = [];
@@ -5239,9 +5468,37 @@ window.bmMusicUI = (function () {
     _nativeFloatBound = true;
     const p = window.Capacitor.Plugins.BmMusicFloat;
     const reg = (ev, fn) => { try { p.addListener(ev, fn); } catch (e) {} };
-    reg('onToggle', () => { M.toggle(); refreshPlayerUI(); });
-    reg('onPrev', () => { M.prev(); refreshPlayerUI(); });
-    reg('onNext', () => { M.next(); refreshPlayerUI(); });
+    // 20261106 修复「后台遥控模式下悬浮窗播放/暂停/切歌仍操控内置播放器」：
+    //   悬浮窗按钮回调此前直接调 M.toggle()/M.prev()/M.next()（内置），未走 remote 分发。
+    //   现统一走 _remoteAction：后台遥控模式（mode==='remote' 且未开直连）发指令给外部 App，
+    //   否则回落到内置播放器。与音乐页控制键 _ppToggle / _isRemoteMode 判断保持一致。
+    const _remoteToggle = () => {
+      if ((M.state.mode === 'remote') && !_netEaseDirect) {
+        _remoteAction({ bridge: 'toggle', local: () => M.toggle() }, null);
+      } else {
+        M.toggle();
+      }
+      refreshPlayerUI();
+    };
+    const _remotePrev = () => {
+      if ((M.state.mode === 'remote') && !_netEaseDirect) {
+        _remoteAction({ bridge: 'prev', local: () => M.prev() }, null);
+      } else {
+        M.prev();
+      }
+      refreshPlayerUI();
+    };
+    const _remoteNext = () => {
+      if ((M.state.mode === 'remote') && !_netEaseDirect) {
+        _remoteAction({ bridge: 'next', local: () => M.next() }, null);
+      } else {
+        M.next();
+      }
+      refreshPlayerUI();
+    };
+    reg('onToggle', _remoteToggle);
+    reg('onPrev', _remotePrev);
+    reg('onNext', _remoteNext);
     reg('onSeek', (info) => {
       try {
         const a = M.state.audio;
@@ -5605,7 +5862,9 @@ window.bmMusicUI = (function () {
     const fmBtn = fw.querySelector('#bm-float-mode');
     if (fmBtn) fmBtn.onclick = (e) => { e.stopPropagation(); M.cyclePlayMode(); updateCtrlState(); };
     const flBtn = fw.querySelector('#bm-float-list');
-    if (flBtn) flBtn.onclick = (e) => { e.stopPropagation(); showFloatMiniList(flBtn); };
+    // 20261106：悬浮窗「播放列表」按钮改为打开软件内部同一个完整播放列表面板（底部半屏、网易云样式），
+    //   与音乐页点「播放列表」完全一致，不再是那个小的 showFloatMiniList 迷你列表。
+    if (flBtn) flBtn.onclick = (e) => { e.stopPropagation(); showPlaylist(); };
     // 20261104：三级悬浮窗（card）播放进度条——可拖动 seek + 实时显示当前/总时长
     const fprog = fw.querySelector('#bm-float-progress-slider');
     if (fprog) {

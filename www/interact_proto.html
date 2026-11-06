@@ -27,6 +27,8 @@
     --btn-grad-b:#45b19b;
     --card-bg:rgba(255,255,255,.66);
     --shadow-color:rgba(91,194,173,.16);
+    /* 20261106 毛玻璃遮罩色：浅色主题用白色半透明遮罩（配合 backdrop-filter blur 融入背景） */
+    --glass-mask:rgba(255,255,255,.22);
   }
   /* 黑苦巧：暖褐深咖（原暖棕，改为主项目黑苦巧深色预设） */
   body.theme-choco{
@@ -37,6 +39,7 @@
     --phone-grad-a:#38312b; --phone-grad-b:#251f1a;
     --btn-grad-a:#a89486; --btn-grad-b:#7a6a5c;
     --card-bg:rgba(255,255,255,.08); --shadow-color:rgba(0,0,0,.4);
+    --glass-mask:rgba(0,0,0,.22);
   }
   /* 南瓜拿铁：回滚为之前暖棕浅色版（米白底 + 深棕字 + 鼠尾草绿强调） */
   body.theme-pumpkin{
@@ -66,6 +69,7 @@
     --phone-grad-a:#1b1920; --phone-grad-b:#1e1b24;
     --btn-grad-a:#8b6fe8; --btn-grad-b:#5b4a8a;
     --card-bg:rgba(30,27,36,.72); --shadow-color:rgba(0,0,0,.4);
+    --glass-mask:rgba(0,0,0,.22);
   }
   body.theme-sakura{
     --bg:#fbf0f2; --ink:#5a4048; --ink2:#b09098; --line:rgba(220,140,160,.24);
@@ -121,6 +125,7 @@
     --phone-grad-a:#331014; --phone-grad-b:#22090c;
     --btn-grad-a:#c03040; --btn-grad-b:#8a1018;
     --card-bg:rgba(60,20,24,.72); --shadow-color:rgba(0,0,0,.4);
+    --glass-mask:rgba(0,0,0,.22);
   }
   body.theme-gray{
     --bg:#29292b; --ink:#f0f0f2; --ink2:#a8a8ad; --line:rgba(168,168,173,.3);
@@ -130,6 +135,7 @@
     --phone-grad-a:#303032; --phone-grad-b:#242426;
     --btn-grad-a:#a8a8ad; --btn-grad-b:#5a5a5e;
     --card-bg:rgba(60,60,62,.72); --shadow-color:rgba(0,0,0,.4);
+    --glass-mask:rgba(0,0,0,.22);
   }
   body.theme-red{
     --bg:#faf1f1; --ink:#5a2a28; --ink2:#b08a88; --line:rgba(192,57,43,.22);
@@ -204,7 +210,8 @@
   .duration-rows{position:relative;z-index:3;display:flex;flex-direction:column;gap:10px;padding:14px 0 2px;align-items:center;}
   .dur-row{display:flex;align-items:center;gap:14px;}
   .dur-row .lbl{font-size:14px;color:var(--ink);min-width:52px;text-align:right;}
-  .dur-row .val{font-size:14px;color:var(--main-deep);font-weight:700;min-width:60px;text-align:center;font-variant-numeric:tabular-nums;}
+  .dur-row .val{font-size:14px;color:var(--main-deep);font-weight:700;min-width:60px;text-align:center;font-variant-numeric:tabular-nums;cursor:pointer;padding:6px 8px;border-radius:10px;border:1.5px dashed transparent;transition:border-color .15s,background .15s;}
+  .dur-row .val:active{background:var(--lav);border-color:var(--main);}
   .circ-btn{width:38px;height:38px;border-radius:50%;background:var(--card-bg);border:1px solid var(--line);color:var(--ink);font-size:19px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .15s cubic-bezier(.34,1.56,.64,1), background .2s;}
   .circ-btn:active{transform:scale(.9);background:var(--lav);}
 
@@ -244,6 +251,19 @@
   }
   .switch-toggle__btn svg{width:16px;height:16px;}
   .switch-toggle[data-on='true'] .switch-toggle__btn{background:var(--main);color:#fff;border-color:var(--main);}
+  /* 20261106：铃铛点击摇摆动画——点击开关时铃铛图标左右摇摆一下（transform-origin 在铃铛顶部挂点） */
+  .switch-toggle__btn svg{transform-origin:50% 0%;will-change:transform;}
+  .switch-toggle__btn.bell-swing svg{animation:bell-swing .6s cubic-bezier(.36,.07,.19,.97);}
+  @keyframes bell-swing{
+    0%{transform:rotate(0);}
+    15%{transform:rotate(22deg);}
+    30%{transform:rotate(-16deg);}
+    45%{transform:rotate(11deg);}
+    60%{transform:rotate(-7deg);}
+    75%{transform:rotate(4deg);}
+    88%{transform:rotate(-2deg);}
+    100%{transform:rotate(0);}
+  }
 
   /* 加号选角色按钮 */
   .add-char{
@@ -378,14 +398,20 @@
   /* 互动消息小圆片弹窗（留白区） */
   .cv-bubbles{flex:1;width:100%;position:relative;margin-top:10px;}
   .cv-bubble{
-    position:absolute;max-width:78%;padding:10px 16px;border-radius:18px;background:var(--card-bg);
-    border:1px solid var(--line);color:var(--ink);font-size:13px;line-height:1.5;
+    position:absolute;max-width:78%;padding:10px 16px;border-radius:18px;
+    /* 20261106 毛玻璃遮罩：不用实色卡片，改为半透明遮罩 + 背景模糊，去掉硬边框，与背景融为一体 */
+    background:var(--glass-mask,rgba(255,255,255,.18));
+    -webkit-backdrop-filter:blur(22px) saturate(1.3);backdrop-filter:blur(22px) saturate(1.3);
+    border:0;color:var(--ink);font-size:13px;line-height:1.5;
     box-shadow:0 4px 14px var(--shadow-color);animation:bubbleIn .5s cubic-bezier(.34,1.56,.64,1) both;
   }
   @keyframes bubbleIn{from{opacity:0;transform:translateY(12px) scale(.9);}to{opacity:1;transform:translateY(0) scale(1);}}
   /* 白噪音播放按钮（清屏页） */
   .cv-noise-btn{
-    width:100%;height:50px;border-radius:25px;border:1px solid var(--line);background:var(--card-bg);
+    width:100%;height:50px;border-radius:25px;border:0;
+    /* 20261106 毛玻璃遮罩：半透明遮罩 + 背景模糊，去掉卡片边框 */
+    background:var(--glass-mask,rgba(255,255,255,.18));
+    -webkit-backdrop-filter:blur(22px) saturate(1.3);backdrop-filter:blur(22px) saturate(1.3);
     color:var(--ink);font-size:15px;font-weight:600;letter-spacing:1px;cursor:pointer;margin-top:16px;
   }
   /* 白噪音选择弹窗（居中，九宫格方块勾选） */
@@ -422,6 +448,45 @@
     color:var(--ink);font-size:14px;font-weight:600;cursor:pointer;
   }
   .noise-actions button.primary{background:var(--main);color:#fff;border-color:var(--main);}
+  /* 20261106 时长轮盘选择弹窗（闹钟式滚轮：小时+分钟） */
+  .wheel-sheet{position:fixed;inset:0;z-index:140;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.4);padding:20px;}
+  .wheel-sheet.show{display:flex;}
+  .wheel-sheet .sheet{
+    width:100%;max-width:360px;background:var(--phone-grad-a);border-radius:24px;padding:22px 20px 24px;
+    box-shadow:0 16px 40px rgba(0,0,0,.28);
+  }
+  .wheel-sheet h4{margin:0 0 4px;font-size:17px;color:var(--ink);text-align:center;}
+  .wheel-sheet .sub{font-size:12px;color:var(--ink2);margin-bottom:14px;text-align:center;}
+  .wheel-body{display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 0 2px;}
+  .wheel-col{display:flex;flex-direction:column;align-items:center;gap:6px;}
+  .wheel-col-label{font-size:12px;color:var(--ink2);}
+  .wheel-scroll{
+    position:relative;width:96px;height:168px;overflow-y:auto;overflow-x:hidden;
+    scrollbar-width:none;-ms-overflow-style:none;
+    border-radius:14px;background:var(--card-bg);border:1.5px solid var(--line);
+    -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 22%,#000 78%,transparent 100%);
+    mask-image:linear-gradient(180deg,transparent 0,#000 22%,#000 78%,transparent 100%);
+  }
+  .wheel-scroll::-webkit-scrollbar{display:none;}
+  /* 上下留白，让首尾项也能滚到中间高亮带 */
+  .wheel-scroll::after{content:'';display:block;height:67px;}
+  .wheel-scroll::before{
+    content:'';position:sticky;top:50%;display:block;height:34px;margin:-17px 6px -34px;
+    border-radius:9px;background:var(--main-soft, rgba(167,139,250,.18));
+    border-top:1px solid var(--main);border-bottom:1px solid var(--main);pointer-events:none;z-index:1;
+  }
+  .wheel-item{
+    height:34px;display:flex;align-items:center;justify-content:center;
+    font-size:20px;font-weight:600;color:var(--ink2);cursor:pointer;
+    -webkit-tap-highlight-color:transparent;transition:color .15s, font-size .15s;
+  }
+  .wheel-item.sel{color:var(--ink);font-size:23px;font-weight:700;}
+  .wheel-actions{display:flex;gap:10px;margin-top:18px;}
+  .wheel-actions button{
+    flex:1;height:44px;border-radius:22px;border:1px solid var(--line);background:var(--card-bg);
+    color:var(--ink);font-size:14px;font-weight:600;cursor:pointer;
+  }
+  .wheel-actions button.primary{background:var(--main);color:#fff;border-color:var(--main);}
   /* 新建文件夹弹窗（居中，输入框） */
   .nfold-sheet{position:fixed;inset:0;z-index:130;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.4);padding:20px;}
   .nfold-sheet.show{display:flex;}
@@ -438,7 +503,10 @@
   .nfold-sheet .nfold-input:focus{border-color:var(--main);}
   .nfold-sheet .nfold-input::placeholder{color:var(--ink2);}
   .cv-exit{
-    width:100%;height:50px;border-radius:25px;border:1px solid var(--line);background:var(--card-bg);
+    width:100%;height:50px;border-radius:25px;border:0;
+    /* 20261106 毛玻璃遮罩：半透明遮罩 + 背景模糊，去掉卡片边框 */
+    background:var(--glass-mask,rgba(255,255,255,.18));
+    -webkit-backdrop-filter:blur(22px) saturate(1.3);backdrop-filter:blur(22px) saturate(1.3);
     color:var(--ink);font-size:15px;font-weight:600;letter-spacing:2px;cursor:pointer;margin-top:18px;
   }
 
@@ -924,6 +992,29 @@
   </div>
 </div>
 
+<!-- 20261106 专注/休息时长轮盘选择弹窗（闹钟式滚轮：小时 + 分钟） -->
+<div class="wheel-sheet" id="wheelSheet">
+  <div class="sheet">
+    <h4 id="wheelTitle">设置专注时长</h4>
+    <div class="sub" id="wheelSub">滑动滚轮选择小时与分钟</div>
+    <div class="wheel-body">
+      <div class="wheel-col">
+        <div class="wheel-col-label">小时</div>
+        <div class="wheel-scroll" id="wheelHour"></div>
+      </div>
+      <div class="wheel-sep">:</div>
+      <div class="wheel-col">
+        <div class="wheel-col-label">分钟</div>
+        <div class="wheel-scroll" id="wheelMin"></div>
+      </div>
+    </div>
+    <div class="wheel-actions">
+      <button id="wheelCancel">取消</button>
+      <button class="primary" id="wheelDone">确定</button>
+    </div>
+  </div>
+</div>
+
 <!-- 待办选择层 -->
 <div class="todo-sheet" id="todoSheet">
   <div class="sheet">
@@ -1236,6 +1327,14 @@ function createSwitchToggle(el, opts={}){
       el.dataset.on = on ? 'true' : 'false';
       render();
       if(opts.onChange) opts.onChange(on);
+      // 20261106：点击时铃铛摇摆一下（小交互动画）
+      const btn = el.querySelector('button');
+      if (btn) {
+        btn.classList.remove('bell-swing');
+        void btn.offsetWidth;              // 强制重排，让动画可重复触发
+        btn.classList.add('bell-swing');
+        btn.addEventListener('animationend', () => btn.classList.remove('bell-swing'), { once: true });
+      }
     });
   }
   render();
@@ -1290,6 +1389,9 @@ function updateCompanionSub(){
 
 // 锁机开关（顶部栏，用锁形图标）
 const lockBtn = document.getElementById('lockBtn');
+// 20261106：记录用户是否「手动」动过锁机开关。手动动过就永远以用户的手动选择为准，
+//   不再被 openClearView() 里的 defaultLockOn 覆盖（否则「点开锁机→开始专注→退出锁机按钮消失」）。
+let lockManuallySet = false;
 function renderLockBtn(){
   lockBtn.innerHTML = lockOn ? ICONS.lockOpen : ICONS.lock;
   lockBtn.classList.toggle('on', lockOn);
@@ -1299,10 +1401,10 @@ lockBtn.onclick = ()=>{
   // 20261104：点锁机开关时申请「使用情况访问」权限（PACKAGE_USAGE_STATS），未授权引导跳设置页
   if(!lockOn){
     requestLockPermission(() => {
-      lockOn = true; renderLockBtn();
+      lockOn = true; lockManuallySet = true; renderLockBtn();
     });
   } else {
-    lockOn = false; renderLockBtn();
+    lockOn = false; lockManuallySet = true; renderLockBtn();
   }
 };
 renderLockBtn();
@@ -1361,6 +1463,107 @@ document.querySelectorAll('.circ-btn').forEach(btn=>{
 });
 document.getElementById('roundMinus').onclick = ()=>{ round=Math.max(1,round-1); refreshDisplay(); };
 document.getElementById('roundPlus').onclick = ()=>{ round=Math.min(12,round+1); refreshDisplay(); };
+
+/* ============ 20261106 时长轮盘选择器（闹钟式滚轮：小时+分钟） ============ */
+/* 点专注/休息的数字 → 弹轮盘弹窗；弹窗内上下滚动选小时/分钟，中间高亮带为选中值 */
+let _wheelTarget = null;   // 'focus' | 'break'
+let _wheelHour = 0, _wheelMin = 0;  // 弹窗当前选中的小时/分钟
+
+function openWheel(target){
+  _wheelTarget = target;
+  const totalMin = target === 'focus' ? focusMin : breakMin;
+  _wheelHour = Math.floor(totalMin / 60);
+  _wheelMin = totalMin % 60;
+  document.getElementById('wheelTitle').textContent = target === 'focus' ? '设置专注时长' : '设置休息时长';
+  const hourScroll = document.getElementById('wheelHour');
+  const minScroll = document.getElementById('wheelMin');
+  // 小时：0~6（专注最多 6 小时，休息最多 0 小时——休息通常 <1h，但保留 0~6 通用）
+  // 分钟：0~59，5 分钟步进（闹钟式常用 5 分钟刻度）
+  buildWheel(hourScroll, 0, 6, _wheelHour, (v)=>{ _wheelHour = v; });
+  buildWheel(minScroll, 0, 59, _wheelMin, (v)=>{ _wheelMin = v; }, 5);
+  document.getElementById('wheelSheet').classList.add('show');
+}
+
+/* 构建一个滚轮：start~end 范围，current 当前值，onPick 回调，step 步进（默认 1） */
+function buildWheel(el, start, end, current, onPick, step = 1){
+  el.innerHTML = '';
+  const items = [];
+  for (let v = start; v <= end; v += step) items.push(v);
+  // 当前值不在步进刻度上时，就近对齐
+  let sel = current;
+  let nearest = items.reduce((a,b)=> Math.abs(b-current) < Math.abs(a-current) ? b : a);
+  sel = nearest;
+  if (onPick) onPick(sel);   // 回写对齐后的值
+  el._items = items;
+  el._sel = sel;
+  el._onPick = onPick;
+  el._step = step;
+  items.forEach(v => {
+    const it = document.createElement('div');
+    it.className = 'wheel-item' + (v === sel ? ' sel' : '');
+    it.textContent = String(v).padStart(2, '0');
+    it.addEventListener('click', ()=> scrollToValue(el, v));
+    el.appendChild(it);
+  });
+  // 初始滚动到选中项居中
+  requestAnimationFrame(()=> scrollToValue(el, sel, true));
+}
+
+/* 滚动到指定值，并高亮中间项 */
+function scrollToValue(el, value, immediate = false){
+  const items = el._items || [];
+  const idx = items.indexOf(value);
+  if (idx < 0) return;
+  el._sel = value;
+  if (el._onPick) el._onPick(value);
+  // 高亮
+  el.querySelectorAll('.wheel-item').forEach((it, i)=> it.classList.toggle('sel', i === idx));
+  // 居中：把该项滚到容器中间（item 高 34px，容器高 168px）
+  const itemH = 34, containerH = el.clientHeight || 168;
+  const targetY = idx * itemH - (containerH / 2) + (itemH / 2);
+  el.scrollTo({ top: Math.max(0, targetY), behavior: immediate ? 'auto' : 'smooth' });
+}
+
+/* 滚轮滚动时，实时更新选中项（惯性滚动 + 手势滑动） */
+function bindWheelScroll(el){
+  let t = null;
+  el.addEventListener('scroll', ()=>{
+    if (t) clearTimeout(t);
+    t = setTimeout(()=>{
+      const itemH = 34, containerH = el.clientHeight || 168;
+      const centerY = el.scrollTop + containerH / 2;
+      const idx = Math.round((centerY - itemH / 2) / itemH);
+      const items = el._items || [];
+      if (idx < 0 || idx >= items.length) return;
+      el._sel = items[idx];
+      if (el._onPick) el._onPick(items[idx]);
+      el.querySelectorAll('.wheel-item').forEach((it, i)=> it.classList.toggle('sel', i === idx));
+    }, 60);
+  });
+}
+bindWheelScroll(document.getElementById('wheelHour'));
+bindWheelScroll(document.getElementById('wheelMin'));
+
+/* 点专注/休息数字 → 打开轮盘弹窗 */
+focusVal.addEventListener('click', ()=> openWheel('focus'));
+breakVal.addEventListener('click', ()=> openWheel('break'));
+
+/* 轮盘弹窗按钮 */
+document.getElementById('wheelCancel').onclick = ()=> document.getElementById('wheelSheet').classList.remove('show');
+document.getElementById('wheelDone').onclick = ()=>{
+  const total = _wheelHour * 60 + _wheelMin;
+  if (_wheelTarget === 'focus'){
+    if (total <= 0){ focusSet = false; } else { focusSet = true; focusMin = Math.min(360, total); }  // 专注上限 6h
+  } else {
+    if (total <= 0){ breakSet = false; } else { breakSet = true; breakMin = Math.min(60, total); }   // 休息上限 1h
+  }
+  document.getElementById('wheelSheet').classList.remove('show');
+  refreshDisplay();
+};
+/* 点遮罩关闭弹窗 */
+document.getElementById('wheelSheet').addEventListener('click', (e)=>{
+  if (e.target === document.getElementById('wheelSheet')) document.getElementById('wheelSheet').classList.remove('show');
+});
 
 /* ============ 清屏页逻辑 ============ */
 let companionElapsed = 0;      // 已陪伴时长（秒）
@@ -1580,7 +1783,8 @@ function openClearView(){
   // 睡眠小帽：夜间模式显示，可拖走丢掉，过段时间刷新回来
   setupSleepCap();
   // 20261104：应用聊天设置里的番茄钟默认——锁机/白噪音
-  lockOn = !!defaultLockOn;
+  // 20261106：用户手动动过锁机开关就保留其选择，否则才套用聊天设置里的默认值
+  if(!lockManuallySet) lockOn = !!defaultLockOn;
   renderLockBtn();
   if(defaultNoiseOn && activeNoises.length === 0){
     activeNoises = ['waves'];   // 默认白噪音：海浪（可在九宫格里切换/取消）
@@ -2447,6 +2651,7 @@ function pomodoroBack(){
     ['nfoldSheet', 'nfold-sheet'],
     ['moveSheet', 'move-sheet'],
     ['resultDialog', 'dialog'],
+    ['wheelSheet', 'wheel-sheet'],
   ];
   for (const [id] of sheets) {
     const el = document.getElementById(id);

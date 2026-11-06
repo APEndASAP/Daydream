@@ -21,7 +21,7 @@ let chatSettings = {
   notifyMerge: 'each',           // 20261002cg：消息通知方式 each=逐条通知 / merge=合并通知（玩家在聊天设置最顶端自主选择）
   notifyConversationEnabled: false, // 20261004dk：会话式通知（MessagingStyle）开关，默认关；开启后消息通知改走 BmConversationNotify 会话式出口，失败自动回退旧通知
   proactive: false,              // 访客主动发消息 5.3
-  proactiveMin: 5,               // 主动消息间隔（分钟）1~120【20261105 角色交互测试临时调为5】
+  proactiveMin: 20,               // 主动消息间隔（分钟）1~120
   proactiveRandom: false,        // 随机主动发消息：开启后在下方区间内随机时刻发，不再按固定间隔
   proactiveRandMin: 10,          // 20260929bf 随机发消息区间·最小（分钟）
   proactiveRandMax: 120,         // 20260929bf 随机发消息区间·最大（分钟）
@@ -59,44 +59,43 @@ let chatSettings = {
   typecardSummonIntervalMin: 40,   // 20261009：召唤自动发消息随机区间下限（分钟）；上限 240 与查岗区间惯例一致，玩家可在召唤开关旁自设
   typecardSummonIntervalMax: 240,  // 20261009：召唤自动发消息随机区间上限（分钟）；每次触发后在 [min,max] 内随机取下一次间隔
   bmSchedDetect: true,             // 20261029：聊天日程+闹钟自动检测总开关（默认开；全局开关，聊天设置里读写）
-  multiCardOn: true,               // 20261031：多字卡组合回复总开关（独立新功能，与打字卡无关；默认关）【20261105 测试临时开】
-  multiCardCountMin: 2,            // 20261031：组合字卡条数下限（1~10）【测试临时2】
-  multiCardCountMax: 3,            // 20261031：组合字卡条数上限（1~10，最多10）【测试临时3】
-  multiCardIntervalMin: 5,         // 20261031：多字卡组合独立随机固定间隔下限（分钟）【测试临时5】
-  multiCardIntervalMax: 5,         // 20261031：多字卡组合独立随机固定间隔上限（分钟）【测试临时5】
+  multiCardOn: false,              // 20261031：多字卡组合回复总开关（独立新功能，与打字卡无关；默认关）
+  multiCardCountMin: 2,            // 20261031：组合字卡条数下限（1~10）
+  multiCardCountMax: 3,            // 20261031：组合字卡条数上限（1~10，最多10）
+  multiCardIntervalMin: 40,        // 20261031：多字卡组合独立随机固定间隔下限（分钟）
+  multiCardIntervalMax: 240,       // 20261031：多字卡组合独立随机固定间隔上限（分钟）
   charSchedCountMin: 2,            // 20261031：角色每天随机写入行程条数下限（默认2）
   charSchedCountMax: 3,            // 20261031：角色每天随机写入行程条数上限（默认3）
   commentPickCountMin: 0,          // 20261031：行程留言/备注每次抽取字卡张数下限（默认0，0=可能不写）
   commentPickCountMax: 2,          // 20261031：行程留言/备注每次抽取字卡张数上限（默认2）
   musicFloatOn: true,              // 20261104：一起听歌悬浮窗开关（默认开；邀请/播放时自动弹悬浮窗）
   musicAuto: true,                 // 20261104：互动B——角色主动搜歌/切歌/收藏（总开关，默认开；开启后一起听期间自动触发，结束一起听自动暂停）
-  musicAutoMin: 5,                 // 20261104：角色主动音乐操作随机间隔下限（分钟）【测试临时调短为5】
-  musicAutoMax: 5,                 // 20261104：角色主动音乐操作随机间隔上限（分钟）【测试临时调短为5】
-  musicInvite: true,               // 20261104：角色主动邀请玩家一起听歌（随机固定间隔，默认关）【20261105 测试临时开】
-  musicInviteMin: 5,               // 20261104：角色主动邀请一起听歌间隔下限（分钟）【测试临时5】
-  musicInviteMax: 5,               // 20261104：角色主动邀请一起听歌间隔上限（分钟）【测试临时5】
+  musicAutoMin: 20,                // 20261104：角色主动音乐操作随机间隔下限（分钟）
+  musicAutoMax: 120,               // 20261104：角色主动音乐操作随机间隔上限（分钟）
+  musicInvite: false,              // 20261104：角色主动邀请玩家一起听歌（随机固定间隔，默认关）
+  musicInviteMin: 120,             // 20261104：角色主动邀请一起听歌间隔下限（分钟）
+  musicInviteMax: 480,             // 20261104：角色主动邀请一起听歌间隔上限（分钟）
   musicPeek: true,                 // 20261104：互动A——角色偷偷查看玩家歌单/随机收藏/后台随机听歌记录（默认开启）
-  musicPeekMin: 5,                 // 20261104：角色偷看玩家歌单间隔下限（分钟）【测试临时5】
-  musicPeekMax: 5,                 // 20261104：角色偷看玩家歌单间隔上限（分钟）【测试临时5】
-  earListenMin: 5,                 // 20261105：角色「戴耳机听自己歌单」生成幽灵听歌记录间隔下限（分钟）【测试临时5】
-  earListenMax: 5,                 // 20261105：角色「戴耳机听自己歌单」间隔上限（分钟）【测试临时5】
-  charCollectMin: 5,               // 20261105：一起听歌时角色随机收藏歌曲间隔下限（分钟）【测试临时5】
-  charCollectMax: 5,               // 20261105：一起听歌时角色随机收藏歌曲间隔上限（分钟）【测试临时5】
-  videoAuto: true,                 // 20261104：角色主动搜发视频给玩家（随机固定间隔，默认关）【20261105 测试临时开】
-  videoAutoMin: 5,                 // 20261104：角色主动发视频随机间隔下限（分钟）【测试临时5】
-  videoAutoMax: 5,                 // 20261104：角色主动发视频随机间隔上限（分钟）【测试临时5】
+  musicPeekMin: 60,                // 20261104：角色偷看玩家歌单间隔下限（分钟）
+  musicPeekMax: 240,               // 20261104：角色偷看玩家歌单间隔上限（分钟）
+  musicActionStyle: 'chat',        // 20261106：角色主动音乐操作「小垫片」形式：'chat'=发到聊天框(默认) / 'toast'=短暂提示条 / 'off'=不提示
+  earListenMin: 40,                // 20261105：角色「戴耳机听自己歌单」生成幽灵听歌记录间隔下限（分钟）
+  earListenMax: 360,               // 20261105：角色「戴耳机听自己歌单」间隔上限（分钟）
+  charCollectMin: 40,              // 20261105：一起听歌时角色随机收藏歌曲间隔下限（分钟）
+  charCollectMax: 180,             // 20261105：一起听歌时角色随机收藏歌曲间隔上限（分钟）
+  videoAuto: false,                // 20261104：角色主动搜发视频给玩家（随机固定间隔，默认关）
+  videoAutoMin: 60,                // 20261104：角色主动发视频随机间隔下限（分钟）
+  videoAutoMax: 240,               // 20261104：角色主动发视频随机间隔上限（分钟）
   videoCoverMode: 'local',         // 20261104：视频封面获取方式 'local'=真封面+文字占位(纯前端) / 'thirdParty'=第三方解析服务(拿小红书/抖音真封面，链接会发第三方)
   videoParseApi: '',               // 20261105：第三方解析服务地址（玩家可自定义；支持 {url}/{link}/{id}/{key} 宏，留空用内置默认）
   videoParseApiId: '',             // 20261105：内置默认服务（接口盒子 apihz）的用户 ID，留空用公共测试号
   videoParseApiKey: '',            // 20261105：内置默认服务（接口盒子 apihz）的通讯密钥，留空用公共测试号
-  videoParsePort: 'auto',          // 20261105：解析口选择 'auto'=自动匹配(默认) / 内置解析口 key / 'custom'=自定义解析服务地址
-  videoParsePortLastFail: 0,       // 20261105：最近一次解析失败时间戳（用于黄字/红字提醒）
   pomodoroFocusMin: 25,            // 20261104：番茄钟默认专注时长（分钟）
   pomodoroBreakMin: 5,             // 20261104：番茄钟默认休息时长（分钟）
   pomodoroNoiseOn: false,          // 20261105：番茄钟默认是否播放白噪音（改为默认关，玩家设置才播）
   pomodoroLockOn: false,           // 20261104：番茄钟默认是否开启锁机（默认关）
-  companionInteractMin: 5,         // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机间隔下限（分钟）【测试临时5】
-  companionInteractMax: 5,         // 20261104：番茄钟前台互动随机间隔上限（分钟）【测试临时5】
+  companionInteractMin: 8,         // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机间隔下限（分钟）
+  companionInteractMax: 20,        // 20261104：番茄钟前台互动随机间隔上限（分钟）
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -1828,6 +1827,38 @@ function showWalletModal() {
    若不加守卫，两次调用的 await 交错会导致「清空后各自追加一遍」→ 访客列表重复滚动 */
 let _renderChatListSeq = 0;
 let _chatListSig = null; // Q4：上次渲染的数据签名（一致则跳过重建）
+
+// 20261106：给未读红点绑定「拖动消散」——拖动红点 → 粒子消散 + 清除未读
+function _bindBadgeDissolve(badge, clearFn) {
+  if (!badge || !window.bmFx) return;
+  let startX = 0, startY = 0, dragging = false;
+  badge.addEventListener('touchstart', (e) => {
+    e.stopPropagation();   // 阻止冒泡到行的点击/长按
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dragging = false;
+  }, { passive: true });
+  badge.addEventListener('touchmove', (e) => {
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    if (!dragging && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      dragging = true;
+      // 跟手：红点跟随手指轻微移动
+      badge.style.transition = 'none';
+      badge.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    } else if (dragging) {
+      badge.style.transform = 'translate(' + (e.touches[0].clientX - startX) + 'px,' + (e.touches[0].clientY - startY) + 'px)';
+    }
+  }, { passive: true });
+  badge.addEventListener('touchend', () => {
+    if (dragging) {
+      // 拖动幅度够 → 粒子消散 + 清未读
+      window.bmFx.dissolveBadge(badge, () => { try { clearFn(); } catch (e) {} });
+      dragging = false;
+    }
+  }, { passive: true });
+}
+
 async function renderChatList() {
   // 批量管理模式下不重绘（避免后台消息渲染覆盖批量勾选列表）
   if (batchMode) return;
@@ -1950,6 +1981,13 @@ async function renderChatList() {
     item.addEventListener('touchmove', () => clearTimeout(gPress));
     item.addEventListener('touchcancel', () => clearTimeout(gPress)); // 20261001ci：系统手势接管时取消长按
     item.addEventListener('contextmenu', (e) => { e.preventDefault(); enterBatchMode(); });
+    // 20261106：未读红点拖动消散（清除群未读）
+    if (data.unread > 0) {
+      const b = item.querySelector('.unread-badge');
+      _bindBadgeDissolve(b, () => {
+        setSetting('lastRead_group_' + g.id, Date.now()).then(() => renderChatList());
+      });
+    }
     return item;
   };
 
@@ -2002,6 +2040,13 @@ async function renderChatList() {
     item.addEventListener('touchmove', () => clearTimeout(pressTimer));
     item.addEventListener('touchcancel', () => clearTimeout(pressTimer)); // 20261001ci
     item.addEventListener('contextmenu', (e) => { e.preventDefault(); enterBatchMode(); });
+    // 20261106：未读红点拖动消散（清除单聊未读）
+    if (data.unread > 0) {
+      const b = item.querySelector('.unread-badge');
+      _bindBadgeDissolve(b, () => {
+        setSetting('lastRead_' + c.id, Date.now()).then(() => renderChatList());
+      });
+    }
     return item;
   };
 
@@ -8446,7 +8491,10 @@ function switchView(viewName) {
     }
   }
   $$('.view').forEach(v => v.classList.remove('active'));
-  $('#view-' + viewName).classList.add('active');
+  const activeView = $('#view-' + viewName);
+  activeView.classList.add('active');
+  // 20261106：切页过渡——进入的 view 淡入+轻微上移（底部导航/主页↔聊天↔朋友圈丝滑衔接）
+  if (window.bmFx && prevView !== viewName) window.bmFx.viewTransition(activeView);
   document.body.dataset.view = viewName; // PC 端双栏布局依赖
   $$('.tab-item').forEach(t => t.classList.toggle('active',
     t.dataset.view === viewName || (viewName === 'chat' && t.dataset.view === 'chatlist')));
@@ -10554,62 +10602,16 @@ const _BUILTIN_PARSE_APIS = {
 const _BUILTIN_PARSE_ID = '88888888';
 const _BUILTIN_PARSE_KEY = '88888888';
 
-/* 20261105：内置「网页跳转式」解析口清单（VIP 视频解析接口，?url= 模式）。
-   当视频无法在 APP 内直接播放（小红书/抖音/其他外链）时，用选中的解析口在 APP 内打开
-   解析播放页（Browser.open），不依赖 CORS。玩家可在聊天设置里自选解析口，默认 'auto' 自动匹配。
-   实测可用（20261105）：冰豆 bd.jx.cn / CK ckplayer.vip / 虾米 jx.xmflv.com / HLS jx.hls.one /
-   playm3u8 playm3u8.cn；七哥 nnxv 301 可用；Player-JY / 七七云已失效（保留但标记 likelyDead）。 */
-const _BUILTIN_PARSE_PORTS = [
-  { key: 'bdjx', name: '冰豆解析', url: 'https://bd.jx.cn/?url={url}' },
-  { key: 'ck', name: 'CK解析', url: 'https://www.ckplayer.vip/jiexi/?url={url}' },
-  { key: 'xiamai', name: '虾米解析', url: 'https://jx.xmflv.com/?url={url}' },
-  { key: 'hls', name: 'HLS解析', url: 'https://jx.hls.one/?url={url}' },
-  { key: 'playm3u8', name: 'playm3u8', url: 'https://www.playm3u8.cn/jiexi.php?url={url}' },
-  { key: 'qige', name: '七哥解析', url: 'https://jx.nnxv.cn/tv.php?url={url}' },
-  { key: 'playerjy', name: 'Player-JY', url: 'https://jx.playerjy.com/?url={url}', likelyDead: true },
-  { key: 'qqyun', name: '七七云解析', url: 'https://jx.77flv.cc/?url={url}', likelyDead: true },
-  { key: '789', name: '789解析', url: 'https://jiexi.789jiexi.icu:4433/?url={url}' },
-  { key: 'jisu', name: '极速解析', url: 'https://jx.2s0.cn/player/?url={url}' },
-  { key: 'pouyun', name: '剖元解析', url: 'https://www.pouyun.com/?url={url}' },
-  { key: '973', name: '973解析', url: 'https://jx.973973.xyz/?url={url}' },
-  { key: 'yparse', name: 'Yparse', url: 'https://yparse.ik9.cc/index.php?url={url}' },
-  { key: 'm1907', name: 'M1907', url: 'https://im1907.top/?jx={url}' },
-];
-// 按平台给一个默认解析口（auto 时自动匹配；实测 B站可 iframe 内嵌无需解析口，故主要给抖音/小红书/外链）
-const _PARSE_PORT_BY_PLATFORM = {
-  douyin: 'bdjx',
-  xiaohongshu: 'xiamai',
-  link: 'bdjx',
-  youtube: 'bdjx',
-};
-// 取当前生效的解析口 URL（?url= 网页跳转式）；portKey 'auto' 按平台匹配，'custom' 用玩家自定义解析服务
-function _getParsePortUrl(platform, settings) {
-  const s = settings || (typeof chatSettings !== 'undefined' ? chatSettings : {});
-  const portKey = (typeof s.videoParsePort === 'string' && s.videoParsePort) ? s.videoParsePort : 'auto';
-  if (portKey === 'custom') {
-    // 自定义：用 videoParseApi（JSON 解析服务）作为跳转地址也行，但网页式解析口更通用，这里回退 auto
-    const custom = (typeof s.videoParseApi === 'string' && s.videoParseApi.trim()) ? s.videoParseApi.trim() : '';
-    if (custom) return custom;
-  }
-  const target = (portKey !== 'auto') ? portKey : (_PARSE_PORT_BY_PLATFORM[platform] || 'bdjx');
-  const port = _BUILTIN_PARSE_PORTS.find(p => p.key === target);
-  return port ? port.url : (_BUILTIN_PARSE_PORTS[0] ? _BUILTIN_PARSE_PORTS[0].url : 'https://bd.jx.cn/?url={url}');
-}
-
 /* 20261105：视频解析失败/成功的状态标记——用于「红字提醒解析失败、黄字提醒 API 失效」。
-   _parseFailStreak 连续失败次数；连续失败 ≥2 视为「解析口/服务可能失效」，黄字提醒切换。 */
+   _parseFailStreak 连续失败次数；连续失败 ≥2 视为「解析服务可能失效」，黄字提醒。 */
 let _parseFailStreak = 0;
 let _parseLastFailAt = 0;
 function _markParseSuccess() {
   _parseFailStreak = 0;
-  if (typeof chatSettings !== 'undefined') chatSettings.videoParsePortLastFail = 0;
 }
 function _markParseFail() {
   _parseFailStreak = (_parseFailStreak || 0) + 1;
   _parseLastFailAt = Date.now();
-  try {
-    if (typeof chatSettings !== 'undefined') chatSettings.videoParsePortLastFail = Date.now();
-  } catch (e) {}
 }
 /* 解析失败时的用户提醒：红字（单次失败）+ 黄字（连续失败，疑似 API 失效）。 */
 function _notifyParseFail(platform) {
@@ -10617,8 +10619,8 @@ function _notifyParseFail(platform) {
     const s = (typeof chatSettings !== 'undefined') ? chatSettings : {};
     const streak = _parseFailStreak || 0;
     if (streak >= 2) {
-      // 连续失败：黄字提醒「解析口/服务可能失效」，提示去聊天设置切换
-      if (typeof miniToast === 'function') miniToast('⚠️ 视频解析口疑似失效，去「聊天设置 → 视频」切换解析口');
+      // 连续失败：黄字提醒「解析服务可能失效」，提示去聊天设置检查
+      if (typeof miniToast === 'function') miniToast('⚠️ 视频解析服务疑似失效，去「聊天设置 → 视频」检查');
     } else if (streak === 1) {
       // 单次失败：红字提醒解析失败，可换原链接跳转
       if (typeof miniToast === 'function') miniToast('❌ 视频解析失败，已保留原链接可跳转播放');
@@ -11327,10 +11329,9 @@ function openVideoPlay(vc) {
   } else if (vc.videoId && vc.platform === 'bilibili') {
     playerHtml = `${coverHtml}<iframe src="https://player.bilibili.com/player.html?bvid=${escapeHtml(vc.videoId)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
   } else if (vc.url) {
-    // 小红书/抖音/其它：无法 iframe 内嵌，改在 APP 内打开网页播放（Browser.open），
-    // 展示封面 + 「解析口播放」+「原链接跳转」两个按钮（解析口用玩家自选的解析接口）
+    // 小红书/抖音/其它：无法 iframe 内嵌，改在 APP 内打开网页播放（Browser.open）
     extLink = vc.url;
-    playerHtml = `${coverHtml}<div style="text-align:center;padding:14px 0;color:var(--text-secondary);font-size:13px;line-height:1.6;">该平台视频需跳转网页播放<br>优先用「解析口」尝试解析，失败可换「原链接」或去设置切换解析口</div>`;
+    playerHtml = `${coverHtml}<div style="text-align:center;padding:14px 0;color:var(--text-secondary);font-size:13px;line-height:1.6;">该平台视频需跳转网页播放</div>`;
   } else {
     playerHtml = `${coverHtml}<div style="text-align:center;color:var(--text-tertiary);padding:40px 0;">该视频暂无可播放源</div>`;
   }
@@ -11341,18 +11342,11 @@ function openVideoPlay(vc) {
     </div>
     ${playerHtml}
     ${extLink ? `<div style="margin-top:10px;display:flex;gap:10px;justify-content:center;">
-      <button id="vp-open" style="display:inline-block;padding:10px 18px;border-radius:10px;background:var(--purple);color:#141019;font-size:14px;font-weight:600;border:0;cursor:pointer;">▶ 解析口播放</button>
-      <button id="vp-open-raw" style="display:inline-block;padding:10px 18px;border-radius:10px;background:transparent;color:var(--text-secondary);font-size:13px;border:1px solid var(--border);cursor:pointer;">原链接跳转</button>
+      <button id="vp-open-raw" style="display:inline-block;padding:10px 18px;border-radius:10px;background:var(--purple);color:#141019;font-size:14px;font-weight:600;border:0;cursor:pointer;">▶ 原链接播放</button>
     </div>` : ''}
   `);
   $('#vp-close').onclick = () => closeModal();
   if (extLink) {
-    // 解析口播放：用玩家选中的解析口（默认 auto 自动匹配平台）包装原始链接
-    $('#vp-open').onclick = () => {
-      const portUrl = _getParsePortUrl(vc.platform);
-      const wrapped = portUrl.replace(/\{url\}/g, encodeURIComponent(extLink));
-      openVideoInApp(wrapped, title);
-    };
     // 原链接跳转：直接打开原始链接（小红书/抖音 APP 页）
     $('#vp-open-raw').onclick = () => openVideoInApp(extLink, title);
   }
@@ -14052,6 +14046,14 @@ function bindEvents() {
   $$('.tab-item').forEach(t => {
     t.onclick = () => { closeModalPanels(); switchView(t.dataset.view); };
   });
+
+  // 20261106：聊天导航页下拉刷新（#chat-list 滚动到顶后下拉触发）
+  if (window.bmFx) {
+    window.bmFx.bindPullRefresh($('#chat-list'), async () => {
+      // 刷新聊天列表（重新汇总最新消息 + 未读数）
+      try { await renderChatList(); } catch (e) {}
+    });
+  }
 
   // 添加访客（改为弹出功能菜单：添加访客 / 建立群聊 / 批量管理 / 访客分组）
   $('#btn-add-char').onclick = showChatListMenu;
@@ -17672,15 +17674,23 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span>🎶 角色主动搜歌/切歌</span>
         <input type="checkbox" id="cs-music-auto" ${(s.musicAuto === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启这个总开关后，角色在<span style="color:var(--text);font-weight:600;">一起听歌期间</span>会自动做音乐操作：播放、暂停、切上一首/下一首、往列表加歌、收藏、随机选歌、主动去网上搜歌。觉得好听的会收藏（存进「访客收藏」），不好听会切歌，并在聊天里发小横条告诉你。结束一起听后自动暂停（开关保持开启，下次一起听自动恢复）。${s.developerMode ? '随机固定间隔触发（下方可设区间），不会刷屏。' : '随机固定间隔触发，不会刷屏。'}</div>
-      ${s.developerMode ? `
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启这个总开关后，角色在<span style="color:var(--text);font-weight:600;">一起听歌期间</span>会自动做音乐操作：播放、暂停、切上一首/下一首、往列表加歌、收藏、随机选歌、主动去网上搜歌。觉得好听的会收藏（存进「访客收藏」），不好听会切歌，并提示你。结束一起听后自动暂停（开关保持开启，下次一起听自动恢复）。随机固定间隔触发（下方可设区间），不会刷屏。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
         <input type="number" id="cs-music-auto-min" min="1" max="720" step="1" value="${typeof s.musicAutoMin === 'number' ? s.musicAutoMin : 20}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
         <span style="font-size:12px;color:var(--text-tertiary);">～</span>
         <input type="number" id="cs-music-auto-max" min="1" max="720" step="1" value="${typeof s.musicAutoMax === 'number' ? s.musicAutoMax : 120}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
         <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
-      </div>` : ''}
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">💬 角色音乐操作提示方式</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色主动播放/暂停/切歌/收藏/搜歌时，怎么告诉你：发一条「小垫片」进聊天框（会沉淀进聊天记录），还是弹一条短暂提示条（几秒后自动消散、不留记录），或者干脆不提示。</div>
+      <select class="input" id="cs-music-action-style" style="width:100%;">
+        <option value="chat" ${((typeof s.musicActionStyle === 'string' ? s.musicActionStyle : 'chat') === 'chat') ? 'selected' : ''}>发到聊天框（小垫片）</option>
+        <option value="toast" ${((typeof s.musicActionStyle === 'string' ? s.musicActionStyle : 'chat') === 'toast') ? 'selected' : ''}>短暂提示条（自动消散）</option>
+        <option value="off" ${((typeof s.musicActionStyle === 'string' ? s.musicActionStyle : 'chat') === 'off') ? 'selected' : ''}>不提示</option>
+      </select>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
@@ -17791,20 +17801,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         </div>
       </div>
     </div>
-    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🔌 解析口选择（跳转播放用）</label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">小红书/抖音等平台无法在软件内直接播放时，会跳转到「解析口」网页播放。默认「自动匹配」会按平台选最稳定的解析口；用不了时可在这里手动切换到其他内置解析口，或选「自定义」用你自己填的解析服务。</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <select id="cs-parse-port" style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;">
-          <option value="auto" ${(s.videoParsePort !== 'custom' && s.videoParsePort !== 'auto' && !_BUILTIN_PARSE_PORTS.some(p => p.key === s.videoParsePort)) || s.videoParsePort === 'auto' ? 'selected' : ''}>🔄 自动匹配（默认）</option>
-          ${_BUILTIN_PARSE_PORTS.map(p => `<option value="${p.key}" ${s.videoParsePort === p.key ? 'selected' : ''}>${p.name}${p.likelyDead ? '（可能失效）' : ''}</option>`).join('')}
-          <option value="custom" ${s.videoParsePort === 'custom' ? 'selected' : ''}>✏️ 自定义（用上方解析服务地址）</option>
-        </select>
-      </div>
-      <div style="font-size:11px;color:var(--text-tertiary);margin-top:7px;line-height:1.5;">若解析失败，会在聊天里用<span style="color:#e5484d;">红字</span>提示；若选中的解析口/服务本身失效（连续失败），会用<span style="color:#e8a33d;">黄字</span>提醒你切换解析口。</div>
-    </div>
     </section>
-
     <section class="cs-panel" data-cs-panel="番茄钟">
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🍅 番茄钟默认设置</label>
@@ -18069,6 +18066,16 @@ function bindChatSettings(s, onSave, tcChar) {
     maMinEl.onchange = applyMa;
     maMaxEl.onchange = applyMa;
   }
+  // 20261106：角色音乐操作「小垫片」提示方式（chat/toast/off），全局设置，即时生效落库
+  const masSel = $('#cs-music-action-style');
+  if (masSel) masSel.onchange = async () => {
+    const v = masSel.value || 'chat';
+    s.musicActionStyle = v;
+    chatSettings.musicActionStyle = v;
+    await setSetting('chatSettings', chatSettings);
+    if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; if (v !== chatSettings.musicActionStyle) tcChar.chatSettings.musicActionStyle = v; else delete tcChar.chatSettings.musicActionStyle; await saveChar(tcChar); }
+    miniToast(v === 'toast' ? '角色音乐操作改为短暂提示条' : (v === 'off' ? '角色音乐操作不再提示' : '角色音乐操作发到聊天框'));
+  };
   // 20261104：角色主动邀请一起听歌开关 + 随机间隔（全局设置，即时生效落库）
   const miCb = $('#cs-music-invite');
   if (miCb) miCb.onchange = async () => {
@@ -18245,19 +18252,6 @@ function bindChatSettings(s, onSave, tcChar) {
       await setSetting('chatSettings', chatSettings);
       if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; tcChar.chatSettings.videoParseApiId = idVal; tcChar.chatSettings.videoParseApiKey = keyVal; await saveChar(tcChar); }
       miniToast('已保存内置服务的鉴权信息（去 apihz.cn 免费注册获取）');
-    };
-  }
-  // 20261105：解析口选择（跳转播放用）——即时落库
-  const parsePortEl = $('#cs-parse-port');
-  if (parsePortEl) {
-    parsePortEl.onchange = async () => {
-      const val = parsePortEl.value || 'auto';
-      chatSettings.videoParsePort = val;
-      chatSettings.videoParsePortLastFail = 0;   // 切换解析口时清空失败标记
-      await setSetting('chatSettings', chatSettings);
-      if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; tcChar.chatSettings.videoParsePort = val; await saveChar(tcChar); }
-      const name = val === 'auto' ? '自动匹配' : (val === 'custom' ? '自定义解析服务' : ((_BUILTIN_PARSE_PORTS.find(p => p.key === val) || {}).name || val));
-      miniToast('已切换解析口：' + name);
     };
   }
   // 20261104：番茄钟默认设置（专注/休息时长 + 白噪音 + 锁机）——全局与访客级都渲染，即时落库
@@ -18757,7 +18751,7 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
@@ -22610,7 +22604,7 @@ async function renderMoments() {
 
   // 事件绑定
   list.querySelectorAll('[data-mo-like]').forEach(btn => {
-    btn.onclick = () => toggleMomentLike(btn.dataset.moLike);
+    btn.onclick = (e) => toggleMomentLike(btn.dataset.moLike, e);
   });
   list.querySelectorAll('[data-mo-cmt]').forEach(btn => {
     btn.onclick = () => showMomentCommentModal(btn.dataset.moCmt, null);
@@ -22668,14 +22662,25 @@ async function renderMoments() {
 }
 
 /* 玩家点赞（可取消） */
-async function toggleMomentLike(postId) {
+async function toggleMomentLike(postId, evt) {
   const posts = await loadMomentPosts();
   const post = posts.find(p => p.id === postId);
   if (!post) return;
   const idx = post.likes.findIndex(l => l.who === 'player');
+  const becomingLiked = idx < 0;   // 本次是点赞（true）还是取消（false）
   if (idx >= 0) post.likes.splice(idx, 1);
   else post.likes.push({ who: 'player', time: Date.now() });
   await saveMomentPosts();
+  // 20261106：点赞成功 → 红心放大回弹 + 粒子炸开（取消点赞不炸）
+  if (becomingLiked && window.bmFx) {
+    let btn = null;
+    if (evt && evt.currentTarget) btn = evt.currentTarget;
+    else btn = document.querySelector(`[data-mo-like="${postId}"]`);
+    if (btn) {
+      const svg = btn.querySelector('svg') || btn;
+      window.bmFx.burst(svg, { color: '#f472b6' });
+    }
+  }
   renderMoments();
 }
 
@@ -30183,6 +30188,16 @@ async function refreshModeSwitchUI() {
 
 /* 20261031：AI/字卡模式切换。source='char'=单聊页开关（支持仅当前角色），
    'global'=朋友圈/群聊开关（保持全局）。 */
+// 20261106：切换后给顶栏开关旋钮加弹性拉伸（拉长成胶囊→回弹）
+function _elasticAimodeKnob() {
+  if (!window.bmFx) return;
+  ['#btn-chat-aimode', '#btn-moments-aimode'].forEach(sel => {
+    const btn = document.querySelector(sel);
+    if (!btn) return;
+    const knob = btn.querySelector('svg .ai-knob');
+    if (knob) window.bmFx.elasticKnob(knob, 'x');
+  });
+}
 async function toggleAImodeFromUI(source = 'global') {
   const cfg = await loadAIConfig();
   const hasAPI = !!(cfg.chatApi && cfg.chatApi.url && cfg.chatApi.url.trim());
@@ -30222,6 +30237,7 @@ async function toggleAImodeFromUI(source = 'global') {
       playModeBeep(toAI);
       miniToast(toAI ? '已全局切换到 AI 模式' : '已全局切换到字卡模式');
       refreshModeSwitchUI();
+      _elasticAimodeKnob();
       document.querySelectorAll('.cs-ai-btn').forEach(b => b.classList.toggle('primary', b.dataset.mode === cfg.chatMode));
     };
     const doChar = async () => {
@@ -30229,6 +30245,7 @@ async function toggleAImodeFromUI(source = 'global') {
       playModeBeep(toAI);
       miniToast(toAI ? `已仅对「${charName}」开启 AI 模式` : `已仅对「${charName}」切回字卡模式`);
       refreshModeSwitchUI();
+      _elasticAimodeKnob();
     };
     $('#am-scope-global').onclick = () => {
       closeModal();
@@ -30260,6 +30277,7 @@ async function toggleAImodeFromUI(source = 'global') {
     playModeBeep(toAI);
     miniToast(toAI ? '已切换到 AI 模式' : '已切换到字卡模式');
     refreshModeSwitchUI();
+    _elasticAimodeKnob();
     document.querySelectorAll('.cs-ai-btn').forEach(b => b.classList.toggle('primary', b.dataset.mode === cfg.chatMode));
   };
   // 20260929ah：开启 AI 且有角色按固定间隔主动发消息 → 中间弹窗警告 API 消耗
