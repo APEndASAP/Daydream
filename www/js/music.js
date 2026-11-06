@@ -3600,10 +3600,32 @@ window.bmMusicUI = (function () {
   }
 
   /* ---------- 每日推荐 ----------
-     点「每日推荐」→ 用一组推荐关键词搜歌，整批加入播放队列并从第一首开始播。
-     这是白日梦自己的播放能力（本地搜歌整批播），不依赖遥控外部 App。 */
+     点「每日推荐」→ 直接打开网易云音乐的「每日推荐」并自动播放。
+     20261106 用户明确纠正：每日推荐不是「抓歌单」，是真正打开网易云的每日推荐。
+     实现：App 端用原生插件 openUrl 拉起 orpheus://songrcmd?autoplay=1 深链，
+     网易云 App 会直接打开每日推荐页并自动播放；网页端/无插件/深链打开失败时
+     回退到本地推荐关键词搜歌播。 */
   const _dailyKwPool = ['每日推荐', '今日热歌', '新歌速递', '流行精选', '热歌榜', '华语新歌'];
   async function _dailyRecommend(say) {
+    // ① 优先：原生插件拉起网易云「每日推荐」（orpheus://songrcmd?autoplay=1 自动播放）
+    const bridge = _remoteBridge();
+    if (bridge && typeof bridge.openUrl === 'function') {
+      try {
+        // 先停掉内置播放器，避免与外部网易云同时响
+        try { const a = M.state.audio; if (a) a.pause(); M.state.playing = false; } catch (e) {}
+        const r = await bridge.openUrl({ url: 'orpheus://songrcmd?autoplay=1' });
+        if (r && r.opened) {
+          if (say) say('已为你打开网易云每日推荐');
+          else if (window.miniToast) miniToast('已打开网易云每日推荐');
+          return;
+        }
+        // 深链打开失败（未装网易云/无 scheme）→ 走下方本地回退
+        if (say) say('没能直接拉起网易云，改用内置每日推荐');
+      } catch (e) {
+        // 原生调用异常 → 本地回退
+      }
+    }
+    // ② 回退：本地推荐关键词搜歌整批播（网页端 / 无插件 / 深链失败）
     // 20261105 直连模式：镜像源已失效（qijieya/gdstudio/meting 均挂），改用网易云官方搜索
     //   拿真实可播直链，根治「每日推荐暂时没抓到歌」。
     if (_netEaseDirect) {
@@ -3644,9 +3666,31 @@ window.bmMusicUI = (function () {
   }
 
   /* ---------- 漫游 ----------
-     点「漫游」→ 随机一个风格/心情关键词搜歌，整批随机化后播放，营造「随机漫游」感。 */
+     点「漫游」→ 直接开启网易云音乐的「私人 FM / 漫游」功能。
+     20261106 用户明确纠正：漫游不是「抓歌单」，是真正开启网易云的漫游（私人FM）。
+     实现：App 端用原生插件 openUrl 拉起 orpheus://radio 深链，网易云 App 会直接
+     打开私人 FM 并开始播放；网页端/无插件/深链打开失败时回退到本地随机漫游播歌。 */
   const _roamKwPool = ['轻音乐', '民谣', '古风', '纯音乐', '爵士', '摇滚', '电子', '治愈系', '雨声', '星空', '钢琴', '慢歌', '回忆', '夏日', '晚安曲'];
   async function _roamPlay(say) {
+    // ① 优先：原生插件拉起网易云私人 FM（漫游）
+    const bridge = _remoteBridge();
+    if (bridge && typeof bridge.openUrl === 'function') {
+      try {
+        // 先停掉内置播放器，避免与外部网易云同时响
+        try { const a = M.state.audio; if (a) a.pause(); M.state.playing = false; } catch (e) {}
+        const r = await bridge.openUrl({ url: 'orpheus://radio' });
+        if (r && r.opened) {
+          if (say) say('已为你开启网易云漫游（私人 FM）');
+          else if (window.miniToast) miniToast('已开启网易云漫游');
+          return;
+        }
+        // 深链打开失败（未装网易云/无 scheme）→ 走下方本地回退
+        if (say) say('没能直接拉起网易云，改用内置漫游');
+      } catch (e) {
+        // 原生调用异常 → 本地回退
+      }
+    }
+    // ② 回退：本地随机漫游播歌（网页端 / 无插件 / 深链失败）
     // 20261105 直连模式：镜像源失效，改用网易云官方搜索，根治「漫游暂时没抓到歌」。
     if (_netEaseDirect) {
       const pool = [..._roamKwPool];
@@ -4033,12 +4077,12 @@ window.bmMusicUI = (function () {
       if (window.miniToast) miniToast('原生插件暂不支持盲切');
       renderRemotePanel(box);
     };
-    // 每日推荐：点它真正生成「每日推荐」歌单并播放（网易云直连走官方搜索，否则镜像源搜歌）
+    // 每日推荐：点它直接打开网易云 App 的「每日推荐」并自动播放（深链拉起，失败回退本地搜歌）
     box.querySelector('#bm-remote-daily').onclick = async () => {
-      // 20261106：不再提示「原生插件未实现」——直接复用软件内 _dailyRecommend 真实搜歌播放
-      //   （直连模式走网易云官方搜索拿真实可播直链，非直连走镜像源整批搜）。
+      // 20261106：复用软件内 _dailyRecommend——优先 openUrl 深链拉起网易云每日推荐，
+      //   深链失败（网页端/未装网易云）则回退本地推荐关键词搜歌整批播。
       if (typeof _dailyRecommend === 'function') {
-        if (window.miniToast) miniToast('正在生成每日推荐…');
+        if (window.miniToast) miniToast('正在打开每日推荐…');
         await _dailyRecommend((t) => { if (t && window.miniToast) miniToast(t); });
         renderRemotePanel(box);
         return;
@@ -4046,9 +4090,10 @@ window.bmMusicUI = (function () {
       if (window.miniToast) miniToast('每日推荐暂不可用');
       renderRemotePanel(box);
     };
-    // 漫游：点它真正开启「音乐漫游」（随机风格关键词搜歌整批播放）
+    // 漫游：点它直接开启网易云 App 的「私人 FM / 漫游」（深链拉起，失败回退本地随机播）
     box.querySelector('#bm-remote-roam').onclick = async () => {
-      // 20261106：不再提示「原生插件未实现」——直接复用软件内 _roamPlay 真实随机漫游播放。
+      // 20261106：复用软件内 _roamPlay——优先 openUrl 深链拉起网易云私人FM（orpheus://radio），
+      //   深链失败（网页端/未装网易云）则回退本地随机风格搜歌整批播。
       if (typeof _roamPlay === 'function') {
         if (window.miniToast) miniToast('正在开启音乐漫游…');
         await _roamPlay((t) => { if (t && window.miniToast) miniToast(t); });
@@ -5502,15 +5547,20 @@ window.bmMusicUI = (function () {
     _stopNativeHeartbeat();
     if (!nativeFloat()) return;
     const p = window.Capacitor.Plugins.BmMusicFloat;
+    let _lastPushedSec = -1;   // 上次已推的秒数：position 未变则不推，避免暂停时反复 update 造成悬浮窗闪动
     const beat = async () => {
       try {
         const a = M.state.audio;
         if (!a) return;
         const cur = a.currentTime;
         if (!isFinite(cur) || cur < 0) return;
-        // 拖动/seek 期间（原生层 onSeek 已把新 position 回写 audio.currentTime），
-        // 仍持续推送校准，避免本地计时漂移
-        await p.update({ position: Math.floor(cur) });
+        const sec = Math.floor(cur);
+        // 20261106 修复「暂停状态下悬浮窗仍闪动」：position 没变化（暂停/缓冲）时跳过推送，
+        //   原生层无需再 updateProgressUi（setText/setTranslationX 相同值仍会触发重绘闪烁）。
+        //   只有秒数真正前进才推，且 seek 跳变也天然会推（sec 变化大）。
+        if (sec === _lastPushedSec) return;
+        _lastPushedSec = sec;
+        await p.update({ position: sec });
       } catch (e) { /* 原生层已销毁等异常，静默忽略 */ }
     };
     _nativeHeartbeatTimer = setInterval(beat, 500);
@@ -5537,6 +5587,10 @@ window.bmMusicUI = (function () {
         M.toggle();
       }
       refreshPlayerUI();
+      // 20261106：补推原生层状态，让悬浮窗播放/暂停图标（▶/||）真实切换。
+      //   此前只刷新软件内 UI，未调 pushNativeState()，原生 refreshPpIcons() 不执行，
+      //   导致点击后图标永远停在初始值。
+      pushNativeState(false);
     };
     const _remotePrev = () => {
       if ((M.state.mode === 'remote') && !_netEaseDirect) {
@@ -5545,6 +5599,7 @@ window.bmMusicUI = (function () {
         M.prev();
       }
       refreshPlayerUI();
+      pushNativeState(false);
     };
     const _remoteNext = () => {
       if ((M.state.mode === 'remote') && !_netEaseDirect) {
@@ -5553,6 +5608,7 @@ window.bmMusicUI = (function () {
         M.next();
       }
       refreshPlayerUI();
+      pushNativeState(false);
     };
     reg('onToggle', _remoteToggle);
     reg('onPrev', _remotePrev);

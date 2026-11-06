@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 白日梦锁机无障碍服务配置。
+     flagRequestFilterKeyEvents：请求过滤键盘事件（拦截 Home / 返回 / 最近任务键），
+     这是普通 App（非 Device Owner）拦截 Home 键的唯一现实方案。 -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRequestFilterKeyEvents|flagDefault"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/bm_lock_accessibility_desc"
+    android:notificationTimeout="100" />

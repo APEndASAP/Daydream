@@ -669,12 +669,15 @@ public class BmMusicFloatPlugin extends Plugin {
 
         card.addView(cardUi, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        /* 右下角缩放手柄（⤢ 用 expand 图标绘制，不用 emoji） */
-        IconBtn resizeHandle = new IconBtn(getContext(), ICONS_EXPAND, ICON_COLOR_MUTED, dp(38), dp(13), 0x66141019);
-        FrameLayout.LayoutParams rhLp = new FrameLayout.LayoutParams(dp(38), dp(38));
-        rhLp.gravity = Gravity.BOTTOM | Gravity.END;
-        rhLp.bottomMargin = dp(12);
-        rhLp.rightMargin = dp(10);
+        /* 右下角缩放手柄（⤢ 用 expand 图标绘制，不用 emoji）
+           20261106 修复「缩放手柄遮挡右下角播放列表按钮」：
+           原 Gravity.BOTTOM|END 叠在控制键排的 listBtn 上，挡住点击。现移到卡片右侧
+           垂直居中（封面右侧空白处，卡片宽300/封面150居中 → 右侧约75dp空白），
+           既不挡播放列表按钮，也不挡头部「结束/收起」与左下角模式键。 */
+        IconBtn resizeHandle = new IconBtn(getContext(), ICONS_EXPAND, ICON_COLOR_MUTED, dp(32), dp(11), 0x66141019);
+        FrameLayout.LayoutParams rhLp = new FrameLayout.LayoutParams(dp(32), dp(32));
+        rhLp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+        rhLp.rightMargin = dp(3);
         card.addView(resizeHandle, rhLp);
         resizeHandle.setOnTouchListener(new View.OnTouchListener() {
             float sx = 0, sy = 0, baseScale = 1f;
@@ -1024,22 +1027,41 @@ public class BmMusicFloatPlugin extends Plugin {
             miniListPanel = panel;
 
             // 表头作为拖动手柄，整个迷你列表可拖动（独立于悬浮窗）
+            // 20261106 完善：加边界钳制（避免拖出屏幕看不见）+ 关闭按钮不触发拖动
             head.setOnTouchListener(new View.OnTouchListener() {
                 float lastX = 0, lastY = 0;
+                boolean dragging = false;
                 @Override public boolean onTouch(View v, android.view.MotionEvent e) {
                     switch (e.getActionMasked()) {
                         case android.view.MotionEvent.ACTION_DOWN:
+                            // 点到关闭按钮不触发拖动（交给 closeBtn 的 onClick）
+                            dragging = false;
                             lastX = e.getRawX(); lastY = e.getRawY();
                             return true;
                         case android.view.MotionEvent.ACTION_MOVE: {
                             float dx = e.getRawX() - lastX;
                             float dy = e.getRawY() - lastY;
                             lastX = e.getRawX(); lastY = e.getRawY();
+                            if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return true;   // 微小抖动不视为拖动
+                            dragging = true;
                             lp.leftMargin += (int) dx;
                             lp.topMargin += (int) dy;
+                            // 边界钳制：mini list 相对 overlayRoot 定位，margin 可负（贴在悬浮窗上方）。
+                            //   这里按屏幕尺寸做宽松钳制，保证列表主体不会完全拖出可视区。
+                            android.util.DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
+                            int minL = -getOverlayWidth() + dp(40);   // 至少留 40dp 在悬浮窗可视范围内
+                            int maxL = dm.widthPixels - dp(40);
+                            int maxT = dm.heightPixels - dp(40);
+                            lp.leftMargin = Math.max(minL, Math.min(maxL, lp.leftMargin));
+                            lp.topMargin = Math.max(-dm.heightPixels, Math.min(maxT, lp.topMargin));
                             panel.setLayoutParams(lp);
                             return true;
                         }
+                        case android.view.MotionEvent.ACTION_UP:
+                        case android.view.MotionEvent.ACTION_CANCEL:
+                            // 未发生拖动时（纯点击），返回 false 让 closeBtn 的 click 正常触发
+                            dragging = false;
+                            return false;
                     }
                     return false;
                 }

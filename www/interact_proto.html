@@ -771,6 +771,11 @@
   .detail-row .k{color:var(--ink2);}
   .detail-row .v{color:var(--ink);font-weight:600;}
   .settle-back{height:42px;border-radius:21px;border:1px solid var(--line);background:var(--card-bg);color:var(--ink);font-size:14px;cursor:pointer;margin-bottom:12px;}
+  /* 20261106：返回文件夹列表 + 批量管理 并排一行（返回在左、批量管理在右，不再上下堆叠） */
+  .record-toprow{display:flex;align-items:center;gap:8px;margin-bottom:12px;}
+  .record-toprow .settle-back{flex:0 0 auto;margin-bottom:0;padding:0 18px;}
+  .record-toprow .tb-btn{height:42px;padding:0 16px;border-radius:21px;border:1px solid var(--line);background:var(--card-bg);color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;}
+  .record-toprow .tb-btn.hidden{display:none;}
 
   /* ============ 待办选择层（底部弹层） ============ */
   .todo-sheet{position:fixed;inset:0;z-index:95;display:none;align-items:center;justify-content:center;background:rgba(20,14,40,.4);padding:24px;}
@@ -2363,9 +2368,13 @@ function syncToolbar(){
   const isFolders = (lv === 'folders');       // 顶层：只显示「新建文件夹」
   const isRecords = (lv === 'records');       // 记录列表页：显示「批量管理」
   document.getElementById('newFolderBtn').classList.toggle('hidden', !isFolders);
-  document.getElementById('batchModeBtn').classList.toggle('hidden', !isRecords);
-  document.getElementById('batchDoneBtn').classList.toggle('hidden', !(isRecords && batchMode));
-  document.getElementById('batchModeBtn').textContent = batchMode ? '退出批量' : '☑ 批量管理';
+  // 20261106：记录列表页的「批量管理」已移到正文「返回文件夹列表」按钮右侧（topRow 内），
+  //   顶部工具栏不再显示批量管理/完成按钮（避免上下两行重复、排版乱）。
+  document.getElementById('batchModeBtn').classList.toggle('hidden', true);
+  document.getElementById('batchDoneBtn').classList.toggle('hidden', true);
+  // 同步正文行内批量按钮（若存在）的文案
+  const bmRow = document.getElementById('batchModeBtnRow');
+  if (bmRow) bmRow.textContent = batchMode ? '退出批量' : '☑ 批量管理';
 }
 function hideBulkBar(){ document.getElementById('bulkBar').classList.remove('show'); }
 function updateBulkBar(){
@@ -2503,10 +2512,20 @@ function openSettleRecords(fid){
   syncToolbar();
   const body = document.getElementById('settleBody');
   body.innerHTML = '';
+  // 20261106：返回文件夹列表 + 批量管理 并排一行（批量管理在返回按钮右侧，不再顶部竖排）
+  const topRow = document.createElement('div');
+  topRow.className = 'record-toprow';
   const back = document.createElement('button');
   back.className = 'settle-back'; back.textContent = '‹ 返回文件夹列表';
   back.onclick = openSettleFolders;
-  body.appendChild(back);
+  topRow.appendChild(back);
+  // 本行右侧放批量管理按钮（新建，onclick 复用统一 toggleBatch()，不移动顶部工具栏原按钮）
+  const bmRow = document.createElement('button');
+  bmRow.className = 'tb-btn'; bmRow.id = 'batchModeBtnRow';
+  bmRow.textContent = batchMode ? '退出批量' : '☑ 批量管理';
+  bmRow.onclick = toggleBatch;
+  topRow.appendChild(bmRow);
+  body.appendChild(topRow);
   // 更换封面（前景图）+ 移入文件夹 操作行
   const ops = document.createElement('div');
   ops.className = 'record-ops';
@@ -2816,8 +2835,8 @@ document.getElementById('nfoldInput').addEventListener('keydown', (e)=>{
 document.getElementById('nfoldSheet').addEventListener('click', (e)=>{
   if(e.target === e.currentTarget) closeNewFolderSheet();
 });
-// 进入/退出批量模式
-document.getElementById('batchModeBtn').onclick = ()=>{
+// 进入/退出批量模式（统一入口：正文行内按钮 batchModeBtnRow、顶部 batchModeBtn 共用）
+function toggleBatch(){
   batchMode = !batchMode;
   if(batchMode){
     selectedFolderIds.clear();
@@ -2836,7 +2855,8 @@ document.getElementById('batchModeBtn').onclick = ()=>{
   }
   syncToolbar();
   updateBulkBar();
-};
+}
+document.getElementById('batchModeBtn').onclick = toggleBatch;
 document.getElementById('batchDoneBtn').onclick = ()=>{
   batchMode = false;
   selectedFolderIds.clear();

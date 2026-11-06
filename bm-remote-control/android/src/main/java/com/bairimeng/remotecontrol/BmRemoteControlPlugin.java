@@ -548,5 +548,40 @@ public class BmRemoteControlPlugin extends Plugin {
             if (conn != null) conn.disconnect();
         }
     }
+
+    /** 20261106：打开外部 App 深链（URL Scheme），用于「漫游」——直接拉起网易云音乐
+        的私人 FM（orpheus://radio）。返回 { ok, opened, reason }。
+        深链打开失败（未安装目标 App / 无对应 scheme）时 opened=false，前端据此回退。 */
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || url.isEmpty()) { resolveErr(call, "empty_url"); return; }
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            // 记录是否有组件能处理该 scheme
+            android.content.pm.PackageManager pm = getContext().getPackageManager();
+            boolean canResolve = intent.resolveActivity(pm) != null;
+            if (!canResolve) {
+                JSObject o = new JSObject();
+                o.put("opened", false);
+                o.put("reason", "no_handler");
+                resolveOk(call, o);
+                return;
+            }
+            getContext().startActivity(intent);
+            JSObject o = new JSObject();
+            o.put("opened", true);
+            o.put("reason", null);
+            resolveOk(call, o);
+        } catch (Throwable t) {
+            // 未安装目标 App 会抛 ActivityNotFoundException，这里统一按「未打开」处理
+            JSObject o = new JSObject();
+            o.put("opened", false);
+            o.put("reason", String.valueOf(t.getMessage()));
+            resolveOk(call, o);
+        }
+    }
 }
 

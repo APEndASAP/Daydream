@@ -11690,12 +11690,27 @@ function _pomodoroStopNoise() {
   } catch (e) {}
 }
 
-/* 20261105：番茄钟锁机——调原生 BmOverlay.lock() 显示全屏锁机覆盖层 */
+/* 20261105：番茄钟锁机——调原生 BmOverlay.lock() 显示全屏锁机覆盖层。
+   20261106 升级：锁机若要连 Home 键都拦住（真正锁住手机），需无障碍服务授权。
+   锁机时先检测无障碍是否已开：未开则引导用户去系统设置开启（一次性），
+   已开则原生 BmLockAccessibilityService 会在锁机期间拦截 Home/返回/最近任务键。 */
 function _pomodoroLock(hint) {
   try {
     const BO = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay;
     if (BO && typeof BO.lock === 'function') {
       BO.lock({ hint: hint || '专注中，请勿分心' }).catch(() => {});
+      // 检测并引导无障碍授权（拦截 Home 键依赖它）
+      if (typeof BO.isAccessibilityEnabled === 'function') {
+        BO.isAccessibilityEnabled().then((r) => {
+          try {
+            if (r && r.enabled === false && typeof BO.openAccessibilitySettings === 'function') {
+              // 首次锁机：提示并引导去无障碍设置页开启「白日梦锁机」服务
+              if (window.miniToast) miniToast('开启「无障碍」可真正锁住手机（拦截 Home 键）');
+              BO.openAccessibilitySettings().catch(() => {});
+            }
+          } catch (e) {}
+        }).catch(() => {});
+      }
     }
   } catch (e) {}
 }

@@ -500,6 +500,8 @@ public class BmOverlayPlugin extends Plugin {
                 return;
             }
             String hint = call.getString("hint", "专注中，请勿分心");
+            // 20261106：开启锁机时，若无障碍服务已授权，置 isLocking=true 拦截 Home/返回/最近任务键
+            BmLockAccessibilityService.isLocking = true;
             showLockOverlay(hint);
             JSObject ret = new JSObject();
             ret.put("ok", true);
@@ -516,10 +518,62 @@ public class BmOverlayPlugin extends Plugin {
     @PluginMethod
     public void unlock(PluginCall call) {
         try {
+            // 20261106：退出锁机，解除键盘拦截
+            BmLockAccessibilityService.isLocking = false;
             removeLockOverlay();
             call.resolve(new JSObject().put("ok", true));
         } catch (Throwable t) {
             call.resolve(new JSObject().put("ok", false));
+        }
+    }
+
+    /** 锁机无障碍服务是否已开启（拦截 Home 键依赖此授权）。返回 { enabled }。 */
+    @PluginMethod
+    public void isAccessibilityEnabled(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            boolean enabled = isAccessibilityServiceEnabled();
+            ret.put("enabled", enabled);
+            ret.put("ok", true);
+        } catch (Throwable t) {
+            ret.put("enabled", false);
+            ret.put("ok", false);
+        }
+        call.resolve(ret);
+    }
+
+    /** 引导用户去无障碍设置页开启「白日梦锁机」服务。 */
+    @PluginMethod
+    public void openAccessibilitySettings(PluginCall call) {
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                    android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve(new JSObject().put("ok", true));
+        } catch (Throwable t) {
+            call.resolve(new JSObject().put("ok", false));
+        }
+    }
+
+    /** 判断本插件的无障碍服务是否已在系统里开启。 */
+    private boolean isAccessibilityServiceEnabled() {
+        try {
+            String flat = android.provider.Settings.Secure.getString(
+                    getContext().getContentResolver(),
+                    android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (flat == null || flat.isEmpty()) return false;
+            String pkg = getContext().getPackageName();
+            String want = pkg + "/com.bairimeng.overlay.BmLockAccessibilityService";
+            String[] parts = flat.split(":");
+            for (String p : parts) {
+                if (want.equals(p.trim())) return true;
+                // 兼容部分 ROM 省略包名前缀的写法
+                if (p != null && p.contains("BmLockAccessibilityService")) return true;
+            }
+            return false;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
