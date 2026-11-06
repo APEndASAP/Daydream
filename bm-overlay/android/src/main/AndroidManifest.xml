@@ -7,11 +7,13 @@
 
     <application>
         <!-- 锁机无障碍服务：番茄钟专注锁机期间拦截 Home/返回/最近任务键。
-             注意：无障碍服务必须能被系统无障碍框架绑定，不能 exported="false"，
-             靠 BIND_ACCESSIBILITY_SERVICE 权限（仅系统可授予）保护安全。 -->
+             注意：无障碍服务带 intent-filter，Android 12+ 强制显式声明 android:exported。
+             exported=true 是正确值——无障碍服务需被系统无障碍框架跨应用绑定，
+             靠 BIND_ACCESSIBILITY_SERVICE 签名权限（仅系统可授予）保护安全，普通 App 无法绑定。 -->
         <service
             android:name="com.bairimeng.overlay.BmLockAccessibilityService"
             android:label="@string/bm_lock_accessibility_desc"
+            android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
