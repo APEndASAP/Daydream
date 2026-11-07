@@ -4209,15 +4209,9 @@ window.bmMusicUI = (function () {
       if (window.miniToast) miniToast('原生插件暂不支持盲切');
       renderRemotePanel(box);
     };
-    // 每日推荐：仅「网易云直连」模式下可用；后台遥控（外部 App）模式无此能力，点它给提示。
+    // 每日推荐：后台遥控 / 网易云直连两种模式下都可用——统一后台用 weapi 拉账号真实
+    //   每日推荐在「白日梦内部」播（_dailyRecommend 内部已按登录态自动兜底，无需区分模式）。
     box.querySelector('#bm-remote-daily').onclick = async () => {
-      // 20261107 用户定案：后台遥控（未开直连 isDirect=false）下，每日推荐不可用——提醒玩家切换模式。
-      if (!isDirect) {
-        if (window.miniToast) miniToast('「每日推荐」需在「网易云直连」模式下使用，请先切换上方模式');
-        return;
-      }
-      // 20261106：复用软件内 _dailyRecommend——优先 openUrl 深链拉起网易云每日推荐，
-      //   深链失败（网页端/未装网易云）则回退本地推荐关键词搜歌整批播。
       if (typeof _dailyRecommend === 'function') {
         if (window.miniToast) miniToast('正在打开每日推荐…');
         await _dailyRecommend((t) => { if (t && window.miniToast) miniToast(t); });
@@ -4227,15 +4221,9 @@ window.bmMusicUI = (function () {
       if (window.miniToast) miniToast('每日推荐暂不可用');
       renderRemotePanel(box);
     };
-    // 漫游：仅「网易云直连」模式下可用；后台遥控（外部 App）模式无此能力，点它给提示。
+    // 漫游：后台遥控 / 网易云直连两种模式下都可用——统一后台用 weapi 拉账号真实私人FM
+    //   在「白日梦内部」播（_roamPlay 内部已按登录态自动兜底，无需区分模式）。
     box.querySelector('#bm-remote-roam').onclick = async () => {
-      // 20261107 用户定案：后台遥控（未开直连 isDirect=false）下，漫游不可用——提醒玩家切换模式。
-      if (!isDirect) {
-        if (window.miniToast) miniToast('「漫游」需在「网易云直连」模式下使用，请先切换上方模式');
-        return;
-      }
-      // 20261106：复用软件内 _roamPlay——优先 openUrl 深链拉起网易云私人FM（orpheus://radio），
-      //   深链失败（网页端/未装网易云）则回退本地随机风格搜歌整批播。
       if (typeof _roamPlay === 'function') {
         if (window.miniToast) miniToast('正在开启音乐漫游…');
         await _roamPlay((t) => { if (t && window.miniToast) miniToast(t); });
