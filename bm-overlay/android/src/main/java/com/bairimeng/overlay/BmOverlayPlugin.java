@@ -503,6 +503,14 @@ public class BmOverlayPlugin extends Plugin {
             // 20261106：开启锁机时，若无障碍服务已授权，置 isLocking=true 拦截 Home/返回/最近任务键
             BmLockAccessibilityService.isLocking = true;
             showLockOverlay(hint);
+            // 20261106：锁机覆盖锁屏 + 锁定任务（LockTask）。
+            //   ① startLockTask() 进入系统级屏幕固定，隐藏手势导航/Home/最近任务，
+            //     让上滑手势切不走 App（普通 App 唯一能真正拦手势导航的系统 API）；
+            //   ② 覆盖层 FLAG_SHOW_WHEN_LOCKED 盖在系统锁屏之上 + 亮屏，玩家完全进不去。
+            startLockTaskSafe();
+            // ③ 若已是 Device Owner，锁机时顺手补一次 LockTask 白名单，
+            //     保证 startLockTask 免确认 + 无法组合键退出（彻底锁死）。
+            ensureLockTaskWhitelist();
             JSObject ret = new JSObject();
             ret.put("ok", true);
             call.resolve(ret);
@@ -520,6 +528,7 @@ public class BmOverlayPlugin extends Plugin {
         try {
             // 20261106：退出锁机，解除键盘拦截
             BmLockAccessibilityService.isLocking = false;
+            stopLockTaskSafe();
             removeLockOverlay();
             call.resolve(new JSObject().put("ok", true));
         } catch (Throwable t) {
@@ -554,6 +563,69 @@ public class BmOverlayPlugin extends Plugin {
         } catch (Throwable t) {
             call.resolve(new JSObject().put("ok", false));
         }
+    }
+
+    /**
+     * 检测本 App 是否已被设为「设备所有者」（Device Owner）。
+     * 返回 { isDeviceOwner, isActiveAdmin }。
+     *   - isDeviceOwner：是否 dpm set-device-owner 设成了设备所有者（彻底锁死的先决条件）
+     *   - isActiveAdmin：是否已是激活的设备管理员（Device Admin，比 Device Owner 弱一级）
+     */
+    @PluginMethod
+    public void isDeviceOwner(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.app.admin.DevicePolicyManager dpm =
+                    (android.app.admin.DevicePolicyManager) getContext()
+                            .getSystemService(Context.DEVICE_POLICY_SERVICE);
+            boolean isOwner = false;
+            boolean isAdmin = false;
+            if (dpm != null) {
+                try { isOwner = dpm.isDeviceOwnerApp(getContext().getPackageName()); } catch (Throwable t) {}
+                try {
+                    android.content.ComponentName cn =
+                            new android.content.ComponentName(getContext(), BmDeviceAdminReceiver.class);
+                    isAdmin = dpm.isAdminActive(cn);
+                } catch (Throwable t) {}
+            }
+            ret.put("isDeviceOwner", isOwner);
+            ret.put("isActiveAdmin", isAdmin);
+            ret.put("ok", true);
+        } catch (Throwable t) {
+            ret.put("isDeviceOwner", false);
+            ret.put("isActiveAdmin", false);
+            ret.put("ok", false);
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 把本 App 加入 LockTask 白名单（仅 Device Owner 时有效）。
+     * 设成 Device Owner 后调用一次，之后 startLockTask() 免确认、且无法组合键退出。
+     * 非 Device Owner 调用会静默失败（返回 ok=false，不抛异常）。
+     */
+    @PluginMethod
+    public void whitelistLockTask(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            android.app.admin.DevicePolicyManager dpm =
+                    (android.app.admin.DevicePolicyManager) getContext()
+                            .getSystemService(Context.DEVICE_POLICY_SERVICE);
+            if (dpm == null || !dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+                ret.put("ok", false);
+                ret.put("reason", "not_device_owner");
+                call.resolve(ret);
+                return;
+            }
+            android.content.ComponentName cn =
+                    new android.content.ComponentName(getContext(), BmDeviceAdminReceiver.class);
+            dpm.setLockTaskPackages(cn, new String[]{ getContext().getPackageName() });
+            ret.put("ok", true);
+        } catch (Throwable t) {
+            ret.put("ok", false);
+            ret.put("reason", String.valueOf(t.getMessage()));
+        }
+        call.resolve(ret);
     }
 
     /** 判断本插件的无障碍服务是否已在系统里开启。 */
@@ -625,6 +697,8 @@ public class BmOverlayPlugin extends Plugin {
         unlockBtn.setOnClickListener(v -> {
             try {
                 // 原生直接移除覆盖层（JS 卡死也能退出），再通知 JS 同步状态
+                BmLockAccessibilityService.isLocking = false;
+                stopLockTaskSafe();
                 removeLockOverlay();
                 fireJsEvent("onLockExit", new JSObject());
             } catch (Throwable t) {}
@@ -649,12 +723,20 @@ public class BmOverlayPlugin extends Plugin {
         int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 : WindowManager.LayoutParams.TYPE_PHONE;
-        // 不加 FLAG_NOT_FOCUSABLE：让覆盖层可聚焦，从而拦截返回键
+        // 不加 FLAG_NOT_FOCUSABLE：让覆盖层可聚焦，从而拦截返回键。
+        // 20261106：加 FLAG_SHOW_WHEN_LOCKED 让锁机页盖在系统锁屏之上，
+        //   FLAG_TURN_SCREEN_ON 亮屏 + FLAG_KEEP_SCREEN_ON 常亮，
+        //   玩家锁机期间完全进不去，唯一出口是「退出锁机」按钮。
+        int lockFlags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
         lockParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 type,
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                lockFlags,
                 PixelFormat.TRANSLUCENT);
         lockParams.gravity = Gravity.TOP | Gravity.START;
         lockParams.x = 0;
@@ -697,6 +779,62 @@ public class BmOverlayPlugin extends Plugin {
         lockRoot = null;
         lockParams = null;
         lockAttached = false;
+    }
+
+    /**
+     * 进入 LockTask（屏幕固定/系统级锁定），锁机期间隐藏手势导航/Home/最近任务，
+     * 让底部上滑手势无法切走 App。这是普通 App（非 Device Owner）唯一能真正拦截
+     * 手势导航的系统 API。
+     * 注意：非 Device Owner 首次调用会弹一次系统「固定屏幕」确认框（系统行为，无法跳过）。
+     */
+    private void startLockTaskSafe() {
+        try {
+            if (getActivity() == null) return;
+            android.app.Activity act = getActivity();
+            // 必须在 UI 线程调用
+            act.runOnUiThread(() -> {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        act.startLockTask();
+                    }
+                } catch (Throwable t) {}
+            });
+        } catch (Throwable t) {}
+    }
+
+    /** 退出 LockTask（屏幕固定），恢复系统手势导航。 */
+    private void stopLockTaskSafe() {
+        try {
+            if (getActivity() == null) return;
+            android.app.Activity act = getActivity();
+            act.runOnUiThread(() -> {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        act.stopLockTask();
+                    }
+                } catch (Throwable t) {}
+            });
+        } catch (Throwable t) {}
+    }
+
+    /**
+     * 若已是 Device Owner，把本 App 加入 LockTask 白名单（幂等，重复调用无害）。
+     * 设成 Device Owner 后，白名单使 startLockTask() 免确认 + 无法组合键退出。
+     * 非 Device Owner 时静默跳过（不影响普通 LockTask 流程）。
+     */
+    private void ensureLockTaskWhitelist() {
+        try {
+            android.app.admin.DevicePolicyManager dpm =
+                    (android.app.admin.DevicePolicyManager) getContext()
+                            .getSystemService(Context.DEVICE_POLICY_SERVICE);
+            if (dpm == null) return;
+            if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) return;
+            android.content.ComponentName cn =
+                    new android.content.ComponentName(getContext(), BmDeviceAdminReceiver.class);
+            try {
+                dpm.setLockTaskPackages(cn, new String[]{ getContext().getPackageName() });
+            } catch (Throwable t) {}
+        } catch (Throwable t) {}
     }
 
     /* ============ 内部实现 ============ */

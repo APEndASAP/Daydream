@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  白日梦 Device Admin 安全策略声明（供 Device Owner / Device Admin 使用）。
+  这里声明的 uses-policies 决定本 App 作为设备管理员时能申请哪些能力。
+  番茄钟锁机「彻底锁死」依赖 lock-task 能力（Device Owner 时免确认 + 无法组合键退出）。
+  尽量精简，只声明锁机所需，不申请无关的敏感能力（如擦除数据）。
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- 锁定任务（LockTask）：Device Owner 时可白名单 + 免确认锁死 -->
+        <lock-task />
+    </uses-policies>
+</device-admin>

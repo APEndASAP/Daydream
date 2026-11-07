@@ -94,6 +94,27 @@ public class BmRemoteControlPlugin extends Plugin {
         try {
             PlaybackState ps = c.getPlaybackState();
             o.put("playing", ps != null && ps.getState() == PlaybackState.STATE_PLAYING);
+            // 20261106 修复「进度条来回串」深层根因：getMediaState 此前不返回 position/duration，
+            //   前端拿不到外部真实进度，只能读内置残留 audio.currentTime(≈0) 推给原生悬浮窗，
+            //   与原生 tick 自推 positionSec 双源交替写 → 进度条来回跳。
+            //   这里补上外部 App 的真实进度（秒）与总时长（秒），供前端 _livePlayback() 统一读取。
+            try {
+                if (ps != null) {
+                    long pos = ps.getPosition();
+                    long dur = ps.getDuration();
+                    // PlaybackState 的 position 语义：若无更新速度信息，getPosition 是最近一次更新的绝对位置
+                    if (pos >= 0) {
+                        // 若提供了速度信息，按「上次更新时刻 + 速度 × 流逝时间」外推当前真实进度
+                        if (ps.getLastUpdatedTime() > 0 && Math.abs(ps.getPlaybackSpeed()) > 0.0001f) {
+                            long elapsed = android.os.SystemClock.elapsedRealtime() - ps.getLastUpdatedTime();
+                            long extrapolated = pos + (long)(ps.getPlaybackSpeed() * elapsed);
+                            if (extrapolated >= 0) pos = extrapolated;
+                        }
+                        o.put("position", (int)(pos / 1000));
+                    }
+                    if (dur > 0) o.put("duration", (int)(dur / 1000));
+                }
+            } catch (Throwable t3) { /* 部分 App 不提供进度信息，忽略 */ }
         } catch (Throwable t) {
             o.put("playing", false);
         }

@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- 20261106 锁机覆盖锁屏：FLAG_KEEP_SCREEN_ON（锁机期间常亮）需要 WAKE_LOCK 权限 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application>
         <!-- 锁机无障碍服务：番茄钟专注锁机期间拦截 Home/返回/最近任务键。
@@ -22,5 +24,25 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- 设备所有者接收器（Device Owner / Device Admin）：番茄钟锁机「彻底锁死」的承载。
+             用户通过 adb 设成 Device Owner 后，可 setLockTaskPackages 白名单 + startLockTask
+             免确认 + 无法组合键退出。非 Device Owner 用户不受影响（仍走普通 LockTask）。
+             注意：receiver 带 intent-filter（DEVICE_ADMIN_ENABLED），Android 12+ 强制显式声明
+             android:exported。这里用 exported=false（DeviceAdminReceiver 由系统通过
+             BIND_DEVICE_ADMIN 签名权限跨应用绑定，普通 App 无法绑定，无需对外导出）。 -->
+        <receiver
+            android:name="com.bairimeng.overlay.BmDeviceAdminReceiver"
+            android:label="@string/bm_device_admin_desc"
+            android:description="@string/bm_device_admin_desc"
+            android:exported="false"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

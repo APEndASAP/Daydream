@@ -86,6 +86,11 @@ public class BmMusicFloatPlugin extends Plugin {
     private boolean playing = false;
     private int positionSec = 0;
     private int durationSec = 0;
+    // 20261106 修复「进度条来回串」：JS 心跳每 500ms 推一次真实 position，原生 tick 每 1000ms
+    //   自推 positionSec，两源交替写导致来回跳。这里记录「最近一次收到 JS position 推送的
+    //   elapsedRealtime」，tick 自推前检查：若 2.5 秒内收到过 JS 推送，说明 JS 心跳在主导，
+    //   原生不自推（避免双源打架）；JS 心跳中断（挂后台/页面销毁）超过 2.5 秒才自推兜底。
+    private long lastJsPushElapsed = 0;
     private String playMode = "order";      // once | order | one | shuffle
     private String charName = null;         // null=单人
     private Bitmap charAvatarBmp = null;
@@ -234,6 +239,7 @@ public class BmMusicFloatPlugin extends Plugin {
             if (onlyProgress && p != null) {
                 // 仅进度：改位置 + 只刷进度 UI，不重排视图
                 positionSec = p;
+                lastJsPushElapsed = SystemClock.elapsedRealtime();   // 记录 JS 心跳推送，tick 据此不自推
                 updateProgressUi();
                 resolve(call, true, null);
                 return;
@@ -298,7 +304,10 @@ public class BmMusicFloatPlugin extends Plugin {
         }
         if (call.hasOption("playing")) playing = call.getBoolean("playing", false);
         Integer p = call.getInt("position");
-        if (p != null) positionSec = p;
+        if (p != null) {
+            positionSec = p;
+            lastJsPushElapsed = SystemClock.elapsedRealtime();   // 记录 JS 心跳推送时刻，供 tick 判断是否自推
+        }
         Integer d = call.getInt("duration");
         if (d != null) durationSec = d;
         if (call.hasOption("mode")) playMode = call.getString("mode", "order");
@@ -1422,7 +1431,12 @@ public class BmMusicFloatPlugin extends Plugin {
                 @Override
                 public void run() {
                     try {
-                        if (playing && !seeking && durationSec > 0) {
+                        // 20261106 修复「进度条来回串」：JS 心跳每 500ms 推真实 position，原生 tick
+                        //   每 1000ms 自推，两源交替写导致来回跳。现在 tick 自推前检查——
+                        //   若 2.5 秒内收到过 JS position 推送，说明 JS 心跳在主导，原生不自推，
+                        //   让 JS 心跳作为唯一进度源；JS 心跳中断（页面销毁/挂后台超时）才自推兜底。
+                        boolean jsAlive = (SystemClock.elapsedRealtime() - lastJsPushElapsed) < 2500;
+                        if (playing && !seeking && durationSec > 0 && !jsAlive) {
                             positionSec = tickBaseSec + (int) ((SystemClock.elapsedRealtime() - tickStartElapsed) / 1000);
                             if (positionSec >= durationSec) positionSec = durationSec;
                             updateProgressUi();
