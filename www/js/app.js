@@ -11698,11 +11698,35 @@ function _pomodoroStopNoise() {
    已开则原生 BmLockAccessibilityService 会在锁机期间拦截 Home/返回/最近任务键。 */
 function _pomodoroLock(hint) {
   try {
+    // 20261107 用户铁律：点锁机时，软件内所有悬浮窗自动关闭，只留专注页锁定界面。
+    _closeAllFloatsForLock();
     const BO = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay;
     if (BO && typeof BO.lock === 'function') {
       BO.lock({ hint: hint || '专注中，请勿分心' }).catch(() => {});
       bmAccessibilityCheckAndGuide();
     }
+  } catch (e) {}
+}
+
+/* 20261107：锁机前关闭软件内所有悬浮窗（一起听歌原生悬浮窗 + 软件内音乐悬浮窗 + 音乐页）。
+   逐项 try-catch，任一项失败不影响锁机主流程。 */
+function _closeAllFloatsForLock() {
+  try {
+    // ① 一起听歌原生悬浮窗（BmMusicFloat）
+    const MF = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmMusicFloat;
+    if (MF && typeof MF.hide === 'function') { try { MF.hide().catch(() => {}); } catch (e) {} }
+  } catch (e) {}
+  try {
+    // ② 软件内音乐悬浮窗/音乐页（bmMusicUI 暴露 closeMusicPage / setFloatScopeAndApply）
+    if (window.bmMusicUI && typeof window.bmMusicUI.closeMusicPage === 'function') {
+      try { window.bmMusicUI.closeMusicPage(); } catch (e) {}
+    }
+  } catch (e) {}
+  try {
+    // ③ 一起听歌悬浮窗回到「关闭」态（若走软件内悬浮，用 setFloatScopeAndApply 无对应「关」值，
+    //    直接调 closeMusicPage 已足够；这里兜底关闭原生悬浮窗）
+    const MF2 = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmMusicFloat;
+    if (MF2 && typeof MF2.stop === 'function') { try { MF2.stop().catch(() => {}); } catch (e) {} }
   } catch (e) {}
 }
 
