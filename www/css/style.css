@@ -6624,6 +6624,10 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 /* ---------- 律动星球（SVG/CSS 绘制，跟随主题色） ---------- */
 /* ===== 封面星球（深空星轨：封面贴球面 + 星轨环 + 星点，播放时律动 + 水波纹） ===== */
 .bm-planet { position: relative; border-radius: 50%; }
+/* 20261107 黑胶唱机台：包裹唱片 + 唱臂，让唱臂能相对唱片定位。
+   手机端只作为普通包裹容器（display:inline-block 不改变布局），唱臂默认隐藏。 */
+.bm-vinyl-rig { position: relative; display: inline-block; }
+.bm-tonearm { display: none; }
 /* 封面球体（星空版默认）：近黑蓝灰 + 中心发光星 + 魔法阵星图环绕 */
 .bm-planet-core {
   position: absolute; inset: 16%;
@@ -6752,9 +6756,11 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
      不能再用 --bm-card（rgba .03 半透明会透出后面的歌词/进度条，用户明确要求背板不可透明） */
   --bm-card-solid: #1b1c22;
   --bm-paper-2: #05070d;
-  /* 20261106 毛玻璃：控制栏/按钮的半透明玻璃底（深色主题用半透明白，浅色主题各自覆盖） */
-  --bm-glass: rgba(255,255,255,.08);
-  --bm-btn-glass: rgba(255,255,255,.10);
+  /* 20261107 融入背景修复：按钮/控制栏/搜索栏背板不再用「半透明白 + blur」的毛玻璃
+     （深色背景上会泛白成独立卡片），改成与背景同色系的实色（明度微差一档），
+     色块像背景自然延伸，不透明、无卡片感。 */
+  --bm-glass: #1e2026;      /* 控制栏/搜索栏容器背板：比背景(#15161c~#17181e)亮一档的深灰蓝 */
+  --bm-btn-glass: #252834;  /* 按钮/输入框背板：再亮一档的深灰蓝 */
   --bm-accent: var(--purple, #a78bfa);
   --bm-accent-soft: var(--purple-soft, #c4b5fd);
   --bm-accent-glow: var(--purple-glow, rgba(167,139,250,.35));
@@ -6917,15 +6923,18 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
 }
 .bm-lrc-line { font-size: 12px; line-height: 2; color: var(--bm-ink-faint); padding: 0 14px; word-break: break-word; overflow-wrap: anywhere; transition: color .3s, transform .3s; }
 .bm-lrc-line.on { color: var(--bm-ink); font-weight: 700; text-shadow: 0 1px 6px rgba(0,0,0,.08); }
+/* 20261107 双语歌词：翻译行字稍小、色稍浅，与原文区分（高亮时同样保持层级：原文最重、翻译次之） */
+.bm-lrc-tr { font-size: 11px; opacity: .82; }
+.bm-lrc-tr.on { font-weight: 600; opacity: .9; }
 .bm-music-search {
   position: relative; z-index: 2;
   flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 10px 16px;
   max-width: 560px; width: 100%; margin: 0 auto; box-sizing: border-box;
-  /* 20261106 毛玻璃修复：搜索栏从「纯实色 bg1 + 边框」的卡片状，改为无边界毛玻璃——
-     半透明遮罩 + backdrop-filter 磨砂，跟背景融合、不显卡片边框，同时挡住后面透出的字。 */
-  background: var(--bm-glass, rgba(255,255,255,.08));
-  -webkit-backdrop-filter: blur(18px) saturate(1.3);
-  backdrop-filter: blur(18px) saturate(1.3);
+  /* 20261107 用户定案：搜索栏背板彻底去卡片化——不做毛玻璃、不加背板，
+     背景完全透明直接透出主题背景纹理；输入框/按钮仍保留不透明色块。 */
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   border: 0;
   border-radius: 14px;
 }
@@ -7289,14 +7298,13 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
   position: relative; z-index: 1;
   flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 20px;
   padding: 12px 16px 8px;
-  /* 20261106 毛玻璃修复：不再用纯实色（--bm-card-solid 深色导致浅色主题「大黑坨」、
-     且与主题色不契合）。改用毛玻璃——半透明主题色底 + backdrop-filter 磨砂，
-     既挡住后面透出的歌名/歌手文字，又跟随各主题颜色，深浅主题都自然。
-     用 --bm-glass 变量（各主题块已定义为主题色半透明），叠一层深/浅中性底保证可读。 */
-  background: var(--bm-glass, rgba(255,255,255,.08));
-  -webkit-backdrop-filter: blur(18px) saturate(1.3);
-  backdrop-filter: blur(18px) saturate(1.3);
-  border: 0;   /* 20261106：去边框，无边界毛玻璃，跟背景融合 */
+  /* 20261107 用户定案：播放控制大背板彻底去卡片化——不做毛玻璃、不加背板，
+     背景完全透明，直接透出后方像素/怀旧等主题背景纹理；只保留排版。
+     图标按钮(.bm-ctrl-btn)仍保留各自的不透明色块。 */
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: 0;
   margin: 0 12px;
   border-radius: 18px;
 }
@@ -7675,8 +7683,10 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   --bm-accent-glow: rgba(10,58,106,.28);
   --bm-card-solid: #8fc0f0;
   --bm-paper-2: #a8d2f8;
-  --bm-glass: rgba(143,192,240,.30);
-  --bm-btn-glass: rgba(168,210,248,.34);
+  /* 20261107（用户定案）：背板（搜索栏/控制栏大横向面板）= 直接与大背景 bg0(#4a8fd8)一致，
+     不要浅色块，融成一片；图标色块（按钮）保持浅蓝白 #b6dcfb，深蓝图标清晰 */
+  --bm-glass: #4a8fd8;
+  --bm-btn-glass: #b6dcfb;
   color: var(--bm-ink);
   font-family: "Courier New", "Consolas", monospace;
 }
@@ -7705,9 +7715,23 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 }
 .bm-music-page[data-theme="pixel"] .bm-music-input,
 .bm-music-page[data-theme="pixel"] .bm-music-gobtn { border-radius: 0; font-family: inherit; }
-.bm-music-page[data-theme="pixel"] .bm-music-gobtn { background: var(--bm-card); border: 1px solid var(--bm-card-line); }
-.bm-music-page[data-theme="pixel"] .bm-ctrl-btn { border-radius: 0; }
-.bm-music-page[data-theme="pixel"] .bm-ctrl-btn.bm-ctrl-main { border-radius: 0; background: var(--bm-accent); color: #fff; box-shadow: 0 0 14px var(--bm-accent-glow); }
+.bm-music-page[data-theme="pixel"] .bm-music-gobtn { background: #b6dcfb; border: 1px solid rgba(20,60,100,.25); color: #0a2a4a; }
+.bm-music-page[data-theme="pixel"] .bm-ctrl-btn { border-radius: 0; background: #b6dcfb; color: #0a2a4a; border: 0; }
+.bm-music-page[data-theme="pixel"] .bm-ctrl-btn.bm-ctrl-main { border-radius: 0; background: #b6dcfb; color: #0a2a4a; box-shadow: none; }
+/* 20261107 用户定案：后台遥控框背板不仅颜色跟大背景一致，纹理（格纹+网点）也要一样。
+   在 --bm-glass(bg0 同色实色底) 上叠加与大背景 ::after 相同的格纹/网点纹理，不透明但纹理一致 */
+.bm-music-page[data-theme="pixel"] .bm-remote-box {
+  background-color: var(--bm-glass, #4a8fd8);
+  background-image:
+    radial-gradient(2px 2px at 18% 26%, rgba(255,255,255,.95), transparent 100%),
+    radial-gradient(2px 2px at 66% 18%, rgba(230,246,255,.85), transparent 100%),
+    radial-gradient(3px 3px at 82% 40%, rgba(255,255,255,.9), transparent 100%),
+    radial-gradient(2px 2px at 30% 68%, rgba(220,240,255,.75), transparent 100%),
+    radial-gradient(3px 3px at 12% 84%, rgba(255,255,255,.8), transparent 100%),
+    radial-gradient(2px 2px at 88% 76%, rgba(230,246,255,.7), transparent 100%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.06) 0 2px, transparent 2px 6px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 2px, transparent 2px 6px);
+}
 .bm-music-page[data-theme="pixel"] .bm-result { border-radius: 0; }
 .bm-music-page[data-theme="pixel"] .bm-result-cover { border-radius: 0; }
 .bm-music-page[data-theme="pixel"] .bm-planet-core {
@@ -7797,8 +7821,10 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
   --bm-accent-glow: rgba(74,42,138,.3);
   --bm-card-solid: #d8d0e8;
   --bm-paper-2: #c8c0e0;
-  --bm-glass: rgba(216,208,232,.30);
-  --bm-btn-glass: rgba(200,192,224,.34);
+  /* 20261107 融入背景（用户定案）：背板（搜索栏/控制栏大横向面板）直接取大背景 bg0(#b0a6d0)，
+     去掉浅色块，融成一片；图标色块（按钮）保持 #9a8aba */
+  --bm-glass: #b0a6d0;
+  --bm-btn-glass: #9a8aba;
   color: var(--bm-ink);
   font-family: "Tahoma", "MS Sans Serif", "Segoe UI", sans-serif;
 }
@@ -7834,20 +7860,20 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 }
 .bm-music-page[data-theme="y2k"] .bm-mode.disabled { color: #9a8aba; }
 .bm-music-page[data-theme="y2k"] .bm-music-input {
-  border-radius: 0; background: #ffffff; color: #2a1a4a; border: 2px solid #6a5a92;
-  box-shadow: inset 1px 1px 2px rgba(0,0,0,.3); font-family: inherit;
+  border-radius: 0; background: #b8aed8; color: #2a1a4a; border: 1px solid #6a5a92;
+  box-shadow: none; font-family: inherit;
 }
 .bm-music-page[data-theme="y2k"] .bm-music-gobtn {
-  border-radius: 0; background: #d8d0e8; color: #2a1a4a; border: 2px solid #6a5a92;
-  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #9a8aba; font-family: inherit;
+  border-radius: 0; background: #9a8aba; color: #2a1a4a; border: 1px solid #6a5a92;
+  box-shadow: none; font-family: inherit;
 }
 .bm-music-page[data-theme="y2k"] .bm-ctrl-btn {
-  border-radius: 2px; background: #d8d0e8; color: #2a1a4a; border: 2px solid #6a5a92;
-  box-shadow: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #9a8aba;
+  border-radius: 2px; background: #9a8aba; color: #2a1a4a; border: 1px solid #6a5a92;
+  box-shadow: none;
 }
 .bm-music-page[data-theme="y2k"] .bm-ctrl-btn.bm-ctrl-main {
-  background: #2a1a4a; color: #ffffff; border-color: #3a1a7a; border-radius: 2px;
-  box-shadow: inset 1px 1px 0 #5a4a82, inset -1px -1px 0 #1a0a3a;
+  background: #4a2a8a; color: #ffffff; border-color: #3a1a7a; border-radius: 2px;
+  box-shadow: none;
 }
 .bm-music-page[data-theme="y2k"] .bm-result { border-radius: 0; background: #d8d0e8; border: 2px solid #6a5a92; box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #9a8aba; }
 .bm-music-page[data-theme="y2k"] .bm-result-cover { border-radius: 0; border: 1px solid #6a5a92; }
@@ -7866,6 +7892,12 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 .bm-music-page[data-theme="y2k"] .bm-planet-ring.r3 { border-color: #c0b8d8; }
 .bm-music-page[data-theme="y2k"] .bm-planet-star { background: #ffffff; box-shadow: 0 0 6px #ffffff; }
 .bm-music-page[data-theme="y2k"] .bm-lrc-line.on { color: #4a2a8a; font-weight: 700; }
+/* 20261107 用户定案：后台遥控框背板颜色+纹理都跟大背景一致（不透明实色底 + 同款 4px 网点纹理） */
+.bm-music-page[data-theme="y2k"] .bm-remote-box {
+  background-color: var(--bm-glass, #b0a6d0);
+  background-image: radial-gradient(rgba(255,255,255,.14) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
 
 /* ============================================================
    听歌页主题五：极简黑白（Wabi-sabi 侘寂：黑白强对比 + 米白纸质感 + 大量留白 + 衬线字体）
@@ -8038,6 +8070,9 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 /* ---------- 黑胶唱片主题（vinyl）20261104：封面球变黑胶盘面 + 唱针 + 播放旋转 ---------- */
 .bm-music-page[data-theme="vinyl"] {
   --bm-paper: #0e0b10; --bm-paper-2: #070608; --bm-ink: #e8e2d8; --bm-ink-dim: #a89f92; --bm-ink-faint: #5d574e; --bm-card: rgba(255,255,255,.03); --bm-card-line: rgba(200,190,170,.16); --bm-accent: #5bc2ad; --bm-accent-glow: rgba(91,194,173,.3);
+  /* 20261107 融入背景：黑胶背景更深(#0e0b10)，按钮/搜索栏背板用更深一档的黑灰实色，色块沉进背景 */
+  --bm-glass: #17141c;
+  --bm-btn-glass: #1d1a24;
 }
 .bm-music-page[data-theme="vinyl"] .bm-planet-core {
   background-color: #0a0a0c;
@@ -8351,6 +8386,9 @@ body.theme-light #bm-float-style-picker {
 /* 20261104：歌词默认色从 --bm-ink-faint（过暗）提升到 --bm-ink-dim，保证暗色下可读；当前句用亮色加粗 */
 .bm-fly-line { font-size: 12px; line-height: 1.7; color: var(--bm-ink-dim); }
 .bm-fly-line.on { color: var(--bm-ink); font-weight: 700; text-shadow: 0 0 6px var(--bm-accent-glow); }
+/* 20261107 双语歌词：悬浮窗翻译行字稍小、色稍浅 */
+.bm-fly-tr { font-size: 11px; opacity: .82; }
+.bm-fly-tr.on { font-weight: 600; opacity: .9; }
 /* 20261104：三级悬浮窗（card）细进度条——位于底部控制按钮上方一行，不挤占歌词；
    细条可拖动 seek，两端显示当前时间/总时长 */
 .bm-float-progress { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 0 6px; margin-bottom: 8px; }
@@ -8435,10 +8473,11 @@ body .bm-music-float.fbg-dark .bm-float-card {
     width: 100%;
     display: grid;
     grid-template-columns: minmax(360px, 480px) 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto 1fr auto;
     grid-template-areas:
       "visual now"
-      "visual lyric";
+      "visual lyric"
+      "visual progress";
     align-items: stretch;
     justify-content: center;
     column-gap: 56px;
@@ -8461,11 +8500,70 @@ body .bm-music-float.fbg-dark .bm-float-card {
     width: 100%;
     max-width: 620px;
     align-self: stretch;
-    padding: 12px 0 16px;
+    padding: 12px 0 8px;
     text-align: left;
+  }
+  /* 20261107：PC 宽屏进度条归到右列 lyric 下方，不再横穿唱片 */
+  .bm-music-progress {
+    grid-area: progress;
+    width: 100%;
+    max-width: 620px;
+    margin: 0;
+    padding: 0 0 8px;
+    box-sizing: border-box;
   }
   /* 唱片尺寸在桌面端放大 */
   .bm-music-visual .bm-planet { width: 360px !important; height: 360px !important; }
+  /* 20261107 PC 宽屏黑胶唱机：显示唱臂（拟物，从唱片右上斜伸向盘面） */
+  .bm-tonearm { display: block; }
+  /* 唱臂基座（pivot）：唱片右上角外侧的银色圆座 */
+  .bm-tonearm-pivot {
+    position: absolute; right: -10px; top: -6px; z-index: 5;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #f8f8f8, #cfcfcf 55%, #9a9a9a);
+    box-shadow: 0 3px 8px rgba(0,0,0,.55), inset 0 2px 3px rgba(255,255,255,.8);
+  }
+  .bm-tonearm-pivot::after {
+    content: ''; position: absolute; inset: 30%; border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, #ffffff, #b8b8b8 70%);
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.35);
+  }
+  /* 唱臂杆：从 pivot 向左下斜伸到唱片盘面中心，末端带唱头 */
+  .bm-tonearm-arm {
+    position: absolute; z-index: 4;
+    right: 6px; top: 10px;
+    width: 210px; height: 9px;
+    border-radius: 5px;
+    background: linear-gradient(180deg, #ffffff, #e0e0e0 45%, #c2c2c2 70%, #a8a8a8);
+    transform-origin: 100% 50%;
+    transform: rotate(33deg);
+    box-shadow: 0 2px 5px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.85);
+  }
+  /* 唱头：装在唱臂杆末端（随杆一起旋转），带唱针 */
+  .bm-tonearm-head {
+    position: absolute; z-index: 6;
+    left: -4px; top: 50%;
+    transform: translateY(-50%);
+    width: 22px; height: 14px; border-radius: 3px;
+    background: linear-gradient(160deg, #f2f2f2, #c4c4c4 60%, #9a9a9a);
+    box-shadow: 0 1px 3px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.7);
+  }
+  .bm-tonearm-head::after {
+    content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+    width: 2px; height: 8px; background: #7a7a7a;
+  }
+  /* 20261107 PC 宽屏：胶囊标签栏（歌词/百科/相似推荐） */
+  .bm-music-tabs { display: flex; gap: 8px; margin-top: 14px; }
+  .bm-music-tab {
+    border: 1px solid var(--bm-card-line); border-radius: 999px;
+    background: var(--bm-card); color: var(--bm-ink-dim);
+    padding: 5px 16px; font-size: 13px; cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .bm-music-tab.on {
+    background: var(--bm-accent); border-color: var(--bm-accent); color: #fff;
+  }
+  .bm-music-tab:hover { border-color: var(--bm-accent); color: var(--bm-ink); }
   /* 搜索框/结果/工具行桌面加宽 */
   .bm-music-searchtool, .bm-music-search, .bm-music-results { max-width: 720px; }
 }
@@ -8652,7 +8750,10 @@ body .bm-music-float.fbg-dark .bm-float-card {
 .bm-remote-box {
   display: flex; flex-direction: column; gap: 10px;
   padding: 18px 16px; border-radius: 14px;
-  background: var(--bm-card, rgba(255,255,255,.03)); border: 1px solid var(--bm-card-line, rgba(203,209,221,.16));
+  /* 20261107 用户定案：后台遥控框要有细边框 + 不透明背板，但背板颜色跟大背景一模一样
+     （--bm-glass 各主题已定义为 bg0 同色实色），仅靠细描边 + 同色背板划分边界，不显浅色卡片。 */
+  background: var(--bm-glass, rgba(255,255,255,.08));
+  border: 1px solid var(--bm-card-line, rgba(203,209,221,.2));
 }
 .bm-remote-head { font-size: 15px; font-weight: 700; }
 .bm-remote-status { font-size: 13px; color: var(--bm-ink); }
@@ -8679,12 +8780,11 @@ body .bm-music-float.fbg-dark .bm-float-card {
 .bm-remote-btn.bm-remote-pp { background: var(--bm-accent-glow); border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-remote-btn.bm-remote-blind { flex: 0 0 auto; }
 .bm-remote-tip-warn { color: var(--bm-ink-faint, #8a94ac); font-size: 11px; }
-/* 20261104 后台遥控面板：不透明背板 + 展开收起 + 权限提示 */
-/* 20261106：面板背板改毛玻璃——半透明主题色底 + 磨砂，挡字又跟随主题，不再用纯深色实色 */
+/* 20261106 后台遥控面板：不透明背板 + 展开收起 + 权限提示 */
+/* 20261107 用户定案：后台遥控框 = 同背景色实色背板 + 细描边（划分边界），不透明、不做毛玻璃 */
 .bm-remote-box-solid, .bm-remote-box {
   background: var(--bm-glass, rgba(255,255,255,.08));
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
+  border: 1px solid var(--bm-card-line, rgba(203,209,221,.2));
 }
 .bm-remote-headbar { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
 .bm-remote-fold { background: none; border: none; color: var(--bm-ink-dim); font-size: 12px; cursor: pointer; padding: 2px 4px; }
@@ -8710,7 +8810,7 @@ body .bm-music-float.fbg-dark .bm-float-card {
   background: #fff; transition: left .2s ease;
 }
 .bm-remote-mode-btn.on .bm-remote-mode-knob { left: 17px; }
-.bm-netease-box { display: flex; flex-direction: column; gap: 10px; padding: 10px 11px; border-radius: 12px; background: var(--bm-glass, rgba(255,255,255,.08)); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1px solid rgba(120,90,220,.25); }
+.bm-netease-box { display: flex; flex-direction: column; gap: 10px; padding: 10px 11px; border-radius: 12px; background: transparent; border: 0; }
 .bm-netease-login-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .bm-netease-status { font-size: 12px; color: var(--bm-ink-dim); }
 .bm-netease-status.on { color: #4cd964; }

@@ -460,27 +460,42 @@
   .wheel-body{display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 0 2px;}
   .wheel-col{display:flex;flex-direction:column;align-items:center;gap:6px;}
   .wheel-col-label{font-size:12px;color:var(--ink2);}
+  /* 20261107 滚轮重构：高亮带移出滚动容器，用 wrap 作定位父级，保证高亮带固定中间不随内容滚 */
+  .wheel-wrap{position:relative;width:96px;height:168px;}
   .wheel-scroll{
-    position:relative;width:96px;height:168px;overflow-y:auto;overflow-x:hidden;
+    position:relative;z-index:2;width:96px;height:168px;overflow-y:auto;overflow-x:hidden;
     scrollbar-width:none;-ms-overflow-style:none;
-    border-radius:14px;background:var(--card-bg);border:1.5px solid var(--line);
-    -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 22%,#000 78%,transparent 100%);
-    mask-image:linear-gradient(180deg,transparent 0,#000 22%,#000 78%,transparent 100%);
+    border-radius:14px;border:1.5px solid var(--line);
+    box-sizing:border-box;
+    /* 背景透明：让下方的高亮带透出来作为选中背景，文字浮在高亮带上方清晰可见 */
+    background:transparent;
+    -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 20%,#000 80%,transparent 100%);
+    mask-image:linear-gradient(180deg,transparent 0,#000 20%,#000 80%,transparent 100%);
   }
   .wheel-scroll::-webkit-scrollbar{display:none;}
-  /* 上下留白，让首尾项也能滚到中间高亮带 */
-  .wheel-scroll::after{content:'';display:block;height:67px;}
-  .wheel-scroll::before{
-    content:'';position:sticky;top:50%;display:block;height:34px;margin:-17px 6px -34px;
-    border-radius:9px;background:var(--main-soft, rgba(167,139,250,.18));
-    border-top:1px solid var(--main);border-bottom:1px solid var(--main);pointer-events:none;z-index:1;
+  /* 顶部留白：让第一项也能滚到中间高亮带 */
+  .wheel-scroll::before{content:'';display:block;height:67px;flex-shrink:0;}
+  /* 底部留白：让最后一项也能滚到中间高亮带 */
+  .wheel-scroll::after{content:'';display:block;height:67px;flex-shrink:0;}
+  /* 中间高亮带：绝对定位在 wrap 上，固定居中，不随滚动内容移动。
+     半透明主色底 + 上下实线边框，形成「选中框」；滚动层(z:2)透明背景、文字浮在其上 */
+  .wheel-highlight{
+    position:absolute;left:0;right:0;top:50%;height:40px;transform:translateY(-50%);
+    background:var(--main-soft, rgba(167,139,250,.16));
+    border-top:1.5px solid var(--main);
+    border-bottom:1.5px solid var(--main);
+    border-radius:9px;
+    pointer-events:none;z-index:1;
   }
   .wheel-item{
+    position:relative;z-index:1;
     height:34px;display:flex;align-items:center;justify-content:center;
-    font-size:20px;font-weight:600;color:var(--ink2);cursor:pointer;
-    -webkit-tap-highlight-color:transparent;transition:color .15s, font-size .15s;
+    font-size:18px;font-weight:500;color:var(--ink2);cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+    transition:color .12s, font-size .12s;
   }
-  .wheel-item.sel{color:var(--ink);font-size:23px;font-weight:700;}
+  /* 选中项：深色加粗放大，透过半透明高亮框清晰可见，不再加背景色块 */
+  .wheel-item.sel{color:var(--ink);font-size:21px;font-weight:700;}
   .wheel-actions{display:flex;gap:10px;margin-top:18px;}
   .wheel-actions button{
     flex:1;height:44px;border-radius:22px;border:1px solid var(--line);background:var(--card-bg);
@@ -1014,12 +1029,18 @@
     <div class="wheel-body">
       <div class="wheel-col">
         <div class="wheel-col-label">小时</div>
-        <div class="wheel-scroll" id="wheelHour"></div>
+        <div class="wheel-wrap">
+          <div class="wheel-scroll" id="wheelHour"></div>
+          <div class="wheel-highlight"></div>
+        </div>
       </div>
       <div class="wheel-sep">:</div>
       <div class="wheel-col">
         <div class="wheel-col-label">分钟</div>
-        <div class="wheel-scroll" id="wheelMin"></div>
+        <div class="wheel-wrap">
+          <div class="wheel-scroll" id="wheelMin"></div>
+          <div class="wheel-highlight"></div>
+        </div>
       </div>
     </div>
     <div class="wheel-actions">
@@ -1491,16 +1512,17 @@ function openWheel(target){
   document.getElementById('wheelTitle').textContent = target === 'focus' ? '设置专注时长' : '设置休息时长';
   const hourScroll = document.getElementById('wheelHour');
   const minScroll = document.getElementById('wheelMin');
-  // 小时：0~6（专注最多 6 小时，休息最多 0 小时——休息通常 <1h，但保留 0~6 通用）
-  // 分钟：0~59，5 分钟步进（闹钟式常用 5 分钟刻度）
-  buildWheel(hourScroll, 0, 6, _wheelHour, (v)=>{ _wheelHour = v; });
-  buildWheel(minScroll, 0, 59, _wheelMin, (v)=>{ _wheelMin = v; }, 5);
+  // 20261107 修正：小时 0~23（全天 24 小时），分钟 0~59（每分钟一个刻度，不再 5 分钟步进）
+  buildWheel(hourScroll, 0, 23, _wheelHour, (v)=>{ _wheelHour = v; });
+  buildWheel(minScroll, 0, 59, _wheelMin, (v)=>{ _wheelMin = v; });
   document.getElementById('wheelSheet').classList.add('show');
 }
 
 /* 构建一个滚轮：start~end 范围，current 当前值，onPick 回调，step 步进（默认 1） */
 function buildWheel(el, start, end, current, onPick, step = 1){
   el.innerHTML = '';
+  // 20261107：高亮带已移到 scroll 容器外（HTML 里的 .wheel-highlight），
+  //   这里只生成可滚动的数字项，不再往 el 里塞高亮带。
   const items = [];
   for (let v = start; v <= end; v += step) items.push(v);
   // 当前值不在步进刻度上时，就近对齐
@@ -1532,9 +1554,9 @@ function scrollToValue(el, value, immediate = false){
   if (el._onPick) el._onPick(value);
   // 高亮
   el.querySelectorAll('.wheel-item').forEach((it, i)=> it.classList.toggle('sel', i === idx));
-  // 居中：把该项滚到容器中间（item 高 34px，容器高 168px）
-  const itemH = 34, containerH = el.clientHeight || 168;
-  const targetY = idx * itemH - (containerH / 2) + (itemH / 2);
+  // 居中：item 高 34px，顶部 spacer 67px，容器高 168px → 该项顶边应滚到 (containerH - itemH)/2
+  const itemH = 34, spacerH = 67, containerH = el.clientHeight || 168;
+  const targetY = spacerH + idx * itemH - (containerH - itemH) / 2;
   el.scrollTo({ top: Math.max(0, targetY), behavior: immediate ? 'auto' : 'smooth' });
 }
 
@@ -1544,15 +1566,27 @@ function bindWheelScroll(el){
   el.addEventListener('scroll', ()=>{
     if (t) clearTimeout(t);
     t = setTimeout(()=>{
-      const itemH = 34, containerH = el.clientHeight || 168;
-      const centerY = el.scrollTop + containerH / 2;
-      const idx = Math.round((centerY - itemH / 2) / itemH);
+      const itemH = 34, spacerH = 67, containerH = el.clientHeight || 168;
+      // 中心高亮带对应 scrollTop 位置
+      const centerY = el.scrollTop + (containerH - itemH) / 2;
+      const idx = Math.round((centerY - spacerH) / itemH);
       const items = el._items || [];
-      if (idx < 0 || idx >= items.length) return;
+      if (idx < 0 || idx >= items.length){
+        // 出界时吸附到最近合法项
+        const cl = Math.max(0, Math.min(items.length - 1, idx));
+        scrollToValue(el, items[cl], true);
+        return;
+      }
+      // 若因惯性停在两格之间（scroll-snap 未生效的兜底），强制吸附到最近整格
+      const raw = (centerY - spacerH) / itemH;
+      if (Math.abs(raw - idx) > 0.05){
+        scrollToValue(el, items[idx], true);
+        return;
+      }
       el._sel = items[idx];
       if (el._onPick) el._onPick(items[idx]);
       el.querySelectorAll('.wheel-item').forEach((it, i)=> it.classList.toggle('sel', i === idx));
-    }, 60);
+    }, 80);
   });
 }
 bindWheelScroll(document.getElementById('wheelHour'));

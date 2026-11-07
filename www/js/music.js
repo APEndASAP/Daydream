@@ -345,12 +345,38 @@ window.bmMusic = (function () {
 
   /* ---------- 获取单曲详情（播放直链 + 封面 + 歌词） ---------- */
   // 20261105：直连拿网易云歌词（官方接口，需 MUSIC_U 登录态）
+  // 20261107 修复「英文/韩文歌只有原文、没有中文翻译」：网易云歌词接口返回里，
+  //   lrc.lyric 是原文、tlyric.lyric 是翻译（中文）。之前只取了 lrc.lyric，丢了翻译。
+  //   现在把原文+翻译按时间戳合并成「原文行 + 翻译行」交替的双语 LRC，播放器滚动时
+  //   每句歌词显示两行（上行原文、下行中文翻译），与网易云 App 官方双语歌词一致。
   async function _netEaseLyric(id) {
     if (!id) return '';
     try {
       const j = await _netEaseReq('https://music.163.com/api/song/lyric?id=' + id + '&lv=1&kv=1&tv=-1');
-      if (j && j.lrc && j.lrc.lyric) return j.lrc.lyric;
-      return '';
+      if (!j || !j.lrc || !j.lrc.lyric) return '';
+      const orig = String(j.lrc.lyric || '');
+      const trans = (j.tlyric && j.tlyric.lyric) ? String(j.tlyric.lyric) : '';
+      if (!trans || !trans.trim()) return orig;   // 无翻译（中文歌）直接返回原文
+      // 解析翻译行：只保留带时间戳且时间戳能精确匹配原文的行
+      const tLine = new Map();   // 时间戳字符串 -> 翻译文本
+      const re = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+      trans.split('\n').forEach(line => {
+        const m = line.match(re);
+        const text = line.replace(re, '').trim();
+        if (!m || !text) return;
+        tLine.set(m[0], text);
+      });
+      // 遍历原文行，遇到「有对应翻译」的时间戳就在原文行后补一行翻译
+      const out = [];
+      orig.split('\n').forEach(line => {
+        out.push(line);
+        const m = line.match(re);
+        const text = line.replace(re, '').trim();
+        if (!m || !text) return;
+        const tr = tLine.get(m[0]);
+        if (tr) out.push(`${m[0]}${tr}`);
+      });
+      return out.join('\n');
     } catch (e) { return ''; }
   }
   async function fetchSongDetail(song) {
@@ -1193,27 +1219,35 @@ window.bmMusicUI = (function () {
       ? `<div class="bm-planet-core has-pic" id="bm-planet-core" style="background-image:url('${esc(pic)}')"></div>`
       : `<div class="bm-planet-core" id="bm-planet-core"><div class="bm-planet-ph">${window.icon ? window.icon('music', 40) : '♪'}</div></div>`;
     return `
-    <div class="bm-planet" id="bm-planet" style="width:${size}px;height:${size}px;">
-      ${core}
-      <div class="bm-planet-ring r1"></div>
-      <div class="bm-planet-ring r2"></div>
-      <div class="bm-planet-ring r3"></div>
-      <span class="bm-planet-star s1"></span>
-      <span class="bm-planet-star s2"></span>
-      <span class="bm-planet-star s3"></span>
-      <div class="bm-magic-circle" id="bm-magic-circle">
-        <span class="bm-node n1"></span>
-        <span class="bm-node n2"></span>
-        <span class="bm-node n3"></span>
-        <span class="bm-node n4"></span>
-        <span class="bm-node n5"></span>
-        <span class="bm-node n6"></span>
-        <svg class="bm-constellation" viewBox="0 0 200 200" preserveAspectRatio="none">
-          <polygon points="185,100 142,26 58,26 15,100 58,174 142,174" class="bm-con-poly"></polygon>
-        </svg>
+    <div class="bm-vinyl-rig">
+      <div class="bm-planet" id="bm-planet" style="width:${size}px;height:${size}px;">
+        ${core}
+        <div class="bm-planet-ring r1"></div>
+        <div class="bm-planet-ring r2"></div>
+        <div class="bm-planet-ring r3"></div>
+        <span class="bm-planet-star s1"></span>
+        <span class="bm-planet-star s2"></span>
+        <span class="bm-planet-star s3"></span>
+        <div class="bm-magic-circle" id="bm-magic-circle">
+          <span class="bm-node n1"></span>
+          <span class="bm-node n2"></span>
+          <span class="bm-node n3"></span>
+          <span class="bm-node n4"></span>
+          <span class="bm-node n5"></span>
+          <span class="bm-node n6"></span>
+          <svg class="bm-constellation" viewBox="0 0 200 200" preserveAspectRatio="none">
+            <polygon points="185,100 142,26 58,26 15,100 58,174 142,174" class="bm-con-poly"></polygon>
+          </svg>
+        </div>
+        <div class="bm-wave-ring" id="bm-wave-ring">
+          <span></span><span></span><span></span>
+        </div>
       </div>
-      <div class="bm-wave-ring" id="bm-wave-ring">
-        <span></span><span></span><span></span>
+      <!-- 20261107 PC 宽屏黑胶唱机：唱臂（默认隐藏，≥1100px 才显示） -->
+      <div class="bm-tonearm" aria-hidden="true">
+        <div class="bm-tonearm-pivot"></div>
+        <div class="bm-tonearm-arm"></div>
+        <div class="bm-tonearm-head"></div>
       </div>
     </div>`;
   }
@@ -1237,6 +1271,11 @@ window.bmMusicUI = (function () {
       times.forEach(t => lines.push({ t, text }));
     });
     lines.sort((a, b) => a.t - b.t);
+    // 20261107 双语歌词：同一时间戳连续出现的「第二行」判定为翻译行，打 tr 标记，
+    //   渲染时加 bm-lrc-tr / bm-fly-tr class，字稍小、色稍浅，与原文区分（与网易云官方一致）。
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].t === lines[i - 1].t && !lines[i - 1].tr) lines[i].tr = true;
+    }
     return lines;
   }
 
@@ -1594,6 +1633,11 @@ window.bmMusicUI = (function () {
     // 20261105：isRemote = 真在「遥控外部 App」（mode=remote 且未开网易云直连）。
     //   开了直连后，角色走内置播放器（搜歌/点播都走 _netEase*），不再盲控外部 App。
     const isRemote = (M.state.mode === 'remote') && !_netEaseDirect;
+    // 20261106 修复「直连模式下角色互动权重归零」：网易云直连（_netEaseDirect=true 且 mode=mirror）
+    //   时 isRemote 恒 false，导致盲抽/日推/漫游权重 isRemote?X:0 全部归零，角色永远只抽得到
+    //   「主动搜歌」一个动作。这里单独标 isDirect，让盲抽/日推/漫游在直连模式下也有权重>0，
+    //   且 act 走 _netEase* 内置播放器路径（_dailyRecommend/_roamPlay 内部已按 _netEaseDirect 分流）。
+    const isDirect = !!_netEaseDirect;
     const actions = [
       // 主动播放（有歌时继续/从头播）
       { w: hasCur ? 2 : 0, act: async () => {
@@ -1619,20 +1663,34 @@ window.bmMusicUI = (function () {
           if (isRemote) { await _remoteAction({ bridge: 'prev', sayText: `${nm} 切换回上一首`, local: () => M.prev() }, (t) => say(t || `${nm} 切换回上一首`)); }
           else { try { await M.prev(); } catch(e){} say(`${nm} 切换回上一首`); }
         } },
-      // 盲抽一首（模式二：角色随机抽外部 App 歌单里的一首来放）
-      { w: isRemote ? 3 : 0, act: async () => {
-          await _remoteAction({ bridge: 'next', sayText: `${nm} 随手抽了一首来听`, local: async () => {
-            const lib = await M.getLocalLibrary();
-            if (!lib.length) { const kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)]; const r = await M.search(kw); if (r && r.length) { const f = await M.fetchSongDetail(r[0]); if (f && f.url) { M.state.playlist = [f]; M.state.playIndex = 0; M.play(f); } } return; }
-            const s = lib[Math.floor(Math.random() * lib.length)]; let f = s; if (!f.url) f = await M.fetchSongDetail(s); if (f && f.url) { M.state.playlist = [f]; M.state.playIndex = 0; M.play(f); }
-          } }, (t) => say(t || `${nm} 随手抽了一首来听`));
+      // 盲抽一首（模式二：角色随机抽外部 App 歌单里的一首来放；直连模式随机搜一首网易云的歌）
+      { w: (isRemote || isDirect) ? 3 : 0, act: async () => {
+          if (isRemote) {
+            await _remoteAction({ bridge: 'next', sayText: `${nm} 随手抽了一首来听`, local: async () => {
+              const lib = await M.getLocalLibrary();
+              if (!lib.length) { const kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)]; const r = await M.search(kw); if (r && r.length) { const f = await M.fetchSongDetail(r[0]); if (f && f.url) { M.state.playlist = [f]; M.state.playIndex = 0; M.play(f); } } return; }
+              const s = lib[Math.floor(Math.random() * lib.length)]; let f = s; if (!f.url) f = await M.fetchSongDetail(s); if (f && f.url) { M.state.playlist = [f]; M.state.playIndex = 0; M.play(f); }
+            } }, (t) => say(t || `${nm} 随手抽了一首来听`));
+          } else if (isDirect) {
+            // 直连模式：随机搜一首网易云的歌盲抽（走 _netEase* 内置播放器）
+            const kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)];
+            const list = await _netEaseSearch(kw);
+            if (!list || !list.length) { say(`${nm} 想随手抽一首，但没找到`); return; }
+            const s = list[Math.floor(Math.random() * list.length)];
+            const u = await _netEaseSongUrl(s.id);
+            if (!u || !u.url) { say(`${nm} 想随手抽一首《${s.name}》，但没拿到播放源`); return; }
+            const full = { id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' };
+            M.state.current = full; M.addToQueue(full);
+            try { await M.play(full); } catch (e) {}
+            say(`${nm} 随手抽了一首《${full.name}》来听`);
+          }
         } },
-      // 每日推荐（模式二：角色自主播放每日推荐）
-      { w: isRemote ? 2 : 0, act: async () => {
+      // 每日推荐（模式二：角色自主播放每日推荐；直连模式同样可用）
+      { w: (isRemote || isDirect) ? 2 : 0, act: async () => {
           await _dailyRecommend((t) => say(t || `${nm} 播放了每日推荐`));
         } },
-      // 漫游（模式二：角色自主开启音乐漫游）
-      { w: isRemote ? 2 : 0, act: async () => {
+      // 漫游（模式二：角色自主开启音乐漫游；直连模式同样可用）
+      { w: (isRemote || isDirect) ? 2 : 0, act: async () => {
           await _roamPlay((t) => say(t || `${nm} 开启了音乐漫游`));
         } },
       // 列表添加音乐（搜一首加进播放列表，不打断当前播放）——仅镜像模式
@@ -1751,7 +1809,12 @@ window.bmMusicUI = (function () {
       if (!c) return;
       // 20261104 模式二：镜像搜索 + 后台遥控两种模式角色都能自主操控；
       //   本地模式角色只在本地歌单盲抽（走别处）。remote 模式动作走 _remoteAction（后台遥控+垫片）。
+      // 20261106 互斥加固：入口同时把「直连残留 + local 模式」排除在外。虽然 _netEaseSetDirect(true)
+      //   已强制把 mode 改回 mirror（正常不会残留 local），但这里显式兜底：只要开了网易云直连
+      //   （_netEaseDirect）且当前在本地模式，就禁止角色联网动作（搜歌/日推/漫游），
+      //   避免「本地断网模式」下角色偷偷联网搜歌、破坏模式隔离。
       if (M.state.mode !== 'mirror' && M.state.mode !== 'remote') return;
+      if (M.state.mode === 'local' && _netEaseDirect) return;
       // 20261104 互动B：只有「正在和该角色一起听歌」时才触发（真的搜歌/播放/暂停/切歌）。
       //   不与互动A（偷看歌单/后台听歌记录，默认开）混淆。
       if (!(M.state.charId === charId && M.state.togetherSince)) return;
@@ -2242,6 +2305,12 @@ window.bmMusicUI = (function () {
         <div class="bm-music-now">
           <div class="bm-music-title2" id="bm-music-title2">${cur ? esc(cur.name) : '未在播放'}</div>
           <div class="bm-music-artist" id="bm-music-artist">${cur ? esc(cur.artist) : '—'}</div>
+          <!-- 20261107 PC 宽屏：歌词/百科/相似推荐 胶囊标签（默认隐藏，≥1100px 显示） -->
+          <div class="bm-music-tabs" id="bm-music-tabs">
+            <button class="bm-music-tab on" data-tab="lyric">歌词</button>
+            <button class="bm-music-tab" data-tab="wiki">百科</button>
+            <button class="bm-music-tab" data-tab="similar">相似推荐</button>
+          </div>
         </div>
         <div class="bm-music-lyric" id="bm-music-lyric"></div>
         <div class="bm-music-progress" id="bm-music-progress">
@@ -2295,6 +2364,15 @@ window.bmMusicUI = (function () {
         b.disabled = false;              // 按钮永远可点
         b.title = isOn ? '当前模式' : '切换到「' + modeLabel(b.dataset.mode) + '」';
       });
+      // 20261106 互斥：切到「后台遥控」时强制关掉网易云直连（两套状态真互斥，
+      //   否则 _netEaseDirect 残留 true 会让所有遥控分支失效、角色互动权重归零）。
+      //   切到 mirror/local 时也同步清掉遥控态心跳。
+      if (mode === 'remote') {
+        if (_netEaseDirect) { _netEaseSetDirect(false); }
+      }
+      // 20261106：remote 模式启动「真实态」心跳，其余模式停止
+      if (mode === 'remote') { _startLiveExternalHeartbeat(); }
+      else { _stopLiveExternalHeartbeat(); _liveExternal = null; _liveExternalAt = 0; }
       // 20261106：切换模式立即落库，重进记住上次选的模式
       M.saveSession();
       renderModePanel(mode);
@@ -2306,6 +2384,21 @@ window.bmMusicUI = (function () {
       b.onclick = () => setMode(b.dataset.mode);
     });
     setMode(M.state.mode);
+
+    // 20261107 PC 宽屏：歌词/百科/相似推荐 胶囊标签切换（百科/相似推荐先占位）
+    const musicTabs = overlay.querySelector('#bm-music-tabs');
+    if (musicTabs) {
+      musicTabs.querySelectorAll('.bm-music-tab').forEach(tb => {
+        tb.onclick = () => {
+          const tab = tb.dataset.tab;
+          musicTabs.querySelectorAll('.bm-music-tab').forEach(x => x.classList.toggle('on', x === tb));
+          if (tab === 'lyric') return;
+          const msg = tab === 'wiki' ? '百科功能即将上线' : '相似推荐功能即将上线';
+          if (window.miniToast) miniToast(msg);
+          else if (window.showTopBanner) showTopBanner(msg, { dur: 2000 });
+        };
+      });
+    }
 
     // 返回（20261105：先关子层弹窗，子层关完才退音乐页，栈式返回）
     overlay.querySelector('#bm-music-back').onclick = () => backMusicPage();
@@ -2797,7 +2890,17 @@ window.bmMusicUI = (function () {
           if (tab === 'history') return;
           const i = parseInt(el.dataset.i, 10);
           M.state.playIndex = i;
-          M.playPrepared(i);
+          // 20261106 互斥修复：播放列表点击切歌此前直接 M.playPrepared(i) 走内置播放器，
+          //   后台遥控模式（mode==='remote' 且未开直连）下应发 bridge 指令给外部 App 切歌，
+          //   否则内置残留旧歌会跟外部歌打架、且切不动外部正在播的那首。
+          //   这里与音乐页控制键 prev/next（_isRemotePage）判断对齐。
+          if ((M.state.mode === 'remote') && !_netEaseDirect) {
+            // 遥控模式：目标歌在外部 App 里，本 App 无法精确跳某首，发 next 语义最接近「切到列表里的歌」
+            _remoteAction({ bridge: 'next', local: () => M.playPrepared(i) }, null);
+            refreshPlayerUI();
+          } else {
+            M.playPrepared(i);
+          }
           rerender();   // 只更新高亮，不关闭（用户明确：选歌后列表保持存在）
         };
       });
@@ -3421,10 +3524,11 @@ window.bmMusicUI = (function () {
         M.state.playing = false;
       } catch (e) {}
       try { await bridge[act.bridge](); } catch (e) { if (window.miniToast) miniToast('原生遥控指令失败'); }
-      // 20261105：遥控外部 App 时同步本地 playing 状态，驱动星球律动/水波纹动效。
-      //   next/prev = 一定有歌在播（切到下一首仍在播）；toggle = 翻转播放/暂停。
-      if (act.bridge === 'toggle') { M.state.playing = !M.state.playing; }
-      else if (act.bridge === 'next' || act.bridge === 'prev') { M.state.playing = true; }
+      // 20261106 修复「图标错乱」：此前 toggle 时瞎猜 M.state.playing=!M.state.playing，
+      //   next/prev 时瞎猜 M.state.playing=true，导致图标永远跟外部真实态脱节。
+      //   现改为：发完指令后异步读 getMediaState() 拿外部真实 playing，刷新统一真实态缓存，
+      //   让图标/悬浮窗/听歌页都显示外部 App 的真实播放/暂停状态，不再瞎猜。
+      _refreshLiveExternal(true);
       if (say && act.sayText) say(act.sayText);
       return;
     }
@@ -3451,6 +3555,14 @@ window.bmMusicUI = (function () {
   async function _netEaseSetDirect(v) {
     _netEaseDirect = !!v;
     try { await setSetting('neteaseDirect', _netEaseDirect); } catch (e) {}
+    // 20261106 互斥：开直连时反向清掉「后台遥控」态（mode 离开 remote），
+    //   并停掉遥控心跳。两套状态真互斥，避免「直连 + 遥控」同时成立导致角色互动权重归零、
+    //   遥控分支失效、进度条双源打架。
+    if (_netEaseDirect) {
+      if (M.state.mode === 'remote') { M.state.mode = 'mirror'; try { M.saveSession(); } catch (e2) {} }
+      _stopLiveExternalHeartbeat();
+      _liveExternal = null; _liveExternalAt = 0;
+    }
   }
   // 原生层带 Cookie 请求网易云官方接口，返回解析后的 JSON（失败返回 null）
   async function _netEaseReq(url) {
@@ -3647,16 +3759,39 @@ window.bmMusicUI = (function () {
       return;
     }
     // 本地：随机推荐关键词搜歌，整批入队列播放；某关键词抓不到歌则换下一个重试
+    // 20261106 修复「每日推荐抓不到歌」：镜像源（qijieya/gdstudio/meting）已失效，
+    //   M.search() 走镜像源必然空。这里优先试网易云官方搜索（_netEaseSearch 走原生 Cookie，
+    //   只要登录态有效就能搜，不依赖 _netEaseDirect 开关），成功则用网易云直链播；
+    //   失败（未登录/无 Cookie）才落回镜像源 M.search()。
     let fulls = [];
-    for (const kw of _dailyKwPool) {
-      const res = await M.search(kw);
-      if (!res || !res.length) continue;
-      const batch = res.slice(0, 12);
-      for (const s of batch) {
-        const f = await M.fetchSongDetail(s);
-        if (f && f.url) fulls.push(f);
+    const neTried = await (async () => {
+      try {
+        const chk = await _netEaseSearch(_dailyKwPool[0]);
+        return !!(chk && chk.length);
+      } catch (e) { return false; }
+    })();
+    if (neTried) {
+      for (const kw of _dailyKwPool) {
+        const list = await _netEaseSearch(kw);
+        if (!list || !list.length) continue;
+        for (const s of list.slice(0, 12)) {
+          const u = await _netEaseSongUrl(s.id);
+          if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+        }
+        if (fulls.length) break;
       }
-      if (fulls.length) break;   // 抓到歌就停，不再换关键词
+    }
+    if (!fulls.length) {
+      for (const kw of _dailyKwPool) {
+        const res = await M.search(kw);
+        if (!res || !res.length) continue;
+        const batch = res.slice(0, 12);
+        for (const s of batch) {
+          const f = await M.fetchSongDetail(s);
+          if (f && f.url) fulls.push(f);
+        }
+        if (fulls.length) break;   // 抓到歌就停，不再换关键词
+      }
     }
     if (!fulls.length) { if (say) say('每日推荐暂时没抓到可播的歌'); if (window.miniToast) miniToast('每日推荐暂时没抓到歌'); return; }
     M.state.playlist = fulls;
@@ -3715,19 +3850,39 @@ window.bmMusicUI = (function () {
       return;
     }
     // 随机风格搜歌，洗牌后整批播；某风格抓不到歌则换下一个重试
+    // 20261106 修复「漫游抓不到歌」：镜像源已失效，M.search() 必然空。优先试网易云官方搜索
+    //   （有登录态即可用，不依赖 _netEaseDirect），失败才落回镜像源 M.search()。
     const pool = [..._roamKwPool];
     for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
     let fulls = [];
-    for (const kw of pool) {
-      const res = await M.search(kw);
-      if (!res || !res.length) continue;
-      const batch = res.slice(0, 15);
-      for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
-      for (const s of batch) {
-        const f = await M.fetchSongDetail(s);
-        if (f && f.url) fulls.push(f);
+    const neTried = await (async () => {
+      try { const chk = await _netEaseSearch(pool[0]); return !!(chk && chk.length); } catch (e) { return false; }
+    })();
+    if (neTried) {
+      for (const kw of pool) {
+        const list = await _netEaseSearch(kw);
+        if (!list || !list.length) continue;
+        const batch = list.slice(0, 15);
+        for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
+        for (const s of batch) {
+          const u = await _netEaseSongUrl(s.id);
+          if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+        }
+        if (fulls.length) break;
       }
-      if (fulls.length) break;
+    }
+    if (!fulls.length) {
+      for (const kw of pool) {
+        const res = await M.search(kw);
+        if (!res || !res.length) continue;
+        const batch = res.slice(0, 15);
+        for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
+        for (const s of batch) {
+          const f = await M.fetchSongDetail(s);
+          if (f && f.url) fulls.push(f);
+        }
+        if (fulls.length) break;
+      }
     }
     if (!fulls.length) { if (say) say('漫游暂时没抓到可播的歌'); if (window.miniToast) miniToast('漫游暂时没抓到歌'); return; }
     M.state.playlist = fulls;
@@ -4077,8 +4232,13 @@ window.bmMusicUI = (function () {
       if (window.miniToast) miniToast('原生插件暂不支持盲切');
       renderRemotePanel(box);
     };
-    // 每日推荐：点它直接打开网易云 App 的「每日推荐」并自动播放（深链拉起，失败回退本地搜歌）
+    // 每日推荐：仅「网易云直连」模式下可用；后台遥控（外部 App）模式无此能力，点它给提示。
     box.querySelector('#bm-remote-daily').onclick = async () => {
+      // 20261107 用户定案：后台遥控（未开直连 isDirect=false）下，每日推荐不可用——提醒玩家切换模式。
+      if (!isDirect) {
+        if (window.miniToast) miniToast('「每日推荐」需在「网易云直连」模式下使用，请先切换上方模式');
+        return;
+      }
       // 20261106：复用软件内 _dailyRecommend——优先 openUrl 深链拉起网易云每日推荐，
       //   深链失败（网页端/未装网易云）则回退本地推荐关键词搜歌整批播。
       if (typeof _dailyRecommend === 'function') {
@@ -4090,8 +4250,13 @@ window.bmMusicUI = (function () {
       if (window.miniToast) miniToast('每日推荐暂不可用');
       renderRemotePanel(box);
     };
-    // 漫游：点它直接开启网易云 App 的「私人 FM / 漫游」（深链拉起，失败回退本地随机播）
+    // 漫游：仅「网易云直连」模式下可用；后台遥控（外部 App）模式无此能力，点它给提示。
     box.querySelector('#bm-remote-roam').onclick = async () => {
+      // 20261107 用户定案：后台遥控（未开直连 isDirect=false）下，漫游不可用——提醒玩家切换模式。
+      if (!isDirect) {
+        if (window.miniToast) miniToast('「漫游」需在「网易云直连」模式下使用，请先切换上方模式');
+        return;
+      }
       // 20261106：复用软件内 _roamPlay——优先 openUrl 深链拉起网易云私人FM（orpheus://radio），
       //   深链失败（网页端/未装网易云）则回退本地随机风格搜歌整批播。
       if (typeof _roamPlay === 'function') {
@@ -5181,7 +5346,8 @@ window.bmMusicUI = (function () {
         core.classList.remove('has-pic');
       }
     }
-    if (pp) pp.innerHTML = window.icon ? window.icon(M.state.playing ? 'pause' : 'play', 26) : (M.state.playing ? '⏸' : '▶');
+    // 20261106：图标改用统一真实态 _livePlayback().playing（遥控模式读外部真实态，不再用内置瞎猜）
+    if (pp) { const lp = _livePlayback(); pp.innerHTML = window.icon ? window.icon(lp.playing ? 'pause' : 'play', 26) : (lp.playing ? '⏸' : '▶'); }
     // 随机/循环按钮状态
     updateCtrlState();
     // 歌词
@@ -5189,12 +5355,14 @@ window.bmMusicUI = (function () {
     if (lyricBox) {
       const lines = parseLrc(M.state.lyrics || (cur && cur.lrc) || '');
       if (!lines.length) { lyricBox.innerHTML = '<div class="bm-music-empty">暂无歌词</div>'; }
-      else { lyricBox.innerHTML = lines.map(l => `<div class="bm-lrc-line" data-t="${l.t}">${esc(l.text)}</div>`).join(''); startLyricScroll(); }
+      else { lyricBox.innerHTML = lines.map(l => `<div class="bm-lrc-line${l.tr ? ' bm-lrc-tr' : ''}" data-t="${l.t}">${esc(l.text)}</div>`).join(''); startLyricScroll(); }
     }
     // 悬浮窗同步
     renderFloat();
     // 20261106：后台遥控模式下，异步用外部 App 真实歌信息覆盖播放器圆盘/标题
     _refreshExternalIntoPlayerUI();
+    // 20261106：遥控模式额外刷一次统一真实态缓存（驱动图标/歌名/封面）
+    if (_isRemoteNow()) _refreshLiveExternal(false);
   }
 
   /* 20261106 修复「后台遥控时播放器圆盘封面/标题不替换」：
@@ -5222,6 +5390,118 @@ window.bmMusicUI = (function () {
     } catch (e) {}
   }
 
+  /* ============================================================
+     20261106 统一「真实播放态」读取（根治图标/进度/歌名/封面五处不一致）
+     核心矛盾：遥控模式（mode==='remote' && !_netEaseDirect）下，真正在播的是外部 App（网易云）
+     的歌，M.state.current 是内部残留旧歌、M.state.playing 是瞎猜值、audio.currentTime≈0。
+     此前五处界面（听歌页图标/软件内悬浮窗/软件外原生悬浮窗/播放列表/角色动作池）各读各的
+     M.state.*，导致图标不换、进度来回串、歌名封面不更新。
+     这里抽一个统一缓存：_liveExternal 保存最近一次 getMediaState() 的返回（外部真实
+     title/artist/cover/playing），_livePlayback() 同步返回「当前真实播放态」——
+     遥控模式优先用外部真实态覆盖，其余模式用内置态。所有界面都从这里读，不再瞎猜。 */
+  let _liveExternal = null;           // 最近一次 getMediaState() 返回（外部真实态缓存）
+  let _liveExternalAt = 0;            // 缓存时间戳（防过期）
+  let _liveExternalTimer = null;      // 遥控模式下周期刷新缓存的心跳
+  // 是否处于「真遥控外部 App」状态
+  function _isRemoteNow() {
+    return (M.state.mode === 'remote') && !_netEaseDirect;
+  }
+  // 同步读取「当前真实播放态」——遥控模式用外部真实态覆盖，其余模式用内置态。
+  // 返回 { name, artist, cover, playing, position, duration, isExternal }
+  function _livePlayback() {
+    const cur = M.state.current;
+    if (_isRemoteNow() && _liveExternal && _liveExternal.hasSession) {
+      const e = _liveExternal;
+      return {
+        name: (e.title || '').trim() || (cur && cur.name) || '未知歌曲',
+        artist: (e.artist || '').trim() || (cur && cur.artist) || '未知歌手',
+        cover: (e.cover && typeof e.cover === 'string' && e.cover) ? e.cover : (cur && cur.pic) || '',
+        playing: !!e.playing,
+        position: (typeof e.position === 'number' && e.position >= 0) ? e.position : (M.state.audio ? Math.floor(M.state.audio.currentTime || 0) : 0),
+        duration: (typeof e.duration === 'number' && e.duration > 0) ? e.duration : (M.state.audio && M.state.audio.duration ? Math.floor(M.state.audio.duration) : 0),
+        isExternal: true,
+      };
+    }
+    const a = M.state.audio;
+    return {
+      name: (cur && cur.name) || '',
+      artist: (cur && cur.artist) || '',
+      cover: (cur && cur.pic) || '',
+      playing: !!M.state.playing,
+      position: a ? Math.floor(a.currentTime || 0) : 0,
+      duration: (a && a.duration) ? Math.floor(a.duration) : 0,
+      isExternal: false,
+    };
+  }
+  // 异步刷新外部真实态缓存（遥控模式才调），成功后顺手刷新相关界面。
+  async function _refreshLiveExternal(forceRefreshUI) {
+    if (!_isRemoteNow()) { _liveExternal = null; _liveExternalAt = 0; return; }
+    try {
+      const br = _remoteBridge();
+      if (!br || typeof br.getMediaState !== 'function') return;
+      const st = await br.getMediaState();
+      if (st && st.hasSession) {
+        _liveExternal = st;
+        _liveExternalAt = Date.now();
+        // 外部真实态变化后，同步刷新：听歌页标题/封面/图标 + 软件内悬浮窗 + 原生悬浮窗
+        if (forceRefreshUI !== false) {
+          _applyLiveToPlayerUI();
+          _applyLiveToFloatUI();
+        }
+      }
+    } catch (e) {}
+  }
+  // 把真实态应用到「听歌页」的标题/封面/播放图标
+  function _applyLiveToPlayerUI() {
+    const lp = _livePlayback();
+    const title2 = document.getElementById('bm-music-title2');
+    const artist = document.getElementById('bm-music-artist');
+    const pp = document.getElementById('bm-music-pp');
+    if (title2 && lp.isExternal) title2.textContent = lp.name;
+    if (artist && lp.isExternal) artist.textContent = lp.artist;
+    if (pp) pp.innerHTML = window.icon ? window.icon(lp.playing ? 'pause' : 'play', 26) : (lp.playing ? '⏸' : '▶');
+    const core = document.getElementById('bm-planet-core');
+    if (core && lp.isExternal && lp.cover) {
+      const picUrl = String(lp.cover).replace(/^http:\/\//i, 'https://');
+      core.style.backgroundImage = `url("${picUrl.replace(/"/g, '\\"')}")`;
+      core.innerHTML = '';
+      core.classList.add('has-pic');
+    }
+  }
+  // 把真实态应用到「软件内悬浮窗」的歌名/歌手/封面/播放图标（第 6 项任务的核心）
+  function _applyLiveToFloatUI() {
+    const fw = document.getElementById('bm-music-float');
+    if (!fw) return;
+    const lp = _livePlayback();
+    if (!lp.isExternal) return;   // 内置模式悬浮窗由 renderFloat 正常渲染，不覆盖
+    const t = fw.querySelector('.bm-mini-title');
+    const a = fw.querySelector('.bm-mini-artist');
+    const ft = fw.querySelector('.bm-float-title');
+    const fa = fw.querySelector('.bm-float-artist');
+    if (t) t.textContent = lp.name;
+    if (a) a.textContent = lp.artist;
+    if (ft) ft.textContent = lp.name;
+    if (fa) fa.textContent = lp.artist;
+    const pp = fw.querySelector('#bm-float-pp');
+    if (pp) pp.innerHTML = window.icon ? window.icon(lp.playing ? 'pause' : 'play', 22) : (lp.playing ? '⏸' : '▶');
+    const miniPp = fw.querySelector('#bm-mini-pp');
+    if (miniPp) miniPp.innerHTML = window.icon ? window.icon(lp.playing ? 'pause' : 'play', 18) : (lp.playing ? '⏸' : '▶');
+    const cover = fw.querySelector('.bm-float-cover');
+    if (cover && lp.cover) {
+      const picUrl = String(lp.cover).replace(/^http:\/\//i, 'https://');
+      const img = cover.querySelector('img');
+      if (img) { try { img.src = picUrl; } catch (e) {} }
+    }
+  }
+  // 启动/停止「真实态」周期刷新心跳（遥控模式才启，500ms 一次，与原生悬浮窗心跳对齐）
+  function _startLiveExternalHeartbeat() {
+    _stopLiveExternalHeartbeat();
+    _liveExternalTimer = setInterval(() => { _refreshLiveExternal(true); }, 500);
+  }
+  function _stopLiveExternalHeartbeat() {
+    if (_liveExternalTimer) { clearInterval(_liveExternalTimer); _liveExternalTimer = null; }
+  }
+
   let _lyricRaf = null;
   let _lyricLastActive = -1;   // 上一次高亮句，只在「唱到新句」时才跳转滚动，玩家可自由上下滚动
   function startLyricScroll() {
@@ -5235,7 +5515,13 @@ window.bmMusicUI = (function () {
           const lines = box.querySelectorAll('.bm-lrc-line');
           let active = -1;
           lines.forEach((l, i) => { if (parseFloat(l.dataset.t) <= t) active = i; });
-          lines.forEach((l, i) => l.classList.toggle('on', i === active));
+          // 20261107 双语歌词：同一时间戳的「原文 + 翻译」两行要同时高亮，
+          //   不能只亮最后一行（否则原文暗、只有翻译亮）。改为「时间戳等于当前句的所有行都亮」。
+          let activeT = active >= 0 ? parseFloat(lines[active].dataset.t) : -1;
+          lines.forEach((l, i) => {
+            const on = i === active || (activeT >= 0 && parseFloat(l.dataset.t) === activeT);
+            l.classList.toggle('on', on);
+          });
           // 只在「唱到新一句」时跳转滚动（active 变化才滚），唱同一句期间玩家可自由上下滚动不被弹回。
           if (active >= 0 && active !== _lyricLastActive) {
             _lyricLastActive = active;
@@ -5396,9 +5682,11 @@ window.bmMusicUI = (function () {
       cover: cover,
       lyric: curLyric,
       lyricLines: lyricLines,
-      playing: !!M.state.playing,
-      position: a ? Math.floor(a.currentTime || 0) : 0,
-      duration: a && a.duration ? Math.floor(a.duration) : 0,
+      // 20261106：playing/position 改用统一真实态 _livePlayback()（遥控模式读外部真实态，
+      //   不再用内置 M.state.playing 瞎猜，根治原生悬浮窗图标/进度条与外部 App 脱节）。
+      playing: _livePlayback().playing,
+      position: _livePlayback().position,
+      duration: _livePlayback().duration || (a && a.duration ? Math.floor(a.duration) : 0),
       mode: M.state.playMode,
       charName: c ? c.name : '',
       charAvatar: charAv,
@@ -5550,11 +5838,11 @@ window.bmMusicUI = (function () {
     let _lastPushedSec = -1;   // 上次已推的秒数：position 未变则不推，避免暂停时反复 update 造成悬浮窗闪动
     const beat = async () => {
       try {
-        const a = M.state.audio;
-        if (!a) return;
-        const cur = a.currentTime;
-        if (!isFinite(cur) || cur < 0) return;
-        const sec = Math.floor(cur);
+        // 20261106 修复「进度条来回串」：遥控模式下内置 audio.currentTime≈0（残留旧歌），
+        //   推给原生层会让原生进度条归零、与外部真实进度打架。这里改用统一真实态
+        //   _livePlayback().position（遥控模式读外部 getMediaState().position，其余模式读内置）。
+        const sec = _livePlayback().position;
+        if (!isFinite(sec) || sec < 0) return;
         // 20261106 修复「暂停状态下悬浮窗仍闪动」：position 没变化（暂停/缓冲）时跳过推送，
         //   原生层无需再 updateProgressUi（setText/setTranslationX 相同值仍会触发重绘闪烁）。
         //   只有秒数真正前进才推，且 seek 跳变也天然会推（sec 变化大）。
@@ -6010,7 +6298,7 @@ window.bmMusicUI = (function () {
     if (fly || miniLyric) {
       const lines = parseLrc(M.state.lyrics || (cur && cur.lrc) || '');
       if (lines.length) {
-        if (fly) fly.innerHTML = lines.map(l => `<div class="bm-fly-line" data-t="${l.t}">${esc(l.text)}</div>`).join('');
+        if (fly) fly.innerHTML = lines.map(l => `<div class="bm-fly-line${l.tr ? ' bm-fly-tr' : ''}" data-t="${l.t}">${esc(l.text)}</div>`).join('');
         const a = M.state.audio;
         // 大卡歌词逐句高亮 + 滚动居中 + mini 显示当前句。
         // 20261104：玩家可自由上下滚动歌词（wheel/touch 不拦截），只有「唱到新一句」才跳转回当前句。
@@ -6178,6 +6466,22 @@ window.bmMusicUI = (function () {
     if (btn) btn.classList.toggle('on', text === 'light' || bg !== 'glass');
   }
 
+  /* 20261107：把悬浮窗钳制在可视区内（四边各留 6px），宽高跟着页面长宽幅度走，绝不出屏。
+     供拖拽 applyMove 与位置恢复 positionFloat 共用。 */
+  function clampFloatToViewport(fw) {
+    const r = fw.getBoundingClientRect();
+    if (!r.width && !r.height) return;   // 尚未布局，跳过（恢复后 requestAnimationFrame 再钳一次）
+    const margin = 6;
+    const maxX = Math.max(margin, window.innerWidth - r.width - margin);
+    const maxY = Math.max(margin, window.innerHeight - r.height - margin);
+    let x = Math.max(margin, Math.min(maxX, r.left));
+    let y = Math.max(margin, Math.min(maxY, r.top));
+    fw.style.left = x + 'px';
+    fw.style.top = y + 'px';
+    fw.style.right = 'auto';
+    fw.style.bottom = 'auto';
+  }
+
   function positionFloat(fw) {
     // 优先恢复用户上次拖动的位置
     let saved = null;
@@ -6187,6 +6491,8 @@ window.bmMusicUI = (function () {
       fw.style.top = saved.y + 'px';
       fw.style.right = 'auto';
       fw.style.bottom = 'auto';
+      // 20261107：恢复位置后按当前窗口/形态尺寸钳制回可视区（防止窗口变窄或换形态导致出屏）
+      requestAnimationFrame(() => clampFloatToViewport(fw));
       return;
     }
     // 否则默认右下，与「碎梦重拼」打字圆点错开（它在右下时上移）
@@ -6221,8 +6527,13 @@ window.bmMusicUI = (function () {
       let nx = drag.left + (cx - drag.px);
       let ny = drag.top + (cy - drag.py);
       const r = fw.getBoundingClientRect();
-      nx = Math.max(6 - r.width, Math.min(window.innerWidth - 6, nx));
-      ny = Math.max(6, Math.min(window.innerHeight - 6, ny));
+      // 20261107 修复「悬浮窗能拉出边界外」：完全限制在可视区内，四边各留 6px 边距，
+      // 且按悬浮窗实际宽高（含缩放后）钳制，宽高跟着页面长宽幅度走，绝不出屏。
+      const margin = 6;
+      const maxX = Math.max(margin, window.innerWidth - r.width - margin);
+      const maxY = Math.max(margin, window.innerHeight - r.height - margin);
+      nx = Math.max(margin, Math.min(maxX, nx));
+      ny = Math.max(margin, Math.min(maxY, ny));
       fw.style.left = nx + 'px';
       fw.style.top = ny + 'px';
       fw.style.right = 'auto';
@@ -6381,6 +6692,15 @@ window.bmMusicUI = (function () {
     _netEasePlaylistTracks,
     _netEaseLoggedIn,
   });
+
+  // 20261106 启动初始化：异步加载 _netEaseDirect，若当前已是「后台遥控」模式，
+  //   立即启动「真实态」心跳（否则重进 App 后 remote 模式悬浮窗/图标不随外部更新）。
+  (async () => {
+    try {
+      await _netEaseLoadDirect();
+      if (M.state.mode === 'remote') { _startLiveExternalHeartbeat(); _refreshLiveExternal(true); }
+    } catch (e) {}
+  })();
 
   return { showMusicPage, refreshPlayerUI, renderFloat, closeMusicPage, backMusicPage, showMusicLib, showThemePicker, resetFloatClosed, showInviteCard, startTogether, endTogether, charAutoMusic, charInviteTogether, charPeekPlaylist, charEarListen, charCollect, getTogetherTotal, setFloatScopeAndApply };
 })();

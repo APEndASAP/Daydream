@@ -17725,15 +17725,14 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span>💌 角色主动邀请一起听歌</span>
         <input type="checkbox" id="cs-music-invite" ${(s.musicInvite === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动弹邀请函邀请你一起听歌，你可同意（进入一起听并自动播放）或拒绝。${s.developerMode ? '随机固定间隔触发（下方可设区间，默认比主动操作更稀疏）。' : '随机固定间隔触发，默认比主动操作更稀疏。'}</div>
-      ${s.developerMode ? `
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动弹邀请函邀请你一起听歌，你可同意（进入一起听并自动播放）或拒绝。随机固定间隔触发（下方可设区间，默认比主动操作更稀疏）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
         <input type="number" id="cs-music-invite-min" min="1" max="1440" step="1" value="${typeof s.musicInviteMin === 'number' ? s.musicInviteMin : 120}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
         <span style="font-size:12px;color:var(--text-tertiary);">～</span>
         <input type="number" id="cs-music-invite-max" min="1" max="1440" step="1" value="${typeof s.musicInviteMax === 'number' ? s.musicInviteMax : 480}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
         <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
-      </div>` : ''}
+      </div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
@@ -27213,6 +27212,18 @@ async function showLetterRecordsModal(charId = null) {
         else if (!t.replyMsg && t.root && !t.root.read) { t.root.read = true; await idbPut('messages', t.root); n++; }
       } catch (e) {}
     }
+    // 20261107：点「全部已读」后同步清零相关访客的未读书信计数，让信箱红点也消失
+    const touchedChars = new Set();
+    for (const t of unread) {
+      const m = t.replyMsg || t.root;
+      if (m && m.charId) touchedChars.add(m.charId);
+    }
+    for (const cid of touchedChars) {
+      const ev = _unreadEvents[cid];
+      if (ev && ev.letters > 0) { ev.letters = 0; }
+    }
+    await _saveUnreadEvents();
+    refreshUnreadBadges();
     render();
     if (window.miniToast) miniToast(`已标记 ${n} 封书信为已读`);
   };
@@ -27886,6 +27897,17 @@ async function openLetterOverlay(msg, c, opts = {}) {
       await idbPut('messages', msg);
       const el = document.querySelector(`.msg-row[data-msgid="${msg.id}"] .letter-card .lc-unread`);
       if (el) el.remove();
+    }
+    // 20261107 修复「读信后信箱红点不消失」：读信（拆信/无动画直开）时，
+    // 同步清零该访客在 _unreadEvents 里的未读书信计数，并刷新红点。
+    // 之前只把消息 read=true，但红点读的是 _unreadEvents[charId].letters，导致红点残留。
+    if (msg.charId) {
+      const ev = _unreadEvents[msg.charId];
+      if (ev && ev.letters > 0) {
+        ev.letters = 0;
+        await _saveUnreadEvents();
+        refreshUnreadBadges();
+      }
     }
   };
   if (opts.noAnim) {
