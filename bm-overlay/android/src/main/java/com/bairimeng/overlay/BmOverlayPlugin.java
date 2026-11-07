@@ -554,35 +554,41 @@ public class BmOverlayPlugin extends Plugin {
     /** 引导用户去无障碍设置页开启「白日梦锁机」服务。 */
     @PluginMethod
     public void openAccessibilitySettings(PluginCall call) {
+        boolean opened = false;
+        // 优先直达本 App 无障碍服务详情页（带「使用服务」开关的那一页），
+        // 避免 ColorOS 等 ROM 只跳到无障碍主页（通用/视觉/听觉/互动），用户找不到入口。
+        // 注意：ACTION_ACCESSIBILITY_DETAILS_SETTINGS 是 @hide/@SystemApi 隐藏常量，
+        //   编译时符号不存在，只能直接用其字符串值 "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"。
         try {
-            android.content.Intent intent = null;
-            // 优先直达本 App 无障碍服务详情页（带「使用服务」开关的那一页），
-            // 避免 ColorOS 等 ROM 只跳到无障碍主页（通用/视觉/听觉/互动），用户找不到入口。
-            // 注意：ACTION_ACCESSIBILITY_DETAILS_SETTINGS 是 @hide/@SystemApi 隐藏常量，
-            //   编译时符号不存在，只能直接用其字符串值 "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"。
-            try {
-                android.content.ComponentName cn = new android.content.ComponentName(
-                        getContext().getPackageName(),
-                        "com.bairimeng.overlay.BmLockAccessibilityService");
-                intent = new android.content.Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
-                intent.putExtra(android.content.Intent.EXTRA_COMPONENT_NAME, cn);
-                intent.putExtra(":settings:show_fragment_args", cn.flattenToString());
-                intent.putExtra("android.provider.extra.SETTINGS_EMBEDDED_DEEP_LINK_HIGHLIGHT_KEY",
-                        cn.flattenToString());
-            } catch (Throwable t) {
-                intent = null;
-            }
-            // 兜底：跳无障碍主页
-            if (intent == null) {
-                intent = new android.content.Intent(
-                        android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
-            }
-            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            call.resolve(new JSObject().put("ok", true));
+            android.content.ComponentName cn = new android.content.ComponentName(
+                    getContext().getPackageName(),
+                    "com.bairimeng.overlay.BmLockAccessibilityService");
+            android.content.Intent detail = new android.content.Intent(
+                    "android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
+            detail.putExtra(android.content.Intent.EXTRA_COMPONENT_NAME, cn);
+            detail.putExtra(":settings:show_fragment_args", cn.flattenToString());
+            detail.putExtra("android.provider.extra.SETTINGS_EMBEDDED_DEEP_LINK_HIGHLIGHT_KEY",
+                    cn.flattenToString());
+            detail.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(detail);
+            opened = true;
         } catch (Throwable t) {
-            call.resolve(new JSObject().put("ok", false));
+            opened = false;
         }
+        // 兜底：部分 ROM（如 ColorOS）未实现详情页 action，回退跳无障碍主页。
+        //   此时服务名已改成「白日梦锁机」，用户在「已下载的应用」列表里一眼能认出。
+        if (!opened) {
+            try {
+                android.content.Intent home = new android.content.Intent(
+                        android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                home.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(home);
+                opened = true;
+            } catch (Throwable t2) {
+                opened = false;
+            }
+        }
+        call.resolve(new JSObject().put("ok", opened));
     }
 
     /**
