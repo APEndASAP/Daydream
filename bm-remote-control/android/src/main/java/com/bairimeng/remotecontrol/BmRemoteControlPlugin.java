@@ -13,6 +13,14 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.List;
+import java.util.Random;
+import java.math.BigInteger;
+import java.security.MessageDigest;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import android.util.Base64;
 
 /**
  * 白日梦后台遥控插件（模式二）。
@@ -361,6 +369,7 @@ public class BmRemoteControlPlugin extends Plugin {
         String url = call.getString("url");
         String method = call.getString("method", "GET");
         String cookie = call.getString("cookie");
+        String body = call.getString("body");      // 20261107 新增：POST 请求体（weapi 加密体）
         if (url == null || url.isEmpty()) { resolveErr(call, "empty_url"); return; }
         // 未显式传 cookie 时，用本地已保存的 Cookie
         if (cookie == null || cookie.isEmpty()) {
@@ -379,6 +388,15 @@ public class BmRemoteControlPlugin extends Plugin {
             conn.setRequestProperty("Accept", "application/json,text/plain,*/*");
             if (cookie != null && !cookie.isEmpty()) {
                 conn.setRequestProperty("Cookie", cookie);
+            }
+            // 20261107：POST + body 时，按 x-www-form-urlencoded 写入请求体（weapi 接口需要）
+            if (body != null && !body.isEmpty() && "POST".equalsIgnoreCase(method)) {
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+                java.io.OutputStream os = conn.getOutputStream();
+                os.write(body.getBytes("UTF-8"));
+                os.flush();
+                os.close();
             }
             int code = conn.getResponseCode();
             java.io.InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
@@ -608,6 +626,81 @@ public class BmRemoteControlPlugin extends Plugin {
             o.put("opened", false);
             o.put("reason", String.valueOf(t.getMessage()));
             resolveOk(call, o);
+        }
+    }
+
+    /* ============================================================
+       网易云 weapi 加密（20261107 新增）：
+       · 用于调网易云 /weapi/ 系列接口（每日推荐 recommend/songs、私人FM personal_fm 等），
+         这些接口需要「weapi 加密」的 POST 体：params + encSecKey。
+       · 算法：双层 AES-128-CBC + RSA（无填充）。Java 标准库即可实现，无需额外依赖。
+       加密流程（与官方前端一致）：
+         1) secKey = 随机 16 位（0-9a-zA-Z）
+         2) params = base64( AES-CBC( base64( AES-CBC(JSON, firstKey) ), secKey ) )
+         3) encSecKey = hex( RSA( reverse(secKey), modulus, 010001 ) )  // RSA 无填充
+       ============================================================ */
+    private static final String WEAPI_FIRST_KEY = "0CoJUm6Qyw8W8jud";
+    private static final String WEAPI_IV = "0102030405060708";
+    private static final String WEAPI_MODULUS =
+            "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7";
+    private static final String WEAPI_PUBKEY = "010001";
+    private static final char[] SEC_KEY_CHARS =
+            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".toCharArray();
+
+    private byte[] weapiAesEncrypt(byte[] data, byte[] key) throws Exception {
+        SecretKeySpec spec = new SecretKeySpec(key, "AES");
+        IvParameterSpec iv = new IvParameterSpec(WEAPI_IV.getBytes("UTF-8"));
+        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, spec, iv);
+        return cipher.doFinal(data);
+    }
+
+    private String weapiRsaEncrypt(String secKey) throws Exception {
+        // 反转 secKey，再 RSA 无填充加密，输出 256 位 hex
+        String reversed = new StringBuilder(secKey).reverse().toString();
+        BigInteger text = new BigInteger(1, reversed.getBytes("UTF-8"));
+        BigInteger modulus = new BigInteger(WEAPI_MODULUS, 16);
+        BigInteger pubKey = new BigInteger(WEAPI_PUBKEY, 16);
+        // RSA 无填充：enc = text^pubKey mod modulus
+        BigInteger encrypted = text.modPow(pubKey, modulus);
+        String hex = encrypted.toString(16);
+        // 补零到 256 位（128 字节 * 2）
+        StringBuilder sb = new StringBuilder(hex);
+        while (sb.length() < 256) sb.insert(0, '0');
+        return sb.toString();
+    }
+
+    /** 前端调用：对传入的 JSON 文本做 weapi 加密，返回 { params, encSecKey }。 */
+    @PluginMethod
+    public void weapiEncrypt(PluginCall call) {
+        String text = call.getString("text");
+        if (text == null || text.isEmpty()) { resolveErr(call, "empty_text"); return; }
+        try {
+            // 1) 随机 16 位 secKey
+            StringBuilder keyBuilder = new StringBuilder(16);
+            Random rnd = new Random();
+            for (int i = 0; i < 16; i++) {
+                keyBuilder.append(SEC_KEY_CHARS[rnd.nextInt(SEC_KEY_CHARS.length)]);
+            }
+            String secKey = keyBuilder.toString();
+
+            // 2) 第一层 AES：JSON + firstKey
+            byte[] first = weapiAesEncrypt(text.getBytes("UTF-8"), WEAPI_FIRST_KEY.getBytes("UTF-8"));
+            String firstB64 = Base64.encodeToString(first, Base64.NO_WRAP);
+
+            // 3) 第二层 AES：firstB64 + secKey
+            byte[] second = weapiAesEncrypt(firstB64.getBytes("UTF-8"), secKey.getBytes("UTF-8"));
+            String params = Base64.encodeToString(second, Base64.NO_WRAP);
+
+            // 4) RSA 加密 secKey
+            String encSecKey = weapiRsaEncrypt(secKey);
+
+            JSObject o = new JSObject();
+            o.put("params", params);
+            o.put("encSecKey", encSecKey);
+            resolveOk(call, o);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
         }
     }
 }

@@ -11557,12 +11557,14 @@ async function _pomodoroSaveSettle(data) {
     } else if (d.type === 'pomodoro-lock-perm') {
       // 20261105：番茄钟锁机——iframe 请求主项目申请「使用情况访问」权限（BmRemoteControl 插件），
       //   授权结果回传 pomodoro-lock-perm-result。修「锁机按钮点不了」（iframe 拿不到 Capacitor 插件）。
+      // 20261107：点锁机按钮时同时引导「无障碍」权限（拦截 Home 键依赖它，不能只申请使用情况访问）。
       const frame = document.getElementById('pomodoro-frame');
       requestUsageAccessPermission().then((granted) => {
         try {
           if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'pomodoro-lock-perm-result', granted: !!granted }, '*');
         } catch (e) {}
       });
+      bmAccessibilityCheckAndGuide();
     } else if (d.type === 'pomodoro-lock') {
       // 20261105：番茄钟真正锁机——iframe 请求主项目调原生 BmOverlay.lock() 显示全屏锁机覆盖层
       _pomodoroLock(d.hint || '');
@@ -11699,19 +11701,27 @@ function _pomodoroLock(hint) {
     const BO = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay;
     if (BO && typeof BO.lock === 'function') {
       BO.lock({ hint: hint || '专注中，请勿分心' }).catch(() => {});
-      // 检测并引导无障碍授权（拦截 Home 键依赖它）
-      if (typeof BO.isAccessibilityEnabled === 'function') {
-        BO.isAccessibilityEnabled().then((r) => {
-          try {
-            if (r && r.enabled === false && typeof BO.openAccessibilitySettings === 'function') {
-              // 首次锁机：提示并引导去无障碍设置页开启「白日梦锁机」服务
-              if (window.miniToast) miniToast('开启「无障碍」可真正锁住手机（拦截 Home 键）');
-              BO.openAccessibilitySettings().catch(() => {});
-            }
-          } catch (e) {}
-        }).catch(() => {});
-      }
+      bmAccessibilityCheckAndGuide();
     }
+  } catch (e) {}
+}
+
+/* 20261107：检测「无障碍」服务（拦截 Home 键依赖 BmLockAccessibilityService）。
+   未开启则 toast 提示 + 引导跳系统无障碍设置页开启「白日梦锁机」服务。
+   供「点锁机按钮」和「开始专注真正锁机」两处复用。 */
+function bmAccessibilityCheckAndGuide() {
+  try {
+    const BO = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmOverlay;
+    if (!BO || typeof BO.isAccessibilityEnabled !== 'function') return;
+    BO.isAccessibilityEnabled().then((r) => {
+      try {
+        if (r && r.enabled === false && typeof BO.openAccessibilitySettings === 'function') {
+          // 首次锁机：提示并引导去无障碍设置页开启「白日梦锁机」服务
+          if (window.miniToast) miniToast('开启「无障碍」可真正锁住手机（拦截 Home 键）');
+          BO.openAccessibilitySettings().catch(() => {});
+        }
+      } catch (e) {}
+    }).catch(() => {});
   } catch (e) {}
 }
 

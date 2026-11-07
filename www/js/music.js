@@ -2305,12 +2305,6 @@ window.bmMusicUI = (function () {
         <div class="bm-music-now">
           <div class="bm-music-title2" id="bm-music-title2">${cur ? esc(cur.name) : '未在播放'}</div>
           <div class="bm-music-artist" id="bm-music-artist">${cur ? esc(cur.artist) : '—'}</div>
-          <!-- 20261107 PC 宽屏：歌词/百科/相似推荐 胶囊标签（默认隐藏，≥1100px 显示） -->
-          <div class="bm-music-tabs" id="bm-music-tabs">
-            <button class="bm-music-tab on" data-tab="lyric">歌词</button>
-            <button class="bm-music-tab" data-tab="wiki">百科</button>
-            <button class="bm-music-tab" data-tab="similar">相似推荐</button>
-          </div>
         </div>
         <div class="bm-music-lyric" id="bm-music-lyric"></div>
         <div class="bm-music-progress" id="bm-music-progress">
@@ -2384,21 +2378,6 @@ window.bmMusicUI = (function () {
       b.onclick = () => setMode(b.dataset.mode);
     });
     setMode(M.state.mode);
-
-    // 20261107 PC 宽屏：歌词/百科/相似推荐 胶囊标签切换（百科/相似推荐先占位）
-    const musicTabs = overlay.querySelector('#bm-music-tabs');
-    if (musicTabs) {
-      musicTabs.querySelectorAll('.bm-music-tab').forEach(tb => {
-        tb.onclick = () => {
-          const tab = tb.dataset.tab;
-          musicTabs.querySelectorAll('.bm-music-tab').forEach(x => x.classList.toggle('on', x === tb));
-          if (tab === 'lyric') return;
-          const msg = tab === 'wiki' ? '百科功能即将上线' : '相似推荐功能即将上线';
-          if (window.miniToast) miniToast(msg);
-          else if (window.showTopBanner) showTopBanner(msg, { dur: 2000 });
-        };
-      });
-    }
 
     // 返回（20261105：先关子层弹窗，子层关完才退音乐页，栈式返回）
     overlay.querySelector('#bm-music-back').onclick = () => backMusicPage();
@@ -2536,9 +2515,12 @@ window.bmMusicUI = (function () {
     // 控制键（20261104：模式二 remote 下走后台遥控）
     // 20261105：与角色动作/悬浮窗 isRemote 判断对齐——加 && !_netEaseDirect，
     //   开了直连后音乐页控制键也走内置播放器，不再误发外部 App。
-    const _isRemotePage = (M.state.mode === 'remote') && !_netEaseDirect;
-    overlay.querySelector('#bm-music-prev').onclick = () => { if (_isRemotePage) { _remoteAction({ bridge: 'prev', local: () => M.prev() }, null); refreshPlayerUI(); } else M.prev(); };
-    overlay.querySelector('#bm-music-next').onclick = () => { if (_isRemotePage) { _remoteAction({ bridge: 'next', local: () => M.next() }, null); refreshPlayerUI(); } else M.next(); };
+    // 20261107 修复「直连模式下点播放/上一首还遥控外部 App」：isRemote 之前是渲染时 const 一次计算，
+    //   闭包捕获了当时的 mode/_netEaseDirect，用户之后切到「网易云直连」时它不更新，仍残留 true 走遥控。
+    //   改为「点击时才实时计算」的函数，确保直连开关切换后立即生效、直连/遥控真正互斥。
+    const _isRemotePage = () => (M.state.mode === 'remote') && !_netEaseDirect;
+    overlay.querySelector('#bm-music-prev').onclick = () => { if (_isRemotePage()) { _remoteAction({ bridge: 'prev', local: () => M.prev() }, null); refreshPlayerUI(); } else M.prev(); };
+    overlay.querySelector('#bm-music-next').onclick = () => { if (_isRemotePage()) { _remoteAction({ bridge: 'next', local: () => M.next() }, null); refreshPlayerUI(); } else M.next(); };
     // 20261105 修复「外部网易云在播时点播放/暂停，内部残留旧歌与外部歌同时响（打架）」：
     //   点播放/暂停时，若检测到外部有活跃媒体会话，优先发 toggle 指令给外部 App（操控后台那首歌），
     //   而非操作内部残留 audio。无外部会话时才回落到内置播放器。
@@ -2547,9 +2529,9 @@ window.bmMusicUI = (function () {
     //   直连（_netEaseDirect）或镜像搜索（mirror）/本地（local）模式一律走内置播放器 M.toggle()，
     //   绝不查外部活跃会话、绝不发 bridge 指令。之前只判 _netEaseDirect，漏了 mirror/local
     //   也会误查 hasActiveSession 遥控外部。
-    const _isRemoteMode = (M.state.mode === 'remote') && !_netEaseDirect;
+    const _isRemoteMode = () => (M.state.mode === 'remote') && !_netEaseDirect;
     const _ppToggle = async () => {
-      if (!_isRemoteMode) {
+      if (!_isRemoteMode()) {
         if (!M.state.current) { window.miniToast && miniToast('请先搜索并选择一首歌'); return; }
         M.toggle();
         return;
@@ -3627,6 +3609,48 @@ window.bmMusicUI = (function () {
       source: 'netease-direct',
     }));
   }
+  // 20261107：weapi 加密请求（POST + params/encSecKey），用于网易云「每日推荐/私人FM」等
+  //   需要登录 + weapi 加密的 /weapi/ 接口。原生插件 weapiEncrypt 做加密，neteaseRequest 发 POST。
+  //   失败返回 null（前端据此回退到官方榜单/关键词搜歌）。
+  async function _netEaseWeapiReq(path, payload) {
+    const b = _neteaseBridge();
+    if (!b || typeof b.weapiEncrypt !== 'function' || typeof b.neteaseRequest !== 'function') return null;
+    try {
+      const enc = await b.weapiEncrypt({ text: JSON.stringify(payload || {}) });
+      if (!enc || !enc.params) return null;
+      const body = 'params=' + encodeURIComponent(enc.params) + '&encSecKey=' + encodeURIComponent(enc.encSecKey);
+      const r = await b.neteaseRequest({ url: 'https://music.163.com/weapi' + path, method: 'POST', body });
+      if (!r || !r.ok) return null;
+      if (typeof r.status === 'number' && (r.status < 200 || r.status >= 300)) return null;
+      if (!r.body) return null;
+      return JSON.parse(r.body);
+    } catch (e) { return null; }
+  }
+  // 20261107：直连读「用户账号真实的每日推荐 30 首」（/weapi/v2/discovery/recommend/songs，需登录）
+  async function _netEaseRecommendSongs() {
+    const j = await _netEaseWeapiReq('/v2/discovery/recommend/songs', { offset: 0, total: true, limit: 30 });
+    if (!j || j.code !== 200 || !j.data || !j.data.dailySongs) return [];
+    return j.data.dailySongs.map(s => ({
+      id: String(s.id),
+      name: s.name || '',
+      artist: (s.ar && s.ar.length) ? s.ar.map(a => a.name).join(' / ') : (s.artists ? s.artists.map(a => a.name).join(' / ') : ''),
+      pic: (s.al && s.al.picUrl) ? String(s.al.picUrl).replace(/^http:\/\//i, 'https://') : '',
+      source: 'netease-direct',
+    }));
+  }
+  // 20261107：直连读「用户账号的私人FM」（/weapi/v1/radio/get，需登录），每次返回约 1~3 首
+  async function _netEasePersonalFm(batch) {
+    const j = await _netEaseWeapiReq('/v1/radio/get', {});
+    if (!j || j.code !== 200 || !j.data) return [];
+    const arr = Array.isArray(j.data) ? j.data : [];
+    return arr.map(s => ({
+      id: String(s.id),
+      name: s.name || '',
+      artist: (s.artists && s.artists.length) ? s.artists.map(a => a.name).join(' / ') : (s.ar && s.ar.length ? s.ar.map(a => a.name).join(' / ') : ''),
+      pic: (s.album && s.album.picUrl) ? String(s.album.picUrl).replace(/^http:\/\//i, 'https://') : ((s.al && s.al.picUrl) ? String(s.al.picUrl).replace(/^http:\/\//i, 'https://') : ''),
+      source: 'netease-direct',
+    }));
+  }
   // 20261105：导入歌单弹窗——列出网易云「我的歌单」，玩家勾选（顶部全选），
   //   选中歌单的歌曲逐首存入音乐库曲库 + 新建同名歌单关联，不做全量强导。
   async function _netEaseImportPlaylists(pls) {
@@ -3718,6 +3742,10 @@ window.bmMusicUI = (function () {
      网易云 App 会直接打开每日推荐页并自动播放；网页端/无插件/深链打开失败时
      回退到本地推荐关键词搜歌播。 */
   const _dailyKwPool = ['每日推荐', '今日热歌', '新歌速递', '流行精选', '热歌榜', '华语新歌'];
+  // 20261107 回退来源改造：不再用固定关键词搜歌（结果高度重复、风格固定），
+  //   改为拉网易云官方榜单歌单（新歌榜/热歌榜/飙升榜，官方天天更新、无需登录、GET 直取），
+  //   保证「每日推荐」回退路径也是实时变化的最新推荐，而非「永远这批歌」。
+  const _dailyOfficialIds = ['3779629', '3778678', '19723756'];  // 新歌榜 / 热歌榜 / 飙升榜
   async function _dailyRecommend(say) {
     // ① 优先：原生插件拉起网易云「每日推荐」（orpheus://songrcmd?autoplay=1 自动播放）
     const bridge = _remoteBridge();
@@ -3740,16 +3768,40 @@ window.bmMusicUI = (function () {
     // ② 回退：本地推荐关键词搜歌整批播（网页端 / 无插件 / 深链失败）
     // 20261105 直连模式：镜像源已失效（qijieya/gdstudio/meting 均挂），改用网易云官方搜索
     //   拿真实可播直链，根治「每日推荐暂时没抓到歌」。
+    // 20261107 回退来源改造：优先拉网易云官方榜单歌单（新歌榜/热歌榜/飙升榜，天天更新、无需登录），
+    //   拉不到才落回固定关键词搜歌兜底。这样「每日推荐」回退也是实时最新的官方推荐，不是「永远这批歌」。
     if (_netEaseDirect) {
       const fulls = [];
-      for (const kw of _dailyKwPool) {
-        const list = await _netEaseSearch(kw);
-        if (!list || !list.length) continue;
-        for (const s of list.slice(0, 12)) {
+      // 20261107：直连优先拉「用户账号真实的每日推荐 30 首」（/weapi recommend/songs，需登录）
+      const rcmd = await _netEaseRecommendSongs();
+      if (rcmd && rcmd.length) {
+        for (const s of rcmd.slice(0, 30)) {
           const u = await _netEaseSongUrl(s.id);
           if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
         }
-        if (fulls.length) break;
+      }
+      // 拿不到真实每日推荐（未登录/weapi 失败）→ 落回官方榜单歌单
+      if (!fulls.length) {
+        for (const pid of _dailyOfficialIds) {
+          const tracks = await _netEasePlaylistTracks(pid);
+          if (!tracks || !tracks.length) continue;
+          for (const s of tracks.slice(0, 20)) {
+            const u = await _netEaseSongUrl(s.id);
+            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+          }
+          if (fulls.length) break;
+        }
+      }
+      if (!fulls.length) {
+        for (const kw of _dailyKwPool) {
+          const list = await _netEaseSearch(kw);
+          if (!list || !list.length) continue;
+          for (const s of list.slice(0, 12)) {
+            const u = await _netEaseSongUrl(s.id);
+            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+          }
+          if (fulls.length) break;
+        }
       }
       if (!fulls.length) { if (say) say('每日推荐暂时没抓到可播的歌'); if (window.miniToast) miniToast('每日推荐暂时没抓到歌'); return; }
       M.state.playlist = fulls;
@@ -3806,6 +3858,9 @@ window.bmMusicUI = (function () {
      实现：App 端用原生插件 openUrl 拉起 orpheus://radio 深链，网易云 App 会直接
      打开私人 FM 并开始播放；网页端/无插件/深链打开失败时回退到本地随机漫游播歌。 */
   const _roamKwPool = ['轻音乐', '民谣', '古风', '纯音乐', '爵士', '摇滚', '电子', '治愈系', '雨声', '星空', '钢琴', '慢歌', '回忆', '夏日', '晚安曲'];
+  // 20261107 漫游回退来源改造：改用网易云官方「多风格」榜单歌单（无需登录、GET 直取、官方更新），
+  //   取代固定关键词搜歌，让漫游每次都是实时变化的最新歌，而不是固定风格那一批。
+  const _roamOfficialIds = ['19723756', '2250011882', '2884035', '3779629', '3778678', '2842711079', '2887052', '2890194'];  // 飙升/抖音/原创/新歌/热歌/电音/民谣/古风等
   async function _roamPlay(say) {
     // ① 优先：原生插件拉起网易云私人 FM（漫游）
     const bridge = _remoteBridge();
@@ -3827,20 +3882,51 @@ window.bmMusicUI = (function () {
     }
     // ② 回退：本地随机漫游播歌（网页端 / 无插件 / 深链失败）
     // 20261105 直连模式：镜像源失效，改用网易云官方搜索，根治「漫游暂时没抓到歌」。
+    // 20261107 回退来源改造：随机挑一个网易云官方榜单歌单（多风格、天天更新、无需登录），
+    //   拉不到才落回固定关键词搜歌兜底。让漫游每次都是实时变化的最新歌，不是固定风格那一批。
     if (_netEaseDirect) {
-      const pool = [..._roamKwPool];
-      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+      const ids = [..._roamOfficialIds];
+      for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
       let fulls = [];
-      for (const kw of pool) {
-        const list = await _netEaseSearch(kw);
-        if (!list || !list.length) continue;
-        const batch = list.slice(0, 15);
-        for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
-        for (const s of batch) {
-          const u = await _netEaseSongUrl(s.id);
-          if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+      // 20261107：直连优先拉「用户账号真实的私人FM」（/weapi radio/get，需登录），多拉几批凑够一批
+      try {
+        for (let round = 0; round < 10 && fulls.length < 15; round++) {
+          const fm = await _netEasePersonalFm();
+          if (!fm || !fm.length) break;
+          for (const s of fm) {
+            const u = await _netEaseSongUrl(s.id);
+            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+          }
         }
-        if (fulls.length) break;
+      } catch (e) {}
+      // 拿不到私人FM（未登录/weapi 失败）→ 落回官方榜单歌单
+      if (!fulls.length) {
+        for (const pid of ids) {
+          const tracks = await _netEasePlaylistTracks(pid);
+          if (!tracks || !tracks.length) continue;
+          const batch = tracks.slice(0, 20);
+          for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
+          for (const s of batch) {
+            const u = await _netEaseSongUrl(s.id);
+            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+          }
+          if (fulls.length) break;
+        }
+      }
+      if (!fulls.length) {
+        const pool = [..._roamKwPool];
+        for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+        for (const kw of pool) {
+          const list = await _netEaseSearch(kw);
+          if (!list || !list.length) continue;
+          const batch = list.slice(0, 15);
+          for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
+          for (const s of batch) {
+            const u = await _netEaseSongUrl(s.id);
+            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+          }
+          if (fulls.length) break;
+        }
       }
       if (!fulls.length) { if (say) say('漫游暂时没抓到可播的歌'); if (window.miniToast) miniToast('漫游暂时没抓到歌'); return; }
       M.state.playlist = fulls;
@@ -6228,20 +6314,20 @@ window.bmMusicUI = (function () {
     //   开了直连后悬浮窗控制的是白日梦内置播放器（走 M.toggle/M.prev/M.next），
     //   否则点播放/暂停会误发给外部 App 的 MediaSession，外部无活跃会话时报 no_active_session，
     //   表现为「点了没反应/只刷新不播放」。
-    const _isRemote = (M.state.mode === 'remote') && !_netEaseDirect;
+    const _isRemote = () => (M.state.mode === 'remote') && !_netEaseDirect;
     fw.querySelector('#bm-float-prev').onclick = () => {
-      if (_isRemote) { _remoteAction({ bridge: 'prev', local: () => M.prev() }, null); refreshPlayerUI(); return; }
+      if (_isRemote()) { _remoteAction({ bridge: 'prev', local: () => M.prev() }, null); refreshPlayerUI(); return; }
       M.prev();
     };
     fw.querySelector('#bm-float-next').onclick = () => {
-      if (_isRemote) { _remoteAction({ bridge: 'next', local: () => M.next() }, null); refreshPlayerUI(); return; }
+      if (_isRemote()) { _remoteAction({ bridge: 'next', local: () => M.next() }, null); refreshPlayerUI(); return; }
       M.next();
     };
     // 20261105 修复「外部在播时点播放/暂停打架」：优先检测外部活跃会话，有则遥控外部。
     // 20261105 二次修复「直连/镜像/本地模式下点播放却操控后台音乐」：三模式互斥——
     //   只有后台遥控模式（_isRemote）才查外部活跃会话发 toggle；其余模式一律内置播放器。
     const _floatPpToggle = async () => {
-      if (!_isRemote) { M.toggle(); refreshPlayerUI(); return; }
+      if (!_isRemote()) { M.toggle(); refreshPlayerUI(); return; }
       const br = _remoteBridge();
       if (br && typeof br.hasActiveSession === 'function') {
         try {

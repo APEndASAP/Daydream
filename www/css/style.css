@@ -8552,18 +8552,6 @@ body .bm-music-float.fbg-dark .bm-float-card {
     content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
     width: 2px; height: 8px; background: #7a7a7a;
   }
-  /* 20261107 PC 宽屏：胶囊标签栏（歌词/百科/相似推荐） */
-  .bm-music-tabs { display: flex; gap: 8px; margin-top: 14px; }
-  .bm-music-tab {
-    border: 1px solid var(--bm-card-line); border-radius: 999px;
-    background: var(--bm-card); color: var(--bm-ink-dim);
-    padding: 5px 16px; font-size: 13px; cursor: pointer;
-    transition: background .15s, color .15s, border-color .15s;
-  }
-  .bm-music-tab.on {
-    background: var(--bm-accent); border-color: var(--bm-accent); color: #fff;
-  }
-  .bm-music-tab:hover { border-color: var(--bm-accent); color: var(--bm-ink); }
   /* 搜索框/结果/工具行桌面加宽 */
   .bm-music-searchtool, .bm-music-search, .bm-music-results { max-width: 720px; }
 }
