@@ -5492,31 +5492,41 @@ window.bmMusicUI = (function () {
       // 20261107 修复「后台遥控拿不到歌词」：MediaSession 不提供歌词，只能拿外部
       //   title+artist 去网易云搜索匹配（搜「歌名 歌手」），命中后按 id 补拉真实 LRC，
       //   再写入 M.state.lyrics 并刷新歌词区。这样遥控模式下封面、歌词都能拿到。
-      if (etitle && !_extLyricFetchedFor) {
-        _extLyricFetchedFor = etitle + '|' + eartist;
-        try {
-          if (typeof _netEaseSearch === 'function' && M && typeof M._netEaseLyric === 'function') {
-            const kw = (eartist && eartist !== '未知歌手') ? (etitle + ' ' + eartist) : etitle;
-            const list = await _netEaseSearch(kw);
-            if (list && list.length) {
-              const hit = list[0];
-              const lrc = await M._netEaseLyric(hit.id);
-              if (lrc) {
-                M.state.lyrics = lrc;
-                const lyricBox = document.getElementById('bm-music-lyric');
-                if (lyricBox) {
-                  const lines = parseLrc(lrc);
-                  if (lines.length) {
-                    lyricBox.innerHTML = lines.map(l => `<div class="bm-lrc-line${l.tr ? ' bm-lrc-tr' : ''}" data-t="${l.t}">${esc(l.text)}</div>`).join('');
-                    startLyricScroll();
-                  }
-                }
+      await _refreshExternalLyric(etitle, eartist);
+    } catch (e) {}
+  }
+
+  /* 20261107 修复「切歌后歌词不实时更换」根因：
+     此前歌词只在 _refreshExternalIntoPlayerUI() 里拉一次，且 _extLyricFetchedFor 只在
+     首屏判断。切歌后外部 title 变了，但心跳 _refreshLiveExternal 不重拉歌词，导致歌词
+     永远停在第一首。这里抽成独立函数，供「首屏 + 心跳换歌检测」两处复用：
+     按「歌名|歌手」去重，换歌才重拉；拉到后写 M.state.lyrics + 重刷歌词区 + 重启滚动。 */
+  async function _refreshExternalLyric(etitle, eartist) {
+    if (!etitle) return;
+    const key = etitle + '|' + eartist;
+    if (_extLyricFetchedFor === key) return;   // 同一首歌已拉过，跳过（避免重复请求）
+    _extLyricFetchedFor = key;
+    try {
+      if (typeof _netEaseSearch === 'function' && M && typeof M._netEaseLyric === 'function') {
+        const kw = (eartist && eartist !== '未知歌手') ? (etitle + ' ' + eartist) : etitle;
+        const list = await _netEaseSearch(kw);
+        if (list && list.length) {
+          const hit = list[0];
+          const lrc = await M._netEaseLyric(hit.id);
+          if (lrc) {
+            M.state.lyrics = lrc;
+            const lyricBox = document.getElementById('bm-music-lyric');
+            if (lyricBox) {
+              const lines = parseLrc(lrc);
+              if (lines.length) {
+                lyricBox.innerHTML = lines.map(l => `<div class="bm-lrc-line${l.tr ? ' bm-lrc-tr' : ''}" data-t="${l.t}">${esc(l.text)}</div>`).join('');
+                startLyricScroll();
               }
             }
           }
-        } catch (e2) {}
+        }
       }
-    } catch (e) {}
+    } catch (e2) {}
   }
 
   /* ============================================================
@@ -5532,6 +5542,7 @@ window.bmMusicUI = (function () {
   let _liveExternalAt = 0;            // 缓存时间戳（防过期）
   let _liveExternalTimer = null;      // 遥控模式下周期刷新缓存的心跳
   let _extLyricFetchedFor = '';       // 20261107：已拉歌词的「歌名|歌手」，换歌才重拉，避免重复请求
+  let _lastExternalKey = '';          // 20261107：上一次外部真实态的「歌名|歌手」，换歌才推封面/拉歌词
   // 是否处于「真遥控外部 App」状态
   function _isRemoteNow() {
     return (M.state.mode === 'remote') && !_netEaseDirect;
@@ -5573,6 +5584,20 @@ window.bmMusicUI = (function () {
       if (st && st.hasSession) {
         _liveExternal = st;
         _liveExternalAt = Date.now();
+        // 20261107 修复「切歌后歌词/封面不实时更换」根因：
+        //   心跳里检测外部 title|artist 是否变化，变了就：
+        //   ① 重拉歌词（_refreshExternalLyric 内部按歌名去重，换歌才真拉）；
+        //   ② 推新歌名/封面给原生悬浮窗（overlay），因为原生悬浮窗封面只在
+        //      pushNativeState() 时更新，此前心跳只推 position 不推封面，导致
+        //      「一级悬浮窗」封面一直停在第一首。
+        const etitle = (st.title || '').trim();
+        const eartist = (st.artist || '').trim();
+        const newKey = etitle + '|' + eartist;
+        if (newKey !== _lastExternalKey) {
+          _lastExternalKey = newKey;
+          _refreshExternalLyric(etitle, eartist);
+          if (nativeFloat()) pushNativeState(false);   // 换歌 → 推新封面/歌名给原生悬浮窗
+        }
         // 外部真实态变化后，同步刷新：听歌页标题/封面/图标 + 软件内悬浮窗 + 原生悬浮窗
         if (forceRefreshUI !== false) {
           _applyLiveToPlayerUI();
