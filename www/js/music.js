@@ -3761,82 +3761,32 @@ window.bmMusicUI = (function () {
   //   保证「每日推荐」回退路径也是实时变化的最新推荐，而非「永远这批歌」。
   const _dailyOfficialIds = ['3779629', '3778678', '19723756'];  // 新歌榜 / 热歌榜 / 飙升榜
   async function _dailyRecommend(say) {
-    // ① 优先：原生插件拉起网易云「每日推荐」（orpheus://songrcmd?autoplay=1 自动播放）
-    const bridge = _remoteBridge();
-    if (bridge && typeof bridge.openUrl === 'function') {
-      try {
-        // 先停掉内置播放器，避免与外部网易云同时响
-        try { const a = M.state.audio; if (a) a.pause(); M.state.playing = false; } catch (e) {}
-        const r = await bridge.openUrl({ url: 'orpheus://songrcmd?autoplay=1' });
-        if (r && r.opened) {
-          if (say) say('已为你打开网易云每日推荐');
-          else if (window.miniToast) miniToast('已打开网易云每日推荐');
-          return;
-        }
-        // 深链打开失败（未装网易云/无 scheme）→ 走下方本地回退
-        if (say) say('没能直接拉起网易云，改用内置每日推荐');
-      } catch (e) {
-        // 原生调用异常 → 本地回退
+    // 20261107 用户铁律：每日推荐 = 用账号真实数据在「白日梦内部」播，不靠深链拉起网易云、
+    //   不绕镜像源。无论遥控还是直连模式，都后台用 weapi 拉账号真实每日推荐（需登录）。
+    // 深链 orpheus:// 在你手机上 no_handler 打不开，故不再优先尝试深链，直接内部播真实数据。
+    let fulls = [];
+    // ① 优先：拉「用户账号真实的每日推荐 30 首」（/weapi recommend/songs，需登录）
+    const rcmd = await _netEaseRecommendSongs();
+    if (rcmd && rcmd.length) {
+      for (const s of rcmd.slice(0, 30)) {
+        const u = await _netEaseSongUrl(s.id);
+        if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
       }
     }
-    // ② 回退：本地推荐关键词搜歌整批播（网页端 / 无插件 / 深链失败）
-    // 20261105 直连模式：镜像源已失效（qijieya/gdstudio/meting 均挂），改用网易云官方搜索
-    //   拿真实可播直链，根治「每日推荐暂时没抓到歌」。
-    // 20261107 回退来源改造：优先拉网易云官方榜单歌单（新歌榜/热歌榜/飙升榜，天天更新、无需登录），
-    //   拉不到才落回固定关键词搜歌兜底。这样「每日推荐」回退也是实时最新的官方推荐，不是「永远这批歌」。
-    if (_netEaseDirect) {
-      const fulls = [];
-      // 20261107：直连优先拉「用户账号真实的每日推荐 30 首」（/weapi recommend/songs，需登录）
-      const rcmd = await _netEaseRecommendSongs();
-      if (rcmd && rcmd.length) {
-        for (const s of rcmd.slice(0, 30)) {
+    // ② 拿不到真实每日推荐（未登录/weapi 失败）→ 落回官方榜单歌单（新歌/热歌/飙升，天天更新、无需登录）
+    if (!fulls.length) {
+      for (const pid of _dailyOfficialIds) {
+        const tracks = await _netEasePlaylistTracks(pid);
+        if (!tracks || !tracks.length) continue;
+        for (const s of tracks.slice(0, 20)) {
           const u = await _netEaseSongUrl(s.id);
           if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
         }
+        if (fulls.length) break;
       }
-      // 拿不到真实每日推荐（未登录/weapi 失败）→ 落回官方榜单歌单
-      if (!fulls.length) {
-        for (const pid of _dailyOfficialIds) {
-          const tracks = await _netEasePlaylistTracks(pid);
-          if (!tracks || !tracks.length) continue;
-          for (const s of tracks.slice(0, 20)) {
-            const u = await _netEaseSongUrl(s.id);
-            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
-          }
-          if (fulls.length) break;
-        }
-      }
-      if (!fulls.length) {
-        for (const kw of _dailyKwPool) {
-          const list = await _netEaseSearch(kw);
-          if (!list || !list.length) continue;
-          for (const s of list.slice(0, 12)) {
-            const u = await _netEaseSongUrl(s.id);
-            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
-          }
-          if (fulls.length) break;
-        }
-      }
-      if (!fulls.length) { if (say) say('每日推荐暂时没抓到可播的歌'); if (window.miniToast) miniToast('每日推荐暂时没抓到歌'); return; }
-      M.state.playlist = fulls;
-      M.state.playIndex = 0;
-      try { await M.play(fulls[0]); } catch (e) {}
-      if (say) say(`播放了每日推荐，共 ${fulls.length} 首`);
-      return;
     }
-    // 本地：随机推荐关键词搜歌，整批入队列播放；某关键词抓不到歌则换下一个重试
-    // 20261106 修复「每日推荐抓不到歌」：镜像源（qijieya/gdstudio/meting）已失效，
-    //   M.search() 走镜像源必然空。这里优先试网易云官方搜索（_netEaseSearch 走原生 Cookie，
-    //   只要登录态有效就能搜，不依赖 _netEaseDirect 开关），成功则用网易云直链播；
-    //   失败（未登录/无 Cookie）才落回镜像源 M.search()。
-    let fulls = [];
-    const neTried = await (async () => {
-      try {
-        const chk = await _netEaseSearch(_dailyKwPool[0]);
-        return !!(chk && chk.length);
-      } catch (e) { return false; }
-    })();
-    if (neTried) {
+    // ③ 还拿不到 → 关键词搜歌兜底
+    if (!fulls.length) {
       for (const kw of _dailyKwPool) {
         const list = await _netEaseSearch(kw);
         if (!list || !list.length) continue;
@@ -3845,18 +3795,6 @@ window.bmMusicUI = (function () {
           if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
         }
         if (fulls.length) break;
-      }
-    }
-    if (!fulls.length) {
-      for (const kw of _dailyKwPool) {
-        const res = await M.search(kw);
-        if (!res || !res.length) continue;
-        const batch = res.slice(0, 12);
-        for (const s of batch) {
-          const f = await M.fetchSongDetail(s);
-          if (f && f.url) fulls.push(f);
-        }
-        if (fulls.length) break;   // 抓到歌就停，不再换关键词
       }
     }
     if (!fulls.length) { if (say) say('每日推荐暂时没抓到可播的歌'); if (window.miniToast) miniToast('每日推荐暂时没抓到歌'); return; }
@@ -3876,93 +3814,29 @@ window.bmMusicUI = (function () {
   //   取代固定关键词搜歌，让漫游每次都是实时变化的最新歌，而不是固定风格那一批。
   const _roamOfficialIds = ['19723756', '2250011882', '2884035', '3779629', '3778678', '2842711079', '2887052', '2890194'];  // 飙升/抖音/原创/新歌/热歌/电音/民谣/古风等
   async function _roamPlay(say) {
-    // ① 优先：原生插件拉起网易云私人 FM（漫游）
-    const bridge = _remoteBridge();
-    if (bridge && typeof bridge.openUrl === 'function') {
-      try {
-        // 先停掉内置播放器，避免与外部网易云同时响
-        try { const a = M.state.audio; if (a) a.pause(); M.state.playing = false; } catch (e) {}
-        const r = await bridge.openUrl({ url: 'orpheus://radio' });
-        if (r && r.opened) {
-          if (say) say('已为你开启网易云漫游（私人 FM）');
-          else if (window.miniToast) miniToast('已开启网易云漫游');
-          return;
-        }
-        // 深链打开失败（未装网易云/无 scheme）→ 走下方本地回退
-        if (say) say('没能直接拉起网易云，改用内置漫游');
-      } catch (e) {
-        // 原生调用异常 → 本地回退
-      }
-    }
-    // ② 回退：本地随机漫游播歌（网页端 / 无插件 / 深链失败）
-    // 20261105 直连模式：镜像源失效，改用网易云官方搜索，根治「漫游暂时没抓到歌」。
-    // 20261107 回退来源改造：随机挑一个网易云官方榜单歌单（多风格、天天更新、无需登录），
-    //   拉不到才落回固定关键词搜歌兜底。让漫游每次都是实时变化的最新歌，不是固定风格那一批。
-    if (_netEaseDirect) {
-      const ids = [..._roamOfficialIds];
-      for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
-      let fulls = [];
-      // 20261107：直连优先拉「用户账号真实的私人FM」（/weapi radio/get，需登录），多拉几批凑够一批
-      try {
-        for (let round = 0; round < 10 && fulls.length < 15; round++) {
-          const fm = await _netEasePersonalFm();
-          if (!fm || !fm.length) break;
-          for (const s of fm) {
-            const u = await _netEaseSongUrl(s.id);
-            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
-          }
-        }
-      } catch (e) {}
-      // 拿不到私人FM（未登录/weapi 失败）→ 落回官方榜单歌单
-      if (!fulls.length) {
-        for (const pid of ids) {
-          const tracks = await _netEasePlaylistTracks(pid);
-          if (!tracks || !tracks.length) continue;
-          const batch = tracks.slice(0, 20);
-          for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
-          for (const s of batch) {
-            const u = await _netEaseSongUrl(s.id);
-            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
-          }
-          if (fulls.length) break;
-        }
-      }
-      if (!fulls.length) {
-        const pool = [..._roamKwPool];
-        for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
-        for (const kw of pool) {
-          const list = await _netEaseSearch(kw);
-          if (!list || !list.length) continue;
-          const batch = list.slice(0, 15);
-          for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
-          for (const s of batch) {
-            const u = await _netEaseSongUrl(s.id);
-            if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
-          }
-          if (fulls.length) break;
-        }
-      }
-      if (!fulls.length) { if (say) say('漫游暂时没抓到可播的歌'); if (window.miniToast) miniToast('漫游暂时没抓到歌'); return; }
-      M.state.playlist = fulls;
-      M.state.playIndex = 0;
-      try { await M.play(fulls[0]); } catch (e) {}
-      if (say) say(`开启了音乐漫游，随机漫游 ${fulls.length} 首`);
-      return;
-    }
-    // 随机风格搜歌，洗牌后整批播；某风格抓不到歌则换下一个重试
-    // 20261106 修复「漫游抓不到歌」：镜像源已失效，M.search() 必然空。优先试网易云官方搜索
-    //   （有登录态即可用，不依赖 _netEaseDirect），失败才落回镜像源 M.search()。
-    const pool = [..._roamKwPool];
-    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    // 20261107 用户铁律：漫游 = 用账号真实私人FM在「白日梦内部」播，不靠深链拉起网易云、
+    //   不绕镜像源。无论遥控还是直连模式，都后台用 weapi 拉账号真实私人FM（需登录）。
+    // 深链 orpheus://radio 在你手机上 no_handler 打不开，故不再优先尝试深链，直接内部播。
+    const ids = [..._roamOfficialIds];
+    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
     let fulls = [];
-    const neTried = await (async () => {
-      try { const chk = await _netEaseSearch(pool[0]); return !!(chk && chk.length); } catch (e) { return false; }
-    })();
-    if (neTried) {
-      for (const kw of pool) {
-        const list = await _netEaseSearch(kw);
-        if (!list || !list.length) continue;
-        const batch = list.slice(0, 15);
+    // ① 优先：拉「用户账号真实的私人FM」（/weapi radio/get，需登录），多拉几批凑够一批
+    try {
+      for (let round = 0; round < 10 && fulls.length < 15; round++) {
+        const fm = await _netEasePersonalFm();
+        if (!fm || !fm.length) break;
+        for (const s of fm) {
+          const u = await _netEaseSongUrl(s.id);
+          if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
+        }
+      }
+    } catch (e) {}
+    // ② 拿不到私人FM（未登录/weapi 失败）→ 落回官方榜单歌单（多风格、天天更新、无需登录）
+    if (!fulls.length) {
+      for (const pid of ids) {
+        const tracks = await _netEasePlaylistTracks(pid);
+        if (!tracks || !tracks.length) continue;
+        const batch = tracks.slice(0, 20);
         for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
         for (const s of batch) {
           const u = await _netEaseSongUrl(s.id);
@@ -3971,15 +3845,18 @@ window.bmMusicUI = (function () {
         if (fulls.length) break;
       }
     }
+    // ③ 还拿不到 → 关键词搜歌兜底
     if (!fulls.length) {
+      const pool = [..._roamKwPool];
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
       for (const kw of pool) {
-        const res = await M.search(kw);
-        if (!res || !res.length) continue;
-        const batch = res.slice(0, 15);
+        const list = await _netEaseSearch(kw);
+        if (!list || !list.length) continue;
+        const batch = list.slice(0, 15);
         for (let i = batch.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [batch[i], batch[j]] = [batch[j], batch[i]]; }
         for (const s of batch) {
-          const f = await M.fetchSongDetail(s);
-          if (f && f.url) fulls.push(f);
+          const u = await _netEaseSongUrl(s.id);
+          if (u && u.url) fulls.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' });
         }
         if (fulls.length) break;
       }
