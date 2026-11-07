@@ -101,19 +101,25 @@ public class BmRemoteControlPlugin extends Plugin {
             try {
                 if (ps != null) {
                     long pos = ps.getPosition();
-                    long dur = ps.getDuration();
                     // PlaybackState 的 position 语义：若无更新速度信息，getPosition 是最近一次更新的绝对位置
                     if (pos >= 0) {
                         // 若提供了速度信息，按「上次更新时刻 + 速度 × 流逝时间」外推当前真实进度
-                        if (ps.getLastUpdatedTime() > 0 && Math.abs(ps.getPlaybackSpeed()) > 0.0001f) {
-                            long elapsed = android.os.SystemClock.elapsedRealtime() - ps.getLastUpdatedTime();
+                        if (ps.getLastPositionUpdateTime() > 0 && Math.abs(ps.getPlaybackSpeed()) > 0.0001f) {
+                            long elapsed = android.os.SystemClock.elapsedRealtime() - ps.getLastPositionUpdateTime();
                             long extrapolated = pos + (long)(ps.getPlaybackSpeed() * elapsed);
                             if (extrapolated >= 0) pos = extrapolated;
                         }
                         o.put("position", (int)(pos / 1000));
                     }
-                    if (dur > 0) o.put("duration", (int)(dur / 1000));
                 }
+                // 总时长在 MediaMetadata（METADATA_KEY_DURATION，单位 ms），PlaybackState 不提供
+                try {
+                    android.media.MediaMetadata mdDur = c.getMetadata();
+                    if (mdDur != null) {
+                        long dur = mdDur.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION);
+                        if (dur > 0) o.put("duration", (int)(dur / 1000));
+                    }
+                } catch (Throwable t4) { /* 部分 App 不提供时长，忽略 */ }
             } catch (Throwable t3) { /* 部分 App 不提供进度信息，忽略 */ }
         } catch (Throwable t) {
             o.put("playing", false);
