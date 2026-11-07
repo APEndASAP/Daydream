@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="bm_lock_accessibility_name">白日梦锁机</string>
     <string name="bm_lock_accessibility_desc">用于番茄钟「锁机」功能：在专注锁机期间拦截 Home 键、返回键和最近任务键，避免误退出专注界面。开启后仅在锁机生效，不收集任何数据。</string>
     <string name="bm_device_admin_desc">用于番茄钟「锁机」功能：设为设备所有者后，锁机期间可彻底锁定（免确认、无法通过组合键退出）。仅在你主动用 adb 设置时生效，不收集任何数据。</string>
 </resources>

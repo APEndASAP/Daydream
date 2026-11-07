@@ -2307,11 +2307,11 @@ window.bmMusicUI = (function () {
           <div class="bm-music-artist" id="bm-music-artist">${cur ? esc(cur.artist) : '—'}</div>
         </div>
         <div class="bm-music-lyric" id="bm-music-lyric"></div>
-        <div class="bm-music-progress" id="bm-music-progress">
-          <span class="bm-prog-time" id="bm-prog-cur">00:00</span>
-          <input type="range" class="bm-progress-slider" id="bm-progress-slider" min="0" max="1000" value="0" step="1" />
-          <span class="bm-prog-time" id="bm-prog-dur">00:00</span>
-        </div>
+      </div>
+      <div class="bm-music-progress" id="bm-music-progress">
+        <span class="bm-prog-time" id="bm-prog-cur">00:00</span>
+        <input type="range" class="bm-progress-slider" id="bm-progress-slider" min="0" max="1000" value="0" step="1" />
+        <span class="bm-prog-time" id="bm-prog-dur">00:00</span>
       </div>
       <div class="bm-music-searchtool" id="bm-music-searchtool">
         <div class="bm-tool-left">
@@ -3544,6 +3544,12 @@ window.bmMusicUI = (function () {
       if (M.state.mode === 'remote') { M.state.mode = 'mirror'; try { M.saveSession(); } catch (e2) {} }
       _stopLiveExternalHeartbeat();
       _liveExternal = null; _liveExternalAt = 0;
+    } else {
+      // 20261107 修复互斥 bug：关直连（回到「遥控外部 App」）时，若 mode 还是 mirror
+      //   （即之前开直连时被 _netEaseSetDirect 从 remote 改成了 mirror），必须把它拉回
+      //   remote，否则 _isRemoteMode()=(mode==='remote') 恒 false，点播放/暂停只控内置播放器，
+      //   只有「盲抽一首」因直接 bridge.next() 不看 mode 还能遥控——正是用户复现的现象。
+      if (M.state.mode === 'mirror') { M.state.mode = 'remote'; try { M.saveSession(); } catch (e2) {} }
     }
   }
   // 原生层带 Cookie 请求网易云官方接口，返回解析后的 JSON（失败返回 null）
@@ -3629,19 +3635,26 @@ window.bmMusicUI = (function () {
   // 20261107：直连读「用户账号真实的每日推荐 30 首」（/weapi/v2/discovery/recommend/songs，需登录）
   async function _netEaseRecommendSongs() {
     const j = await _netEaseWeapiReq('/v2/discovery/recommend/songs', { offset: 0, total: true, limit: 30 });
-    if (!j || j.code !== 200 || !j.data || !j.data.dailySongs) return [];
-    return j.data.dailySongs.map(s => ({
+    if (!j || j.code !== 200) return [];
+    // 20261107 真机实测修正字段：真实返回的歌在 j.recommend[]（不是 j.data.dailySongs）。
+    //   歌曲对象 {name,id,artists:[{name}],album:{name,picUrl}}。
+    const list = (j.recommend && j.recommend.length) ? j.recommend
+               : ((j.data && j.data.dailySongs) ? j.data.dailySongs : null);
+    if (!list || !list.length) return [];
+    return list.map(s => ({
       id: String(s.id),
       name: s.name || '',
-      artist: (s.ar && s.ar.length) ? s.ar.map(a => a.name).join(' / ') : (s.artists ? s.artists.map(a => a.name).join(' / ') : ''),
-      pic: (s.al && s.al.picUrl) ? String(s.al.picUrl).replace(/^http:\/\//i, 'https://') : '',
+      artist: (s.artists && s.artists.length) ? s.artists.map(a => a.name).join(' / ') : (s.ar && s.ar.length ? s.ar.map(a => a.name).join(' / ') : ''),
+      pic: (s.album && s.album.picUrl) ? String(s.album.picUrl).replace(/^http:\/\//i, 'https://') : ((s.al && s.al.picUrl) ? String(s.al.picUrl).replace(/^http:\/\//i, 'https://') : ''),
       source: 'netease-direct',
     }));
   }
   // 20261107：直连读「用户账号的私人FM」（/weapi/v1/radio/get，需登录），每次返回约 1~3 首
   async function _netEasePersonalFm(batch) {
     const j = await _netEaseWeapiReq('/v1/radio/get', {});
-    if (!j || j.code !== 200 || !j.data) return [];
+    // 20261107 真机实测修正：该接口返回 {popAdjust, data:[...]}，顶层无 code 字段；
+    //   歌在 j.data[]，封面在 album.picUrl。
+    if (!j || !j.data) return [];
     const arr = Array.isArray(j.data) ? j.data : [];
     return arr.map(s => ({
       id: String(s.id),

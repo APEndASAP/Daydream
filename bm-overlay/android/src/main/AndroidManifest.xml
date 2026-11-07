@@ -14,7 +14,7 @@
              靠 BIND_ACCESSIBILITY_SERVICE 签名权限（仅系统可授予）保护安全，普通 App 无法绑定。 -->
         <service
             android:name="com.bairimeng.overlay.BmLockAccessibilityService"
-            android:label="@string/bm_lock_accessibility_desc"
+            android:label="@string/bm_lock_accessibility_name"
             android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
