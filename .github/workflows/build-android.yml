@@ -440,6 +440,18 @@ jobs:
           } else {
             console.log('launchMode already present');
           }
+          // 20261107：MainActivity 注入 android:lockTaskMode="if_whitelisted" ——
+          //   startLockTask()（屏幕固定）要生效的前提是 Activity 声明 lockTaskMode，
+          //   否则系统静默忽略调用、番茄钟锁机锁不住手势导航（上滑回桌面）。
+          //   if_whitelisted 非 Device Owner 首次会弹一次系统「固定屏幕」确认框，点允许后永久生效。
+          if (!m.includes('android:lockTaskMode')) {
+            m = m.replace(/(<activity[^>]*android:name="\.MainActivity"[^>]*?)(\/?>)/,
+              '$1 android:lockTaskMode="if_whitelisted"$2');
+            fs.writeFileSync(p, m);
+            console.log('MainActivity lockTaskMode=if_whitelisted injected');
+          } else {
+            console.log('lockTaskMode already present');
+          }
           // compileSdk 34 -> 35：@ebarooni/capacitor-calendar 拉入 androidx.core 1.15（要求 SDK 35 编译）；
           // targetSdk 保持 34 不变（运行时行为不变，仅编译目标升级；AGP 8.2.1 未推荐 35 的警告压制）
           const vp = 'android/variables.gradle';
