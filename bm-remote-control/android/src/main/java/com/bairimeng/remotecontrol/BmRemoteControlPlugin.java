@@ -400,19 +400,19 @@ public class BmRemoteControlPlugin extends Plugin {
             }
             int code = conn.getResponseCode();
             java.io.InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
-            String body = "";
+            String respBody = "";
             if (is != null) {
                 java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
                 is.close();
-                body = bos.toString("UTF-8");
+                respBody = bos.toString("UTF-8");
             }
             conn.disconnect();
             JSObject o = new JSObject();
             o.put("status", code);
-            o.put("body", body);
+            o.put("body", respBody);
             resolveOk(call, o);
         } catch (Throwable t) {
             resolveErr(call, String.valueOf(t.getMessage()));
