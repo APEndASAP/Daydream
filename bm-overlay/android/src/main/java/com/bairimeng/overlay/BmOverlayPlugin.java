@@ -558,12 +558,13 @@ public class BmOverlayPlugin extends Plugin {
             android.content.Intent intent = null;
             // 优先直达本 App 无障碍服务详情页（带「使用服务」开关的那一页），
             // 避免 ColorOS 等 ROM 只跳到无障碍主页（通用/视觉/听觉/互动），用户找不到入口。
+            // 注意：ACTION_ACCESSIBILITY_DETAILS_SETTINGS 是 @hide/@SystemApi 隐藏常量，
+            //   编译时符号不存在，只能直接用其字符串值 "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"。
             try {
                 android.content.ComponentName cn = new android.content.ComponentName(
                         getContext().getPackageName(),
                         "com.bairimeng.overlay.BmLockAccessibilityService");
-                intent = new android.content.Intent(
-                        android.provider.Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS);
+                intent = new android.content.Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
                 intent.putExtra(android.content.Intent.EXTRA_COMPONENT_NAME, cn);
                 intent.putExtra(":settings:show_fragment_args", cn.flattenToString());
                 intent.putExtra("android.provider.extra.SETTINGS_EMBEDDED_DEEP_LINK_HIGHLIGHT_KEY",
