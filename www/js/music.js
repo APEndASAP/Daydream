@@ -1170,6 +1170,7 @@ window.bmMusic = (function () {
     state,
     isApp,
     setNeteaseBridge,   // 20261106 方案A：闭包2 注入网易云直连函数（修跨闭包 ReferenceError）
+    _netEaseLyric,      // 20261107 暴露给闭包2：后台遥控模式拿外部 title/artist 搜歌后补拉歌词
     search,
     fetchSongDetail,
     parsePlaylistLink,
@@ -5478,13 +5479,42 @@ window.bmMusicUI = (function () {
       if (!st || !st.hasSession) return;
       const title2 = document.getElementById('bm-music-title2');
       const artist = document.getElementById('bm-music-artist');
-      if (title2) title2.textContent = (st.title || '').trim() || '未知歌曲';
-      if (artist) artist.textContent = (st.artist || '').trim() || '未知歌手';
+      const etitle = (st.title || '').trim();
+      const eartist = (st.artist || '').trim();
+      if (title2) title2.textContent = etitle || '未知歌曲';
+      if (artist) artist.textContent = eartist || '未知歌手';
       const core = document.getElementById('bm-planet-core');
       if (core && st.cover && typeof st.cover === 'string' && st.cover) {
         core.style.backgroundImage = `url("${String(st.cover).replace(/"/g, '\\"')}")`;
         core.innerHTML = '';
         core.classList.add('has-pic');
+      }
+      // 20261107 修复「后台遥控拿不到歌词」：MediaSession 不提供歌词，只能拿外部
+      //   title+artist 去网易云搜索匹配（搜「歌名 歌手」），命中后按 id 补拉真实 LRC，
+      //   再写入 M.state.lyrics 并刷新歌词区。这样遥控模式下封面、歌词都能拿到。
+      if (etitle && !_extLyricFetchedFor) {
+        _extLyricFetchedFor = etitle + '|' + eartist;
+        try {
+          if (typeof _netEaseSearch === 'function' && M && typeof M._netEaseLyric === 'function') {
+            const kw = (eartist && eartist !== '未知歌手') ? (etitle + ' ' + eartist) : etitle;
+            const list = await _netEaseSearch(kw);
+            if (list && list.length) {
+              const hit = list[0];
+              const lrc = await M._netEaseLyric(hit.id);
+              if (lrc) {
+                M.state.lyrics = lrc;
+                const lyricBox = document.getElementById('bm-music-lyric');
+                if (lyricBox) {
+                  const lines = parseLrc(lrc);
+                  if (lines.length) {
+                    lyricBox.innerHTML = lines.map(l => `<div class="bm-lrc-line${l.tr ? ' bm-lrc-tr' : ''}" data-t="${l.t}">${esc(l.text)}</div>`).join('');
+                    startLyricScroll();
+                  }
+                }
+              }
+            }
+          }
+        } catch (e2) {}
       }
     } catch (e) {}
   }
@@ -5501,6 +5531,7 @@ window.bmMusicUI = (function () {
   let _liveExternal = null;           // 最近一次 getMediaState() 返回（外部真实态缓存）
   let _liveExternalAt = 0;            // 缓存时间戳（防过期）
   let _liveExternalTimer = null;      // 遥控模式下周期刷新缓存的心跳
+  let _extLyricFetchedFor = '';       // 20261107：已拉歌词的「歌名|歌手」，换歌才重拉，避免重复请求
   // 是否处于「真遥控外部 App」状态
   function _isRemoteNow() {
     return (M.state.mode === 'remote') && !_netEaseDirect;
