@@ -11711,6 +11711,10 @@ function _pomodoroLock(hint) {
     if (BO && typeof BO.lock === 'function') {
       BO.lock({ hint: hint || '专注中，请勿分心' }).catch(() => {});
       bmAccessibilityCheckAndGuide();
+    } else {
+      // 20261107 用户要求：网页端点锁机按钮时，要提醒「这是 APP 才能用的功能」。
+      //   网页端没有 Capacitor 原生插件 BmOverlay，锁机无法生效，明确提示而非静默。
+      if (window.miniToast) miniToast('锁机是安装版 APP 专属功能，网页版无法锁屏，请下载安装后使用');
     }
   } catch (e) {}
 }

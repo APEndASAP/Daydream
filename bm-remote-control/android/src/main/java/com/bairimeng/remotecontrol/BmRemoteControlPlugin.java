@@ -621,23 +621,25 @@ public class BmRemoteControlPlugin extends Plugin {
             android.content.Intent intent = new android.content.Intent(
                     android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-            // 记录是否有组件能处理该 scheme
-            android.content.pm.PackageManager pm = getContext().getPackageManager();
-            boolean canResolve = intent.resolveActivity(pm) != null;
-            if (!canResolve) {
-                JSObject o = new JSObject();
-                o.put("opened", false);
-                o.put("reason", "no_handler");
-                resolveOk(call, o);
-                return;
-            }
+            // 20261107 修复「无 host 深链误判 no_handler」：网易云的 orpheus://radio、
+            //   orpheus://songrcmd 这类「只有 scheme + path、没有 host」的深链，
+            //   resolveActivity(pm) 在部分系统/API 上返回 null（需 host 才能精确匹配），
+            //   导致误判 canResolve=false 提前 return，根本没走到 startActivity。
+            //   但 adb am start -d 却能成功拉起——证明深链本身有效，是 resolveActivity 判断有 bug。
+            //   修复：去掉 resolveActivity 预判，直接 startActivity，靠 catch
+            //   ActivityNotFoundException（未装目标 App）判断是否成功。
             getContext().startActivity(intent);
             JSObject o = new JSObject();
             o.put("opened", true);
             o.put("reason", null);
             resolveOk(call, o);
+        } catch (android.content.ActivityNotFoundException anfe) {
+            // 未安装目标 App 或确无组件处理该 scheme
+            JSObject o = new JSObject();
+            o.put("opened", false);
+            o.put("reason", "no_handler");
+            resolveOk(call, o);
         } catch (Throwable t) {
-            // 未安装目标 App 会抛 ActivityNotFoundException，这里统一按「未打开」处理
             JSObject o = new JSObject();
             o.put("opened", false);
             o.put("reason", String.valueOf(t.getMessage()));

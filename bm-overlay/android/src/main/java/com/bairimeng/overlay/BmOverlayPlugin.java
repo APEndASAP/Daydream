@@ -502,12 +502,15 @@ public class BmOverlayPlugin extends Plugin {
             String hint = call.getString("hint", "专注中，请勿分心");
             // 20261106：开启锁机时，若无障碍服务已授权，置 isLocking=true 拦截 Home/返回/最近任务键
             BmLockAccessibilityService.isLocking = true;
-            showLockOverlay(hint);
-            // 20261106：锁机覆盖锁屏 + 锁定任务（LockTask）。
-            //   ① startLockTask() 进入系统级屏幕固定，隐藏手势导航/Home/最近任务，
-            //     让上滑手势切不走 App（普通 App 唯一能真正拦手势导航的系统 API）；
-            //   ② 覆盖层 FLAG_SHOW_WHEN_LOCKED 盖在系统锁屏之上 + 亮屏，玩家完全进不去。
+            // 20261107 用户铁律修正：必须先 startLockTask() 再盖覆盖层。
+            //   早期注入式测试能「上滑滑不上去」，是因为系统「应用已固定」确认框弹出期间，
+            //   Android 会临时禁用导航手势。之前先 showLockOverlay 盖覆盖层、后 startLockTask，
+            //   把系统确认框挡住了，确认框不弹出 → 手势不被临时禁用 → 上滑就能切走。
+            //   现在调整顺序：先 startLockTask()（让系统确认框先弹出来、手势被临时禁用），
+            //   再盖覆盖层（拦住返回键 + 屏幕点击），复现注入式测试时的锁机效果。
             startLockTaskSafe();
+            // 再盖全屏锁机覆盖层（覆盖层不遮挡系统确认框，确认框在系统层更高优先级正常显示）
+            showLockOverlay(hint);
             // ③ 若已是 Device Owner，锁机时顺手补一次 LockTask 白名单，
             //     保证 startLockTask 免确认 + 无法组合键退出（彻底锁死）。
             ensureLockTaskWhitelist();

@@ -3776,9 +3776,29 @@ window.bmMusicUI = (function () {
   //   保证「每日推荐」回退路径也是实时变化的最新推荐，而非「永远这批歌」。
   const _dailyOfficialIds = ['3779629', '3778678', '19723756'];  // 新歌榜 / 热歌榜 / 飙升榜
   async function _dailyRecommend(say) {
-    // 20261107 用户铁律：每日推荐 = 用账号真实数据在「白日梦内部」播，不靠深链拉起网易云、
-    //   不绕镜像源。无论遥控还是直连模式，都后台用 weapi 拉账号真实每日推荐（需登录）。
-    // 深链 orpheus:// 在你手机上 no_handler 打不开，故不再优先尝试深链，直接内部播真实数据。
+    // 20261107 用户铁律（本轮修正）：遥控外部 APP 模式（mode==='remote' 且未开直连）下，
+    //   点「每日推荐」要「直接操控后台网易云开始播放」——深链拉起网易云每日推荐页并自动播放，
+    //   绝不在白日梦内部播放器播。深链 orpheus://songrcmd 已真机验证可打开 DailyRecommendMusicActivity，
+    //   且网易云打开后自己就自动播放第一首（MediaSession state=PLAYING），无需额外发 play 指令。
+    //   只有网易云直连模式（_netEaseDirect）才走 weapi 拉账号真实数据在内部播。
+    if ((M.state.mode === 'remote') && !_netEaseDirect) {
+      const bridge = _remoteBridge();
+      // 先停掉内置播放器，避免内部残留歌曲与外部 App 同时响
+      try { const a = M.state.audio; if (a) a.pause(); M.state.playing = false; } catch (e) {}
+      if (bridge && typeof bridge.openUrl === 'function') {
+        try {
+          const r = await bridge.openUrl({ url: 'orpheus://songrcmd' });
+          if (r && r.opened) {
+            // 深链打开后网易云会自动开始播放（已真机验证），延迟刷新外部真实态驱动悬浮窗
+            setTimeout(() => { _refreshLiveExternal(true); }, 1200);
+            if (say) say('已打开网易云每日推荐并播放');
+            return;
+          }
+        } catch (e) {}
+      }
+      if (window.miniToast) miniToast('未能拉起网易云每日推荐');
+      return;
+    }
     let fulls = [];
     // ① 优先：拉「用户账号真实的每日推荐 30 首」（/weapi recommend/songs，需登录）
     const rcmd = await _netEaseRecommendSongs();
@@ -3829,9 +3849,28 @@ window.bmMusicUI = (function () {
   //   取代固定关键词搜歌，让漫游每次都是实时变化的最新歌，而不是固定风格那一批。
   const _roamOfficialIds = ['19723756', '2250011882', '2884035', '3779629', '3778678', '2842711079', '2887052', '2890194'];  // 飙升/抖音/原创/新歌/热歌/电音/民谣/古风等
   async function _roamPlay(say) {
-    // 20261107 用户铁律：漫游 = 用账号真实私人FM在「白日梦内部」播，不靠深链拉起网易云、
-    //   不绕镜像源。无论遥控还是直连模式，都后台用 weapi 拉账号真实私人FM（需登录）。
-    // 深链 orpheus://radio 在你手机上 no_handler 打不开，故不再优先尝试深链，直接内部播。
+    // 20261107 用户铁律（本轮修正）：遥控外部 APP 模式（mode==='remote' 且未开直连）下，
+    //   点「漫游」要「直接操控后台网易云开始播放」——深链拉起网易云私人FM（漫游）自动播放，
+    //   绝不在白日梦内部播放器播。深链 orpheus://radio 已真机验证可打开「私人漫游·探索模式」并自动播放。
+    //   只有网易云直连模式（_netEaseDirect）才走 weapi 拉账号真实私人FM在内部播。
+    if ((M.state.mode === 'remote') && !_netEaseDirect) {
+      const bridge = _remoteBridge();
+      // 先停掉内置播放器，避免内部残留歌曲与外部 App 同时响
+      try { const a = M.state.audio; if (a) a.pause(); M.state.playing = false; } catch (e) {}
+      if (bridge && typeof bridge.openUrl === 'function') {
+        try {
+          const r = await bridge.openUrl({ url: 'orpheus://radio' });
+          if (r && r.opened) {
+            // 私人FM深链打开后网易云会自动开始播放；延迟刷新外部真实态驱动悬浮窗
+            setTimeout(() => { _refreshLiveExternal(true); }, 1200);
+            if (say) say('已开启网易云私人漫游');
+            return;
+          }
+        } catch (e) {}
+      }
+      if (window.miniToast) miniToast('未能拉起网易云漫游');
+      return;
+    }
     const ids = [..._roamOfficialIds];
     for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
     let fulls = [];
@@ -4224,8 +4263,9 @@ window.bmMusicUI = (function () {
       if (window.miniToast) miniToast('原生插件暂不支持盲切');
       renderRemotePanel(box);
     };
-    // 每日推荐：后台遥控 / 网易云直连两种模式下都可用——统一后台用 weapi 拉账号真实
-    //   每日推荐在「白日梦内部」播（_dailyRecommend 内部已按登录态自动兜底，无需区分模式）。
+    // 每日推荐：遥控外部APP / 网易云直连两种模式下都可用——内部已按模式分流：
+    //   遥控外部APP（mode=remote 且未开直连）→ 深链拉起网易云每日推荐并自动播放；
+    //   网易云直连（_netEaseDirect）→ weapi 拉账号真实数据在「白日梦内部」播。
     box.querySelector('#bm-remote-daily').onclick = async () => {
       if (typeof _dailyRecommend === 'function') {
         if (window.miniToast) miniToast('正在打开每日推荐…');
@@ -4236,8 +4276,9 @@ window.bmMusicUI = (function () {
       if (window.miniToast) miniToast('每日推荐暂不可用');
       renderRemotePanel(box);
     };
-    // 漫游：后台遥控 / 网易云直连两种模式下都可用——统一后台用 weapi 拉账号真实私人FM
-    //   在「白日梦内部」播（_roamPlay 内部已按登录态自动兜底，无需区分模式）。
+    // 漫游：遥控外部APP / 网易云直连两种模式下都可用——内部已按模式分流：
+    //   遥控外部APP（mode=remote 且未开直连）→ 深链拉起网易云私人FM自动播放；
+    //   网易云直连（_netEaseDirect）→ weapi 拉账号真实私人FM在「白日梦内部」播。
     box.querySelector('#bm-remote-roam').onclick = async () => {
       if (typeof _roamPlay === 'function') {
         if (window.miniToast) miniToast('正在开启音乐漫游…');

@@ -441,9 +441,11 @@ jobs:
             console.log('launchMode already present');
           }
           // 20261107：MainActivity 注入 android:lockTaskMode="if_whitelisted" ——
-          //   startLockTask()（屏幕固定）要生效的前提是 Activity 声明 lockTaskMode，
-          //   否则系统静默忽略调用、番茄钟锁机锁不住手势导航（上滑回桌面）。
-          //   if_whitelisted 非 Device Owner 首次会弹一次系统「固定屏幕」确认框，点允许后永久生效。
+          //   startLockTask()（屏幕固定）要生效的前提是 Activity 声明 lockTaskMode。
+          //   20261108 澄清：普通第三方 App（非系统/非特权）无论用 normal/if_whitelisted/always，
+          //   startLockTask() 首次都会弹系统「应用已固定」确认框（Android 硬性设计，无法绕过），
+          //   用户点「知道了」后上滑手势即被锁死。if_whitelisted 是文档推荐给「配合白名单」的值，
+          //   未设 Device Owner 时等同 normal，行为一致；保留此值以便将来设白名单后免确认。
           if (!m.includes('android:lockTaskMode')) {
             m = m.replace(/(<activity[^>]*android:name="\.MainActivity"[^>]*?)(\/?>)/,
               '$1 android:lockTaskMode="if_whitelisted"$2');
@@ -567,3 +569,4 @@ jobs:
           name: bairimeng-apk
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 90
+
