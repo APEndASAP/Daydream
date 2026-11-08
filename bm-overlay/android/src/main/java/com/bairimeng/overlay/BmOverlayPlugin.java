@@ -757,9 +757,27 @@ public class BmOverlayPlugin extends Plugin {
                 return false;
             }
         });
-        // 拦截整屏触摸（除「退出锁机」按钮外全部消费掉）
+        // 拦截整屏触摸，但必须放行「退出锁机」按钮区域。
+        // 20261108 修复「退出锁机按钮点没反应」：原来 root.setOnTouchListener 无条件 return true，
+        //   会连子 View(unlockBtn) 的触摸也一起吞掉——触摸事件从父容器往下发，父容器先消费了
+        //   事件就传不到按钮，导致 OnClickListener 永远不触发、按钮点了没反应。
+        //   改为：ACTION_DOWN 时判断触点是否落在 unlockBtn 的屏幕坐标范围内，落在按钮上则
+        //   返回 false 放行（让事件继续下发给按钮），否则返回 true 拦截（专注页内容不被误点）。
         root.setOnTouchListener((v, e) -> {
-            try { return true; } catch (Throwable t) { return false; }
+            try {
+                if (e.getAction() == android.view.MotionEvent.ACTION_DOWN) {
+                    int[] loc = new int[2];
+                    unlockBtn.getLocationOnScreen(loc);
+                    float x = e.getRawX();
+                    float y = e.getRawY();
+                    boolean onBtn = x >= loc[0] && x <= loc[0] + unlockBtn.getWidth()
+                                 && y >= loc[1] && y <= loc[1] + unlockBtn.getHeight();
+                    return !onBtn;   // 在按钮上 → false 放行；否则 → true 拦截
+                }
+                return false;         // 非 DOWN 事件放行，让完整点击流程走完
+            } catch (Throwable t) {
+                return false;
+            }
         });
 
         try {
