@@ -5750,20 +5750,27 @@ async function writeSingleFileChunked(path, base64, directory, onProgress = null
   // 切块必须按 4 的倍数对齐，保证每一块都是合法的独立 base64 片段（CHUNK 本身是 4 的倍数）
   let first = true;
   let written = 0;
-  for (let off = 0; off < padded.length; off += CHUNK) {
-    const seg = padded.slice(off, off + CHUNK);
-    if (first) {
-      await FS.writeFile({ path, data: seg, directory, recursive: true });
-      first = false;
-    } else {
-      // 20261011：appendFile 补 recursive（与首块对齐），防父目录在两次调用间被清理导致追加失败
-      await FS.appendFile({ path, data: seg, directory, recursive: true });
+  // 20261107 修复「导出完成后底部『正在写入』小提示卡住不消失」：else 分支弹了 exportProgress(true, ...)
+  //   提示后，无论成功还是异常，都必须主动关闭，否则提示条永久残留。用 try-finally 兜底。
+  try {
+    for (let off = 0; off < padded.length; off += CHUNK) {
+      const seg = padded.slice(off, off + CHUNK);
+      if (first) {
+        await FS.writeFile({ path, data: seg, directory, recursive: true });
+        first = false;
+      } else {
+        // 20261011：appendFile 补 recursive（与首块对齐），防父目录在两次调用间被清理导致追加失败
+        await FS.appendFile({ path, data: seg, directory, recursive: true });
+      }
+      written = Math.min(off + CHUNK, total);
+      if (onProgress) onProgress(written, total);
+      else if (CHUNK > 3 * 1024 * 1024 && off + CHUNK < padded.length) {
+        exportProgress(true, `💾 正在写入 ${written}/${total}…`);
+      }
     }
-    written = Math.min(off + CHUNK, total);
-    if (onProgress) onProgress(written, total);
-    else if (CHUNK > 3 * 1024 * 1024 && off + CHUNK < padded.length) {
-      exportProgress(true, `💾 正在写入 ${written}/${total}…`);
-    }
+  } finally {
+    // onProgress 模式由调用方（如 writeContainerFile）管理提示；无 onProgress 才由本函数开/关。
+    if (!onProgress) exportProgress(false);
   }
 }
 
