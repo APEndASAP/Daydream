@@ -2478,6 +2478,17 @@ body.theme-light #bm-ma-toast {
   width: 100%; height: 100%; border: 0;
   display: block; background: #cdf3ec;
 }
+/* 20261108：四季陪伴小游戏全屏层（照搬番茄钟层，四季自己控制底色） */
+#season-layer {
+  position: fixed; inset: 0; z-index: 130;
+  display: none;
+  background: #f6f4ef;
+}
+#season-layer.show { display: block; }
+#season-layer iframe {
+  width: 100%; height: 100%; border: 0;
+  display: block; background: #f6f4ef;
+}
 /* 悬浮窗2号浮游：层穿透，玩家可直接点按底下的功能界面继续使用 */
 #call-layer.call-float2 { pointer-events: none; background: transparent; }
 #call-layer.call-float2 #call-box { pointer-events: auto; }

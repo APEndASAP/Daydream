@@ -61,6 +61,10 @@
       // #call-layer（不走 modal-mask），通话中同样不算「在聊天页」——悬浮窗必须收起。
       const cl = document.getElementById('call-layer');
       if (cl && cl.classList.contains('show') && !cl.classList.contains('call-float2')) return true;
+      // 20261108（用户反馈碎梦重拼悬浮窗浮在四季页上）：四季 #season-layer 也是全屏 iframe 层，
+      // 进入四季/番茄钟等功能页时悬浮窗必须收起，退出回到聊天页再恢复。
+      const sl = document.getElementById('season-layer');
+      if (sl && sl.classList.contains('show')) return true;
       return false;
     } catch (e) { return false; }
   }

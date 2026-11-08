@@ -112,6 +112,10 @@ const ICONS = {
   list: '<path d="M8.5 6.2h12M8.5 12h12M8.5 17.8h12"/><circle cx="4.2" cy="6.2" r="1.15" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="4.2" cy="17.8" r="1.15" fill="currentColor" stroke="none"/>',
   download: '<path d="M12 3.5v11"/><path d="M7.6 10.5L12 15l4.4-4.5"/><path d="M4.5 15.5v2.7a2.3 2.3 0 0 0 2.3 2.3h10.4a2.3 2.3 0 0 0 2.3-2.3v-2.7"/>',
   timer: '<circle cx="12" cy="13" r="8"/><path d="M12 13V8.5"/><path d="M9.5 2.5h5"/><path d="M12 5.5v-1"/>',
+
+  /* —— 陪伴 / 四季（20261108）：陪伴一级入口 + 番茄钟/四季两个功能块 —— */
+  companion: '<circle cx="9" cy="8.5" r="3.2"/><circle cx="16.5" cy="10" r="2.4"/><path d="M3.5 20c.7-3.6 2.9-5.4 5.5-5.4 1.2 0 2.3.3 3.3.9"/><path d="M14.5 13.8c1.5.7 2.5 1.8 3 3.4.3 1 .6 1.9.8 2.8"/><path d="M8 14.2c.9.3 1.8.9 2.4 1.8"/>',
+  season: '<path d="M12 4.5v3"/><path d="M12 7.5a4.5 4.5 0 0 1 4.5 4.5c0 1.6-.8 3-2 3.9.6.9.9 2 .9 3.1a4.5 4.5 0 0 1-9 0c0-1.1.3-2.2.9-3.1-1.2-.9-2-2.3-2-3.9A4.5 4.5 0 0 1 12 7.5z"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><path d="M5.5 3.5l1.2 1.2M18.5 3.5l-1.2 1.2"/>',
 };
 
 /* 取图标 SVG（内联，自动继承颜色） */

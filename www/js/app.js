@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.2'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.3'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0；20261108 接入四季陪伴小游戏
 
 let characters = [];
 let cards = null;
@@ -96,6 +96,12 @@ let chatSettings = {
   pomodoroLockOn: false,           // 20261104：番茄钟默认是否开启锁机（默认关）
   companionInteractMin: 8,         // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机间隔下限（分钟）
   companionInteractMax: 20,        // 20261104：番茄钟前台互动随机间隔上限（分钟）
+  seasonCareGapMin: 30,            // 20261108：四季——角色自己照料（浇水/施肥）随机区间下限（分钟）
+  seasonCareGapMax: 90,            // 20261108：四季——角色自己照料随机区间上限（分钟）
+  seasonCardGapMin: 120,           // 20261108：四季——角色随机抽卡留言随机区间下限（分钟）
+  seasonCardGapMax: 240,           // 20261108：四季——角色随机抽卡留言随机区间上限（分钟）
+  seasonAiGapMin: 30,              // 20261108：四季——AI 模式兜底最小间隔随机区间下限（分钟）
+  seasonAiGapMax: 120,             // 20261108：四季——AI 模式兜底最小间隔随机区间上限（分钟）
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -270,8 +276,12 @@ async function init() {
     // 20260929bk：软件声明未同意时提前置 gate，保证后续启动的定时器（随机来电/超频/书信等）
     // 触发前 gate 已生效，任何打断弹窗都被抑制，声明弹窗始终排在最前
     try {
-      if (!(await getSetting('softwareNoticeAgreed'))) _noticeGate = true;
-      else { try { window.__bmNoticeGateDone = true; } catch (e2) {} } // 20261002cn：已同意，声明流程视为结束（引导 gate 硬门槛信号）
+      const _agreed = await getSetting('softwareNoticeAgreed');
+      const _agreedVer = await getSetting('softwareNoticeVer');
+      // 20261108：版本更新后强制重弹一次（老玩家版本标记落后时也进 gate，弹完即永久关闭）
+      const _verChanged = !_agreedVer || _agreedVer !== APP_VERSION;
+      if (!_agreed || _verChanged) _noticeGate = true;
+      else { try { window.__bmNoticeGateDone = true; } catch (e2) {} } // 已同意且版本无更新：声明流程视为结束
     } catch (e) {}
   } catch (e) {
     console.error('[白日梦] 启动加载异常（已跳过，界面照常显示）', e);
@@ -378,8 +388,12 @@ async function showSoftwareNotice(opts = {}) {
   const isReview = !!opts.review;
   try {
     const agreed = await getSetting('softwareNoticeAgreed');
-    if (!isReview && agreed) { try { window.__bmNoticeGateDone = true; } catch (e2) {} return; } // 已同意且非主动重看 → 跳过（cn：同步发引导 gate 信号）
-    if (!isReview && !agreed) _noticeGate = true;
+    const agreedVer = await getSetting('softwareNoticeVer');
+    // 20261108：版本更新后强制重弹一次——老玩家「已同意」但记录版本落后于当前版本时，也弹一次，
+    // 弹完会写入 softwareNoticeVer=当前版本，之后永久不再弹（一次性）。
+    const verChanged = !agreedVer || agreedVer !== APP_VERSION;
+    if (!isReview && agreed && !verChanged) { try { window.__bmNoticeGateDone = true; } catch (e2) {} return; } // 已同意且版本无更新 → 跳过
+    if (!isReview && (!agreed || verChanged)) _noticeGate = true;
   } catch (e) { if (!isReview) _noticeGate = true; }
 
   /* 编号小节：01~07 斜体数字 + 渐隐线 + 标题（可带英文小字），正文为若干段 */
@@ -393,7 +407,7 @@ async function showSoftwareNotice(opts = {}) {
   const prose = (t) => ({ html: t, indent: true }); // 散文段（首行缩进）
 
   openModal(`
-    <div class="oc-star-modal notice-modal" style="max-height:80vh;overflow-y:auto;overflow-x:hidden;">
+    <div class="oc-star-modal notice-modal" id="notice-scroll" style="max-height:80vh;overflow-y:auto;overflow-x:hidden;">
       <div class="oc-star-field"></div>
       <div class="nt-blobs"><div class="oc-star-blob oc-star-blob1"></div><div class="oc-star-blob oc-star-blob2"></div></div>
       <div class="notice-doc">
@@ -428,7 +442,7 @@ async function showSoftwareNotice(opts = {}) {
         ${sec('04', '版权与转载 / 二创规则', 'Copyright', [
           cl('<b>1. 允许二传：</b>欢迎将本软件分享给更多人。'),
           cl('<b>2. 禁止二改：</b>不允许直接修改、魔改本软件或本网站进行发布。'),
-          cl('<b>3. 参考学习：</b>可以参考学习本软件的代码，甚至使用代码进行相似功能的开发，但请务必标明出处。'),
+          cl('<b>3. 参考学习：</b>可以参考学习本软件的代码，甚至使用代码进行相似功能的开发，但请务必标明出处（<b>灵感来源于小红书 @蓝色鸽子窝（1139353519）</b>）。'),
           cl('<b>4. 严正声明：</b>本软件绝对禁止任何形式的商用、盈利行为，严禁倒卖。'),
         ])}
 
@@ -457,6 +471,12 @@ async function showSoftwareNotice(opts = {}) {
           cl('<b>思路与代码均为本软件自研：</b>本人仅是提取了这一灵感，该功能实现的思路与代码均为本软件自研，与其并不相同。'),
         ])}
 
+        ${sec('09', '关于「四季」陪伴小游戏 · 原创声明', 'Season · Original', [
+          cl('<b>本软件「四季」陪伴小游戏为作者 @蓝色鸽子窝 原创制作，其玩法、界面与代码均为本人原创。</b>'),
+          cl('<b>「四季」的情感核心：</b>把这个世界的一年四季，送给另一个世界的 TA。从拍摄一朵花、一株植物送给 TA，到一起种植养护，再到植物慢慢长成属于你们的星球——这条「把四季馈赠给 TA」的陪伴链路，是「四季」的原创核心，<b>禁止抄袭、照搬</b>。'),
+          cl('<b>欢迎参考学习：</b>「一起种植物」「一起搭建家园」这类陪伴玩法，市面上已经有很多可爱的作品，我们也很喜欢。如果你想做类似的陪伴功能，欢迎参考学习本软件的内容，只需标明出处即可（<b>灵感来源于小红书 @蓝色鸽子窝（1139353519）</b>）。'),
+        ])}
+
         <div class="nt-sign">—— 本声明最终解释权归作者 @蓝色鸽子窝 所有</div>
 
         <div class="nt-seal" aria-hidden="true">
@@ -477,6 +497,7 @@ async function showSoftwareNotice(opts = {}) {
   };
   const agree = async () => {
     try { await setSetting('softwareNoticeAgreed', '1'); } catch (e) {}
+    try { await setSetting('softwareNoticeVer', APP_VERSION); } catch (e) {} // 20261108：记录已同意的声明版本，用于版本更新后强制重弹一次
     releaseGate();
     closeModal();
     // 20261002cl2：声明关闭后显式串联首启顺序——若新手引导尚未完成且当前未显示，
@@ -11434,6 +11455,122 @@ function showPomodoroPlaceholder() {
   openPomodoroLayer(cid);
 }
 
+/* 20261108：陪伴一级入口——九宫格弹窗，内含「番茄钟」「四季」两个功能块 */
+function showCompanionMenu() {
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:18px;font-weight:600;">陪伴</div>
+      <button class="icon-btn" id="companion-close">✕</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px 10px;">
+      <button class="panel-item" id="companion-pomodoro">
+        <div class="panel-icon">${icon('timer', 26)}</div>
+        <div class="panel-label">番茄钟</div>
+      </button>
+      <button class="panel-item" id="companion-season">
+        <div class="panel-icon">${icon('season', 26)}</div>
+        <div class="panel-label">四季</div>
+      </button>
+    </div>
+  `);
+  $('#companion-close').onclick = closeModal;
+  $('#companion-pomodoro').onclick = () => {
+    closeModal();
+    showPomodoroPlaceholder();
+  };
+  $('#companion-season').onclick = () => {
+    closeModal();
+    openSeasonLayer(currentCharId);
+  };
+}
+
+/* ============================================================
+   20261108：四季陪伴小游戏接入（iframe + postMessage 桥接，复用番茄钟模式）
+   - 四季是独立单文件 deploy/www/season/index.html，用 #season-layer 盖在聊天页上层
+   - 打开时把「当前聊天角色」+「玩家回复字卡库」经 postMessage 推给四季
+   - 四季内部已内置 season-close / season-save-image 回传，主项目据此关层/还原视图
+   ============================================================ */
+function ensureSeasonLayer() {
+  let layer = document.getElementById('season-layer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'season-layer';
+    layer.innerHTML = '<iframe id="season-frame" allow="autoplay; camera; fullscreen" title="四季"></iframe>';
+    document.body.appendChild(layer);
+  }
+  return layer;
+}
+let _seasonCurrentCharId = null;
+function openSeasonLayer(cid) {
+  const layer = ensureSeasonLayer();
+  const frame = document.getElementById('season-frame');
+  frame.src = 'season/index.html';
+  layer.classList.add('show');
+  _seasonCurrentCharId = cid || currentCharId || null;
+  // 四季全屏层打开 = 离开聊天页观感，打字卡圆点/召唤悬浮窗立即收起
+  try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
+}
+function closeSeasonLayer() {
+  const layer = document.getElementById('season-layer');
+  if (!layer) return;
+  layer.classList.remove('show');
+  try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
+  _seasonCurrentCharId = null;
+}
+/* 把主项目真实角色 + 玩家回复字卡库推给四季（四季 season-init ready 后调用） */
+async function _seasonPushInit() {
+  const frame = document.getElementById('season-frame');
+  if (!frame || !frame.contentWindow) return;
+  // 角色：主项目真实 characters，转成四季 CHARS 需要的 { id, name, tone }（头像/标签附带上，四季可用可不用）
+  const chars = (characters || []).map(x => ({
+    id: x.id,
+    name: x.name || 'TA',
+    tag: (x.desc || x.signature || '').slice(0, 20) || '',
+    tone: 'warm', // 四季按 tone 决定 TA 自己种种子的等待时长；主项目角色无 tone，先统一 warm，后续可接性格
+  }));
+  // 字卡：主项目「回复字卡 + 回复分组」抽成字符串数组，全部作为四季 scene 池（四季注释：无分类则全塞 scene）
+  const replyPool = ((cards && cards.customReplies) || [])
+    .concat(((cards && cards.customReplyGroups) || []).flatMap(g => g.items || []))
+    .map(t => String(t || '').trim())
+    .filter(t => t);
+  frame.contentWindow.postMessage({
+    type: 'season-init',
+    chars,
+    currentCharId: _seasonCurrentCharId || null,
+    cardPool: { scene: replyPool }, // 四季 playerCardPool 适配：只提供一个 scene 池
+    // 20261108：四季角色互动节奏（照料/抽卡留言/AI 兜底间隔，随机固定区间，分钟），
+    // 当前进入的角色用 getCharChatSettings 合并角色级覆盖，未设则继承全局
+    seasonGaps: (() => {
+      const cur = (characters || []).find(x => x.id === (_seasonCurrentCharId || null));
+      const cs = cur ? getCharChatSettings(cur) : chatSettings;
+      return {
+        careGapMin: cs.seasonCareGapMin ?? chatSettings.seasonCareGapMin ?? 30,
+        careGapMax: cs.seasonCareGapMax ?? chatSettings.seasonCareGapMax ?? 90,
+        cardGapMin: cs.seasonCardGapMin ?? chatSettings.seasonCardGapMin ?? 120,
+        cardGapMax: cs.seasonCardGapMax ?? chatSettings.seasonCardGapMax ?? 240,
+        aiGapMin: cs.seasonAiGapMin ?? chatSettings.seasonAiGapMin ?? 30,
+        aiGapMax: cs.seasonAiGapMax ?? chatSettings.seasonAiGapMax ?? 120,
+      };
+    })(),
+  }, '*');
+}
+/* 四季消息监听（常驻） */
+(function () {
+  window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'season-ready') {
+      _seasonPushInit();
+    } else if (d.type === 'season-close') {
+      // 四季栈见底（根页面）才关闭：还原视图到进入时的聊天页（若仍在聊天视图）
+      closeSeasonLayer();
+    } else if (d.type === 'season-save-image') {
+      // 四季保存图片：主项目侧落地（预留，四季若已自行下载则无需处理）
+      try { if (d.name && d.dataUrl) { const a = document.createElement('a'); a.href = d.dataUrl; a.download = d.name || 'season.png'; document.body.appendChild(a); a.click(); a.remove(); } } catch (e) {}
+    }
+  });
+})();
+
 /* 20261104：番茄钟 postMessage 桥接——收 iframe 的 ready/settle/close，
    并把主项目真实访客列表（name/avatar/color/emoji）推给番茄钟原型 */
 async function _pomodoroPushChars() {
@@ -11831,7 +11968,7 @@ function buildPlusPanel() {
   const items = g0 ? [
     { label: '拍摄', icon: 'camera', act: () => showImageSourcePicker() }, // 20261103：拍照/相册融合为一个入口
     { label: '分享', icon: 'share', act: () => showShareMediaEntry() }, // 20261104：音乐/视频合并分享入口
-    { label: '番茄钟', icon: 'timer', act: () => showPomodoroPlaceholder() }, // 20261104：番茄钟陪伴（占位）
+    { label: '陪伴', icon: 'companion', act: () => showCompanionMenu() }, // 20261108：陪伴一级入口（番茄钟 + 四季）
     { label: '决策币', icon: 'coin', act: pickThen('决策币 · 选一名成员主持', (g, m) => showGroupCoinModal(g, m)) },
     { label: '查岗', icon: 'checkin', act: pickThen('查岗 · 选择目标成员', null, () => showCheckinModal()) },
     { label: '群通话', icon: 'call', act: () => showGroupCallModal(g0) }, // ba：勾选多名成员发起群通话
@@ -11846,7 +11983,7 @@ function buildPlusPanel() {
   ] : [
     { label: '拍摄', icon: 'camera', act: () => showImageSourcePicker() }, // 20261103：拍照/相册融合为一个入口
     { label: '分享', icon: 'share', act: () => showShareMediaEntry() }, // 20261104：音乐/视频合并分享入口（弹窗选音乐或视频）
-    { label: '番茄钟', icon: 'timer', act: () => showPomodoroPlaceholder() }, // 20261104：番茄钟陪伴（占位）
+    { label: '陪伴', icon: 'companion', act: () => showCompanionMenu() }, // 20261108：陪伴一级入口（番茄钟 + 四季）
     { label: '决策币', icon: 'coin', act: showCoinModal },
     { label: '查岗', icon: 'checkin', act: showCheckinModal },
     { label: '模拟通话', icon: 'call', act: showCallModal },
@@ -13978,6 +14115,14 @@ function _inAnyChat() {
 /* 是否在「非聊天页」但仍是应用内可见页（导航/主页/朋友圈等）——用于即时播动画 */
 function _inNonChatPage() {
   const v = document.body.dataset.view;
+  // 20261108：四季/番茄钟等全屏 iframe 层打开时，底层 view 仍是 'chat'，但观感已离开聊天页，
+  // 超频/惊喜全屏动画不得穿层触发——把这些全屏层一并视为「非聊天页」。
+  try {
+    const sl = document.getElementById('season-layer');
+    if (sl && sl.classList.contains('show')) return true;
+    const pl = document.getElementById('pomodoro-layer');
+    if (pl && pl.classList.contains('show')) return true;
+  } catch (e) {}
   return v === 'home' || v === 'chatlist' || v === 'moments' || v === 'discover';
 }
 
@@ -17306,6 +17451,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <button class="btn cs-tab" data-cs-tab="音乐" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">音乐</button>
       <button class="btn cs-tab" data-cs-tab="视频" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">视频</button>
       <button class="btn cs-tab" data-cs-tab="番茄钟" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">番茄钟</button>
+      <button class="btn cs-tab" data-cs-tab="四季" style="flex:1;min-width:64px;padding:7px 4px;font-size:12.5px;">四季</button>
     </div>
 
     ${!isPerChar ? `
@@ -17463,6 +17609,42 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span style="font-size:13px;color:var(--text-secondary);white-space:nowrap;">每日上限（0～5 封）</span>
         <input class="input" type="number" min="0" max="5" value="${s.lettersDailyLimit ?? 2}" id="cs-letter-limit" style="width:80px;">
       </div>
+    </div>
+
+    </section>
+
+    <section class="cs-panel" data-cs-panel="四季">
+    <div class="field">
+      <label style="font-size:13.5px;font-weight:600;color:var(--text-primary);">四季 · 角色互动节奏</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">在四季（星球/书签集）里，角色会自己照料植物、随机留一句字卡留言。下面三项决定 TA 多久动一次，都是「随机固定区间」——每次触发后在最小～最大之间随机取一个值，单位分钟。</div>
+      <div style="margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);">
+        <span style="font-size:13px;color:var(--text-secondary);font-weight:600;">照料间隔</span>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+          <input class="input" type="number" min="15" max="720" step="1" value="${parseInt(s.seasonCareGapMin, 10) || 30}" id="cs-season-care-gap-min" style="width:80px;" title="最小间隔（分钟）">
+          <span style="font-size:13px;color:var(--text-tertiary);">～</span>
+          <input class="input" type="number" min="15" max="720" step="1" value="${parseInt(s.seasonCareGapMax, 10) || 90}" id="cs-season-care-gap-max" style="width:80px;" title="最大间隔（分钟）">
+          <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+        </div>
+      </div>
+      <div style="margin-top:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);">
+        <span style="font-size:13px;color:var(--text-secondary);font-weight:600;">抽卡留言间隔</span>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+          <input class="input" type="number" min="15" max="720" step="1" value="${parseInt(s.seasonCardGapMin, 10) || 120}" id="cs-season-card-gap-min" style="width:80px;" title="最小间隔（分钟）">
+          <span style="font-size:13px;color:var(--text-tertiary);">～</span>
+          <input class="input" type="number" min="15" max="720" step="1" value="${parseInt(s.seasonCardGapMax, 10) || 240}" id="cs-season-card-gap-max" style="width:80px;" title="最大间隔（分钟）">
+          <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+        </div>
+      </div>
+      <div style="margin-top:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);">
+        <span style="font-size:13px;color:var(--text-secondary);font-weight:600;">AI 兜底间隔</span>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+          <input class="input" type="number" min="15" max="720" step="1" value="${parseInt(s.seasonAiGapMin, 10) || 30}" id="cs-season-ai-gap-min" style="width:80px;" title="最小间隔（分钟）">
+          <span style="font-size:13px;color:var(--text-tertiary);">～</span>
+          <input class="input" type="number" min="15" max="720" step="1" value="${parseInt(s.seasonAiGapMax, 10) || 120}" id="cs-season-ai-gap-max" style="width:80px;" title="最大间隔（分钟）">
+          <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:8px;">「AI 兜底间隔」只在四季用 AI 模式时才生效（防止 AI 连发刷屏）。字卡模式只看前两个。</div>
     </div>
     </section>
 
@@ -18738,6 +18920,31 @@ function bindChatSettings(s, onSave, tcChar) {
     }
     s.proactiveCheckin = $('#cs-proactive-checkin').checked;
     s.checkinLocation = !!$('#cs-checkin-location').checked;
+    // 20261108：四季角色互动节奏（照料/抽卡留言/AI 兜底间隔，随机固定区间 15~720 分钟，min>max 自动对调）
+    const scgMinEl = $('#cs-season-care-gap-min'), scgMaxEl = $('#cs-season-care-gap-max');
+    if (scgMinEl && scgMaxEl) {
+      let lo = Math.min(720, Math.max(15, parseInt(scgMinEl.value, 10) || 30));
+      let hi = Math.min(720, Math.max(15, parseInt(scgMaxEl.value, 10) || 90));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      scgMinEl.value = String(lo); scgMaxEl.value = String(hi);
+      s.seasonCareGapMin = lo; s.seasonCareGapMax = hi;
+    }
+    const scdgMinEl = $('#cs-season-card-gap-min'), scdgMaxEl = $('#cs-season-card-gap-max');
+    if (scdgMinEl && scdgMaxEl) {
+      let lo = Math.min(720, Math.max(15, parseInt(scdgMinEl.value, 10) || 120));
+      let hi = Math.min(720, Math.max(15, parseInt(scdgMaxEl.value, 10) || 240));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      scdgMinEl.value = String(lo); scdgMaxEl.value = String(hi);
+      s.seasonCardGapMin = lo; s.seasonCardGapMax = hi;
+    }
+    const saiMinEl = $('#cs-season-ai-gap-min'), saiMaxEl = $('#cs-season-ai-gap-max');
+    if (saiMinEl && saiMaxEl) {
+      let lo = Math.min(720, Math.max(15, parseInt(saiMinEl.value, 10) || 30));
+      let hi = Math.min(720, Math.max(15, parseInt(saiMaxEl.value, 10) || 120));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      saiMinEl.value = String(lo); saiMaxEl.value = String(hi);
+      s.seasonAiGapMin = lo; s.seasonAiGapMax = hi;
+    }
     s.randomCall = $('#cs-random-call').checked;
     s.randomPacket = !!$('#cs-random-packet').checked;
     // az：群聊自动接龙轮次上限（仅总聊天设置渲染该输入；0~5）
@@ -18843,7 +19050,7 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
@@ -19439,6 +19646,7 @@ async function showDataModal() {
     { id: 'palace',  ic: 'memory',  name: '记忆宫殿', desc: '记忆条目与文件夹结构（.palacedata）' },
     { id: 'music',   ic: 'music',   name: '音乐', desc: '音乐库 / 歌单 / 访客收藏（.musicdata，独立于全局）' },
     { id: 'focus',   ic: 'timer',   name: '番茄钟', desc: '番茄钟陪伴结算记录（.focusdata，按角色分角色导出）' },
+    { id: 'season',  ic: 'season',  name: '四季', desc: '星球 / 书签集 / 照片墙图鉴（.seasondata，独立于全局）' },
   ];
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
@@ -19478,6 +19686,7 @@ function showDataCatModal(id) {
     palace: [`${ti('memory')}记忆宫殿`, '导出/导入记忆条目与文件夹结构（.palacedata）；导出可选访客/玩家文件夹，导入自动分辨归属'],
     music: [`${ti('music')}音乐数据`, '单独导出/导入音乐数据（音乐库 · 歌单 · 访客收藏 · 音源设置）。<b>独立于全局备份</b>，全局导出/导入不包含音乐数据，需在此单独操作'],
     focus: [`${ti('timer')}番茄钟结算`, '导出/导入番茄钟陪伴的专注结算记录。导出可按角色单选或多选（分角色导出），也可一键全部导出'],
+    season: [`${ti('season')}四季数据`, '单独导出/导入四季小游戏数据（星球 · 书签集 · 照片墙图鉴 · 收集进度）。<b>独立于全局备份</b>，全局导出/导入不包含四季数据，需在此单独操作'],
   };
   const t = titles[id] || ['', ''];
   const btn = (bid, label, tail) => `<button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="${bid}">${label} <span>${tail}</span></button>`;
@@ -19565,6 +19774,17 @@ function showDataCatModal(id) {
       </div>`;
     $('#btn-export-focus').onclick = () => showExportFocusModal(showDataModal);
     $('#btn-import-focus').onclick = () => showImportFocusModal(showDataModal);
+  } else if (id === 'season') {
+    body.innerHTML = `
+      ${btn('btn-export-season', '导出四季数据（.seasondata）', '⬇')}
+      ${btn('btn-import-season', '导入四季数据（.seasondata）', '⬆')}
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
+        四季数据<b>独立于全局备份</b>：全局导出/导入不包含四季，需在此单独备份。<br>
+        导出内容：星球（植物/皮肤/爱意/凝星）、书签集（书签与寄语）、照片墙图鉴、收集进度。<br>
+        注意：玩家实拍/相册的照片图片本体不随导出（仅记录文字与来源标识），导入后照片图需重新拍摄。
+      </div>`;
+    $('#btn-export-season').onclick = exportSeasonData;
+    $('#btn-import-season').onclick = () => showImportSeasonModal(showDataModal);
   }
 }
 
@@ -19777,6 +19997,80 @@ function showImportMusicModal(back = null) {
       }
       msg.textContent = `导入完成：新增 ${added} 项（歌曲 ${songs.length} 首、歌单 ${playlists.length} 个），本地音频文件本体需重新上传`;
       miniToast(`已导入音乐数据（${songs.length} 首歌曲、${playlists.length} 个歌单）`);
+      fileInput.value = '';
+    } catch (e2) {
+      msg.textContent = '导入失败：' + (e2 && e2.message ? e2.message : '文件格式不对');
+    }
+  };
+}
+
+/* ---------- 导出四季数据（20261108：独立于全局，.seasondata 单文件） ---------- */
+async function exportSeasonData() {
+  try {
+    /* 优先从四季 iframe 取实时序列化结果（同源可直接调 contentWindow.bmSeasonExport）；
+       若四季层未打开，则退回直接读共享 localStorage 的 bmSeasonSave */
+    let jsonStr = null;
+    const frame = document.getElementById('season-frame');
+    if (frame && frame.contentWindow && typeof frame.contentWindow.bmSeasonExport === 'function') {
+      try { jsonStr = frame.contentWindow.bmSeasonExport(); } catch (e) { jsonStr = null; }
+    }
+    if (!jsonStr) {
+      try { jsonStr = localStorage.getItem('bmSeasonSave'); } catch (e) { jsonStr = null; }
+    }
+    if (!jsonStr) { miniToast('还没有四季数据可以导出'); return; }
+    const payload = JSON.parse(jsonStr);
+    if (!payload || !payload.__season) { miniToast('四季数据格式不对，无法导出'); return; }
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const ok = await finishExport({ filename: '白日梦四季数据备份.seasondata' }, blob, '已导出四季数据');
+    if (!ok) miniToast('导出失败');
+  } catch (e) {
+    miniToast('导出四季数据失败：' + (e && e.message ? e.message : '未知错误'));
+  }
+}
+
+/* ---------- 导入四季数据（独立，覆盖导入） ---------- */
+function showImportSeasonModal(back = null) {
+  const backFn = () => back ? back() : closeModal();
+  openModal(`
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <button class="icon-btn" id="ism-back">‹</button>
+      <div style="flex:1;font-size:17px;font-weight:600;">导入四季数据</div>
+      <button class="icon-btn" id="ism-close">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">
+      选择之前导出的「白日梦四季数据备份.seasondata」文件，覆盖导入当前四季进度。<br>
+      <b>独立于全局数据</b>，不影响访客、聊天记录等其他数据。
+    </div>
+    <input type="file" id="ism-file" accept=".seasondata,.json" style="display:none;" />
+    <button class="btn primary block" id="ism-go">选择文件并导入</button>
+    <div id="ism-msg" style="font-size:12px;color:var(--text-tertiary);margin-top:10px;display:none;"></div>
+  `);
+  $('#ism-back').onclick = backFn;
+  $('#ism-close').onclick = backFn;
+  const fileInput = $('#ism-file');
+  const msg = $('#ism-msg');
+  $('#ism-go').onclick = () => fileInput.click();
+  fileInput.onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    msg.style.display = 'block';
+    msg.textContent = '正在导入…';
+    try {
+      const text = await f.text();
+      const data = JSON.parse(text);
+      if (!data || !data.__season) { msg.textContent = '文件格式不对（不是四季数据备份）'; return; }
+      /* 优先写入四季 iframe（若已打开），否则直接写共享 localStorage，下次进四季时 seasonLoad 恢复 */
+      let ok = false;
+      const frame = document.getElementById('season-frame');
+      if (frame && frame.contentWindow && typeof frame.contentWindow.bmSeasonImport === 'function') {
+        try { ok = frame.contentWindow.bmSeasonImport(text); } catch (e2) { ok = false; }
+      }
+      if (!ok) {
+        try { localStorage.setItem('bmSeasonSave', text); ok = true; } catch (e2) { ok = false; }
+      }
+      if (!ok) { msg.textContent = '导入失败：写入四季数据出错'; return; }
+      msg.textContent = '导入完成：四季进度已恢复（照片图片本体需重新拍摄）';
+      miniToast('已导入四季数据');
       fileInput.value = '';
     } catch (e2) {
       msg.textContent = '导入失败：' + (e2 && e2.message ? e2.message : '文件格式不对');
@@ -33069,6 +33363,8 @@ async function maybeTriggerOverclockIntro(force = false) {
   if (!force) {
     if (_ocIntroRunning) return;
     if (await isOverclockSeen()) return;          // 已看过，一次性
+    // 20261108：四季/番茄钟/通话全屏层打开时，首次超频动画不在底层触发（回聊天页再触发）
+    if (_ocFullscreenBlocked()) return;
     const days = await _ocChatDays();
     if (days < 3) return;                          // 聊天天数到 3 才触发（个人主页统计同源，20260929aq）
   }
@@ -34522,11 +34818,26 @@ function _ocIntervalFor(c) {
   const max = Math.max(min, parseInt(cs.overclockIntervalMax, 10) || globalMax);
   return randInt(min, max) * 60000;
 }
+/* 20261108：四季/番茄钟/通话等全屏 iframe 层打开时，超频动画不应在底层被触发——
+   这些层盖在聊天页上，底层弹全屏动画会穿层。这里统一判定「是否被全屏子功能挡住」。 */
+function _ocFullscreenBlocked() {
+  try {
+    const sl = document.getElementById('season-layer');
+    if (sl && sl.classList.contains('show')) return true;
+    const pl = document.getElementById('pomodoro-layer');
+    if (pl && pl.classList.contains('show')) return true;
+    const cl = document.getElementById('call-layer');
+    if (cl && cl.classList.contains('show')) return true;
+  } catch (e) {}
+  return false;
+}
 async function _ocTickRandom(c, now = Date.now()) {
   if (!c || _ocPending.has(c.id)) return;
   if (!(await isOverclockUnlocked())) return;
   const cs = c.chatSettings || {};
   if (chatSettings.overclockProactive === false || cs.overclockProactive === false) return;
+  // 20261108：四季/番茄钟/通话全屏层打开时，动画不触发（但账本已记，回聊天页后正常触发）
+  if (_ocFullscreenBlocked()) return;
   if (!_ocNextAt[c.id]) {
     _ocNextAt[c.id] = now + _ocIntervalFor(c); _ocSaveNextAt();
     bmRegisterAlarm(c, 'gift', _ocNextAt[c.id]); // 20261002ca：预排原生精确闹钟（挂后台/冻结也到点提醒）
