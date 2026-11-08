@@ -344,6 +344,22 @@ public class BmRemoteControlPlugin extends Plugin {
         }
     }
 
+    /** 拖动进度条 seek（20261107 新增）：后台遥控模式下拖动进度条时，
+        通过 MediaSession 的 seekTo 让外部 App（网易云等）跳转到指定秒数。
+        部分外部 App 的 MediaSession 不响应 seekTo，此时静默成功（前端无感知）。 */
+    @PluginMethod
+    public void seek(PluginCall call) {
+        MediaController c = getActiveController();
+        if (c == null) { resolveErr(call, "no_active_session"); return; }
+        long positionMs = call.getLong("position", 0L);   // 前端传毫秒
+        try {
+            c.getTransportControls().seekTo(positionMs);
+            resolveOk(call, null);
+        } catch (Throwable t) {
+            resolveErr(call, String.valueOf(t.getMessage()));
+        }
+    }
+
     /* ============================================================
        网易云直连（20261105 新增）：
        · neteaseRequest(url, method, cookie)：原生层（Java，不受 CORS 限制）带上玩家
