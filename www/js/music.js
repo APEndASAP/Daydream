@@ -805,6 +805,10 @@ window.bmMusic = (function () {
     //   http→https（music.126.net 支持 https），根治直连模式播放失败。
     song.url = _normUrl(song.url);
     state.current = song;
+    // 20261107 修复「切回内置播放后歌词残留遥控旧歌」：内置播放用 song.lrc（fetchSongDetail 已填），
+    //   这里清掉全局 M.state.lyrics 残留（它是遥控模式 _refreshExternalLyric 写的），
+    //   避免 parseLrc(M.state.lyrics || cur.lrc) 优先读到遥控旧歌词。
+    state.lyrics = '';
     // 20261104：显式切歌（play）一律从头播放，清掉断点续播进度；
     //   只有「刷新/重进后点播放键」走 resume() 才续播到上次进度。
     _resumeAt = 0;
@@ -2615,11 +2619,21 @@ window.bmMusicUI = (function () {
         }
       };
       progSlider.onchange = () => {
-        const a = M.state.audio;
-        const d = (a && isFinite(a.duration) && a.duration > 0) ? a.duration : _cachedDuration;
-        if (a && d > 0) {
-          const t = (parseInt(progSlider.value, 10) / 1000) * d;
-          try { a.currentTime = t; } catch (e) {}
+        // 20261107 修复「后台遥控下拖进度条拖不动」：遥控模式真正在播的是外部 App，
+        //   拖动要发 seek 指令给外部 App（bridge.seek，原生层 seekTo），不是改内置残留 audio。
+        if (_isRemotePage()) {
+          const d = _livePlayback().duration;
+          if (d > 0) {
+            const t = (parseInt(progSlider.value, 10) / 1000) * d;
+            _remoteAction({ bridge: 'seek', args: { position: Math.round(t * 1000) }, local: () => {} }, null);
+          }
+        } else {
+          const a = M.state.audio;
+          const d = (a && isFinite(a.duration) && a.duration > 0) ? a.duration : _cachedDuration;
+          if (a && d > 0) {
+            const t = (parseInt(progSlider.value, 10) / 1000) * d;
+            try { a.currentTime = t; } catch (e) {}
+          }
         }
         _seeking = false;
       };
@@ -3493,7 +3507,8 @@ window.bmMusicUI = (function () {
   /* ---------- 模式二统一遥控动作分发 ----------
      20261104：悬浮窗 / 音乐页 / 角色自主操控，在模式二（remote）下都走这里，
      保证「后台遥控 + 本地降级 + 小垫片提示」三件事一致。
-     act：{ bridge:'next'|'prev'|'toggle', local:()=>Promise, sayText } */
+     act：{ bridge:'next'|'prev'|'toggle'|'seek', args:任意, local:()=>Promise, sayText }
+     20261107：seek 支持传 args（{position:毫秒}），桥接原生 layer seekTo。 */
   async function _remoteAction(act, say) {
     const bridge = _remoteBridge();
     // 有原生插件 → 直接发指令给外部 App（后台操控）
@@ -3506,7 +3521,7 @@ window.bmMusicUI = (function () {
         if (a) { a.pause(); }
         M.state.playing = false;
       } catch (e) {}
-      try { await bridge[act.bridge](); } catch (e) { if (window.miniToast) miniToast('原生遥控指令失败'); }
+      try { await bridge[act.bridge](act.args); } catch (e) { if (window.miniToast) miniToast('原生遥控指令失败'); }
       // 20261106 修复「图标错乱」：此前 toggle 时瞎猜 M.state.playing=!M.state.playing，
       //   next/prev 时瞎猜 M.state.playing=true，导致图标永远跟外部真实态脱节。
       //   现改为：发完指令后异步读 getMediaState() 拿外部真实 playing，刷新统一真实态缓存，
@@ -5388,6 +5403,11 @@ window.bmMusicUI = (function () {
                 startLyricScroll();
               }
             }
+            // 20261107 修复「遥控切歌后软件内悬浮窗歌词不更新」：拉到新歌词后，
+            //   同步重建软件内悬浮窗（一/二/三级歌词区），否则悬浮窗歌词停在上一首。
+            try { renderFloat(); } catch (e3) {}
+            // 同时推原生悬浮窗（一/二/三级）新歌词
+            try { if (nativeFloat()) pushNativeState(false); } catch (e4) {}
           }
         }
       }
@@ -5582,24 +5602,26 @@ window.bmMusicUI = (function () {
   //   （见 _cachedDuration，模块级变量，play/rebuildCleanAudio 里同步更新），
   //   audio 的 duration 失效时用缓存兜底，时长和进度条不再闪断归零。
   window.__bmUpdateProgress = () => {
-    const a = M.state.audio;
+    // 20261107 修复「后台遥控下进度条显示错误/拖不动」：改用统一真实态 _livePlayback()，
+    //   不再直接读内置 M.state.audio（后台遥控模式真正在播的是外部 App，内置 audio 是残留旧歌）。
+    const lp = _livePlayback();
     const cur = document.getElementById('bm-prog-cur');
     const dur = document.getElementById('bm-prog-dur');
     const slider = document.getElementById('bm-progress-slider');
     const fcur = document.getElementById('bm-float-prog-cur');
     const fdur = document.getElementById('bm-float-prog-dur');
     const fslider = document.getElementById('bm-float-progress-slider');
-    if (!a) return;
-    // duration 优先取实时值，失效时用缓存兜底（并持续刷新缓存）
-    let d = a.duration;
+    // position/duration 走真实态（遥控模式读外部 getMediaState，其余模式读内置）
+    const pos = lp.position || 0;
+    let d = lp.duration;
     if (isFinite(d) && d > 0) { _cachedDuration = d; }
     else { d = _cachedDuration; }
     if (dur && isFinite(d) && d > 0) dur.textContent = _fmtTime(d);
-    if (cur) cur.textContent = _fmtTime(a.currentTime || 0);
+    if (cur) cur.textContent = _fmtTime(pos);
     if (fdur && isFinite(d) && d > 0) fdur.textContent = _fmtTime(d);
-    if (fcur) fcur.textContent = _fmtTime(a.currentTime || 0);
+    if (fcur) fcur.textContent = _fmtTime(pos);
     if (d && isFinite(d) && d > 0) {
-      const pct = Math.min(1000, Math.max(0, Math.round((a.currentTime / d) * 1000)));
+      const pct = Math.min(1000, Math.max(0, Math.round((pos / d) * 1000)));
       if (slider) slider.value = pct;
       if (fslider && !_floatSeeking) fslider.value = pct;
     }
@@ -5682,7 +5704,9 @@ window.bmMusicUI = (function () {
     let lyricLines = [];
     try {
       const lines = parseLrc(M.state.lyrics || (cur && cur.lrc) || '');
-      const t = a ? a.currentTime : 0;
+      // 20261107 修复「原生悬浮窗歌词不跟随」：高亮进度改用统一真实态 _livePlayback().position，
+      //   不再读内置 a.currentTime（后台遥控模式下内置 audio 是残留旧歌，进度错误）。
+      const t = _livePlayback().position;
       for (const l of lines) { if (l.t <= t) curLyric = l.text; else break; }
       lyricLines = lines.map(l => ({ t: Math.round(l.t * 100) / 100, text: l.text }));
     } catch (e) {}
@@ -6302,11 +6326,21 @@ window.bmMusicUI = (function () {
         }
       };
       fprog.onchange = () => {
-        const a = M.state.audio;
-        const d = (a && isFinite(a.duration) && a.duration > 0) ? a.duration : _cachedDuration;
-        if (a && d > 0) {
-          const t = (parseInt(fprog.value, 10) / 1000) * d;
-          try { a.currentTime = t; } catch (e) {}
+        // 20261107 修复「后台遥控下悬浮窗进度条拖不动」：遥控模式发 seek 指令给外部 App，
+        //   其余模式才改内置 audio.currentTime。
+        if (_isRemote()) {
+          const d = _livePlayback().duration;
+          if (d > 0) {
+            const t = (parseInt(fprog.value, 10) / 1000) * d;
+            _remoteAction({ bridge: 'seek', args: { position: Math.round(t * 1000) }, local: () => {} }, null);
+          }
+        } else {
+          const a = M.state.audio;
+          const d = (a && isFinite(a.duration) && a.duration > 0) ? a.duration : _cachedDuration;
+          if (a && d > 0) {
+            const t = (parseInt(fprog.value, 10) / 1000) * d;
+            try { a.currentTime = t; } catch (e) {}
+          }
         }
         _floatSeeking = false;
       };
@@ -6338,8 +6372,9 @@ window.bmMusicUI = (function () {
             const label = tt || '';
             if (ft.textContent !== label) ft.textContent = label;
           }
-          // audio 未建立（还没真正播放）时，兜底显示第一句歌词，避免暂停态歌词区空白
-          const t = a ? a.currentTime : (lines.length ? lines[0].t : 0);
+          // 20261107 修复「悬浮窗歌词不实时跟随」：高亮进度改用统一真实态 _livePlayback().position，
+          //   不再读内置 a.currentTime（后台遥控模式下内置 audio 是残留旧歌，进度错误导致歌词不滚）。
+          const t = _livePlayback().position;
           let activeIdx = -1;
           if (fly) {
             fly.querySelectorAll('.bm-fly-line').forEach((l, i) => {
