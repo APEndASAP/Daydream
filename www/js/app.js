@@ -2,7 +2,7 @@
    《白日梦》- 主应用逻辑
    ============================================================ */
 
-const APP_VERSION = 'V1.1'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
+const APP_VERSION = 'V1.2'; // 全局版本号（总设置展示；升版时同步 index.html 全部 ?v= 与 README）；20261005 起正式版命名 V1.0
 
 let characters = [];
 let cards = null;
@@ -21212,7 +21212,9 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     im.dataURL = null;
     im._raw = null;
     compressDone++;
-    if (compressDone % 4 === 0 || compressDone === compressTotal) reportCompress();
+    // 20261107 导出进度条修复：原来每 4 张才上报一次，大图库时中间长时间进度条纹丝不动，
+    //   玩家误以为卡死在 67%。改为【每张都上报】，让「写入文件」的压缩子进度持续可见推进。
+    reportCompress();
   }
   if (compressTotal > 0) reportCompress();
   // ② 写 JSON 头（含分隔符）
@@ -21948,7 +21950,8 @@ async function exportAll() {
       }
       im.blob = null; im.dataURL = null; // 释放原始引用，帮助 GC
       webCompressDone++;
-      if (webCompressDone % 4 === 0 || webCompressDone === webCompressTotal) setStageProgress(2, webCompressDone, webCompressTotal);
+      // 20261107 导出进度条修复：与 APK 端一致，每张都上报，避免「写入文件」长时间卡在 0% 像卡死。
+      setStageProgress(2, webCompressDone, webCompressTotal);
     }
     setStageProgress(2, 1, 1);
     const headStr = packContainerFile(headData, images); // JSON 头 + 分隔符（小，offset/len 已按压缩后字节算）
