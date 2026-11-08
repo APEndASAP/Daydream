@@ -3670,7 +3670,7 @@ function _locInfoHTML(loc, weather, doing, marker, distKm) {
   const doingHtml = doing ? `<span style="display:inline-flex;align-items:center;gap:4px;">🕒 ${escapeHtml(doing)}</span>` : '';
   const distHtml = (distKm != null) ? `<span style="display:inline-flex;align-items:center;gap:4px;">↔ ${distKm} km</span>` : '';
   const posLine = dim > 0
-    ? `📍 第 ${dim} 维度 · 无法识别具体位置`
+    ? `📍 第 ${dim} 维度 · 坐标不可测`
     : (loc.city ? `📍 ${escapeHtml(loc.city)}` : `📍 ${loc.lat}, ${loc.lng}`);
   return `<div class="checkin-loc">
     ${map}
@@ -3686,7 +3686,8 @@ function _checkinRepliesHTML(replies) {
   if (!replies || !replies.length) return '';
   return `<div class="checkin-replies" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:flex;flex-direction:column;gap:5px;">${replies.map(r => {
     const dist = r.dist != null ? `<span style="color:var(--purple-soft);font-size:11px;">（相距 ${r.dist} km）</span>` : '';
-    return `<div style="font-size:12px;line-height:1.45;color:var(--text-secondary);"><span style="color:var(--text-tertiary);">${escapeHtml(r.who)}：</span>${escapeHtml(r.text)}${dist}</div>`;
+    const locHtml = r.loc ? _locInfoHTML(r.loc, r.weather, r.doing, r.who, r.dist) : '';
+    return `<div style="font-size:12px;line-height:1.45;color:var(--text-secondary);"><span style="color:var(--text-tertiary);">${escapeHtml(r.who)}：</span>${escapeHtml(r.text)}${dist}</div>${locHtml}`;
   }).join('')}</div>`;
 }
 
@@ -12226,10 +12227,14 @@ function _getPlayerLocation() {
 function showCheckinModal() {
   openModal(`
     <div style="font-size:18px;font-weight:600;margin-bottom:12px;">突击查岗</div>
-    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">向访客发起突击查岗，TA 会回复当前位置（或所在维度）、天气和正在做的事。</div>
+    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">向访客发起突击查岗，TA 会回复自己此刻所在的位置（或所在维度）、天气和正在做的事。</div>
     <div class="field">
       <label>查岗文案（可编辑）</label>
       <input class="input" id="checkin-text" value="突击查岗！你现在在做什么！">
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+      <input type="checkbox" id="checkin-my-loc" style="width:17px;height:17px;accent-color:var(--purple);">
+      <label for="checkin-my-loc" style="font-size:13px;color:var(--text-secondary);">📌 附带我的位置（需授权定位，可随时拒绝）</label>
     </div>
     <div style="display:flex;gap:10px;">
       <button class="btn" style="flex:1;" id="checkin-cancel">取消</button>
@@ -12240,37 +12245,37 @@ function showCheckinModal() {
   $('#checkin-cancel').onclick = closeModal;
   $('#checkin-send').onclick = async () => {
     const text = $('#checkin-text').value.trim() || '突击查岗！你现在在做什么！';
+    const wantMyLoc = !!($('#checkin-my-loc') && $('#checkin-my-loc').checked);
     closeModal();
     if (!currentCharId) return;
     const c = characters.find(x => x.id === currentCharId);
-    // 角色回答：带位置（随机经纬度 / 50% 其他维度）+ 天气 + 状态（受「允许发送位置」开关控制）
-    const locOn = (getCharChatSettings(c) || {}).checkinLocation !== false;
-    let loc = null, weather = null, doing = null, distKm = null;
-    if (locOn) {
-      const p = _randWorldPos();
-      const dim = _randDim();
-      loc = { lat: p.lat, lng: p.lng, dim };
-      if (dim > 0) {
-        weather = _randWeather();
+    // —— 玩家自己发的查岗卡片：默认不带位置；勾选「附带我的位置」才带玩家真实定位 ——
+    let myLoc = null, myWeather = null;
+    if (wantMyLoc) {
+      const myPos = await _getPlayerLocation();
+      if (myPos.ok) {
+        myLoc = { lat: myPos.lat, lng: myPos.lng, dim: 0 };
+        const city = await _reverseGeo(myPos.lat, myPos.lng);
+        if (city) myLoc.city = city;
+        myWeather = await _fetchWeather(myPos.lat, myPos.lng) || _randWeather();
       } else {
-        const city = await _reverseGeo(p.lat, p.lng);
-        if (city) loc.city = city;
-        weather = await _fetchWeather(p.lat, p.lng) || _randWeather();
-        const myPos = await _getPlayerLocation();
-        if (myPos.ok) distKm = _distKm(p.lat, p.lng, myPos.lat, myPos.lng);
+        myLoc = { lat: 0, lng: 0, dim: 0, denied: true };
+        myWeather = null;
       }
-      doing = _drawCheckinStatus();
     }
     const myMsg = {
       id: uid('msg'), charId: currentCharId, from: 'me', type: 'checkin', time: Date.now(),
-      content: { text, replies: [], location: loc, weather, doing, marker: 'TA', distKm },
+      content: { text, replies: [], location: myLoc, weather: myWeather, doing: null, marker: '你', distKm: null },
     };
     await idbPut('messages', myMsg);
     appendMessage(myMsg);
-    // 角色继续抽 2~3 条字卡 / AI 生成的话作为回复（正在做什么的话术）
-    const quote = { name: playerProfile.name || '我', content: text, msgId: myMsg.id };
+    if (wantMyLoc && myLoc && myLoc.denied) miniToast('未获取到定位（已拒绝或不可用），仅发送文字查岗');
+    // —— 角色回复：随机带 / 不带自己的位置（带位置时附在角色那条回复下方） ——
     const aiOn = await isCharAIMode(currentCharId);
+    const locOn = (getCharChatSettings(c) || {}).checkinLocation !== false;
     const n = randInt(2, 3);
+    // 随机挑 1 条回复作为「带位置」的那条（约 1/3 概率带位置，且受开关控制）
+    const locReplyIndex = locOn && Math.random() < 0.4 ? randInt(0, n - 1) : -1;
     for (let i = 0; i < n; i++) {
       let replyContent;
       if (aiOn) {
@@ -12282,7 +12287,22 @@ function showCheckinModal() {
       }
       if (replyContent) {
         myMsg.content.replies = myMsg.content.replies || [];
-        myMsg.content.replies.push({ who: c ? c.name : 'TA', text: replyContent });
+        const entry = { who: c ? c.name : 'TA', text: replyContent };
+        // 该条回复带角色位置：随机经纬度/维度 + 天气 + 状态
+        if (i === locReplyIndex) {
+          const p = _randWorldPos();
+          const dim = _randDim();
+          entry.loc = { lat: p.lat, lng: p.lng, dim };
+          if (dim > 0) {
+            entry.weather = _randWeather();
+          } else {
+            const city = await _reverseGeo(p.lat, p.lng);
+            if (city) entry.loc.city = city;
+            entry.weather = await _fetchWeather(p.lat, p.lng) || _randWeather();
+          }
+          entry.doing = _drawCheckinStatus();
+        }
+        myMsg.content.replies.push(entry);
         await idbPut('messages', myMsg);
         refreshCheckinCardReplies(myMsg);
       }
