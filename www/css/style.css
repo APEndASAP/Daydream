@@ -8463,21 +8463,22 @@ body .bm-music-float.fbg-dark .bm-float-card {
 
 /* PC 端听歌页更宽 */
 @media (min-width: 900px) {
-  .bm-music-page { max-width: 720px; left: 0; right: 0; margin-left: auto; margin-right: auto; border-left: 1px solid var(--bm-card-line); border-right: 1px solid var(--bm-card-line); }
+  /* 20261108：去掉 max-width 限制，让音乐页铺满整个窗口（网易云桌面全屏样式），
+     不再缩成中间一条、左右露出底层聊天界面。 */
+  .bm-music-page { max-width: none; left: 0; right: 0; width: 100%; }
 }
 
 /* PC 端（≥1100px）桌面两栏布局：左侧唱片/封面，右侧歌名+歌词（参考网易云桌面） */
 @media (min-width: 1100px) {
-  .bm-music-page { max-width: 1180px; }
+  .bm-music-page { max-width: none; width: 100%; }
   .bm-music-stage {
     width: 100%;
     display: grid;
     grid-template-columns: minmax(360px, 480px) 1fr;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto 1fr;
     grid-template-areas:
       "visual now"
-      "visual lyric"
-      "visual progress";
+      "visual lyric";
     align-items: stretch;
     justify-content: center;
     column-gap: 56px;
@@ -8503,13 +8504,12 @@ body .bm-music-float.fbg-dark .bm-float-card {
     padding: 12px 0 8px;
     text-align: left;
   }
-  /* 20261107：PC 宽屏进度条归到右列 lyric 下方，不再横穿唱片 */
+  /* 20261107 PC 宽屏重排：进度条移出 stage，横贯整页宽屏（占满整条） */
   .bm-music-progress {
-    grid-area: progress;
     width: 100%;
-    max-width: 620px;
+    max-width: 100%;
     margin: 0;
-    padding: 0 0 8px;
+    padding: 14px 64px 6px;
     box-sizing: border-box;
   }
   /* 唱片尺寸在桌面端放大 */
@@ -8552,8 +8552,51 @@ body .bm-music-float.fbg-dark .bm-float-card {
     content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
     width: 2px; height: 8px; background: #7a7a7a;
   }
-  /* 搜索框/结果/工具行桌面加宽 */
-  .bm-music-searchtool, .bm-music-search, .bm-music-results { max-width: 720px; }
+  /* 20261108 PC 宽屏重排（参考网易云桌面）：下半部分合成「一条通栏大横条」。
+     从左到右一条横条：邀请一起听 / 分享 / 评论 / 音量 / 收藏 / 下载 / 唤起悬浮窗
+     ＋ 播放控制（循环 / 上一首 / 播放暂停 / 下一首 / 播放列表）居中 ＋ 搜索栏最右。
+     用 display:contents 把 searchtool 左右两组拆开，与播放控制、搜索框排进同一行 grid；
+     上半部分（stage：左唱片 + 右歌名歌词）保持原样不动。 */
+  .bm-music-page {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto 1fr auto auto auto;
+    grid-template-areas:
+      "head     head     head     head"
+      "modes    modes    modes    modes"
+      "together together together together"
+      "stage    stage    stage    stage"
+      "progress progress progress progress"
+      "tleft    tright   ctrl     search"
+      "results  results  results  results";
+  }
+  .bm-music-head { grid-area: head; }
+  .bm-music-modes { grid-area: modes; }
+  .bm-music-together { grid-area: together; }
+  .bm-music-stage { grid-area: stage; min-height: 0; }
+  .bm-music-progress { grid-area: progress; }
+  /* 搜索栏（含搜索框 + 音源按钮）：移到最右，右侧留出边距 */
+  .bm-music-search {
+    grid-area: search; max-width: 460px; min-width: 320px; width: 100%;
+    align-self: center; justify-self: end;
+    padding: 8px 32px 8px 12px; margin: 0; box-sizing: border-box;
+  }
+  /* 播放控制：居中（占中间 1fr 列，justify-self center 让它在整条横条里居中） */
+  .bm-music-ctrl {
+    grid-area: ctrl; align-self: center; justify-self: center;
+    margin: 0; gap: 14px; padding: 8px 12px;
+  }
+  .bm-music-results { grid-area: results; max-width: 100%; }
+  /* 工具栏拆组：display:contents 让左右两组直接参与页面 grid，排进同一条横条 */
+  .bm-music-searchtool { display: contents; }
+  .bm-music-searchtool .bm-tool-left {
+    grid-area: tleft; align-self: center; justify-self: start;
+    display: flex; gap: 6px; align-items: center; padding: 8px 4px 8px 56px;
+  }
+  .bm-music-searchtool .bm-tool-right {
+    grid-area: tright; align-self: center; justify-self: start;
+    display: flex; gap: 6px; align-items: center; padding: 8px 0;
+  }
 }
 
 
