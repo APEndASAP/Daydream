@@ -502,15 +502,53 @@ public class BmOverlayPlugin extends Plugin {
             String hint = call.getString("hint", "专注中，请勿分心");
             // 20261106：开启锁机时，若无障碍服务已授权，置 isLocking=true 拦截 Home/返回/最近任务键
             BmLockAccessibilityService.isLocking = true;
-            // 20261107 用户铁律修正：必须先 startLockTask() 再盖覆盖层。
-            //   早期注入式测试能「上滑滑不上去」，是因为系统「应用已固定」确认框弹出期间，
-            //   Android 会临时禁用导航手势。之前先 showLockOverlay 盖覆盖层、后 startLockTask，
-            //   把系统确认框挡住了，确认框不弹出 → 手势不被临时禁用 → 上滑就能切走。
-            //   现在调整顺序：先 startLockTask()（让系统确认框先弹出来、手势被临时禁用），
-            //   再盖覆盖层（拦住返回键 + 屏幕点击），复现注入式测试时的锁机效果。
-            startLockTaskSafe();
-            // 再盖全屏锁机覆盖层（覆盖层不遮挡系统确认框，确认框在系统层更高优先级正常显示）
-            showLockOverlay(hint);
+            // 20261108 修复「确认框不弹 + View 线程报错」：
+            //   之前 startLockTaskSafe() 和 showLockOverlay() 都在 CapacitorPlugins 后台线程里
+            //   「发起」，showLockOverlay 直接在后台线程 new View + addView（触发
+            //   CalledFromWrongThreadException 刷屏），且 startLockTask 与 addView 之间有竞态，
+            //   导致 startLockTask 未生效 / 系统确认框被吞。现在把「先 startLockTask 再盖覆盖层」
+            //   整个序列一次性投递到主线程，保证顺序 + 都在主线程执行。
+            final String fHint = hint;
+            android.app.Activity act = null;
+            try { act = getActivity(); } catch (Throwable t1) {}
+            if (act == null && getBridge() != null) { try { act = getBridge().getActivity(); } catch (Throwable t2) {} }
+            final android.app.Activity fAct = act;
+            Runnable lockSeq = () -> {
+                try {
+                    // ① 先 startLockTask：让系统「应用已固定」确认框先弹、手势先被接管
+                    if (fAct != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        try {
+                            fAct.startLockTask();
+                            android.util.Log.i("BmOverlay", "lock: startLockTask() 已调用");
+                        } catch (Throwable t) {
+                            android.util.Log.e("BmOverlay", "lock: startLockTask() 异常: " + t, t);
+                        }
+                    } else {
+                        android.util.Log.e("BmOverlay", "lock: Activity 为 null 或 SDK<21，跳过 startLockTask");
+                    }
+                    // ② 延迟再盖全屏锁机覆盖层：
+                    //   20261108 修复「确认框一闪而过/不弹」——之前 startLockTask() 后立即
+                    //   showLockOverlay()，全屏悬浮窗抢焦点，把系统「固定屏幕」确认框在 11ms 内
+                    //   dismiss（logcat 铁证 HAS_DRAWN→NO_SURFACE）。现在延迟 900ms，给系统确认框
+                    //   留出弹出 + 用户点「知道了/开始」的时间，确认后再盖透明遮罩拦截触摸。
+                    //   遮罩本身是透明层 + 底部「退出锁机」按钮，盖上去不影响专注页显示。
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        try {
+                            showLockOverlay(fHint);
+                        } catch (Throwable t) {
+                            android.util.Log.e("BmOverlay", "lock: 延迟盖遮罩异常: " + t, t);
+                        }
+                    }, 900);
+                } catch (Throwable t) {
+                    android.util.Log.e("BmOverlay", "lock 主线程序列异常: " + t, t);
+                }
+            };
+            if (fAct != null) {
+                fAct.runOnUiThread(lockSeq);
+            } else {
+                // 极端兜底：拿不到 Activity 时仍在主线程执行覆盖层（startLockTask 只能跳过）
+                new Handler(Looper.getMainLooper()).post(lockSeq);
+            }
             // ③ 若已是 Device Owner，锁机时顺手补一次 LockTask 白名单，
             //     保证 startLockTask 免确认 + 无法组合键退出（彻底锁死）。
             ensureLockTaskWhitelist();
@@ -809,32 +847,63 @@ public class BmOverlayPlugin extends Plugin {
      */
     private void startLockTaskSafe() {
         try {
-            if (getActivity() == null) return;
-            android.app.Activity act = getActivity();
+            // 20261108 锁机确认框不弹根因修复：
+            //   之前 getActivity()==null 直接静默 return，startLockTask() 异常也被空 catch 吞掉，
+            //   导致「startLockTask 根本没生效」却查不到任何痕迹（logcat 里无 LockTask 日志）。
+            //   现在：① 用 getBridge().getActivity() 兜底（插件在 CapacitorPlugins 后台线程跑，
+            //   getActivity() 依赖 bridge 引用，bridge 未就绪时为 null）；② 加日志暴露真实结果；
+            //   ③ 异常不再吞掉，打印堆栈，方便下次真机定位。
+            android.app.Activity act = null;
+            try { act = getActivity(); } catch (Throwable t1) { android.util.Log.e("BmOverlay", "getActivity() 异常: " + t1); }
+            if (act == null && getBridge() != null) {
+                try { act = getBridge().getActivity(); } catch (Throwable t2) { android.util.Log.e("BmOverlay", "getBridge().getActivity() 异常: " + t2); }
+            }
+            if (act == null) {
+                android.util.Log.e("BmOverlay", "startLockTaskSafe: Activity 为 null，无法 startLockTask（bridge 未就绪？）");
+                return;
+            }
+            android.util.Log.i("BmOverlay", "startLockTaskSafe: 准备 startLockTask，activity=" + act.getClass().getSimpleName()
+                    + " isFinishing=" + act.isFinishing());
+            final android.app.Activity fAct = act;
             // 必须在 UI 线程调用
-            act.runOnUiThread(() -> {
+            fAct.runOnUiThread(() -> {
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        act.startLockTask();
+                        fAct.startLockTask();
+                        android.util.Log.i("BmOverlay", "startLockTask() 已调用（确认框应由系统弹出）");
                     }
-                } catch (Throwable t) {}
+                } catch (Throwable t) {
+                    android.util.Log.e("BmOverlay", "startLockTask() 抛异常: " + t, t);
+                }
             });
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            android.util.Log.e("BmOverlay", "startLockTaskSafe 外层异常: " + t, t);
+        }
     }
 
     /** 退出 LockTask（屏幕固定），恢复系统手势导航。 */
     private void stopLockTaskSafe() {
         try {
-            if (getActivity() == null) return;
-            android.app.Activity act = getActivity();
-            act.runOnUiThread(() -> {
+            android.app.Activity act = null;
+            try { act = getActivity(); } catch (Throwable t1) {}
+            if (act == null && getBridge() != null) {
+                try { act = getBridge().getActivity(); } catch (Throwable t2) {}
+            }
+            if (act == null) { android.util.Log.e("BmOverlay", "stopLockTaskSafe: Activity 为 null"); return; }
+            final android.app.Activity fAct = act;
+            fAct.runOnUiThread(() -> {
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        act.stopLockTask();
+                        fAct.stopLockTask();
+                        android.util.Log.i("BmOverlay", "stopLockTask() 已调用");
                     }
-                } catch (Throwable t) {}
+                } catch (Throwable t) {
+                    android.util.Log.e("BmOverlay", "stopLockTask() 抛异常: " + t, t);
+                }
             });
-        } catch (Throwable t) {}
+        } catch (Throwable t) {
+            android.util.Log.e("BmOverlay", "stopLockTaskSafe 外层异常: " + t, t);
+        }
     }
 
     /**

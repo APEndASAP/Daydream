@@ -868,6 +868,48 @@
   .ab-entry .ab-imgs img{width:72px;height:72px;border-radius:10px;object-fit:cover;border:1px solid var(--line);}
   .ab-entry .ab-reply{margin-top:10px;padding:10px 12px;border-radius:12px;background:var(--lav);border:1px solid var(--line);font-size:12.5px;color:var(--ink);line-height:1.6;}
   .ab-entry .ab-reply .who{font-weight:700;color:var(--main-deep);}
+
+  /* ============ PC 宽屏适配（20261108） ============
+     手机端（<768px）完全不动，维持 420px 竖排单列。
+     PC 宽屏（≥768px）下不改任何 DOM 元素，仅用 CSS Grid 重新排布：
+       - 顶部栏横贯整行
+       - 左栏 = 计时数字 + 专注/休息时长设置（时间控制区）
+       - 右栏 = 头像圆盘 + 陪伴/专注模式/待办 + 开始按钮（陪伴设置区）
+     用 grid-template-areas 把每个现有元素精确放进各自格子，互不重叠。 */
+  @media (min-width:768px){
+    .phone{
+      max-width:980px;
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      grid-template-rows:auto auto auto auto;
+      grid-template-areas:
+        "topbar   topbar"
+        "timer    art"
+        "duration interact"
+        ".        bottom";
+      column-gap:48px;
+      row-gap:0;
+      padding:0 36px 24px;
+      align-items:center;
+      align-content:center;
+      min-height:100vh;
+      height:100vh;   /* 给 grid 确定高度，让 align-content:center 真正垂直居中 */
+    }
+    .phone .topbar{grid-area:topbar;width:100%;align-self:start;}
+    /* 左栏：计时数字（上）+ 时长设置（下） */
+    .phone .timer-wrap{grid-area:timer;justify-self:center;align-self:end;justify-content:center;padding:0;}
+    .phone .duration-rows{grid-area:duration;justify-self:center;align-self:start;justify-content:flex-start;padding:20px 0 0;align-items:center;}
+    /* 右栏：头像（上）+ 交互区（中）+ 开始按钮（下） */
+    .phone .art-wrap{grid-area:art;justify-self:center;align-self:end;justify-content:center;padding:0;}
+    .phone .interact-zone{grid-area:interact;justify-self:center;align-self:center;width:100%;max-width:400px;padding:8px 0 0;}
+    .phone .bottom-zone{grid-area:bottom;justify-self:center;align-self:start;width:100%;max-width:400px;padding:14px 0 0;margin-top:0;}
+    .phone .interact-row.col-radio{margin-right:0;}
+    .phone .start-btn{max-width:100%;margin:0;height:50px;}
+    /* 印章装饰在宽屏下移到角落 + 降透明度，避免压到计时数字 */
+    .phone .seal{opacity:.13;}
+    .phone .seal.tl{top:64px;left:-14px;}
+    .phone .seal.br{bottom:80px;right:-14px;}
+  }
 </style>
 </head>
 <body>
@@ -1962,11 +2004,19 @@ function bindSleepCapDrag(){
 
 function applyLockState(){
   const locked = lockOn;
-  // 20261106 需求：删掉原生「专注中请勿分心」黑色全屏遮罩（BmOverlay.lock），
-  //   直接用「专注清屏页」本身作为锁机界面（该页已禁用侧滑/物理返回/手势，只有退出按钮可结束）。
-  //   锁机开关只切换 locked 态 + 显示「退出锁机」按钮，不再弹任何遮罩。
+  // 20261108 修复「锁机空壳」：之前只 toggle .locked class（无 CSS 定义，锁机完全无效）。
+  //   现在锁机开 → postMessage 通知父窗口调原生 BmOverlay.lock()（全屏遮罩 + startLockTask
+  //   屏幕固定 + 无障碍拦截 Home/返回/最近任务键），锁机关 → 通知父窗口 BmOverlay.unlock()。
+  //   父窗口 app.js 已有 pomodoro-lock / pomodoro-unlock 消息监听（调 _pomodoroLock/_pomodoroUnlock）。
   document.getElementById('clearView').classList.toggle('locked', locked);
   document.getElementById('cvUnlockBtn').style.display = locked ? '' : 'none';
+  if(window.parent && window.parent !== window){
+    if(locked){
+      window.parent.postMessage({ type: 'pomodoro-lock', hint: '专注中，请勿分心' }, '*');
+    } else {
+      window.parent.postMessage({ type: 'pomodoro-unlock' }, '*');
+    }
+  }
 }
 
 function requestLockPermission(onGranted){
@@ -2126,12 +2176,8 @@ function exitFocus(){
 function exitLockOnly(){
   lockOn = false;
   renderLockBtn();
-  document.getElementById('clearView').classList.remove('locked');
-  document.getElementById('cvUnlockBtn').style.display = 'none';
-  // 20261105：postMessage 请求父窗口移除全屏锁机覆盖层
-  if(window.parent && window.parent !== window){
-    window.parent.postMessage({ type: 'pomodoro-unlock' }, '*');
-  }
+  // 20261108：统一走 applyLockState()，锁机关 → postMessage 通知父窗口 BmOverlay.unlock()
+  applyLockState();
   hintPill.textContent = '🔓 已退出锁机，专注继续';
 }
 
