@@ -439,6 +439,17 @@ body{
 #camLive.on{display:block}
 .phone.cam #camLive{display:none}
 .phone.cam #camLive.on{display:block}
+/* 20261109：换镜头/重开流时的「冻结帧」遮罩。
+   安卓 WebView 同一时刻只能被一颗摄像头占用，切镜头必须「停旧流→开新流」，
+   中间必然有 0.5~1.5 秒没有画面；以前表现为纯黑屏，主观上就是「卡死」。
+   现在停流前把最后一帧画到这块 canvas 上盖住，新流出画后再淡出——
+   用户看到的是「画面静止了一下」，而不是黑屏。 */
+#camFreeze{position:absolute;left:0;top:0;width:100%;height:100%;
+  z-index:2;display:none;opacity:0;pointer-events:none;
+  transform-origin:center center;
+  transition:opacity .2s linear}
+#camFreeze.on{display:block;opacity:1}
+#camFreeze.fade{display:block;opacity:0}
 .cam-vig{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 80px rgba(0,0,0,.5)}
 .cam-grid{
   position:absolute;inset:0;pointer-events:none;opacity:.40;
@@ -2046,6 +2057,7 @@ body{
       <div class="cam">
         <div class="cam-view" id="camView">
           <video id="camLive" playsinline muted autoplay></video>
+          <canvas id="camFreeze"></canvas>
           <canvas id="camCanvas"></canvas>
           <div class="cam-vig"></div>
           <div class="cam-grid"></div>
@@ -5597,7 +5609,7 @@ function _camGrab64(st){
             v.srcObject = null;
             res(px);
           } catch (e){ res(null); }
-        }, 620);
+        }, 380);   /* 20261109：620ms → 380ms，四颗镜头省约 1 秒 */
       }).catch(function(){ res(null); });
     } catch (e){ res(null); }
   });
@@ -5634,6 +5646,10 @@ async function camCalibrateWide(){
   if (!main || camLenses.length < 2) return false;
   _camCalibrating = (async function(){
     const key = camLensKey();
+    /* 20261109：标定要独占摄像头，会打断正在出画面的流 → 先冻结最后一帧，
+       期间用户看到的是静止画面而不是黑屏；9 秒兜底一定会揭开。 */
+    try { camFreezeFrame(); } catch (e){}
+    camThawForce(9000);
     let mainPx = null;
     try {
       const st = await navigator.mediaDevices.getUserMedia({
@@ -5658,7 +5674,7 @@ async function camCalibrateWide(){
       if (!px) continue;
       const r = _camBestK(px, mainPx);
       if (r.k >= 1.25 && r.e < bestE){ bestE = r.e; bestK = r.k; bestLens = l; }
-      await new Promise(function(r2){ setTimeout(r2, 220); });
+      await new Promise(function(r2){ setTimeout(r2, 120); });   /* 20261109：220ms → 120ms */
     }
     if (!bestLens) return false;
     camLenses.forEach(function(l){ if (l.role === 'wide') l.role = ''; });
@@ -5668,13 +5684,105 @@ async function camCalibrateWide(){
     } catch (e){}
     return true;
   })();
-  try { return await _camCalibrating; } finally { _camCalibrating = null; }
+  try { return await _camCalibrating; }
+  finally {
+    _camCalibrating = null;
+    /* 标定完，如果原流还在就把冻结帧揭开（没找到广角时调用方不会重开流） */
+    if (camStream) camThaw(0);
+  }
+}
+
+/* ===== 换流时的「冻结帧」遮罩（20261109 修卡顿）=====
+   真机上同一时刻只能有一颗摄像头被占用，切镜头只能「停旧流 → 开新流」，
+   中间 0.5~1.5 秒没有任何画面。以前这个过程是纯黑屏，主观感受就是「卡死」。
+   现在停流前把最后一帧画到 #camFreeze 盖住，新流出画后再淡出：
+   用户看到的是「画面静止了一下」，而不是黑屏。 */
+function camFreezeFrame(){
+  const live = $('#camLive'), fz = $('#camFreeze'), box = $('#camView');
+  if (!live || !fz || !box) return false;
+  const vw = live.videoWidth, vh = live.videoHeight;
+  if (!vw || !vh) return false;
+  const W = box.clientWidth || 0, H = box.clientHeight || 0;
+  if (!W || !H) return false;
+  let sw = vw, sh = vh, sx = 0, sy = 0;
+  if (camFit !== 'contain'){
+    /* 与 #camLive 的 object-fit:cover 用同一套裁切，冻结帧才不会「跳一下」 */
+    const ar = W / H;
+    if (vw / vh > ar){ sw = vh * ar; sx = (vw - sw) / 2; }
+    else { sh = vw / ar; sy = (vh - sh) / 2; }
+  }
+  try {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    fz.width = Math.round(W * dpr);
+    fz.height = Math.round(H * dpr);
+    const g = fz.getContext('2d');
+    g.drawImage(live, sx, sy, sw, sh, 0, 0, fz.width, fz.height);
+    fz.style.transform = live.style.transform || '';
+    fz.classList.remove('fade');
+    fz.classList.add('on');
+    return true;
+  } catch (e){ return false; }
+}
+function camThaw(delay){
+  const fz = $('#camFreeze');
+  if (!fz) return;
+  setTimeout(function(){
+    try {
+      if (!camStream) return;            /* 新流还没到 → 继续冻着，别黑屏 */
+      fz.classList.add('fade');
+      setTimeout(function(){
+        try { fz.classList.remove('on', 'fade'); fz.style.transform = ''; } catch (e){}
+      }, 220);
+    } catch (e){}
+  }, Math.max(0, delay || 0));
+}
+/* 兜底：新流迟迟不到（开流失败）时 1.8 秒后强制揭开，避免永远停在旧画面 */
+function camThawForce(ms){
+  setTimeout(function(){
+    const fz = $('#camFreeze');
+    if (!fz) return;
+    try {
+      if (fz.classList.contains('on') && !fz.classList.contains('fade')){
+        fz.classList.add('fade');
+        setTimeout(function(){ try { fz.classList.remove('on', 'fade'); } catch (e){} }, 220);
+      }
+    } catch (e){}
+  }, ms || 1800);
+}
+
+/* ===== 镜头表缓存（20261109 修卡顿）=====
+   探测一次要对 4~5 颗摄像头逐颗开流取帧，安卓 WebView 上一颗 0.5~1.2 秒，
+   合计 4~8 秒。以前结果只写 sessionStorage，App 冷启动即清空 →
+   每次进相机都要重新黑屏量一遍。现在写 localStorage，同一台设备第二次起直接还原。 */
+const CAM_LENS_CACHE_KEY = 'bmLensTableV2';
+function camSaveLensTable(){
+  try {
+    if (!camLenses.length) return;
+    localStorage.setItem(CAM_LENS_CACHE_KEY, JSON.stringify({ v: 2, at: Date.now(), list: camLenses }));
+  } catch (e){}
+}
+function camLoadLensTable(){
+  try {
+    const d = JSON.parse(localStorage.getItem(CAM_LENS_CACHE_KEY) || 'null');
+    if (!d || d.v !== 2 || !Array.isArray(d.list) || !d.list.length) return false;
+    for (let i = 0; i < d.list.length; i++){
+      if (!d.list[i] || !d.list[i].id) return false;
+    }
+    camLenses = d.list;
+    return true;
+  } catch (e){ return false; }
+}
+function camCurDeviceId(){
+  const t = camTrack();
+  if (!t || !t.getSettings) return '';
+  try { return (t.getSettings() || {}).deviceId || ''; } catch (e){ return ''; }
 }
 
 /* 开流（deviceId 为空则按 facingMode），并设连续自动对焦 */
 async function camOpenStream(deviceId){
   const live = $('#camLive');
   if (camStream){
+    try { camFreezeFrame(); } catch (e){}                    /* 20261109：停流前先冻结最后一帧，避免黑屏 */
     try { camStream.getTracks().forEach(function(t){ t.stop(); }); } catch (e){}
     camStream = null;
   }
@@ -5710,6 +5818,9 @@ async function camOpenStream(deviceId){
     }
     try { await live.play(); } catch (e){}
     camApplyFit();
+    /* 20261109：新流出画了，把冻结帧淡出（等一帧让 video 先渲染，再揭遮罩） */
+    camThaw(60);
+    camThawForce(2000);
   }
   camLiveOn = true;
   const cvs = $('#camCanvas'); if (cvs) cvs.classList.add('off');
@@ -5728,6 +5839,9 @@ async function camOpenStream(deviceId){
 
 /* 探测后置镜头组：短开短关，按像素量降序（最窄那颗当超广角） */
 async function camProbeLenses(){
+  /* 20261109：前置模式下不探测后摄（池子里全是后摄，探测完会把画面切成后摄，
+     等于「点切换反而回到后置」）。回后摄时直接用缓存 / 再探测。 */
+  if (camFacing === 'front') return camLenses;
   if (camLenses.length > 1) return camLenses;
   if (_camProbing) return _camProbing;
   _camProbing = (async function(){
@@ -5740,7 +5854,11 @@ async function camProbeLenses(){
     const backs = devs.filter(function(d){ return /back|rear|environment|后置/i.test(d.label || ''); });
     const pool = backs.length > 1 ? backs : devs;
     if (pool.length < 2) return camLenses;
-    /* 探测需独占摄像头：先停当前流 */
+    /* 探测需独占摄像头：先停当前流。
+       20261109：停之前冻结画面，探测期间用户看到的是静止帧而不是黑屏；
+       再挂一个 9 秒兜底，万一探测卡住也一定会揭开。 */
+    try { camFreezeFrame(); } catch (e){}
+    camThawForce(9000);
     if (camStream){ try { camStream.getTracks().forEach(function(t){ t.stop(); }); } catch (e){} camStream = null; }
     camLiveOn = false;
     const out = [];
@@ -5760,10 +5878,11 @@ async function camProbeLenses(){
       try {
         _lsV.srcObject = stream;
         try { await _lsV.play(); } catch (e) {}
-        for (let i = 0; i < 14 && !_lsV.videoWidth; i++) await new Promise(function(r){ setTimeout(r, 70); });
+        for (let i = 0; i < 10 && !_lsV.videoWidth; i++) await new Promise(function(r){ setTimeout(r, 40); });
         if (!_lsV.videoWidth) return 0;
-        /* 等自动曝光收敛，别拿第一帧的暗片当「糊」 */
-        await new Promise(function(r){ setTimeout(r, 200); });
+        /* 等自动曝光收敛，别拿第一帧的暗片当「糊」。
+           20261109：200ms → 90ms（单颗省 110ms，4 颗省 0.44 秒，实测 90ms 已拿到正常曝光帧） */
+        await new Promise(function(r){ setTimeout(r, 90); });
         _lsG.drawImage(_lsV, 0, 0, 96, 96);
         const d = _lsG.getImageData(0, 0, 96, 96).data;
         const G = new Float32Array(96 * 96);
@@ -5799,8 +5918,13 @@ async function camProbeLenses(){
         const ss = (tk.getSettings && tk.getSettings()) || {};
         const cc = (tk.getCapabilities && tk.getCapabilities()) || {};
         let sh = 0;
+        const isZero = /camera2 0,/i.test(pool[k].label || '');
         if (_sharpCache && typeof _sharpCache[pool[k].deviceId] === 'number'){
           sh = _sharpCache[pool[k].deviceId];
+        } else if (isZero){
+          /* 20261109：camera2 0 是主摄，判定里「永不摘」，根本不用量清晰度。
+             跳过它等于少开一次流，省最长约 1.2 秒。 */
+          sh = 0;
         } else {
           try { sh = await lensSharp(st); } catch (e) { sh = 0; }
           _sharpNew[pool[k].deviceId] = sh;
@@ -5848,16 +5972,24 @@ async function camProbeLenses(){
         }
       } catch (e){}
     }
+    /* 20261109：把镜头表（含 role/sharp）写进 localStorage，
+       同一台设备下次进相机直接还原，不再黑屏探测 4~8 秒。 */
+    try { camSaveLensTable(); } catch (e){}
     return camLenses;
   })();
   try { return await _camProbing; } finally { _camProbing = null; }
 }
 
-/* 切到第 idx 颗镜头 */
+/* 切到第 idx 颗镜头（20261109：索引在开流成功后再生效，开流失败不会把状态改错） */
 async function camSwitchLens(idx){
   if (idx < 0 || idx >= camLenses.length || idx === camLensIdx) return;
-  camLensIdx = idx;
-  try { await camOpenStream(camLenses[idx].id); } catch (e){}
+  const prev = camLensIdx;
+  try {
+    await camOpenStream(camLenses[idx].id);
+    camLensIdx = idx;
+  } catch (e){
+    camLensIdx = prev;
+  }
   camApplyFit();
 }
 
@@ -6137,21 +6269,47 @@ async function startCam(){
         camOpenStream(null),
         new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('timeout')); }, 6000); })
       ]);
-      /* ② 拿到权限后探测镜头组：主摄认 "camera2 0"，超广角靠标定缓存 */
-      camProbeLenses().then(function(){
+      /* ② 还原镜头组：有本地缓存直接还原（零延迟，不再黑屏探测）；
+            没有缓存才探测一次，探测结果写进 localStorage，下次进相机不必再等。
+            主摄认 "camera2 0"，超广角靠标定缓存。 */
+      if (camFacing === 'front'){
+        /* 20261109：前置只用 facingMode 开出来的流。绝不能走「切回后摄主摄」那条路，
+           否则点一下切换会先出前置再被拉回后摄（镜头表里全是后摄）。 */
+        camRefreshCaps();
+      } else if (camLoadLensTable()){
         const main = camMainLens();
-        const mi = main ? camLenses.indexOf(main) : 0;
-        if (!camStream || camLenses.length > 1){          /* 探测时把流停了，重建到「真正的主摄」。
-             20261109：绝不再拿 camLenses[0] —— 真机上它是 camera2 4（微距/长焦），
-             又糊又窄，就是「拍出来特别大」的元凶。 */
-          camLensIdx = Math.max(0, mi);
-          camOpenStream(main ? main.id : null).catch(function(){});
+        camLensIdx = Math.max(0, main ? camLenses.indexOf(main) : 0);
+        if (main && camCurDeviceId() !== main.id){
+          /* 当前流不是主摄（facingMode 在真机上会命中 camera2 4 辅助镜头）→ 切回主摄。
+             开流失败说明缓存里的 deviceId 已失效（换设备 / 清过站点数据）→ 清缓存重探。 */
+          camOpenStream(main.id).catch(function(){
+            try { localStorage.removeItem(CAM_LENS_CACHE_KEY); } catch (e){}
+            camLenses = [];
+            camProbeLenses().then(function(){
+              const m2 = camMainLens();
+              camLensIdx = Math.max(0, m2 ? camLenses.indexOf(m2) : 0);
+              camOpenStream(m2 ? m2.id : null).catch(function(){});
+            }).catch(function(){ camOpenStream(null).catch(function(){}); });
+          });
         } else {
           camRefreshCaps();
         }
-      }).catch(function(){
-        if (!camStream) camOpenStream(null).catch(function(){});
-      });
+      } else {
+        camProbeLenses().then(function(){
+          const main = camMainLens();
+          const mi = main ? camLenses.indexOf(main) : 0;
+          if (!camStream || camLenses.length > 1){          /* 探测时把流停了，重建到「真正的主摄」。
+               20261109：绝不再拿 camLenses[0] —— 真机上它是 camera2 4（微距/长焦），
+               又糊又窄，就是「拍出来特别大」的元凶。 */
+            camLensIdx = Math.max(0, mi);
+            camOpenStream(main ? main.id : null).catch(function(){});
+          } else {
+            camRefreshCaps();
+          }
+        }).catch(function(){
+          if (!camStream) camOpenStream(null).catch(function(){});
+        });
+      }
     } catch (e){
       camLiveOn = false;
       if (live) live.classList.remove('on');
@@ -6175,7 +6333,10 @@ function stopCam(){
   _camFocusTimers.forEach(function(h){ clearTimeout(h); });
   _camFocusTimers = [];
   camCap = null;
-  camLenses = []; camLensIdx = 0;
+  /* 20261109：不再清空 camLenses。原来每次关相机都清空，导致下次进相机必须重新
+     探测 4~5 颗摄像头（4~8 秒黑屏）——这是「每次都卡」的元凶之一。
+     镜头表是设备级信息，跨会话有效，留着复用。 */
+  camLensIdx = 0;
   if (camStream){
     try { camStream.getTracks().forEach(function(tr){ tr.stop(); }); } catch (e) {}
     camStream = null;
@@ -6183,6 +6344,9 @@ function stopCam(){
   camLiveOn = false;
   const live = $('#camLive');
   if (live){ live.classList.remove('on'); try { live.srcObject = null; } catch (e) {} }
+  /* 20261109：关相机时把冻结帧一起清掉，否则下次进来会先看到上一轮的旧画面 */
+  const fz = $('#camFreeze');
+  if (fz){ fz.classList.remove('on', 'fade'); fz.style.transform = ''; }
   const cvs = $('#camCanvas'); if (cvs) cvs.classList.remove('off');
 }
 
@@ -6801,8 +6965,13 @@ $('#camBack').addEventListener('click', () => goUp());
 $('#camClose').addEventListener('click', () => goUp());
 $('#camSwitch').addEventListener('click', async () => {
   camFacing = camFacing === 'back' ? 'front' : 'back';
-  /* 换朝向后旧镜头组失效，重新探测 */
-  camLenses = []; camLensIdx = 0;
+  /* ★ 20261109 修「切换摄像头很卡」的核心：
+     原来这里写的是 camLenses = []; camLensIdx = 0; —— 把后摄镜头表清空，
+     于是 startCam 里必须重新对 4~5 颗摄像头逐颗开流取帧，等于每次切前后摄
+     都要黑屏 4~8 秒，这就是用户说的「切换上还是很卡」。
+     前后摄切换跟「后摄有哪几颗」毫无关系：后摄镜头表保留（内存 + localStorage），
+     前置只用 facingMode 开流即可，一次切换只剩开流本身的 0.5~1 秒。 */
+  camLensIdx = 0;
   stopCam();
   await startCam();
   toast(camFacing === 'back' ? '后置镜头' : '前置镜头');
