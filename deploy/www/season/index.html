@@ -498,6 +498,28 @@ body{
 .cz-i.on{background:#f2ecdd;color:#1d1a16;font-weight:600}
 /* 20261109：当前设备不支持的倍数档（如无超广角时的 0.5×）置灰不可点 */
 .cz-i.dis{opacity:.30;cursor:default}
+/* 20261109：长按调曝光——右侧竖向滑条，只在长按时出现 */
+#camExpo{
+  position:absolute;right:14px;top:50%;transform:translateY(-50%);
+  width:56px;padding:10px 6px;border-radius:16px;z-index:4;
+  background:rgba(16,14,11,.62);border:1px solid rgba(242,236,221,.25);
+  display:none;flex-direction:column;align-items:center;gap:6px;
+  opacity:0;transition:opacity .18s;
+}
+#camExpo.on{display:flex;opacity:1}
+#camExpo .ce-track{
+  width:8px;height:190px;border-radius:4px;position:relative;
+  background:rgba(242,236,221,.18);overflow:hidden;
+}
+#camExpo .ce-fill{
+  position:absolute;left:0;right:0;bottom:0;height:50%;
+  background:linear-gradient(180deg,#f2ecdd,#c9b16c);border-radius:4px;
+  transition:height .06s linear;
+}
+#camExpo .ce-v{
+  font-size:11px;color:#f2ecdd;font-family:system-ui,'Microsoft YaHei';
+  letter-spacing:.5px;
+}
 /* 20261109：点击对焦框——点哪对哪的视觉反馈，装饰层永远低于文字（z 低于 cam-tip） */
 #camFocusRing{
   position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;
@@ -5462,6 +5484,14 @@ let camZoomMin = 0.5;      /* 界面允许的最小倍数 */
 let camZoomMax = 3;
 let _camProbing = null;    /* 探测中的 Promise，防并发 */
 let _camFocusTimers = [];
+/* ★ 20261109 长按调曝光 */
+let camExpo = 0;                 /* 当前曝光补偿值 */
+let camExpoRange = null;         /* {min,max,step}，设备不支持时为 null */
+let _czDragging = false;         /* 双指拖动中：只走 CSS 跟手，不逐帧改 track（丝滑） */
+let _lpTimer = null;             /* 长按计时器 */
+let _lpStart = null;             /* {x,y,expoBase} */
+let _expoOn = false;             /* 是否已进入曝光调节 */
+let _expoSuppress = false;       /* 曝光结束后抑制一次 click，避免误对焦 */
 
 function camTrack(){
   try { return (camStream && camStream.getVideoTracks()) ? camStream.getVideoTracks()[0] : null; }
@@ -5485,14 +5515,21 @@ async function camOpenStream(deviceId){
     camStream = null;
   }
   let st;
+  /* ★ 20261109 用户反馈「哪个档位的摄像头都太大（视野太窄）」：
+     根因是以前请求 1440x1440 方形流，而取景框是 9:16 竖屏，object-fit:cover
+     会横向裁掉约 43% 的画面 → 看起来像一直贴着放大。
+     这里直接请求 9:16 竖屏流（aspectRatio + 竖屏宽高），cover 几乎不裁切，
+     1× 就是这颗镜头的真实完整视野，等价于「以前 0.5× 的观感」，0.5× 再靠
+     切超广角镜头继续变广。 */
+  const VERT = { aspectRatio: { ideal: 9 / 16 }, width: { ideal: 1080 }, height: { ideal: 1920 } };
   if (deviceId){
     st = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      video: Object.assign({ deviceId: { exact: deviceId } }, VERT)
     });
   } else {
     const fm = camFacing === 'back' ? 'environment' : 'user';
-    const mk = (fo) => ({ audio: false, video: { facingMode: fo, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    const mk = (fo) => ({ audio: false, video: Object.assign({ facingMode: fo }, VERT) });
     try { st = await navigator.mediaDevices.getUserMedia(mk({ exact: fm })); }
     catch (e0){ st = await navigator.mediaDevices.getUserMedia(mk({ ideal: fm })); }
   }
@@ -5539,7 +5576,8 @@ async function camProbeLenses(){
       try {
         const st = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { deviceId: { exact: pool[k].deviceId }, width: { ideal: 4032 }, height: { ideal: 3024 } }
+          video: { deviceId: { exact: pool[k].deviceId },
+                   aspectRatio: { ideal: 9 / 16 }, width: { ideal: 1080 }, height: { ideal: 1920 } }
         });
         const tk = st.getVideoTracks()[0];
         const ss = (tk.getSettings && tk.getSettings()) || {};
@@ -5578,6 +5616,13 @@ function camRefreshCaps(){
   const hasWide = camLenses.length > 1;
   const zminOk = !!(zr && typeof zr.min === 'number' && zr.min < 1);
   camZoomMin = (hasWide || zminOk) ? 0.5 : 1;
+  /* 曝光补偿能力：有范围才启用长按调曝光 */
+  const ec = camCap && camCap.exposureCompensation;
+  if (ec && typeof ec.min === 'number' && typeof ec.max === 'number' && ec.max > ec.min){
+    camExpoRange = { min: ec.min, max: ec.max, step: ec.step || 1 };
+  } else {
+    camExpoRange = null;
+  }
   document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
     const zz = Number(el.dataset.z);
     el.classList.toggle('dis', zz < camZoomMin - 1e-6 || zz > camZoomMax + 1e-6);
@@ -5585,6 +5630,44 @@ function camRefreshCaps(){
   if (camZoom < camZoomMin) camZoom = camZoomMin;
   if (camZoom > camZoomMax) camZoom = camZoomMax;
   camApplyZoom();
+}
+
+/* ===== 长按调曝光（20261109）=====
+   长按画面 0.55s 进曝光模式：竖条出现，上下拖动调曝光补偿（exposureCompensation）。
+   设备不支持该能力时，长按只做一次提示，不弹滑条。 */
+function camExpoEnsureUI(){
+  let el = document.getElementById('camExpo');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'camExpo';
+  el.innerHTML = '<div class="ce-track"><i class="ce-fill"></i></div><div class="ce-v">0</div>';
+  const view = $('#camView');
+  if (view) view.appendChild(el);
+  return el;
+}
+function camExpoRender(){
+  const el = document.getElementById('camExpo');
+  if (!el || !camExpoRange) return;
+  const r = camExpoRange;
+  const span = Math.max(1, r.max - r.min);
+  const t = (camExpo - r.min) / span;
+  const f = el.querySelector('.ce-fill');
+  if (f) f.style.height = Math.round(Math.max(0, Math.min(1, t)) * 100) + '%';
+  const v = el.querySelector('.ce-v');
+  if (v) v.textContent = (camExpo > 0 ? '+' : '') + camExpo;
+}
+async function camExpoApply(v){
+  if (!camExpoRange) return;
+  camExpo = Math.max(camExpoRange.min, Math.min(camExpoRange.max, Math.round(v)));
+  const t = camTrack();
+  if (t && t.applyConstraints){
+    try { await t.applyConstraints({ advanced: [{ exposureCompensation: camExpo }] }); } catch (e){}
+  }
+  camExpoRender();
+}
+function camExpoHide(){
+  const el = document.getElementById('camExpo');
+  if (el) el.classList.remove('on');
 }
 
 /* 点击对焦：真·点哪对哪（pointsOfInterest），并对用户给出对焦框反馈 */
@@ -5737,6 +5820,9 @@ function camApplyZoom(){
   document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
     el.classList.toggle('on', Math.abs(Number(el.dataset.z) - camZoom) < 1e-6);
   });
+  /* ★ 丝滑：双指拖动过程中只让 CSS 跟手（GPU 合成 60fps），
+     不逐帧调 track.applyConstraints（那会卡成幻灯片）。松手才真正提交。 */
+  if (_czDragging) return;
   const want = camResolve();
   const cur = camLenses[camLensIdx] || null;
   if (want.lens && cur && want.lens.id !== cur.id){
@@ -5776,38 +5862,102 @@ function setCamZoom(z, snap){
 function camZoomBind(){
   const view = $('#camView');
   if (!view) return;
+
+  function clearLP(){
+    if (_lpTimer){ clearTimeout(_lpTimer); _lpTimer = null; }
+    _lpStart = null;
+  }
+
   view.addEventListener('touchstart', function(e){
     if (e.touches.length === 2){
+      clearLP();
       _czTouch = {
         startDist: Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
                               e.touches[0].clientY - e.touches[1].clientY),
         startZoom: camZoom
       };
+      _czDragging = false;
+      return;
+    }
+    if (e.touches.length === 1 && !_expoOn){
+      /* 长按 0.55s 进曝光调节 */
+      const t0 = e.touches[0];
+      _lpStart = { x: t0.clientX, y: t0.clientY, expoBase: camExpo };
+      _lpTimer = setTimeout(function(){
+        _lpTimer = null;
+        if (!_lpStart) return;
+        if (!camExpoRange){
+          toast('这台设备的网页相机不支持调曝光');
+          return;
+        }
+        _expoOn = true;
+        _czDragging = false;
+        const el = camExpoEnsureUI();
+        el.classList.add('on');
+        camExpoRender();
+        toast('上下拖动调曝光');
+      }, 550);
     }
   }, { passive: true });
+
   view.addEventListener('touchmove', function(e){
+    /* 曝光调节：单指上下拖 */
+    if (_expoOn && e.touches.length === 1 && camExpoRange && _lpStart){
+      const dy = _lpStart.y - e.touches[0].clientY;   /* 上滑 = 变亮 */
+      const span = camExpoRange.max - camExpoRange.min;
+      camExpoApply(_lpStart.expoBase + (dy / 240) * span);
+      return;
+    }
+    /* 单指移动超过阈值 → 不是长按，取消计时 */
+    if (_lpStart && e.touches.length === 1 && _lpTimer){
+      const dx = Math.abs(e.touches[0].clientX - _lpStart.x);
+      const dy2 = Math.abs(e.touches[0].clientY - _lpStart.y);
+      if (dx > 10 || dy2 > 10) clearLP();
+    }
+    /* 双指缩放：丝滑跟手 */
     if (e.touches.length !== 2 || !_czTouch) return;
     const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
                          e.touches[0].clientY - e.touches[1].clientY);
     if (_czTouch.startDist <= 0) return;
     const nz = _czTouch.startZoom * (d / _czTouch.startDist);
     camZoom = Math.max(camZoomMin, Math.min(camZoomMax, nz));
-    camApplyZoom();
+    _czDragging = true;
+    /* 只改 CSS：相对手势起点的倍率，GPU 合成，跟手不卡 */
+    const rel = camZoom / (_czTouch.startZoom || 1);
+    const live = $('#camLive'), cvs = $('#camCanvas');
+    const tf = 'scale(' + rel + ')';
+    if (live) live.style.transform = tf;
+    if (cvs) cvs.style.transform = tf;
+    document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
+      el.classList.toggle('on', Math.abs(Number(el.dataset.z) - camZoom) < 1e-6);
+    });
   }, { passive: true });
+
   view.addEventListener('touchend', function(e){
-    if (e.touches.length < 2 && _czTouch){
+    clearLP();
+    if (_expoOn){
+      _expoOn = false;
+      _expoSuppress = true;          /* 松手后抑制一次 click，别误触发对焦 */
+      setTimeout(camExpoHide, 900);
+      return;
+    }
+    if (_czTouch && e.touches.length < 2){
       _czTouch = null;
-      setCamZoom(camZoom, true);
+      _czDragging = false;
+      setCamZoom(camZoom, true);     /* 松手提交：吸附档位 + 真正下发 track zoom */
     }
   });
-  /* 单击对焦 */
+
+  /* 单击对焦（长按/曝光结束时跳过） */
   view.addEventListener('click', function(e){
+    if (_expoSuppress){ _expoSuppress = false; return; }
     const box = view.getBoundingClientRect();
     if (!box.width || !box.height) return;
     const nx = (e.clientX - box.left) / box.width;
     const ny = (e.clientY - box.top) / box.height;
     camFocusAt(Math.max(0, Math.min(1, nx)), Math.max(0, Math.min(1, ny)));
   });
+
   /* 倍数按钮点选 */
   document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
     el.addEventListener('click', function(ev){
@@ -6853,6 +7003,26 @@ let _HOST_CARD_POOL = null;
    localStorage['bmSeasonSave']，主项目导出时直接读这个键、导入时写回并重载。
    ============================================================ */
 const SEASON_SAVE_KEY = 'bmSeasonSave';
+/* ★ 20261109 用户要求「把四季的数据清空再推送」：
+   交付前必须清掉开发期/测试期写进 localStorage 的各种假数据
+   （角色名对不上的 TA 留言、「收到书签」回话、调试种下的植物、demo 角色 id 等）。
+   做法：给数据加一个版本号，版本不符即判定为「旧的脏存档」→ 整包清空后按新档重来。
+   以后再需要一次性重置，只改这个常量即可（不必让玩家手动清缓存）。 */
+const SEASON_DATA_VER = '20261109-clean';
+const SEASON_VER_KEY = 'bmSeasonDataVer';
+const SEASON_SIDE_KEYS = ['bmSeasonTitles','bmSeasonBookTitle','bmSeasonWallBg','bmSeasonFirstTill'];
+function seasonDataResetIfStale(){
+  try {
+    if (localStorage.getItem(SEASON_VER_KEY) === SEASON_DATA_VER) return false;
+    /* ① 主存档整包删掉（照片/星球/植物/留言/书签全在里面） */
+    localStorage.removeItem(SEASON_SAVE_KEY);
+    /* ② 四季自己的零散键一并清（标题、书签集名、照片墙背景、首次翻土标记） */
+    SEASON_SIDE_KEYS.forEach(function(k){ try { localStorage.removeItem(k); } catch(e){} });
+    /* ③ 打上新版本号，之后不再重复清 */
+    localStorage.setItem(SEASON_VER_KEY, SEASON_DATA_VER);
+    return true;
+  } catch(e){ return false; }
+}
 
 /* 照片记录里的 img 是 canvas/Image 内存对象（玩家实拍/相册图），无法 JSON 序列化、
    换壳本来就丢，故导出时剔除，只保留文字记录 + src 标识（与音乐「本地文件本体不随导出」同策略）。 */
@@ -6906,6 +7076,8 @@ function seasonSave(){
 }
 /* 读盘：启动时恢复 PHOTOS / PLANET / 各 bmSeason* 键 */
 function seasonLoad(){
+  /* 20261109：先做一次「脏存档清理」，版本不符直接当没有存档（从空开始） */
+  if (seasonDataResetIfStale()) return false;
   let raw = null;
   try { raw = localStorage.getItem(SEASON_SAVE_KEY); } catch(e){}
   if (!raw) return false;
@@ -11835,8 +12007,13 @@ function renderPlantSheet(){
     tx.className = 'pls-tx';
     const isChar = (e.by !== '你');
     if (e.k === '爱意'){
-      tx.textContent = isChar ? (e.by + ' 和你一起浇灌了爱意')
-                              : ('你 和 ' + (pl.by || 'TA') + ' 一起浇灌了爱意');
+      /* ★ 20261109 修「你和 你 一起浇灌了爱意」：
+         玩家自己种下的植物 by='你'，旧代码直接拿 pl.by 当对方名字 → 显示成「你 和 你」。
+         正确：对方永远是（本星球主人 / 角色），按下述优先级取，绝不取到「你」。 */
+      const _mine = (pl.by && pl.by !== '你') ? pl.by : '';
+      const _evBy = (e.by && e.by !== '你') ? e.by : '';
+      const _partner = _evBy || _mine || PLANET.owner || 'TA';
+      tx.textContent = '你 和 ' + _partner + ' 一起浇灌了爱意';
     } else {
       tx.textContent = (isChar ? e.by : '你') + ' ' + (EV_TX[e.k] || e.k);
     }
