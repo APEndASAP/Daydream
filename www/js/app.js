@@ -11603,92 +11603,13 @@ async function _seasonPushInit() {
         const _sc = (characters || []).find(x => x.name === tn) || null;
         if (_sc) notifyIncoming(_sc, tn + ' 把一颗种子种到了自己的星球上，回四季看看吧', '四季 · 星球有了新芽', 'msg');
       } catch (e) {}
-    } else if (d.type === 'season-cam') {
-      // 20261108：四季采集相机走原生 CameraX（bm-camera 插件）——iframe 无法直接访问
-      // Capacitor 原生插件，故经 postMessage 桥接：iframe 发 season-cam{action,...}，
-      // 主项目调 window.Capacitor.Plugins.BmCamera，结果经 season-cam-result 回传。
-      _seasonCamBridge(d, ev.source);
     }
   });
 })();
 
-/* 20261108：四季原生相机桥接——iframe 发 season-cam{action,...}，
-   主项目调 bm-camera 插件（CameraX），结果经 season-cam-result 回传 iframe。
-   action: open / close / capture / setLens / zoomTo / focusAt / switchFacing / checkPermission
-   网页端（无插件）统一回 { ok:false, reason:'no_native' }，四季据此回退 getUserMedia。 */
-async function _seasonCamBridge(d, source){
-  const BC = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmCamera;
-  const reply = (payload) => {
-    try {
-      const frame = document.getElementById('season-frame');
-      const target = (frame && frame.contentWindow) ? frame.contentWindow : source;
-      if (target && target.postMessage) target.postMessage(Object.assign({ type: 'season-cam-result', reqId: d.reqId }, payload), '*');
-    } catch (e) {}
-  };
-  if (!BC){
-    reply({ ok: false, reason: 'no_native' });
-    return;
-  }
-  const a = d.action;
-  try {
-    if (a === 'checkPermission'){
-      const r = await BC.checkPermission();
-      reply({ ok: true, granted: !!r.granted });
-    } else if (a === 'requestPermission'){
-      const r = await BC.requestPermission();
-      reply({ ok: true, granted: !!r.granted });
-    } else if (a === 'open'){
-      const r = await BC.open(d.options || {});
-      reply(r || { ok: true });
-    } else if (a === 'close'){
-      const r = await BC.close();
-      reply(r || { ok: true });
-    } else if (a === 'capture'){
-      const r = await BC.capture();
-      reply(r || { ok: false });
-    } else if (a === 'setLens'){
-      const r = await BC.setLens({ factor: d.factor != null ? d.factor : 1 });
-      reply(r || { ok: true });
-    } else if (a === 'zoomTo'){
-      const r = await BC.zoomTo({ factor: d.factor != null ? d.factor : 1 });
-      reply(r || { ok: true });
-    } else if (a === 'focusAt'){
-      const r = await BC.focusAt({ x: d.x != null ? d.x : 0.5, y: d.y != null ? d.y : 0.5 });
-      reply(r || { ok: true });
-    } else if (a === 'switchFacing'){
-      const r = await BC.switchFacing();
-      reply(r || { ok: true });
-    } else {
-      reply({ ok: false, reason: 'unknown_action' });
-    }
-  } catch (e){
-    reply({ ok: false, reason: String(e && e.message || e) });
-  }
-}
 
-/* 20261108：原生相机（BmCamera）事件 → 转发给四季 iframe。
-   原生层按钮（返回/前后摄/快门）由插件自己处理，但结果要同步给四季：
-   - bmcam-photo：原生快门拍完，回传 dataUrl 给四季走 addPhotoFromImage
-   - bmcam-back：原生返回键点了，让四季 goUp()（栈式返回）
-   - bmcam-switch：前后摄切换，同步 facing 给四季（四季 camFacing 保持一致） */
-function _seasonCamListenersInit(){
-  const BC = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmCamera;
-  if (!BC || typeof BC.addListener !== 'function') return;
-  const fwd = (type, payload) => {
-    try {
-      const frame = document.getElementById('season-frame');
-      if (frame && frame.contentWindow){
-        frame.contentWindow.postMessage(Object.assign({ type: 'season-cam-event', event: type }, payload || {}), '*');
-      }
-    } catch (e) {}
-  };
-  try {
-    BC.addListener('bmcam-photo', (d) => { fwd('bmcam-photo', d); });
-    BC.addListener('bmcam-back', () => { fwd('bmcam-back', {}); });
-    BC.addListener('bmcam-switch', (d) => { fwd('bmcam-switch', d); });
-  } catch (e) {}
-}
-_seasonCamListenersInit();
+/* 20261109：四季采集相机改回纯网页 getUserMedia（在 season/index.html 内自研变焦+点击对焦），
+   已彻底删除 bm-camera 原生插件与 season-cam 桥接，勿再引入。 */
 
 /* 20261104：番茄钟 postMessage 桥接——收 iframe 的 ready/settle/close，
    并把主项目真实访客列表（name/avatar/color/emoji）推给番茄钟原型 */

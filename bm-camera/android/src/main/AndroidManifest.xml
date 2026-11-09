@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 相机权限（运行时申请；manifest 声明保证可申请） -->
-    <uses-permission android:name="android.permission.CAMERA" />
-</manifest>

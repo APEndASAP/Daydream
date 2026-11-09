@@ -23,7 +23,6 @@
     "bm-background": "file:./bm-background",
     "bm-remote-control": "file:./bm-remote-control",
   "bm-music-float": "file:./bm-music-float",
-  "bm-camera": "file:./bm-camera",
   "capacitor-overlay": "7.0.3"
   },
   "devDependencies": {

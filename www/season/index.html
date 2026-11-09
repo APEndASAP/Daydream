@@ -496,6 +496,22 @@ body{
   transition:background .15s,color .15s;
 }
 .cz-i.on{background:#f2ecdd;color:#1d1a16;font-weight:600}
+/* 20261109：当前设备不支持的倍数档（如无超广角时的 0.5×）置灰不可点 */
+.cz-i.dis{opacity:.30;cursor:default}
+/* 20261109：点击对焦框——点哪对哪的视觉反馈，装饰层永远低于文字（z 低于 cam-tip） */
+#camFocusRing{
+  position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;
+  border:1.5px solid rgba(242,236,221,.92);border-radius:6px;z-index:4;
+  opacity:0;pointer-events:none;
+  box-shadow:0 0 0 1px rgba(0,0,0,.25) inset;
+}
+#camFocusRing.go{animation:camFocusPop .72s ease-out 1}
+@keyframes camFocusPop{
+  0%{opacity:0;transform:scale(1.5)}
+  22%{opacity:1;transform:scale(1)}
+  70%{opacity:1;transform:scale(.92)}
+  100%{opacity:0;transform:scale(.86)}
+}
 .cam-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:5}
 .cam-flash.go{animation:flash .26s steps(3) 1}
 @keyframes flash{0%{opacity:.92}60%{opacity:.35}100%{opacity:0}}
@@ -5429,56 +5445,183 @@ const CAM_ZOOM_MIN = 0.5, CAM_ZOOM_MAX = 3;
 const CAM_ZOOM_STEPS = [0.5, 1, 2, 3];
 let _czTouch = null;        /* 双指缩放中间态 { startDist, startZoom, cx, cy } */
 
-/* ===== 原生相机桥接（20261108：bm-camera / CameraX，替换 getUserMedia）=====
-   真机 APK 里网页 getUserMedia 拿不到超广角/长焦镜头、控制不了对焦变焦，
-   0.5× 是 CSS 缩小留黑边。故改为：四季 iframe 发 season-cam 给主项目 →
-   主项目调原生 BmCamera 插件（CameraX）→ 结果经 season-cam-result 回传。
-   网页端（无原生）自动回退 getUserMedia。 */
-let _bmNativeCam = null;      /* null=未探测，true=原生可用，false=回退网页 */
-let _bmNativeCamOn = false;   /* 原生预览是否已打开 */
-let _bmCamReqSeq = 0;         /* 请求序号，用于回传匹配 */
-let _bmCamWaiters = {};       /* reqId -> resolve 函数 */
-let _bmCamCaptureCb = null;   /* 拍照回调（拍完拿到 dataUrl 后走 addPhotoFromImage） */
+/* ===== 相机能力层（20261109 v2：多镜头自动切广角 + 点击对焦 + 双指变焦）=====
+   ★ 用户要求：0.5× 必须自动切到那颗超广角小镜头，不能置灰、不能不能用。
+   纯 getUserMedia（无任何原生插件）能做到的最好方案：
+     ① 先按 facingMode 开一次流拿到相机授权；
+     ② enumerateDevices() 列出所有后置 videoinput，逐个「短开短关」探测
+        分辨率 + zoom 能力，按像素量降序：最大=主摄，最小=最广角；
+     ③ 0.5× → 切到最广角那颗（独立物理镜头，画面完整，object-fit:cover
+        永远满屏，绝无黑框）；1×/2×/3× → 主摄 + track zoom；
+     ④ 只有设备真的只暴露一颗后摄、且 zoom 不支持 <1 时 0.5× 才降级提示
+        （Chromium 单摄 HAL 硬限制，非本代码可绕过）。 */
+let camLenses = [];        /* [{id,label,w,h,zmin,zmax}] 后置镜头，按像素量降序 */
+let camLensIdx = 0;        /* 当前用第几颗：0=主摄，末位=最广角 */
+let camCap = null;         /* 当前 track 能力表 */
+let camZoomMin = 0.5;      /* 界面允许的最小倍数 */
+let camZoomMax = 3;
+let _camProbing = null;    /* 探测中的 Promise，防并发 */
+let _camFocusTimers = [];
 
-/* 发 season-cam 请求，返回 Promise<result> */
-function bmNativeCamRequest(action, payload){
-  return new Promise(function(resolve){
-    if (!window.parent || window.parent === window){ resolve({ ok:false, reason:'no_host' }); return; }
-    const reqId = ++_bmCamReqSeq;
-    _bmCamWaiters[reqId] = resolve;
-    const msg = { type: 'season-cam', action: action, reqId: reqId };
-    if (payload) Object.assign(msg, payload);
-    try { window.parent.postMessage(msg, '*'); } catch(e){ delete _bmCamWaiters[reqId]; resolve({ ok:false, reason:String(e) }); }
-    // 兜底：4s 没回就超时
-    setTimeout(function(){
-      if (_bmCamWaiters[reqId]){ delete _bmCamWaiters[reqId]; resolve({ ok:false, reason:'timeout' }); }
-    }, 4000);
-  });
+function camTrack(){
+  try { return (camStream && camStream.getVideoTracks()) ? camStream.getVideoTracks()[0] : null; }
+  catch (e){ return null; }
 }
-/* 收到主项目回传 */
-function bmNativeCamOnResult(d){
-  if (d && d.reqId != null && _bmCamWaiters[d.reqId]){
-    const fn = _bmCamWaiters[d.reqId];
-    delete _bmCamWaiters[d.reqId];
-    fn(d);
+function camWideLens(){ return camLenses.length > 1 ? camLenses[camLenses.length - 1] : null; }
+
+/* 把「界面倍数」解析成「用哪颗镜头 + 下发多少 zoom」 */
+function camResolve(){
+  const wide = camWideLens();
+  const useWide = !!wide && camZoom < 0.75;
+  const lens = useWide ? wide : (camLenses[0] || null);
+  return { useWide: useWide, lens: lens, hw: useWide ? 1 : camZoom };
+}
+
+/* 开流（deviceId 为空则按 facingMode），并设连续自动对焦 */
+async function camOpenStream(deviceId){
+  const live = $('#camLive');
+  if (camStream){
+    try { camStream.getTracks().forEach(function(t){ t.stop(); }); } catch (e){}
+    camStream = null;
   }
-}
-/* 探测原生相机是否可用 */
-async function bmNativeCamDetect(){
-  if (_bmNativeCam !== null) return _bmNativeCam;
-  const r = await bmNativeCamRequest('checkPermission');
-  // checkPermission 回 ok:true 表示主项目有 BmCamera 插件（即使未授权也返回 granted:false）
-  if (r && r.ok === true){
-    _bmNativeCam = true;
-    // 未授权则先申请
-    if (!r.granted){
-      const rr = await bmNativeCamRequest('requestPermission');
-      if (!rr || !rr.granted){ _bmNativeCam = false; }
-    }
+  let st;
+  if (deviceId){
+    st = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { deviceId: { exact: deviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
   } else {
-    _bmNativeCam = false;
+    const fm = camFacing === 'back' ? 'environment' : 'user';
+    const mk = (fo) => ({ audio: false, video: { facingMode: fo, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    try { st = await navigator.mediaDevices.getUserMedia(mk({ exact: fm })); }
+    catch (e0){ st = await navigator.mediaDevices.getUserMedia(mk({ ideal: fm })); }
   }
-  return _bmNativeCam;
+  camStream = st;
+  if (live){
+    live.srcObject = st;
+    live.classList.add('on');
+    try { await live.play(); } catch (e){}
+  }
+  camLiveOn = true;
+  const cvs = $('#camCanvas'); if (cvs) cvs.classList.add('off');
+  stopJitter();
+  /* 默认连续自动对焦 */
+  try {
+    const tk = camTrack();
+    const cp = (tk && tk.getCapabilities) ? (tk.getCapabilities() || {}) : {};
+    const ms = Array.isArray(cp.focusMode) ? cp.focusMode : [];
+    if (ms.indexOf('continuous') >= 0){
+      try { await tk.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e2){}
+    }
+  } catch (e2){}
+  camRefreshCaps();
+}
+
+/* 探测后置镜头组：短开短关，按像素量降序（最窄那颗当超广角） */
+async function camProbeLenses(){
+  if (camLenses.length > 1) return camLenses;
+  if (_camProbing) return _camProbing;
+  _camProbing = (async function(){
+    let devs = [];
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      devs = all.filter(function(d){ return d.kind === 'videoinput'; });
+    } catch (e){ devs = []; }
+    if (!devs.length) return camLenses;
+    const backs = devs.filter(function(d){ return /back|rear|environment|后置/i.test(d.label || ''); });
+    const pool = backs.length > 1 ? backs : devs;
+    if (pool.length < 2) return camLenses;
+    /* 探测需独占摄像头：先停当前流 */
+    if (camStream){ try { camStream.getTracks().forEach(function(t){ t.stop(); }); } catch (e){} camStream = null; }
+    camLiveOn = false;
+    const out = [];
+    for (let k = 0; k < pool.length; k++){
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { deviceId: { exact: pool[k].deviceId }, width: { ideal: 4032 }, height: { ideal: 3024 } }
+        });
+        const tk = st.getVideoTracks()[0];
+        const ss = (tk.getSettings && tk.getSettings()) || {};
+        const cc = (tk.getCapabilities && tk.getCapabilities()) || {};
+        out.push({
+          id: pool[k].deviceId,
+          label: pool[k].label || ('镜头' + (k + 1)),
+          w: ss.width || 0, h: ss.height || 0,
+          zmin: (cc.zoom && cc.zoom.min) || 1,
+          zmax: (cc.zoom && cc.zoom.max) || 1
+        });
+        st.getTracks().forEach(function(t){ t.stop(); });
+      } catch (e){}
+    }
+    out.sort(function(a, b){ return (b.w * b.h) - (a.w * a.h); });
+    if (out.length) camLenses = out;
+    return camLenses;
+  })();
+  try { return await _camProbing; } finally { _camProbing = null; }
+}
+
+/* 切到第 idx 颗镜头 */
+async function camSwitchLens(idx){
+  if (idx < 0 || idx >= camLenses.length || idx === camLensIdx) return;
+  camLensIdx = idx;
+  try { await camOpenStream(camLenses[idx].id); } catch (e){}
+}
+
+/* 读能力表 → 刷新档位可用性 */
+function camRefreshCaps(){
+  const t = camTrack();
+  camCap = (t && t.getCapabilities) ? (t.getCapabilities() || {}) : null;
+  const zr = camCap && camCap.zoom;
+  camZoomMax = (zr && typeof zr.max === 'number' && zr.max > 1) ? Math.min(8, zr.max) : 3;
+  /* 0.5× 可用：有第二颗后置镜头（真超广角），或设备 zoom 本身支持 <1 */
+  const hasWide = camLenses.length > 1;
+  const zminOk = !!(zr && typeof zr.min === 'number' && zr.min < 1);
+  camZoomMin = (hasWide || zminOk) ? 0.5 : 1;
+  document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
+    const zz = Number(el.dataset.z);
+    el.classList.toggle('dis', zz < camZoomMin - 1e-6 || zz > camZoomMax + 1e-6);
+  });
+  if (camZoom < camZoomMin) camZoom = camZoomMin;
+  if (camZoom > camZoomMax) camZoom = camZoomMax;
+  camApplyZoom();
+}
+
+/* 点击对焦：真·点哪对哪（pointsOfInterest），并对用户给出对焦框反馈 */
+function camFocusAt(nx, ny){
+  const view = $('#camView');
+  if (!view) return;
+  let ring = document.getElementById('camFocusRing');
+  if (!ring){
+    ring = document.createElement('div');
+    ring.id = 'camFocusRing';
+    view.appendChild(ring);
+  }
+  ring.classList.remove('go');
+  ring.style.left = (nx * 100) + '%';
+  ring.style.top  = (ny * 100) + '%';
+  void ring.offsetWidth;
+  ring.classList.add('go');
+
+  const t = camTrack();
+  if (!t || !t.applyConstraints) return;
+  const c = camCap || {};
+  const modes = Array.isArray(c.focusMode) ? c.focusMode : [];
+  _camFocusTimers.forEach(function(h){ clearTimeout(h); });
+  _camFocusTimers = [];
+  if (Array.isArray(c.pointsOfInterest) && modes.indexOf('single-shot') >= 0){
+    try {
+      t.applyConstraints({ advanced: [{ focusMode: 'single-shot', pointsOfInterest: [{ x: nx, y: ny }] }] })
+        .then(function(){
+          _camFocusTimers.push(setTimeout(function(){
+            try { t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){}); } catch (e){}
+          }, 1600));
+        })
+        .catch(function(){});
+    } catch (e){}
+  } else if (modes.indexOf('continuous') >= 0){
+    try { t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){}); } catch (e){}
+  }
 }
 
 /* 每张照片可以带自己的原图；没有就用示例图 */
@@ -5522,52 +5665,35 @@ function startJitter(){
 }
 function stopJitter(){ if (camTimer){ clearInterval(camTimer); camTimer = null; } }
 
-/* 真的打开手机相机：APK 里优先走原生 CameraX（bm-camera 插件，超广角/对焦/变焦），
-   网页端/无原生时回退 getUserMedia */
+/* 真的打开手机相机（20261109 v2：纯网页 getUserMedia，多镜头自动切广角）*/
 async function startCam(){
   const live = $('#camLive');
   /* 先把示例画面跑起来，等真相机就绪再切过去，避免黑屏 */
   if (!camLiveOn) startJitter();
-  /* ==== 原生相机优先 ==== */
-  const useNative = await bmNativeCamDetect();
-  if (useNative && !_bmNativeCamOn){
-    const openR = await bmNativeCamRequest('open', { options: { facing: camFacing, factor: camZoom } });
-    if (openR && openR.ok){
-      _bmNativeCamOn = true;
-      /* 原生预览层浮在 WebView 之上，网页的 #camLive 隐藏（避免黑底透出） */
-      if (live) live.classList.remove('on');
-      const cvs = $('#camCanvas'); if (cvs) cvs.classList.add('off');
-      stopJitter();
-      const t = $('#camThumb');
-      if (imgReady && t){
-        const tc = t.getContext('2d');
-        tc.clearRect(0,0,40,40);
-        tc.drawImage(srcImg, 0, 0, srcImg.width, srcImg.height, 0, 0, 40, 40);
-      }
-      return;
-    }
-    // 原生打开失败 → 回退网页
-    _bmNativeCam = false;
-  }
-  /* ==== 网页 getUserMedia 回退 ==== */
   if (live && !camStream){
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('no-gum');
-      const g = navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: camFacing === 'back' ? { ideal: 'environment' } : { ideal: 'user' },
-          width: { ideal: 1440 }, height: { ideal: 1440 }
+      /* ① 先拿授权并立刻出画面（6s 没回应当未授权） */
+      await Promise.race([
+        camOpenStream(null),
+        new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('timeout')); }, 6000); })
+      ]);
+      /* ② 拿到权限后探测镜头组：有第二颗后摄 = 有超广角，0.5× 才能切过去 */
+      camProbeLenses().then(function(){
+        if (!camStream){
+          const id = camLenses.length ? camLenses[0].id : null;
+          camLensIdx = 0;
+          camOpenStream(id).catch(function(){});
+        } else if (camLenses.length > 1){
+          /* 探测时把流停了，重建到主摄 */
+          camLensIdx = 0;
+          camOpenStream(camLenses[0].id).catch(function(){});
+        } else {
+          camRefreshCaps();
         }
+      }).catch(function(){
+        if (!camStream) camOpenStream(null).catch(function(){});
       });
-      /* 3.6s 还没回应就当没开（用户没点授权） */
-      camStream = await Promise.race([g, new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('timeout')); }, 3600); })]);
-      live.srcObject = camStream;
-      live.classList.add('on');
-      await live.play().catch(function(){});
-      camLiveOn = true;
-      const cvs = $('#camCanvas'); if (cvs) cvs.classList.add('off');
-      stopJitter();
     } catch (e){
       camLiveOn = false;
       if (live) live.classList.remove('on');
@@ -5587,11 +5713,11 @@ async function startCam(){
 }
 function stopCam(){
   stopJitter();
-  /* 关闭原生相机 */
-  if (_bmNativeCamOn){
-    _bmNativeCamOn = false;
-    bmNativeCamRequest('close').catch(function(){});
-  }
+  /* 清对焦定时器 */
+  _camFocusTimers.forEach(function(h){ clearTimeout(h); });
+  _camFocusTimers = [];
+  camCap = null;
+  camLenses = []; camLensIdx = 0;
   if (camStream){
     try { camStream.getTracks().forEach(function(tr){ tr.stop(); }); } catch (e) {}
     camStream = null;
@@ -5602,36 +5728,50 @@ function stopCam(){
   const cvs = $('#camCanvas'); if (cvs) cvs.classList.remove('off');
 }
 
-/* ===== 相机缩放（20261108）=====
-   camZoom 同时作用在 #camLive（真实相机画面）和 #camCanvas（示例画面）上，
-   用 transform:scale 从中心放大；拍摄时 grabLiveFrame 按 camZoom 从画面中心
-   裁一块更小的区域 = 拉近对焦的效果。
-   双指捏合：touchstart 记两指初始距离 → touchmove 按距离比缩放。
-   倍数按钮：点选 0.5/1/2/3×，直接 setCamZoom。 */
-function applyCamZoom(){
-  const s = camZoom;
-  const live = $('#camLive'), cvs = $('#camCanvas');
-  const tf = 'scale(' + s + ')';
-  if (live) live.style.transform = tf;
-  if (cvs) cvs.style.transform = tf;
+/* ===== 相机缩放（20261109 v2）=====
+   camApplyZoom 负责「选镜头 + 下发变焦」：
+   - camZoom < 0.75 → 切到最广角那颗镜头，画面 scale 必须 1（绝无黑框）；
+   - 否则用主摄，有 track zoom 就走镜头变焦（画面满屏），
+     无 zoom 能力才 CSS 放大且下限 1×。 */
+function camApplyZoom(){
   document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
-    el.classList.toggle('on', Number(el.dataset.z) === camZoom);
+    el.classList.toggle('on', Math.abs(Number(el.dataset.z) - camZoom) < 1e-6);
   });
-  /* 原生相机：同步变焦到原生镜头（setLens 吸附物理镜头，无黑边） */
-  if (_bmNativeCamOn){
-    bmNativeCamRequest('setLens', { factor: camZoom }).catch(function(){});
+  const want = camResolve();
+  const cur = camLenses[camLensIdx] || null;
+  if (want.lens && cur && want.lens.id !== cur.id){
+    camSwitchLens(camLenses.indexOf(want.lens));   /* 异步换镜头，回来再刷一次 */
+    return;
+  }
+  const t = camTrack();
+  const zr = camCap && camCap.zoom;
+  const hwOk = !!(t && camLiveOn && zr && typeof zr.min === 'number' && zr.max > zr.min);
+  const live = $('#camLive'), cvs = $('#camCanvas');
+  if (hwOk && !want.useWide){
+    const z = Math.max(zr.min, Math.min(zr.max, want.hw));
+    try { t.applyConstraints({ advanced: [{ zoom: z }] }).catch(function(){}); } catch (e){}
+    if (live) live.style.transform = '';
+    if (cvs) cvs.style.transform = '';
+  } else {
+    /* 广角镜头自身满屏 → scale=1；单镜头无 zoom 能力才放大，下限 1× */
+    const zz = want.useWide ? 1 : Math.max(1, want.hw);
+    const tf = zz === 1 ? '' : 'scale(' + zz + ')';
+    if (live) live.style.transform = tf;
+    if (cvs) cvs.style.transform = tf;
   }
 }
-/* snap=true 时吸附到最近档位（倍数按钮点选 / 双指松手时用）；
-   snap=false 时平滑跟手（双指捏合拖动中），松手再吸附。 */
+/* snap=true 吸附到最近档位（按钮点选 / 双指松手）；false 平滑跟手 */
 function setCamZoom(z, snap){
-  camZoom = Math.max(CAM_ZOOM_MIN, Math.min(CAM_ZOOM_MAX, z));
+  camZoom = Math.max(camZoomMin, Math.min(camZoomMax, z));
   if (snap !== false){
     let best = CAM_ZOOM_STEPS[0], bd = 1e9;
-    CAM_ZOOM_STEPS.forEach(function(st){ const d = Math.abs(st - camZoom); if (d < bd){ bd = d; best = st; } });
+    CAM_ZOOM_STEPS.forEach(function(st){
+      if (st < camZoomMin - 1e-6 || st > camZoomMax + 1e-6) return;
+      if (Math.abs(st - camZoom) < bd){ bd = Math.abs(st - camZoom); best = st; }
+    });
     camZoom = best;
   }
-  applyCamZoom();
+  camApplyZoom();
 }
 function camZoomBind(){
   const view = $('#camView');
@@ -5650,39 +5790,32 @@ function camZoomBind(){
     const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
                          e.touches[0].clientY - e.touches[1].clientY);
     if (_czTouch.startDist <= 0) return;
-    /* 拖动中平滑跟手，不吸附（吸附会跳档、手感发硬） */
     const nz = _czTouch.startZoom * (d / _czTouch.startDist);
-    camZoom = Math.max(CAM_ZOOM_MIN, Math.min(CAM_ZOOM_MAX, nz));
-    /* 原生：双指平滑变焦（不吸附物理镜头，走数码变焦） */
-    if (_bmNativeCamOn){
-      bmNativeCamRequest('zoomTo', { factor: camZoom }).catch(function(){});
-    } else {
-      applyCamZoom();
-    }
-    // 更新按钮高亮（不吸附）
-    document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
-      el.classList.toggle('on', Number(el.dataset.z) === camZoom);
-    });
+    camZoom = Math.max(camZoomMin, Math.min(camZoomMax, nz));
+    camApplyZoom();
   }, { passive: true });
   view.addEventListener('touchend', function(e){
     if (e.touches.length < 2 && _czTouch){
       _czTouch = null;
-      setCamZoom(camZoom, true);   /* 松手吸附到最近档位，按钮高亮准确 */
+      setCamZoom(camZoom, true);
     }
   });
-  /* 单击对焦：原生相机点击对焦，网页端无效果 */
+  /* 单击对焦 */
   view.addEventListener('click', function(e){
-    if (_bmNativeCamOn){
-      const box = view.getBoundingClientRect();
-      const x = (e.clientX - box.left) / box.width;
-      const y = (e.clientY - box.top) / box.height;
-      bmNativeCamRequest('focusAt', { x: x, y: y }).catch(function(){});
-    }
+    const box = view.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const nx = (e.clientX - box.left) / box.width;
+    const ny = (e.clientY - box.top) / box.height;
+    camFocusAt(Math.max(0, Math.min(1, nx)), Math.max(0, Math.min(1, ny)));
   });
   /* 倍数按钮点选 */
   document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
     el.addEventListener('click', function(ev){
       ev.stopPropagation();
+      if (el.classList.contains('dis')){
+        toast('这台设备的网页相机没暴露超广角镜头');
+        return;
+      }
       setCamZoom(Number(el.dataset.z));
     });
   });
@@ -6049,13 +6182,8 @@ async function shoot(){
   const fl = $('#camFlash');
   if (fl){ fl.classList.add('go'); setTimeout(() => fl.classList.remove('go'), 320); }
   let img = null;
-  /* 原生相机优先：调原生 capture 拿 base64 */
-  if (_bmNativeCamOn){
-    const r = await bmNativeCamRequest('capture');
-    if (r && r.ok && r.dataUrl){
-      try { img = await loadImageFromDataUrl(r.dataUrl); } catch (e) { img = null; }
-    }
-  } else if (camLiveOn){
+  /* 20261109：纯网页拍照，从 #camLive 当前帧按倍数裁切 */
+  if (camLiveOn){
     const url = grabLiveFrame();
     if (url){
       try { img = await loadImageFromDataUrl(url); } catch (e) { img = null; }
@@ -6074,12 +6202,8 @@ $('#camBack').addEventListener('click', () => goUp());
 $('#camClose').addEventListener('click', () => goUp());
 $('#camSwitch').addEventListener('click', async () => {
   camFacing = camFacing === 'back' ? 'front' : 'back';
-  /* 原生相机：直接切前后摄，不重启预览 */
-  if (_bmNativeCamOn){
-    await bmNativeCamRequest('switchFacing');
-    toast(camFacing === 'back' ? '后置镜头' : '前置镜头');
-    return;
-  }
+  /* 换朝向后旧镜头组失效，重新探测 */
+  camLenses = []; camLensIdx = 0;
   stopCam();
   await startCam();
   toast(camFacing === 'back' ? '后置镜头' : '前置镜头');
@@ -6711,26 +6835,6 @@ let _HOST_CARD_POOL = null;
               window.parent.postMessage({ type: 'season-taplant', charName: (PLANET && PLANET.owner) || 'TA', count: after - before }, '*');
             } catch(e){}
           }
-        }
-      } catch(e){}
-    }
-    // 20261108：主项目原生相机（bm-camera / CameraX）回传结果——四季据此驱动采集相机。
-    if (d.type === 'season-cam-result'){
-      try { if (typeof bmNativeCamOnResult === 'function') bmNativeCamOnResult(d); } catch(e){}
-    }
-    // 20261108：原生相机层的按钮事件（返回/前后摄/快门）——由主项目转发。
-    if (d.type === 'season-cam-event'){
-      try {
-        if (d.event === 'bmcam-photo' && d.dataUrl){
-          // 原生快门拍完 → 走 addPhotoFromImage
-          loadImageFromDataUrl(d.dataUrl).then(function(im){
-            addPhotoFromImage(im, '实拍');
-          }).catch(function(){});
-        } else if (d.event === 'bmcam-back'){
-          // 原生返回键 → 栈式返回（和四季 HTML 的返回键一致）
-          if (typeof goUp === 'function') goUp();
-        } else if (d.event === 'bmcam-switch'){
-          if (d.facing) camFacing = d.facing;
         }
       } catch(e){}
     }
