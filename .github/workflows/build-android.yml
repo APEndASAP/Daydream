@@ -320,6 +320,108 @@ jobs:
           NODE_EOF
           node /tmp/register-bm-music-float.js
 
+      # 20261108：注入 WebChromeClient 相机授权处理——四季「采集」相机 getUserMedia 根因修复。
+      #   根因：Capacitor 的 BridgeWebChromeClient 只处理 file chooser（onShowFileChooser）和
+      #   地理定位权限，不处理 getUserMedia 的 onPermissionRequest 相机请求，导致
+      #   navigator.mediaDevices.getUserMedia 在 APK 里直接失败、回退到 demo 占位图。
+      #   做法：包装 BridgeActivity 已有的 WebChromeClient，只重写 onPermissionRequest 对相机
+      #   请求 grant，其余所有方法（onShowFileChooser/onJsAlert 等）委托原实现，不破坏 file chooser。
+      - name: 注入 WebChromeClient 相机授权（20261108）
+        run: |
+          cat > /tmp/inject-webchrome.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('installCameraChromeClient')) {
+            console.log('WebChromeClient 相机授权已注入，跳过');
+            process.exit(0);
+          }
+          // 1. 加 import
+          const imports = [
+            'import android.webkit.WebChromeClient;',
+            'import android.webkit.PermissionRequest;',
+            'import android.Manifest;',
+            'import android.webkit.WebView;',
+            'import android.content.pm.PackageManager;',
+            'import android.os.Build;'
+          ];
+          let impBlock = '';
+          for (const im of imports) {
+            if (!s.includes(im)) impBlock += im + '\n';
+          }
+          if (impBlock) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n' + impBlock);
+          }
+          // 2. 在 onCreate 的 super.onCreate 之后注入：包装 WebChromeClient 处理相机
+          const injectCode = `
+    installCameraChromeClient();
+  }
+
+  // 20261108：包装 WebChromeClient，处理相机（getUserMedia）权限请求；
+  //           其余方法委托原实现（Capacitor BridgeWebChromeClient），不破坏相册选图。
+  private void installCameraChromeClient() {
+    try {
+      WebView wv = bridge.getWebView();
+      if (wv == null) return;
+      final WebChromeClient orig = wv.getWebChromeClient();
+      wv.setWebChromeClient(new WebChromeClient() {
+        @Override
+        public void onPermissionRequest(final PermissionRequest request) {
+          String[] res = request.getResources();
+          boolean cam = false;
+          if (res != null) {
+            for (String r : res) {
+              if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) cam = true;
+            }
+          }
+          if (cam) {
+            // 相机：Manifest 已声明 CAMERA；Android 6.0+ 先查运行时权限
+            if (Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+              requestPermissions(new String[]{ Manifest.permission.CAMERA }, 9001);
+              return;
+            }
+            request.grant(new String[]{ PermissionRequest.RESOURCE_VIDEO_CAPTURE });
+            return;
+          }
+          // 非相机请求（麦克风等）委托原实现
+          if (orig != null) { try { orig.onPermissionRequest(request); } catch (Throwable t) {} }
+        }
+        @Override
+        public void onPermissionRequestCanceled(final PermissionRequest request) {
+          if (orig != null) { try { orig.onPermissionRequestCanceled(request); } catch (Throwable t) {} }
+        }
+      });
+    } catch (Throwable t) {
+      android.util.Log.w("BaiRiMeng", "installCameraChromeClient failed: " + t);
+    }
+  }
+  `;
+          if (s.includes('super.onCreate(savedInstanceState);')) {
+            // 已有 onCreate：在 super.onCreate 后追加 installCameraChromeClient 调用
+            s = s.replace(/super\.onCreate\(savedInstanceState\);\s*\}/,
+              'super.onCreate(savedInstanceState);\n' + injectCode);
+          } else {
+            console.error('未找到 super.onCreate，跳过 WebChromeClient 注入');
+            process.exit(0);
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注入 WebChromeClient 相机授权');
+          NODE_EOF
+          node /tmp/inject-webchrome.js
+
       # 20261001 修复：图标生成必须在 cap add 之后执行（cg 版排在壳生成之前，
       # android/ 目录尚不存在导致 capacitor-assets 静默失败，APK 用了 Capacitor 默认蓝色图标）。
       # 图标=白日梦手绘 logo（星辰与轨道），自适应图标背景/启动图底色统一白色。
@@ -419,6 +521,8 @@ jobs:
             // ===== 20261104：突击查岗「附带我的位置」真实定位（声明后 getCurrentPosition 才会弹系统授权框）=====
             'android.permission.ACCESS_FINE_LOCATION',
             'android.permission.ACCESS_COARSE_LOCATION',
+            // ===== 20261108：四季「采集」相机（声明后 WebView getUserMedia 才会被系统授予相机）=====
+            'android.permission.CAMERA',
           ];
           let added = 0;
           for (const pm of perms) {

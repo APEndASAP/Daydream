@@ -2352,18 +2352,13 @@ function pixelize(img, opt){
 }
 
 /* ================= 数据 ================= */
-const PHOTOS = [
-  { id:1, no:1, crop:{r:.92,cx:.50,cy:.52}, season:'autumn', name:'宽叶车前草', latin:'Plantago asiatica', cnf:92, src:'pl', made:true,  date:'2026.11.06',
-    desc:'叶脉像车辙，路边最常见的一味草药。', place:'老墙根', rare:1 },
-  { id:2, no:2, crop:{r:.62,cx:.44,cy:.60}, season:'summer', name:'白车轴草',   latin:'Trifolium repens',    cnf:88, src:'pl', made:true,  date:'2026.11.04',
-    desc:'三片小叶凑成一颗心，偶尔凑出四叶的运气。', place:'河堤草坡', rare:2 },
-  { id:3, no:0, crop:{r:.70,cx:.58,cy:.42}, season:'spring', name:'蒲公英',     latin:'Taraxacum mongolicum',cnf:81, src:'pl', made:false, date:'2026.11.07',
-    desc:'种子带着小伞，风一吹就各自去远方。', place:'石缝', rare:1 },
-  { id:4, no:0, crop:{r:.54,cx:.46,cy:.62}, season:'winter', name:'荠菜',       latin:'Capsella bursa-pastoris',cnf:0, src:'none', made:false, date:'2026.11.07',
-    desc:'田埂上的春信，开细碎的白花。', place:'田埂', rare:3 }
-];
+/* 20261108：清空内置 demo 照片——四季交付给玩家时照片墙从空开始，
+   不再预置「宽叶车前草/白车轴草/蒲公英/荠菜」等测试数据。
+   ⚠️ src.png（srcImg 示例原图）必须保留：它是相机 demo 占位图 + 无图照片的默认像素化原图，
+   删除会导致相机画面空白、且所有 img=null 的照片无图可画（像素化绑定关系）。 */
+const PHOTOS = [];
 const SEASON_CN = { spring:'春', summer:'夏', autumn:'秋', winter:'冬' };
-let seqNo = 2;          // 已发号
+let seqNo = 0;          // 已发号（清空 demo 后从 0 起，避免票据编号跳号）
 let curPhoto = null;    // 当前详情
 let imgReady = false;
 
@@ -3104,7 +3099,7 @@ function pad2(n){ return String(n).padStart(2,'0'); }
 function pad4(n){ return String(n).padStart(4,'0'); }
 function dexOwnedPhoto(no){ return PHOTOS.find(p => p.made && p.dex === no); }
 function dexOwned(no){ return !!dexOwnedPhoto(no); }
-PHOTOS[0].dex = 1; PHOTOS[1].dex = 2; PHOTOS[2].dex = 3; PHOTOS[3].dex = 4;
+/* 20261108：demo 照片已清空，删除原来的 PHOTOS[0..3].dex 初始化（空数组下会报错） */
 
 function renderWall(filter){
   wallEl.innerHTML = '';
@@ -5118,13 +5113,13 @@ srcImg.onload = () => {
     if (sd) seedPlanetDemoMore(sd);
   } catch(e){}
   const q = new URLSearchParams(location.search).get('s');
-  if (q === 'photo') openPhoto(PHOTOS[2]);
+  if (q === 'photo' && PHOTOS[2]) openPhoto(PHOTOS[2]);
   if (q === 'book'){ showView('vBook'); setTimeout(openBook, 300); }
   if (q === 'book2'){ showView('vBook'); setTimeout(() => { openBook(); bookIdx = 1; renderBookPage(); }, 320); }
-  if (q === 'pressmid'){ openPhoto(PHOTOS[2]); setTimeout(() => demoPressMid(PHOTOS[2], 3), 200); }
+  if (q === 'pressmid' && PHOTOS[2]){ openPhoto(PHOTOS[2]); setTimeout(() => demoPressMid(PHOTOS[2], 3), 200); }
   if (q === 'dex') showView('vDex');
   if (q === 'dexl'){ showView('vDex'); setTimeout(() => openSpecies(DEX[0]), 160); }
-  if (q === 'ticket'){ showView('vBook'); setTimeout(() => openTicket(PHOTOS[0]), 160); }
+  if (q === 'ticket' && PHOTOS[0]){ showView('vBook'); setTimeout(() => openTicket(PHOTOS[0]), 160); }
   if (q === 'planet'){ showView('vPlanet'); setTimeout(maybeCharInvite, 1200); }
   if (q === 'cam') showView('vCamera');
   if (q === 'wall') showView('vWall');
@@ -5523,7 +5518,9 @@ function grabLiveFrame(){
    本地植物识别（quarrying-plant-id 开源模型，BSD 3-Clause）
    ------------------------------------------------------------
    ① 模型：quarrying_plantid_model.onnx（29.5MB，4066 类，iPlant 中国植物图库）
-   ② 引擎：onnxruntime-web 1.19.2（ort.min.js + ort-wasm-simd-threaded.wasm）
+   ② 引擎：onnxruntime-web 1.18.0（ort.min.js + ort-wasm-simd.wasm 单线程版，
+      20261108 从 1.19.2 threaded 版降级——threaded 依赖 SharedArrayBuffer，
+      Capacitor WebView 无 COOP/COEP 拿不到 SAB 导致识别卡死）
    ③ 预处理：照搬 identifier.py —— 短边缩到 224 → 中心裁 224×224 →
        RGB、/255、mean/std 归一化 → CHW 转置加 batch → [1,3,224,224]
    ④ 输出：4066 维 logits → softmax → top-k 中文名 + 学名 + 置信度
@@ -5549,7 +5546,11 @@ function bmPlantEnsureModel(){
     try {
       if (typeof ort === 'undefined') throw new Error('ort 未加载');
       ort.env.wasm.wasmPaths = './';
+      /* 20261108 单线程 wasm 修复：onnxruntime-web 1.18.0 的 ort-wasm-simd.wasm 是单线程版，
+         不依赖 SharedArrayBuffer，在 Capacitor WebView（无 COOP/COEP）里稳定可用。
+         1.19.2 只有 threaded 版，在 WebView 里因拿不到 SAB 卡死（识别 5 分钟根因）。 */
       ort.env.wasm.numThreads = 1;
+      try { ort.env.wasm.proxy = false; } catch(e){}
       const sess = await ort.InferenceSession.create('quarrying_plantid_model.onnx', {
         executionProviders: ['wasm']
       });
@@ -5600,7 +5601,7 @@ function bmPlantPreprocess(src){
   return data;
 }
 
-/* 识别一张图片，返回 { name, latin, cnf }；失败/置信度太低返回 null（由调用方兜底） */
+/* 识别一张图片，返回 { name, latin, cnf }；失败/置信度太低/超时返回 null（由调用方兜底） */
 async function bmPlantRecognize(src){
   const sess = await bmPlantEnsureModel();
   const inputName = sess.inputNames[0];
@@ -5608,7 +5609,12 @@ async function bmPlantRecognize(src){
   const data = bmPlantPreprocess(src);
   const inputTensor = new ort.Tensor('float32', data, [1, 3, 224, 224]);
   const feeds = {}; feeds[inputName] = inputTensor;
-  const results = await sess.run(feeds);
+  /* 20261108 超时兜底：wasm 在个别机型/环境可能卡死（曾出现识别 5 分钟无结果）。
+     推理设 20s 上限，超时直接判「未识别」，绝不把玩家卡死在「识别中」。 */
+  const results = await Promise.race([
+    sess.run(feeds),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('recognize-timeout')), 20000))
+  ]);
   const logits = results[outputName].data;
   /* softmax */
   let max = -Infinity;
@@ -6547,13 +6553,18 @@ function seasonLoad(){
 }
 function _seasonApply(d){
   if (Array.isArray(d.photos) && d.photos.length){
-    /* 保留内置 demo 图（PHOTOS 前 4 张是 const 预置），只追加玩家新增的 */
+    /* PHOTOS 现在是空数组（20261108 已清空 demo），玩家照片全部从存档恢复；
+       按 id 去重，避免重复导入。img 字段是内存对象，恢复时置 null（像素化走 srcImg 或重新拍）。 */
     const existIds = new Set(PHOTOS.map(x => x.id));
     d.photos.forEach(p => {
       if (p && p.id != null && !existIds.has(p.id)){
         PHOTOS.push(Object.assign({}, p, { img: null }));
       }
     });
+    /* 恢复已发号：seqNo 取存档里最大 no，避免制签编号冲突 */
+    let mx = seqNo;
+    PHOTOS.forEach(p => { if (p.no && p.no > mx) mx = p.no; });
+    seqNo = mx;
   }
   if (d.planet && typeof d.planet === 'object'){
     const gp = d.planet;
