@@ -123,8 +123,9 @@ public class BmMusicFloatPlugin extends Plugin {
     private IconBtn modeBtn, listBtn, ppBtn, prevBtn, nextBtn;
     private IconBtn miniPpBtn, miniCollapseBtn, cardCollapseBtn;
 
-    /* 迷你播放列表视图 */
+    /* 迷你播放列表视图（20261109：改成独立系统悬浮窗，自己的 window + 可拖动 + 可关闭） */
     private View miniListPanel;
+    private WindowManager.LayoutParams miniListParams;
 
     /* 进度条 */
     private View progressTrack;
@@ -220,6 +221,13 @@ public class BmMusicFloatPlugin extends Plugin {
     @PluginMethod
     public void update(PluginCall call) {
         try {
+            /* 20261109 真机：窗口可能已被系统/双击移除（overlayRoot 为 null），
+               此时 update 静默成功，JS 以为一切正常 → 悬浮窗永远不再出现。
+               这里显式回 no_window，让 JS 心跳重新 show 一次。 */
+            if (overlayRoot == null || !viewAttached) {
+                resolve(call, false, "no_window");
+                return;
+            }
             // 20261106 修复闪屏：心跳只推 position（不含 title/cover/lyric/playing 等）时，
             //   只做进度增量更新（updateProgressUi），绝不走 refreshAll() 重建歌词/封面，
             //   否则每 500ms 一次 SpannableString 重建 + setText 会造成悬浮窗持续闪屏。
@@ -240,7 +248,13 @@ public class BmMusicFloatPlugin extends Plugin {
                 // 仅进度：改位置 + 只刷进度 UI，不重排视图
                 positionSec = p;
                 lastJsPushElapsed = SystemClock.elapsedRealtime();   // 记录 JS 心跳推送，tick 据此不自推
+                // 20261109 修复「App 挂后台后悬浮窗歌词不滚」：tick 自推基准只在 show 时设过一次，
+                //   后台 JS 冻结后 tick 会拿「首次 show 时刻」当基准 → 越算越偏、钳到末尾、歌词停死。
+                //   每次收到真实 position 就重置基准，断流后从最后真实位置继续自推。
+                tickBaseSec = p;
+                tickStartElapsed = SystemClock.elapsedRealtime();
                 updateProgressUi();
+                renderLyricLines();
                 resolve(call, true, null);
                 return;
             }
@@ -287,6 +301,7 @@ public class BmMusicFloatPlugin extends Plugin {
         // 20261105：完整歌词行数组 [{t,text}]，原生本地推进高亮/滚动
         if (call.hasOption("lyricLines")) {
             lyricTimes.clear(); lyricTexts.clear();
+            lyricActiveIdx = -1;   // 20261109：换歌词后重置高亮下标，否则新歌词沿用旧下标不滚动
             try {
                 org.json.JSONArray arr = call.getArray("lyricLines");
                 if (arr != null) {
@@ -307,6 +322,10 @@ public class BmMusicFloatPlugin extends Plugin {
         if (p != null) {
             positionSec = p;
             lastJsPushElapsed = SystemClock.elapsedRealtime();   // 记录 JS 心跳推送时刻，供 tick 判断是否自推
+            // 20261109：同步重置 tick 自推基准（理由同 onlyProgress 分支），
+            //   保证后台 JS 断流后原生自推从「最后一次真实位置」起算，而不是从首次 show 起算。
+            tickBaseSec = p;
+            tickStartElapsed = SystemClock.elapsedRealtime();
         }
         Integer d = call.getInt("duration");
         if (d != null) durationSec = d;
@@ -398,6 +417,15 @@ public class BmMusicFloatPlugin extends Plugin {
 
         bindRootGesture(root);
         startTicking();
+
+        /* 20261109 真机实测：窗口建好后 form 仍是 0（1 号圆点），桌面上只看得到一个
+           「♪」小圆点 —— 玩家眼里就是「悬浮窗不能用、看不到歌词」。
+           这里建好即展开成 3 号卡片（封面 + 歌词区 + 进度条），玩家能直接看到歌词。 */
+        root.post(new Runnable() {
+            @Override public void run() {
+                try { switchForm(2); } catch (Throwable t) {}
+            }
+        });
     }
 
     /* —— 1号 dot：封面圆点 —— */
@@ -636,7 +664,30 @@ public class BmMusicFloatPlugin extends Plugin {
 
         modeBtn = new IconBtn(getContext(), ICONS_REPEAT, ICON_COLOR_MUTED, dp(40), dp(15), 0x00000000);
         modeBtn.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { try { fireJsEvent("onMode", new JSObject()); } catch (Throwable t) {} }
+            @Override public void onClick(View v) {
+                /* 20261109 真机修复「点左下角循环模式按钮没反应」：
+                   原实现在这里只 fireJsEvent("onMode") 就结束 —— JS 端在遥控模式/App 挂后台
+                   被系统冻结时不一定能执行回调，且执行了也没有把 playMode 推回原生层，
+                   于是原生 refreshModeIcon() 永不重绘 → 点了图标不动、状态也不变（看起来就是坏键）。
+                   现在改为「原生先本地切 + 立刻刷图标 + 再把新值通知 JS 落库」：
+                   与 JS 侧 M.cyclePlayMode() 的顺序严格一致（once → order → shuffle → one）。 */
+                try {
+                    /* 20261109 用户定案：这个键只在【单曲循环 / 列表循环 / 随机播放】三态里循环
+                       （顺序播放 once 不进这个环 —— 用户明确说的是这三种）。
+                       JS 侧玩家内置播放器读到这个值会真实改变行为：
+                         one     → 播完从 0 秒重播当前这首
+                         order   → 播完自动下一首、末尾回到第一首
+                         shuffle → 播完随机抽一首（≠当前） */
+                    if ("one".equals(playMode)) playMode = "order";
+                    else if ("order".equals(playMode)) playMode = "shuffle";
+                    else if ("shuffle".equals(playMode)) playMode = "one";
+                    else playMode = "one";   // once（顺序播放）→ 进入三态循环的第一档
+                    refreshModeIcon();
+                    JSObject data = new JSObject();
+                    data.put("mode", playMode);
+                    fireJsEvent("onMode", data);
+                } catch (Throwable t) {}
+            }
         });
         ctrlRow.addView(modeBtn, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
@@ -1026,13 +1077,35 @@ public class BmMusicFloatPlugin extends Plugin {
 
             panel.addView(col, new FrameLayout.LayoutParams(listW, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-            // 贴附悬浮窗：作为 overlayRoot 的子 View，定位在悬浮窗上方（root 已 setClipChildren(false) 不会被裁剪）
-            final FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(listW, listH);
-            lp.gravity = Gravity.TOP | Gravity.START;
-            // 水平居中于悬浮窗；垂直放在悬浮窗顶部之上（紧贴悬浮窗向上弹出）
-            lp.leftMargin = Math.max(0, (getOverlayWidth() - listW) / 2);
-            lp.topMargin = -listH - dp(6);
-            overlayRoot.addView(panel, lp);
+            /* 20261109 真机修复（用户明确要求「真实唤出原生播放列表悬浮窗，可拖可关，
+               和软件内一致」）：
+               原实现把面板作为 overlayRoot 的子 View、用负 margin 浮在卡片上方 —— 但 form=2 时
+               窗口被 applyCardWindowSize() 钉死成卡片大小，窗口外的东西 WindowManager 根本不绘制，
+               点了等于没点（列表永远看不见）。
+               现有两条路都不走，改成【独立系统悬浮窗】：
+                 · 自己一个 WindowManager 窗口（TYPE_APPLICATION_OVERLAY），
+                   不再受卡片窗口尺寸/裁剪约束；
+                 · 默认贴在卡片右侧（右侧放不下自动翻到左侧），位置离屏自动钳制；
+                 · 头部可拖动、右上角 ✕ 可关闭，行为与软件内播放列表面板一致。 */
+            int baseW0 = getOverlayWidth();
+            int baseX = (layoutParams != null) ? layoutParams.x : dp(24);
+            int baseY = (layoutParams != null) ? layoutParams.y : dp(160);
+            android.util.DisplayMetrics dmW = android.content.res.Resources.getSystem().getDisplayMetrics();
+            int lx = baseX + baseW0 + dp(8);
+            if (lx + listW > dmW.widthPixels) lx = Math.max(0, baseX - listW - dp(8));   // 右边放不下 → 挪到左边
+            int ly = Math.max(0, Math.min(baseY, dmW.heightPixels - listH - dp(8)));
+
+            int winType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    : WindowManager.LayoutParams.TYPE_PHONE;
+            miniListParams = new WindowManager.LayoutParams(
+                    listW, listH, winType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            miniListParams.gravity = Gravity.TOP | Gravity.START;
+            miniListParams.x = lx;
+            miniListParams.y = ly;
+            windowManager.addView(panel, miniListParams);
             miniListPanel = panel;
 
             // 表头作为拖动手柄，整个迷你列表可拖动（独立于悬浮窗）
@@ -1053,17 +1126,17 @@ public class BmMusicFloatPlugin extends Plugin {
                             lastX = e.getRawX(); lastY = e.getRawY();
                             if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return true;   // 微小抖动不视为拖动
                             dragging = true;
-                            lp.leftMargin += (int) dx;
-                            lp.topMargin += (int) dy;
-                            // 边界钳制：mini list 相对 overlayRoot 定位，margin 可负（贴在悬浮窗上方）。
-                            //   这里按屏幕尺寸做宽松钳制，保证列表主体不会完全拖出可视区。
-                            android.util.DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
-                            int minL = -getOverlayWidth() + dp(40);   // 至少留 40dp 在悬浮窗可视范围内
-                            int maxL = dm.widthPixels - dp(40);
-                            int maxT = dm.heightPixels - dp(40);
-                            lp.leftMargin = Math.max(minL, Math.min(maxL, lp.leftMargin));
-                            lp.topMargin = Math.max(-dm.heightPixels, Math.min(maxT, lp.topMargin));
-                            panel.setLayoutParams(lp);
+                            /* 20261109：列表改成独立系统悬浮窗后，拖动直接改它自己的
+                               WindowManager.LayoutParams（不再动 overlayRoot 的 margin）——
+                               头部按住即可把列表拖到任意位置，和软件内浮窗手感一致。 */
+                            if (miniListParams != null) {
+                                miniListParams.x += (int) dx;
+                                miniListParams.y += (int) dy;
+                                android.util.DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
+                                miniListParams.x = Math.max(-listW + dp(48), Math.min(dm.widthPixels - dp(48), miniListParams.x));
+                                miniListParams.y = Math.max(0, Math.min(dm.heightPixels - dp(48), miniListParams.y));
+                                try { windowManager.updateViewLayout(panel, miniListParams); } catch (Throwable t) {}
+                            }
                             return true;
                         }
                         case android.view.MotionEvent.ACTION_UP:
@@ -1084,13 +1157,24 @@ public class BmMusicFloatPlugin extends Plugin {
         return w > 0 ? w : dp(280);
     }
 
+    /* 20261109：当前悬浮窗窗口高度（form=2 时 = 卡片实际尺寸）。
+       供「播放列表抽屉」撑窗时算基准高度，避免把卡片本身撑变形。 */
+    private int getOverlayHeight() {
+        if (overlayRoot == null) return dp(320);
+        int h = overlayRoot.getHeight();
+        return h > 0 ? h : dp(320);
+    }
+
     private void dismissMiniList() {
         try {
-            if (miniListPanel != null && miniListPanel.getParent() != null) {
+            if (miniListPanel != null && windowManager != null) {
+                windowManager.removeView(miniListPanel);   // 20261109：列表已是独立系统悬浮窗，直接移除窗口
+            } else if (miniListPanel != null && miniListPanel.getParent() != null) {
                 ((ViewGroup) miniListPanel.getParent()).removeView(miniListPanel);
             }
         } catch (Throwable t) {}
         miniListPanel = null;
+        miniListParams = null;
     }
 
     private String optStr(JSObject o, String key, String def) {
@@ -1175,6 +1259,13 @@ public class BmMusicFloatPlugin extends Plugin {
                 offset += len + 1;   // +1 换行
             }
             cardLyricLines.setText(ss);
+            // 20261109 修复「2号 mini 形态歌词不跟随」：此前只更新 3 号卡片的多行歌词，
+            //   mini 的单行 miniLyric 只在 applyState 里 setText 一次 → 切歌/走句后永远停住。
+            //   这里随高亮句同步，文本没变则不写（避免无谓重绘导致悬浮窗闪）。
+            if (miniLyric != null) {
+                String cur = (active >= 0 && active < lyricTexts.size()) ? lyricTexts.get(active) : "";
+                if (!cur.equals(String.valueOf(miniLyric.getText()))) miniLyric.setText(cur);
+            }
             // 滚动居中到当前句（只在 active 变化时滚，唱同一句期间不弹回）
             if (active != lyricActiveIdx) {
                 lyricActiveIdx = active;
@@ -1224,8 +1315,11 @@ public class BmMusicFloatPlugin extends Plugin {
             if (modeBtn == null) return;
             String icon;
             if ("shuffle".equals(playMode)) icon = "M2.5 7h3.2c2.2 0 3.2 1.4 4.8 5s2.6 5 4.8 5h1.2M2.5 17h3.2c1 0 1.7-.3 2.4-.9l3-2.4M16.5 5.5L21 7l-1.5 4.5M16.5 15L21 17l-1.5 4.5";
+            /* 20261109：单曲循环必须有辨识度 —— 原来 one 和 order 共用同一个 repeat 图标，
+               玩家点完三档发现"图标永远是那个圈"，自然判定按钮坏了。这里给 one 叠一个居中的「1」。 */
+            else if ("one".equals(playMode)) icon = ICONS_REPEAT + "M11.4 10v4M11.4 10l-1 .85";
             else if ("once".equals(playMode)) icon = "M4.5 12h13M14 6.5l3.5 5.5L14 17.5";
-            else icon = ICONS_REPEAT;   // order / one 都用 repeat（单曲循环视觉同 repeat）
+            else icon = ICONS_REPEAT;   // order：列表循环
             modeBtn.setIcon(icon);
         } catch (Throwable t) {}
     }
@@ -1436,9 +1530,12 @@ public class BmMusicFloatPlugin extends Plugin {
                         //   若 2.5 秒内收到过 JS position 推送，说明 JS 心跳在主导，原生不自推，
                         //   让 JS 心跳作为唯一进度源；JS 心跳中断（页面销毁/挂后台超时）才自推兜底。
                         boolean jsAlive = (SystemClock.elapsedRealtime() - lastJsPushElapsed) < 2500;
-                        if (playing && !seeking && durationSec > 0 && !jsAlive) {
+                        // 20261109 修复「后台歌词不滚」：去掉 durationSec>0 限制——
+                        //   后台 JS 冻结时可能从未推过 duration，原先条件不满足就完全不自推，
+                        //   歌词永远停在推送时那一句。duration 未知时仍可推进并刷新歌词高亮。
+                        if (playing && !seeking && !jsAlive) {
                             positionSec = tickBaseSec + (int) ((SystemClock.elapsedRealtime() - tickStartElapsed) / 1000);
-                            if (positionSec >= durationSec) positionSec = durationSec;
+                            if (durationSec > 0 && positionSec >= durationSec) positionSec = durationSec;
                             updateProgressUi();
                             // 20261105：进度推进时同步刷新歌词高亮/滚动
                             renderLyricLines();
@@ -1595,7 +1692,11 @@ public class BmMusicFloatPlugin extends Plugin {
     private void bringAppToFront() {
         try {
             fireJsEvent("onEnterApp", new JSObject());
-            removeOverlay();
+            // 20261109（用户定案「方案 A」）：双击回 App 时【不拆悬浮窗】。
+            //   原先这里调 removeOverlay()：它把 WindowManager 里的浮层整套摘掉、控件引用置 null，
+            //   而前端 onEnterApp 是空实现 → 结果就是「双击后小窗彻底消失，App 也没跳到音乐页」。
+            //   方案 A：浮窗继续挂在系统层（回到 App 里也看得见那扇小窗），
+            //   只有点「收起」或「结束一起听」才 removeOverlay()。
             android.app.ActivityManager am = (android.app.ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
             if (am != null) {
                 java.util.List<android.app.ActivityManager.AppTask> tasks = null;

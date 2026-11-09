@@ -72,9 +72,16 @@ let chatSettings = {
   musicAuto: true,                 // 20261104：互动B——角色主动搜歌/切歌/收藏（总开关，默认开；开启后一起听期间自动触发，结束一起听自动暂停）
   musicAutoMin: 20,                // 20261104：角色主动音乐操作随机间隔下限（分钟）
   musicAutoMax: 120,               // 20261104：角色主动音乐操作随机间隔上限（分钟）
+  musicModeSwitch: true,           // 20261109：角色自主切换播放模式（总开关，默认开；一起听期间生效）
+  musicModeSwitchMin: 45,          // 20261109：角色自主切模式的随机间隔下限（分钟）
+  musicModeSwitchMax: 90,          // 20261109：角色自主切模式的随机间隔上限（分钟）
+  musicBgAllow: true,              // 20261109：App 在后台时是否允许角色做音乐互动（播放/暂停/切歌/切模式/发邀请）。默认开=允许；关掉=只有前台才动
   musicInvite: false,              // 20261104：角色主动邀请玩家一起听歌（随机固定间隔，默认关）
   musicInviteMin: 120,             // 20261104：角色主动邀请一起听歌间隔下限（分钟）
   musicInviteMax: 480,             // 20261104：角色主动邀请一起听歌间隔上限（分钟）
+  musicSwap: true,                 // 20261109：角色主动问「要不要换一首」/ 让玩家点歌（发卡片，随机固定间隔）
+  musicSwapMin: 90,                // 20261109：角色主动换歌互动间隔下限（分钟）
+  musicSwapMax: 300,               // 20261109：角色主动换歌互动间隔上限（分钟）
   musicPeek: true,                 // 20261104：互动A——角色偷偷查看玩家歌单/随机收藏/后台随机听歌记录（默认开启）
   musicPeekMin: 60,                // 20261104：角色偷看玩家歌单间隔下限（分钟）
   musicPeekMax: 240,               // 20261104：角色偷看玩家歌单间隔上限（分钟）
@@ -1977,6 +1984,7 @@ async function renderChatList() {
       else if (lastMsg.type === 'image') brief = speakerName + '：[图片]';
       else if (lastMsg.type === 'share') brief = speakerName + '：[朋友圈分享]';
       else if (lastMsg.type === 'music') brief = speakerName + '：[一起听歌]';
+      else if (lastMsg.type === 'seasonlove') brief = speakerName + '：[四季邀请]';
       else if (lastMsg.type === 'poke') brief = '[戳一戳]';
       else if (lastMsg.type === 'survey') brief = speakerName + '：[问卷]';
       else if (lastMsg.type === 'grouppacket') brief = speakerName === '我' ? '你发了群红包' : speakerName + '：[群红包]';
@@ -2043,6 +2051,7 @@ async function renderChatList() {
       else if (lastMsg.type === 'letter') brief = lastMsg.from === 'me' ? '[寄出的书信]' : '[收到的书信]';
       else if (lastMsg.type === 'share') brief = '[朋友圈分享]';
       else if (lastMsg.type === 'music') brief = '[一起听歌]';
+      else if (lastMsg.type === 'seasonlove') brief = '[四季邀请]';
       else if (lastMsg.type === 'survey') brief = lastMsg.from === 'me' ? '[发出的问卷]' : '[问卷]';
       else if (typeof lastMsg.content === 'string') brief = lastMsg.content;
       else brief = '[卡片消息]';
@@ -3850,6 +3859,17 @@ function msgBodyHtml(m, oneLine = false) {
         <div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);">分享给你的一段设定</div>
       </div>`;
     }
+    case 'seasonlove': {
+      // 20261109：四季「一起浇灌爱意」邀请卡 —— 角色在后台发起时发到聊天页。
+      // 点一下直接进四季（完整播放开屏动画，绝不加 nosplash）。
+      const sl = m.content || {};
+      return `<div class="msg-card msg-season-love-card" data-season-love="${escapeHtml(m.charId || '')}" style="cursor:pointer;">
+        <span class="msg-card-tag">🌱 四季 · 一起照料</span>
+        <div style="margin-top:8px;font-size:14px;font-weight:600;line-height:1.5;">${escapeHtml(sl.name || 'TA')} 想邀请你一起照料植物</div>
+        <div style="margin-top:6px;font-size:12.5px;color:var(--text-secondary);line-height:1.6;word-break:break-word;">${escapeHtml(sl.text || '去星球上一起浇浇水吧')}</div>
+        <div style="margin-top:8px;font-size:11.5px;color:var(--text-tertiary);">点一下，去它的星球</div>
+      </div>`;
+    }
     case 'music': {
       // 一起听歌卡片（玩家邀请访客一起听歌时发到聊天页）
       const mc = m.content || {};
@@ -3881,6 +3901,43 @@ function msgBodyHtml(m, oneLine = false) {
         </div>
         ${mcc.lyric ? `<div style="margin-top:8px;font-size:12.5px;line-height:1.6;color:var(--text-secondary);font-style:italic;">「${escapeHtml(mcc.lyric)}」</div>` : ''}
         <div style="margin-top:8px;font-size:13px;line-height:1.6;color:var(--purple-soft);word-break:break-word;">${escapeHtml(mcc.wish || '这首歌，送给你。')}</div>
+      </div>`;
+    }
+    case 'songpick': {
+      /* 20261109 新增：角色的「换歌 / 点歌」卡片
+         mode:'ask'  —— 问要不要换一首（候选 3 首可点，底部「就听这首」= 不换）
+         mode:'pick' —— 让玩家点歌（候选 3 首可点，底部「让 TA 帮我选」）
+         点击逻辑见 appendMessage 末尾的 [data-songpick] 绑定 → bmMusicUI.playPickedSong。 */
+      const sp = m.content || {};
+      const songs = Array.isArray(sp.songs) ? sp.songs : [];
+      const done = !!sp.answered;
+      const pickedName = sp.pickedName || '';
+      const rowHtml = songs.map((s, i) => {
+        const cover = s.pic
+          ? `<img src="${escapeHtml(imgSrc(s.pic, true))}" referrerpolicy="no-referrer" style="width:36px;height:36px;border-radius:7px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);">`
+          : `<span style="width:36px;height:36px;border-radius:7px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">♪</span>`;
+        const isPicked = done && sp.picked === i;
+        return `<div data-songidx="${i}" style="display:flex;align-items:center;gap:9px;margin-top:8px;padding:6px;border-radius:9px;background:${isPicked ? 'var(--purple-glow)' : 'transparent'};${done ? 'opacity:.62;' : 'cursor:pointer;'}">
+            ${cover}
+            <div style="min-width:0;flex:1;">
+              <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.name || '')}</div>
+              <div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;">${escapeHtml(s.artist || '')}</div>
+            </div>
+            ${isPicked ? '<span style="font-size:11px;color:var(--purple);flex-shrink:0;">已选</span>'
+                       : (done ? '' : '<span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">▸</span>')}
+          </div>`;
+      }).join('');
+      const footHtml = done
+        ? `<div style="margin-top:10px;font-size:11.5px;color:var(--text-tertiary);">${sp.declined ? '你说先听这首' : (pickedName ? ('已换成《' + escapeHtml(pickedName) + '》') : '已交给 TA 挑')}</div>`
+        : (sp.mode === 'pick'
+            ? `<button class="btn" data-songpick-rand="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">让 ${escapeHtml(((characters.find(x => x.id === m.charId) || {}).name) || 'TA')} 帮我选</button>`
+            : `<button class="btn" data-songpick-no="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">就听这首</button>`);
+      return `<div class="msg-card msg-song-card" data-songpick="${m.id}">
+        <span class="msg-card-tag">🎧 ${sp.mode === 'pick' ? 'TA 想让你点一首' : 'TA 想换首歌'}</span>
+        <div style="margin-top:7px;font-size:13.5px;font-weight:600;line-height:1.5;">${escapeHtml(sp.title || '要换一首吗')}</div>
+        <div style="margin-top:3px;font-size:12px;color:var(--text-secondary);line-height:1.55;">${escapeHtml(sp.tip || '')}</div>
+        ${rowHtml}
+        ${footHtml}
       </div>`;
     }
     case 'video': {
@@ -4280,6 +4337,32 @@ function appendMessage(m, scroll = true, container = null) {
     };
   }
 
+  /* 20261109 新增：角色的「换歌 / 点歌」卡片
+     · 点某一行 → 真的换歌并播放（走 music.js playPickedSong，遥控模式转发 next 给外部 App）
+     · 「让 TA 帮我选」→ 角色自己随机挑一首（走玩家请求链路，含概率同意/拒绝）
+     · 「就听这首」→ 不换，回一条垫片收场 */
+  const songPickEl = row.querySelector('[data-songpick]');
+  if (songPickEl && !(m.content && m.content.answered)) {
+    songPickEl.querySelectorAll('[data-songidx]').forEach((el2) => {
+      el2.onclick = (ev) => {
+        ev.stopPropagation();
+        const idx = parseInt(el2.getAttribute('data-songidx'), 10);
+        if (Number.isNaN(idx)) return;
+        if (window.bmMusicUI && window.bmMusicUI.playPickedSong) window.bmMusicUI.playPickedSong(m.id, idx);
+      };
+    });
+    const randBtn = songPickEl.querySelector('[data-songpick-rand]');
+    if (randBtn) randBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      if (window.bmMusicUI && window.bmMusicUI.playPickedSong) window.bmMusicUI.playPickedSong(m.id, -1);
+    };
+    const noBtn = songPickEl.querySelector('[data-songpick-no]');
+    if (noBtn) noBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      if (window.bmMusicUI && window.bmMusicUI.declineSongSwap) window.bmMusicUI.declineSongSwap(m.id);
+    };
+  }
+
   // 超频礼物卡片（20260929ap 重做）：未打开 → 播打开动画 → 紫色星际弹窗；已打开/我送的 → 直接弹窗
   const giftEl = row.querySelector('[data-gift-card]');
   if (giftEl) {
@@ -4626,6 +4709,21 @@ function scrollToBottom() {
 }
 
 /* ---------- 发送消息 + 字卡回复逻辑 ---------- */
+/* 20261109 新增：聊天框「让 TA 换一首」识别。
+   只认明确指向换歌的短句（≤24 字），避免正常聊天里带个「换」字就误触发。
+   命中后交给 music.js 的 playerAskSongSwap：角色概率答应（真换歌播放）/ 概率拒绝（聊天框留小垫片）。 */
+function maybeDetectSongSwapRequest(charId, text) {
+  const s = String(text || '').trim();
+  if (!s || s.length > 24 || !charId) return false;
+  const hit = /(换|切)(一?首|个|一下)?(歌|曲子|音乐)|换(一?首|个)吧|这首(歌)?(不好听|听腻了|太难听|不喜欢)|换个(歌|曲子)|来点别的(歌|音乐)/.test(s);
+  if (!hit) return false;
+  const ui = window.bmMusicUI;
+  if (!ui || typeof ui.playerAskSongSwap !== 'function') return false;
+  // 稍等一拍：玩家的消息先上屏，角色再"考虑一下"回话，节奏更像真人
+  setTimeout(() => { try { ui.playerAskSongSwap(charId, { src: 'chat' }); } catch (e) {} }, 700);
+  return true;
+}
+
 async function sendMessage(text) {
   // 群聊走群聊发送
   if (currentGroupId) {
@@ -4658,6 +4756,8 @@ async function sendMessage(text) {
   try { maybeDetectScheduleRecord(currentCharId, trimmed); } catch (e) {}
   // 20261002ch：重要日期检测（字卡模式本地兜底，AI 模式走 [[ANNIV:]] 标签）
   try { maybeDetectImportantDate(currentCharId, trimmed); } catch (e) {}
+  // 20261109：聊天框「让 TA 换一首」自然语言识别（概率同意/拒绝，走音乐模块真换歌）
+  try { maybeDetectSongSwapRequest(currentCharId, trimmed); } catch (e) {}
 
   // 角色回复
   await scheduleCharReply(currentCharId);
@@ -5955,7 +6055,9 @@ let _packetUntil = {};   // 20260929ba 随机红包：按角色记录「下次�
 let _emojiUntil = {};    // 20261005dy 表情包主动发：按角色记录「下次发表情包时间点」（随机区间，比主动消息更长）
 let _multiCardUntil = {}; // 20261031：多字卡组合回复——按角色记录「下次触发时间点」（独立随机固定间隔，与打字卡/主动消息无关）
 let _musicAutoUntil = {}; // 20261104：角色主动搜歌/切歌/收藏——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
+let _musicModeSwitchUntil = {}; // 20261109：角色自主切换播放模式——按角色记录「下次可切换时间点」（随机固定间隔，独立开关）
 let _musicInviteUntil = {}; // 20261104：角色主动邀请玩家一起听歌——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
+let _musicSwapUntil = {};   // 20261109：角色主动问「要不要换一首」/ 让玩家点歌——按角色记录「下次触发时间点」
 let _musicPeekUntil = {}; // 20261104：角色偷偷查看玩家歌单——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
 let _earListenUntil = {}; // 20261105：角色「戴耳机听歌」生成幽灵听歌记录——按角色记录「下次触发时间点」（随机固定间隔，独立）
 let _charCollectUntil = {}; // 20261105：一起听歌时角色随机收藏歌曲——按角色记录「下次触发时间点」（随机固定间隔）
@@ -6194,7 +6296,12 @@ async function __proactiveScan() {
       //     （其内部仍有 togetherSince 判断兜底，只有真的正在一起听才真正动作）。
       //     不设防刷屏冷却锁（文档一·4：随机固定间隔本身即防刷屏）。
       const _togetherNow = !!(window.bmMusic && window.bmMusic.state && window.bmMusic.state.charId === c.id && window.bmMusic.state.togetherSince);
-      if (s.musicAuto && _togetherNow) {
+      /* 20261109 用户新增：App 在后台（锁屏 / 切到别的应用 / 只有系统悬浮窗）时，
+         是否允许角色自己播放、暂停、切歌、切播放模式、发邀请、偷看歌单。
+         musicBgAllow 默认 true=允许；关掉后 bmIsBg() 成立时一律不动，
+         后台只保留「歌继续放着」，回到前台立刻恢复（计时下次重新播种）。 */
+      const _musicBgOk = (s.musicBgAllow !== false) || !bmIsBg();
+      if (s.musicAuto && _togetherNow && _musicBgOk) {
         const muLo = Math.max(1, Math.min(720, parseInt(s.musicAutoMin, 10) || 20));
         const muHi = Math.max(1, Math.min(720, parseInt(s.musicAutoMax, 10) || 120));
         const muIvMin = Math.min(muLo, muHi), muIvMax = Math.max(muLo, muHi);
@@ -6211,10 +6318,33 @@ async function __proactiveScan() {
         delete _musicAutoUntil[c.id]; // 不在听即清除，重新进入一起听再重新播种
       }
 
+      // —— 角色自主切换播放模式（20261109 新增，用户定案）——
+      //     总开关 musicModeSwitch（默认开）+ 随机固定间隔（musicModeSwitchMin~Max，默认 45~90 分钟）。
+      //     与 musicAuto 同一节拍判断：只有「正在和该角色一起听歌」时才触发。
+      //     到点调用 music.js 的 charSwitchPlayMode：角色从 镜像搜索 / 后台遥控 / 网易云直连 /
+      //     本地与解析 里随机挑一个切过去（本地曲库为空时绝不选 local；可以切走玩家手动选的模式），
+      //     切完立即落库（顶替玩家上次记忆）并发一条通知（遵循玩家选的 聊天框/提示条/不提示）。
+      if (s.musicModeSwitch !== false && _togetherNow && _musicBgOk) {
+        const msLo = Math.max(1, Math.min(1440, parseInt(s.musicModeSwitchMin, 10) || 45));
+        const msHi = Math.max(1, Math.min(1440, parseInt(s.musicModeSwitchMax, 10) || 90));
+        const msIvMin = Math.min(msLo, msHi), msIvMax = Math.max(msLo, msHi);
+        const nextMsIv = () => msIvMin + Math.floor(Math.random() * (msIvMax - msIvMin + 1));
+        if (!_musicModeSwitchUntil[c.id]) {
+          _musicModeSwitchUntil[c.id] = now + nextMsIv() * 60000; // 首次播种
+        } else if (now >= _musicModeSwitchUntil[c.id]) {
+          _musicModeSwitchUntil[c.id] = now + nextMsIv() * 60000; // 重排下一次
+          try {
+            if (window.bmMusicUI && window.bmMusicUI.charSwitchPlayMode) await window.bmMusicUI.charSwitchPlayMode(c.id);
+          } catch (e) {}
+        }
+      } else if (_musicModeSwitchUntil[c.id]) {
+        delete _musicModeSwitchUntil[c.id]; // 不在听即清除，下次一起听重新播种
+      }
+
       // —— 角色主动邀请玩家一起听歌（20261104：角色主动发起听歌邀请，玩家可同意/拒绝）——
       //     随机固定间隔（musicInviteMin~Max，默认 120~480 分钟，比主动操作更稀疏）。
       //     只对开启 musicInvite 的角色生效；到点调用 music.js 的 charInviteTogether。
-      if (s.musicInvite) {
+      if (s.musicInvite && _musicBgOk) {
         const viLo = Math.max(1, Math.min(1440, parseInt(s.musicInviteMin, 10) || 120));
         const viHi = Math.max(1, Math.min(1440, parseInt(s.musicInviteMax, 10) || 480));
         const viIvMin = Math.min(viLo, viHi), viIvMax = Math.max(viLo, viHi);
@@ -6231,10 +6361,32 @@ async function __proactiveScan() {
         delete _musicInviteUntil[c.id];
       }
 
+      // —— 角色主动问「要不要换一首」/ 让玩家点歌（20261109 新增，用户需求）——
+      //     随机固定间隔（musicSwapMin~Max，默认 90~300 分钟）。到点调用 music.js 的
+      //     charAskSongSwap：50% 问「要不要换」（卡片带 3 首候选 + 「就听这首」），
+      //     50% 让玩家点歌（卡片 3 首 + 「让 TA 帮我选」）。玩家点完真的会切歌播放。
+      //     与其它音乐互动共用 musicBgAllow 后台闸。
+      if (s.musicSwap !== false && _musicBgOk) {
+        const swLo = Math.max(1, Math.min(1440, parseInt(s.musicSwapMin, 10) || 90));
+        const swHi = Math.max(1, Math.min(1440, parseInt(s.musicSwapMax, 10) || 300));
+        const swIvMin = Math.min(swLo, swHi), swIvMax = Math.max(swLo, swHi);
+        const nextSwIv = () => swIvMin + Math.floor(Math.random() * (swIvMax - swIvMin + 1));
+        if (!_musicSwapUntil[c.id]) {
+          _musicSwapUntil[c.id] = now + nextSwIv() * 60000;   // 首次播种
+        } else if (now >= _musicSwapUntil[c.id]) {
+          _musicSwapUntil[c.id] = now + nextSwIv() * 60000;   // 重排下一次
+          try {
+            if (window.bmMusicUI && window.bmMusicUI.charAskSongSwap) await window.bmMusicUI.charAskSongSwap(c.id);
+          } catch (e) {}
+        }
+      } else if (_musicSwapUntil[c.id]) {
+        delete _musicSwapUntil[c.id];
+      }
+
       // —— 角色偷偷查看玩家歌单（20261104：角色随机偷看玩家歌单，留足迹提醒）——
       //     随机固定间隔（musicPeekMin~Max，默认 60~240 分钟）；到点调用 music.js 的 charPeekPlaylist。
       //     只对开启 musicPeek 的角色生效。
-      if (s.musicPeek) {
+      if (s.musicPeek && _musicBgOk) {
         const peLo = Math.max(1, Math.min(1440, parseInt(s.musicPeekMin, 10) || 60));
         const peHi = Math.max(1, Math.min(1440, parseInt(s.musicPeekMax, 10) || 240));
         const peIvMin = Math.min(peLo, peHi), peIvMax = Math.max(peLo, peHi);
@@ -6256,7 +6408,7 @@ async function __proactiveScan() {
       //     到点随机选「从玩家歌单偷听一首」或「自己搜一首新歌来听」，写 kind:'ear' 幽灵听歌记录。
       //     随机固定间隔（earListenMin~Max，默认 40~360 分钟，拉长更稀疏）。复用 musicPeek 开关作为总闸
       //     （角色耳机也归「角色偷偷查看歌单/后台听歌」这一组互动，开关一致，避免多一个独立开关）。
-      if (s.musicPeek) {
+      if (s.musicPeek && _musicBgOk) {
         const elLo = Math.max(1, Math.min(1440, parseInt(s.earListenMin, 10) || 40));
         const elHi = Math.max(1, Math.min(1440, parseInt(s.earListenMax, 10) || 360));
         const elIvMin = Math.min(elLo, elHi), elIvMax = Math.max(elLo, elHi);
@@ -6276,7 +6428,7 @@ async function __proactiveScan() {
       // —— 角色一起听歌时随机收藏歌曲（20261105：独立随机固定间隔，仅「正在一起听」时触发）——
       //     到点从当前播放/播放列表里随机收藏一首进角色自己的歌单（source:'visitor'）。
       //     随机固定间隔（charCollectMin~Max，默认 40~180 分钟）。总闸复用在 musicAuto（一起听联动）。
-      if (s.musicAuto && _togetherNow) {
+      if (s.musicAuto && _togetherNow && _musicBgOk) {
         const ccLo = Math.max(1, Math.min(720, parseInt(s.charCollectMin, 10) || 40));
         const ccHi = Math.max(1, Math.min(720, parseInt(s.charCollectMax, 10) || 180));
         const ccIvMin = Math.min(ccLo, ccHi), ccIvMax = Math.max(ccLo, ccHi);
@@ -6534,6 +6686,8 @@ async function _doAnnivCelebration(c, annivList) {
       _seasonFrame.contentWindow.postMessage({ type: 'season-tick' }, '*');
     }
   } catch (e) {}
+  // 20261109：四季后台结算（生长按真实时间 / 角色后台照料 / 三类通知）
+  try { await _seasonBgTick(); } catch (e) {}
 }
 
 /* 角色向玩家转账（char_to_me，待领取）：从访客钱包真扣款，玩家可在卡片内领取或退回
@@ -10332,6 +10486,16 @@ function showShareMediaEntry() {
         <span style="font-size:11px;color:var(--text-tertiary);">一起看视频</span>
       </button>
     </div>
+    <!-- 20261109 新增（用户要求放在「音乐」下方）：让角色换一首。
+         真实走音乐模块：概率同意 → 从播放列表随机抽一首 / 按关键词搜一首播放；
+         概率拒绝 → 在聊天框留一条小垫片式的拒绝话（不弹窗、不打断）。 -->
+    <button class="btn" id="sm-swap" style="width:100%;margin-top:12px;height:48px;display:flex;align-items:center;justify-content:center;gap:8px;">
+      <span style="font-size:18px;">🎧</span>
+      <span style="font-size:13.5px;font-weight:600;">让${c ? escapeHtml(c.name || 'TA') : '角色'}换一首</span>
+    </button>
+    <div style="margin-top:7px;font-size:11.5px;color:var(--text-tertiary);line-height:1.6;text-align:center;">
+      ${c ? `${escapeHtml(c.name || 'TA')} 不一定会答应 —— 答应了会直接换一首放给你听，拒绝了会在聊天里回你一句。` : '进入角色聊天后可用。'}
+    </div>
   `);
   $('#sm-close').onclick = () => closeModal();
   $('#sm-music').onclick = () => {
@@ -10341,6 +10505,14 @@ function showShareMediaEntry() {
   $('#sm-video').onclick = () => {
     closeModal();
     showVideoEntry();
+  };
+  const smSwap = $('#sm-swap');
+  if (smSwap) smSwap.onclick = async () => {
+    closeModal();
+    if (!cid) { miniToast('先进一个角色的聊天再试'); return; }
+    if (!(window.bmMusicUI && window.bmMusicUI.playerAskSongSwap)) { miniToast('音乐功能未就绪'); return; }
+    miniToast('看看 TA 答不答应…');
+    try { await window.bmMusicUI.playerAskSongSwap(cid, { src: 'btn' }); } catch (e) {}
   };
 }
 
@@ -11546,6 +11718,51 @@ function closeSeasonLayer() {
   try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
   _seasonCurrentCharId = null;
 }
+/* 20261109：取某个角色自己的回复字卡池（已按它的禁用词/禁用分组过滤）。
+   四季字卡模式只拿这一份，A 角色的卡不会跑到 B 角色的星球上。
+   ⚠️ 主项目字卡没有 scene/plant/miss 分类，统一塞 scene，四季 playerCardPool
+      在其他 kind 缺池时会自动回退 scene，不影响「2~3 张拼句」。 */
+function _seasonCardPoolFor(c) {
+  if (!c) return [];
+  let banWords = [];
+  try { banWords = (typeof getCharBanWords === 'function') ? (getCharBanWords(c) || []) : []; } catch (e) {}
+  const bannedGroups = Array.isArray(c.bannedGroups) ? c.bannedGroups : [];
+  let list = ((cards && cards.customReplies) || []).slice();
+  ((cards && cards.customReplyGroups) || []).forEach(function (g) {
+    if (!g || bannedGroups.indexOf(g.id) >= 0) return;
+    list = list.concat(g.items || []);
+  });
+  list = list.map(function (t) { return String(t || '').trim(); }).filter(Boolean);
+  if (banWords.length) {
+    list = list.filter(function (t) {
+      return !banWords.some(function (w) { return w && t.indexOf(w) >= 0; });
+    });
+  }
+  return list;
+}
+/* 20261109：四季角色互动节奏（三组随机固定区间）统一取值。
+   当前进入的角色用 getCharChatSettings 合并角色级覆盖，未设则继承全局。
+   下发（season-init）与热更新（season-gaps）共用这一份，避免两处算错。 */
+function _seasonGapsOf() {
+  const cur = (characters || []).find(x => x.id === (_seasonCurrentCharId || null));
+  const cs = cur ? getCharChatSettings(cur) : chatSettings;
+  return {
+    careGapMin: cs.seasonCareGapMin ?? chatSettings.seasonCareGapMin ?? 30,
+    careGapMax: cs.seasonCareGapMax ?? chatSettings.seasonCareGapMax ?? 90,
+    cardGapMin: cs.seasonCardGapMin ?? chatSettings.seasonCardGapMin ?? 120,
+    cardGapMax: cs.seasonCardGapMax ?? chatSettings.seasonCardGapMax ?? 240,
+    aiGapMin: cs.seasonAiGapMin ?? chatSettings.seasonAiGapMin ?? 30,
+    aiGapMax: cs.seasonAiGapMax ?? chatSettings.seasonAiGapMax ?? 120,
+  };
+}
+/* 20261109：只推「四季互动节奏」——玩家在聊天设置里改完那三组随机间隔后，
+   四季页若正开着，立刻把新值推过去生效，不必关掉重进。
+   （season-init 是整包初始化，重推会把星球视角重置，所以单开一条轻量消息。） */
+function _seasonPushGaps() {
+  const frame = document.getElementById('season-frame');
+  if (!frame || !frame.contentWindow) return;
+  try { frame.contentWindow.postMessage({ type: 'season-gaps', seasonGaps: _seasonGapsOf() }, '*'); } catch (e) {}
+}
 /* 把主项目真实角色 + 玩家回复字卡库推给四季（四季 season-init ready 后调用） */
 async function _seasonPushInit() {
   const frame = document.getElementById('season-frame');
@@ -11557,30 +11774,29 @@ async function _seasonPushInit() {
     tag: (x.desc || x.signature || '').slice(0, 20) || '',
     tone: 'warm', // 四季按 tone 决定 TA 自己种种子的等待时长；主项目角色无 tone，先统一 warm，后续可接性格
   }));
-  // 字卡：主项目「回复字卡 + 回复分组」抽成字符串数组，全部作为四季 scene 池（四季注释：无分类则全塞 scene）
-  const replyPool = ((cards && cards.customReplies) || [])
-    .concat(((cards && cards.customReplyGroups) || []).flatMap(g => g.items || []))
-    .map(t => String(t || '').trim())
-    .filter(t => t);
+  // 20261109：按角色各下一份字卡池（每个角色只拿自己的，受自己的禁用词/禁用分组约束）
+  const cardPools = {};
+  (characters || []).forEach(function (c) {
+    const pool = _seasonCardPoolFor(c);
+    cardPools[c.id] = { scene: pool, plant: pool, miss: pool, ask: pool, tail: pool };
+  });
+  // 兼容旧字段：整体池仍下发（四季在按角色池缺失时才回退到它）
+  const replyPool = _seasonCardPoolFor(
+    (characters || []).find(x => x.id === (_seasonCurrentCharId || null)) || null
+  );
+  // 20261109：互动模式按「这个角色在主项目里的模式」走（字卡 / AI），不再写死
+  let seasonMode = 'card';
+  try { seasonMode = (await isCharAIMode(_seasonCurrentCharId || null)) ? 'ai' : 'card'; } catch (e) {}
   frame.contentWindow.postMessage({
     type: 'season-init',
     chars,
     currentCharId: _seasonCurrentCharId || null,
-    cardPool: { scene: replyPool }, // 四季 playerCardPool 适配：只提供一个 scene 池
+    mode: seasonMode,          // 'ai' | 'card'
+    cardPools: cardPools,      // charId → 该角色自己的字卡
+    cardPool: { scene: replyPool }, // 兼容旧字段
     // 20261108：四季角色互动节奏（照料/抽卡留言/AI 兜底间隔，随机固定区间，分钟），
     // 当前进入的角色用 getCharChatSettings 合并角色级覆盖，未设则继承全局
-    seasonGaps: (() => {
-      const cur = (characters || []).find(x => x.id === (_seasonCurrentCharId || null));
-      const cs = cur ? getCharChatSettings(cur) : chatSettings;
-      return {
-        careGapMin: cs.seasonCareGapMin ?? chatSettings.seasonCareGapMin ?? 30,
-        careGapMax: cs.seasonCareGapMax ?? chatSettings.seasonCareGapMax ?? 90,
-        cardGapMin: cs.seasonCardGapMin ?? chatSettings.seasonCardGapMin ?? 120,
-        cardGapMax: cs.seasonCardGapMax ?? chatSettings.seasonCardGapMax ?? 240,
-        aiGapMin: cs.seasonAiGapMin ?? chatSettings.seasonAiGapMin ?? 30,
-        aiGapMax: cs.seasonAiGapMax ?? chatSettings.seasonAiGapMax ?? 120,
-      };
-    })(),
+    seasonGaps: _seasonGapsOf(),
   }, '*');
 }
 /* 四季消息监听（常驻） */
@@ -11596,6 +11812,12 @@ async function _seasonPushInit() {
     } else if (d.type === 'season-save-image') {
       // 四季保存图片：主项目侧落地（预留，四季若已自行下载则无需处理）
       try { if (d.name && d.dataUrl) { const a = document.createElement('a'); a.href = d.dataUrl; a.download = d.name || 'season.png'; document.body.appendChild(a); a.click(); a.remove(); } } catch (e) {}
+    } else if (d.type === 'season-gen-request') {
+      // 20261109：四季向主项目要一句话 / 要一个决策（AI 模式）
+      _seasonGenReply(d);
+    } else if (d.type === 'season-event') {
+      // 20261109：四季把发生的事报上来（写记忆宫殿 / 通知）
+      _seasonOnEvent(d);
     } else if (d.type === 'season-taplant') {
       // 20261108：四季「TA 自己把种子种下去」到点结算后回发，主项目弹通知提醒玩家
       const tn = (d.charName && d.charName !== 'TA') ? d.charName : 'TA';
@@ -11607,6 +11829,328 @@ async function _seasonPushInit() {
   });
 })();
 
+
+/* ============================================================
+   20261109：四季 · 主项目生成层
+   ------------------------------------------------------------
+   四季在 iframe 里，没有模型能力。所有「AI 模式要说的话」都走这里：
+     请求 { type:'season-gen-request', reqId, charId, kind, payload }
+     回执 { type:'season-gen-result', reqId, text } 或 { action, plantId, text }
+   kind 含义：
+     'book'   书签便签留言（书签集那句）
+     'reply'  收到书签的回应（星球/植物下方那句，可能带玩家寄语）
+     'card'   平时的抽卡留言
+     'love'   邀请一起浇灌爱意要说的话
+     'decide' AI 模式的动作决策（care/love/card/none）
+   ★ 字卡模式一律回 text:null —— 四季本地用它自己的字卡池拼，少一次往返。
+   ★ AI 说 null 就是「这回不想说话」，四季不会硬塞文案。
+   ============================================================ */
+function _seasonFrameWin() {
+  const f = document.getElementById('season-frame');
+  return (f && f.contentWindow) ? f.contentWindow : null;
+}
+function _seasonGenResult(reqId, obj) {
+  const cw = _seasonFrameWin();
+  if (!cw) return;
+  try { cw.postMessage(Object.assign({ type: 'season-gen-result', reqId: reqId }, obj || {}), '*'); } catch (e) {}
+}
+function _seasonSceneText(p) {
+  const lines = [];
+  const plants = Array.isArray(p && p.plants) ? p.plants : [];
+  if (plants.length) {
+    lines.push('【你星球上的植物（实时状态）】');
+    plants.forEach(function (x) {
+      const bits = [x.name + '：' + x.stage + '（' + x.growPct + '%）'];
+      if (x.burned) bits.push('烧苗了');
+      if (x.dead) bits.push('已经枯了');
+      if (x.mutant) bits.push('变异株');
+      if (x.daysNoWater != null) bits.push(x.daysNoWater + '天没浇水');
+      if (x.daysNoFert != null) bits.push(x.daysNoFert + '天没施肥');
+      lines.push('- ' + bits.join('，'));
+    });
+  }
+  const books = Array.isArray(p && p.books) ? p.books : [];
+  if (books.length) {
+    lines.push('【你收到过的书签】');
+    books.slice(-8).forEach(function (b) {
+      lines.push('- 「' + b.name + '」' + (b.myMsg ? '（玩家寄语：' + b.myMsg + '）' : '') + (b.taNote ? '（你曾在便签上写：' + b.taNote + '）' : ''));
+    });
+  }
+  return lines.join('\n');
+}
+function _seasonAsk(kind, p) {
+  p = p || {};
+  if (kind === 'book') {
+    return '你在书签册里翻到了一枚「' + (p.bookName || '书签') + '」书签' +
+      (p.myMsg ? '，上面有玩家写的一句话：「' + p.myMsg + '」' : '') +
+      '。写一句你此刻想说的话：不超过 25 字，只输出这一句本身，不要动作描写、不要括号、不要解释。';
+  }
+  if (kind === 'reply') {
+    return '玩家刚送给你一枚「' + (p.bookName || '书签') + '」书签。' +
+      (p.first ? '这是你第一次收到这个品种。' : '') +
+      (p.myMsg ? '玩家在书签上写了寄语：「' + p.myMsg + '」——你在星球上看到了它，回一句话（35 字内），要体现出你读到了这句寄语。'
+               : '玩家没有写寄语。你在星球上看到了这枚书签，说一句话（30 字内）。') +
+      '只输出这句话本身，不要动作描写、不要括号。';
+  }
+  if (kind === 'love') {
+    return '你想邀请玩家一起浇灌某株植物。写一句邀请的话，25 字内，只输出这句话本身。';
+  }
+  return '你现在在自己的星球上，看着上面这些植物。对玩家说一句自然的话，35 字内，只输出这句话本身。';
+}
+async function _seasonGenReply(d) {
+  const reqId = d && d.reqId;
+  const kind = (d && d.kind) || 'card';
+  const cid = (d && d.charId) || _seasonCurrentCharId || null;
+  try {
+    // 字卡模式：本地拼句就行，不用往返
+    let aiOn = false;
+    try { aiOn = await isCharAIMode(cid); } catch (e) { aiOn = false; }
+    if (!aiOn) { _seasonGenResult(reqId, { text: null }); return; }
+    const cfg = await loadAIConfig();
+    if (!(cfg.chatApi && cfg.chatApi.url)) { _seasonGenResult(reqId, { text: null }); return; }
+    const ctx = await buildCharAIContext(cid, []);
+    const scene = _seasonSceneText((d && d.payload) || {});
+    const sys = '你是角色扮演 AI，正在扮演下面这个角色，用第一人称说话。' +
+      '不要提"AI""模型""系统"，不要写动作描写和括号，不要解释自己在做什么，只输出台词本身。\n\n' +
+      ctx + (scene ? '\n\n' + scene : '');
+    let ask = _seasonAsk(kind, (d && d.payload) || {});
+    if (kind === 'decide') {
+      ask = '现在由你决定这一刻做什么（可以什么都不做）。从下面选一个，只输出 JSON：\n' +
+        '{"action":"care|love|card|none","plantId":"植物id或空","text":"要说的话，没有就空"}\n' +
+        '· care＝去照顾其中一株（浇水/松土等）\n· love＝邀请玩家一起浇灌爱意\n' +
+        '· card＝说一句日常的话\n· none＝什么都不做（允许，而且很常见）';
+    }
+    const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+      { role: 'system', content: sys },
+      { role: 'user', content: ask },
+    ], { temperature: kind === 'decide' ? 0.6 : 0.95, timeout: 9000 });
+    if (!r || !r.ok || !r.text) { _seasonGenResult(reqId, { text: null }); return; }
+    const raw = String(r.text).trim();
+    if (kind === 'decide') {
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) { _seasonGenResult(reqId, { action: 'none', text: '' }); return; }
+      let o = null;
+      try { o = JSON.parse(m[0]); } catch (e) { o = null; }
+      if (!o) { _seasonGenResult(reqId, { action: 'none', text: '' }); return; }
+      _seasonGenResult(reqId, {
+        action: ['care', 'love', 'card', 'none'].indexOf(o.action) >= 0 ? o.action : 'none',
+        plantId: o.plantId || '',
+        text: String(o.text || '').slice(0, 120),
+      });
+      return;
+    }
+    // AI 明确表示「不想说」时，允许它沉默
+    if (/^(不说|不想说|NONE|沉默)$/i.test(raw)) { _seasonGenResult(reqId, { text: null }); return; }
+    _seasonGenResult(reqId, { text: raw.replace(/^["「『]|["」』]$/g, '').slice(0, 120) });
+  } catch (e) {
+    _seasonGenResult(reqId, { text: null });
+  }
+}
+
+
+/* ============================================================
+   20261109：四季后台结算（App 在后台也走，不看页面是否打开）
+   ------------------------------------------------------------
+   用户要求：
+     ① 植物成长按真实时间算 —— 挂后台 / 关着也算（t0 时间戳天然满足，
+        这里补「缓存字段 + 阶段跨越通知」）；
+     ② 角色在后台也能照常照料、浇水；
+     ③ 后台发生的事先排队，玩家进四季才正式加载成留言；
+        爱意邀请累积多次 → 合并成一条（写明几次）；
+     ④ 只发三类通知：浇灌爱意邀请 / 植物进入下一阶段 / 多日无人照顾保底。
+   ⚠️ 四季 iframe 开着时不动手（它自己收 season-tick 自己结算），避免双写。
+   ============================================================ */
+const _SEASON_BG = {
+  careGapMs: 90 * 60000,      // 超过 90 分钟没人浇 → 角色自己去浇
+  loveGapMs: 6 * 3600000,     // 爱意邀请冷却
+  dryWarnMs: 5 * 86400000,    // 5 天没人照顾 → 保底提醒
+  careDays: 0.08,             // 与四季 SEASON_RULES.careDays 一致
+  offlineRate: 0.6,           // 与四季 SEASON_RULES.offlineRate 一致
+};
+function _seasonGrowPct(pl, now) {
+  if (!pl) return 0;
+  if (pl.burned || pl.dead) return pl.grow || 0;
+  const totalDays = (pl.totalDays > 0) ? pl.totalDays : ((pl.growDays > 0) ? pl.growDays : 5);
+  const passed = ((now - (pl.t0 || now)) / 86400000) * _SEASON_BG.offlineRate;
+  return Math.max(0, Math.min(100, (passed + (pl.bonusDays || 0)) / totalDays * 100));
+}
+function _seasonStageIdx(pl, now) {
+  const n = (pl && (pl.stageN || (pl.stages && pl.stages.length))) || 5;
+  const pct = _seasonGrowPct(pl, now);
+  return Math.min(n - 1, Math.floor(pct / 100 * n));
+}
+async function _seasonBgTick() {
+  const f = document.getElementById('season-frame');
+  if (f && f.contentWindow) return;          // 四季开着 → 交给它自己结算
+  let raw = null;
+  try { raw = localStorage.getItem('bmSeasonSave'); } catch (e) { return; }
+  if (!raw) return;
+  let doc = null;
+  try { doc = JSON.parse(raw); } catch (e) { return; }
+  if (!doc || !doc.__season || !doc.planet) return;
+
+  const now = Date.now();
+  const planet = doc.planet;
+  const bg = planet.bg || (planet.bg = {});
+  const pending = planet.pending || (planet.pending = {});
+  const notices = [];
+  let dirty = false;
+
+  const pools = {};
+  if (Array.isArray(planet.plants)) pools[planet.viewId || planet.ownerId] = planet.plants;
+  Object.keys(planet.pool || {}).forEach(function (k) {
+    if (Array.isArray(planet.pool[k])) pools[k] = planet.pool[k];
+  });
+
+  Object.keys(pools).forEach(function (cid) {
+    const list = pools[cid] || [];
+    if (!cid || !list.length) return;
+    const st = bg[cid] || (bg[cid] = {});
+    st.snap = st.snap || {};
+    st.lovePending = st.lovePending || 0;
+    const c = (characters || []).find(x => x.id === cid);
+    const name = c ? c.name : 'TA';
+
+    // ① 阶段跨越（成长本身按时间戳算，不看是否打开）
+    list.forEach(function (pl) {
+      if (!pl || !pl.id) return;
+      const idx = _seasonStageIdx(pl, now);
+      const prev = st.snap[pl.id];
+      if (prev != null && idx > prev) {
+        notices.push({ kind: 'stage', charId: cid, title: '四季 · 植物长了一阶',
+          body: '你和' + name + '的「' + (pl.name || '那株') + '」生长到下一阶段了' });
+        (pending[cid] = pending[cid] || []).push({ kind: 'stage', plantId: pl.id, name: pl.name, at: now });
+        dirty = true;
+      }
+      if (prev == null || idx > prev) { st.snap[pl.id] = idx; dirty = true; }
+    });
+
+    // ② 角色后台照料：挑最久没浇的那株，超过 careGap 就自己动手
+    let driest = null, driestAt = 0;
+    list.forEach(function (pl) {
+      if (!pl || pl.dead) return;
+      const acts = pl.acts || [];
+      let w = 0;
+      for (let i = acts.length - 1; i >= 0; i--) { if (acts[i] && acts[i].k === '浇水') { w = acts[i].t || 0; break; } }
+      if (!w) w = pl.t0 || 0;
+      if (!driest || w < driestAt) { driest = pl; driestAt = w; }
+    });
+    if (driest && (now - driestAt) > _SEASON_BG.careGapMs && (now - (st.lastCareAt || 0)) > _SEASON_BG.careGapMs) {
+      driest.acts = driest.acts || [];
+      driest.acts.push({ t: now, k: '浇水', by: name });
+      driest.bonusDays = (driest.bonusDays || 0) + _SEASON_BG.careDays;
+      driest.grow = _seasonGrowPct(driest, now);
+      st.lastCareAt = now;
+      (pending[cid] = pending[cid] || []).push({ kind: 'care', plantId: driest.id, name: driest.name, by: name, at: now });
+      dirty = true;
+    }
+
+    // ③ 爱意邀请（后台累积，进页面合并成一条）
+    if (!st.lastLoveAt) {
+      st.lastLoveAt = now; dirty = true;
+    } else if ((now - st.lastLoveAt) > _SEASON_BG.loveGapMs && Math.random() < 0.5) {
+      st.lastLoveAt = now;
+      st.lovePending = st.lovePending + 1;
+      (pending[cid] = pending[cid] || []).push({ kind: 'love', at: now });
+      notices.push({ kind: 'love', charId: cid, title: '四季 · TA 想找你',
+        body: name + ' 想邀请你一起照料植物' });
+      // 玩家不在四季页 → 同时往聊天流发一张邀请卡（点开直接进四季）
+      try { _seasonSendLoveCard(cid, name, ''); } catch (e) {}
+      dirty = true;
+    }
+
+    // ④ 多日无人照顾的保底提醒（每天最多一次）
+    if (driest && (now - driestAt) > _SEASON_BG.dryWarnMs && (now - (st.dryWarnAt || 0)) > 86400000) {
+      st.dryWarnAt = now;
+      notices.push({ kind: 'dry', charId: cid, title: '四季 · 该照顾一下了',
+        body: '你和' + name + '的「' + (driest.name || '那株') + '」好几天没浇水了' });
+      dirty = true;
+    }
+  });
+
+  if (dirty) { try { localStorage.setItem('bmSeasonSave', JSON.stringify(doc)); } catch (e) {} }
+  for (const n of notices) {
+    try {
+      const c = (characters || []).find(x => x.id === n.charId);
+      if (c) await notifyIncoming(c, n.body, n.title, 'msg');
+    } catch (e) {}
+  }
+}
+
+/* 20261109：发一张「一起浇灌爱意」邀请卡到聊天流。
+   角色在后台发起（玩家不在四季页）时才发；玩家正在四季里就用四季自己的邀请卡。 */
+async function _seasonSendLoveCard(cid, name, text) {
+  try {
+    const c = (characters || []).find(x => x.id === cid);
+    if (!c) return;
+    const msg = {
+      id: (typeof uid === 'function') ? uid('msg') : ('msg' + Date.now()),
+      charId: cid, from: 'them', type: 'seasonlove',
+      content: { name: name || c.name || 'TA', text: text || '', at: Date.now() },
+      time: Date.now(), read: false,
+    };
+    await idbPut('messages', msg);
+    if (document.body.dataset.view === 'chat' && currentCharId === cid) {
+      if (typeof appendMessage === 'function') appendMessage(msg);
+    } else if (typeof renderChatList === 'function') {
+      renderChatList();
+    }
+  } catch (e) {}
+}
+/* 点击卡片 → 打开四季（照常播开屏动画，不传 nosplash） */
+document.addEventListener('click', function (ev) {
+  const el = ev.target && ev.target.closest ? ev.target.closest('[data-season-love]') : null;
+  if (!el) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const cid = el.getAttribute('data-season-love');
+  if (cid && typeof openSeasonLayer === 'function') openSeasonLayer(cid);
+}, true);
+
+/* 四季事件 → 记忆宫殿（按 charId 独立文件夹，不同角色互不串味） */
+async function _seasonMemo(charId, text) {
+  try {
+    if (!charId || !text) return;
+    if (typeof palEnsureFolders === 'function') await palEnsureFolders();
+    await idbPut('palace', {
+      id: uid('pal'), kind: 'manual',
+      folderId: 'pf_char_' + charId, subFolderId: '',
+      charId: charId, groupId: '',
+      messages: [], baseMsgId: '',
+      title: String(text).replace(/\s+/g, ' ').trim().slice(0, 30) || '四季里的一件事',
+      summary: '', summaryByAI: false,
+      text: String(text), img: null,
+      dateLabel: (typeof palDateLabel === 'function') ? palDateLabel(Date.now()) : '',
+      time: Date.now(), createdAt: Date.now(),
+      allowAI: null, auto: true,
+    });
+  } catch (e) {}
+}
+function _seasonOnEvent(d) {
+  try {
+    const cid = d.charId || _seasonCurrentCharId;
+    if (!cid) return;
+    const c = (characters || []).find(x => x.id === cid);
+    const who = c ? c.name : 'TA';
+    const day = (function () {
+      const t = new Date(d.at || Date.now());
+      return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+    })();
+    if (d.kind === 'book-gift') {
+      _seasonMemo(cid, day + ' 玩家送了我一枚「' + (d.bookName || '书签') + '」书签' +
+        (d.myMsg ? '，上面写着：「' + d.myMsg + '」' : '，没有写寄语') + '。我收下了。');
+    } else if (d.kind === 'book-note') {
+      _seasonMemo(cid, day + ' 我在「' + (d.bookName || '那枚') + '」书签的便签上写了一句话：「' + (d.text || '') + '」');
+    } else if (d.kind === 'gift-reply') {
+      _seasonMemo(cid, day + ' 我收到了「' + (d.bookName || '书签') + '」' +
+        (d.hasMsg ? '，玩家还写了寄语。我对玩家说：「' + (d.text || '') + '」' : '，回了一句：「' + (d.text || '') + '」'));
+    } else if (d.kind === 'plant') {
+      _seasonMemo(cid, day + ' 玩家在我的星球上种下了「' + (d.name || '一株') + '」，这株是我们一起养的。');
+    } else if (d.kind === 'star') {
+      _seasonMemo(cid, day + ' 我们一起凝出了「' + (d.star || '一颗新星球') + '」这颗星球。');
+    }
+  } catch (e) {}
+}
 
 /* 20261109：四季采集相机改回纯网页 getUserMedia（在 season/index.html 内自研变焦+点击对焦），
    已彻底删除 bm-camera 原生插件与 season-cam 桥接，勿再引入。 */
@@ -17999,6 +18543,27 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🎚 角色自主切换播放模式</span>
+        <input type="checkbox" id="cs-music-mode-switch" ${(s.musicModeSwitch !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色在<span style="color:var(--text);font-weight:600;">一起听歌期间</span>会自己决定用哪种方式找歌：镜像搜索、后台遥控（遥控外部 App）、网易云直连，或本地与解析（本地曲库一首歌都没有时绝不选它）。角色可以改掉你上次手动选的模式，切换后会记住，并按上面的「提示方式」告诉你一声。随机固定间隔触发（下方可设区间）。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
+        <input type="number" id="cs-music-mode-min" min="1" max="1440" step="1" value="${typeof s.musicModeSwitchMin === 'number' ? s.musicModeSwitchMin : 45}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-music-mode-max" min="1" max="1440" step="1" value="${typeof s.musicModeSwitchMax === 'number' ? s.musicModeSwitchMax : 90}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>📴 后台也允许角色播放互动</span>
+        <input type="checkbox" id="cs-music-bg-allow" ${(s.musicBgAllow !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">默认开启。开启时，App 退到后台（锁屏 / 切到别的应用 / 挂着系统悬浮窗）角色仍会按上面的节奏自己播放、暂停、切歌、切模式、发邀请；<span style="color:var(--text);font-weight:600;">关掉后，只有你打开着 App 时角色才会做这些音乐互动</span>，在后台只保留「歌继续放着」，不再替你操作。回到前台立刻恢复。</div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">💬 角色音乐操作提示方式</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色主动播放/暂停/切歌/收藏/搜歌时，怎么告诉你：发一条「小垫片」进聊天框（会沉淀进聊天记录），还是弹一条短暂提示条（几秒后自动消散、不留记录），或者干脆不提示。</div>
       <select class="input" id="cs-music-action-style" style="width:100%;">
@@ -18018,6 +18583,20 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <input type="number" id="cs-music-invite-min" min="1" max="1440" step="1" value="${typeof s.musicInviteMin === 'number' ? s.musicInviteMin : 120}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
         <span style="font-size:12px;color:var(--text-tertiary);">～</span>
         <input type="number" id="cs-music-invite-max" min="1" max="1440" step="1" value="${typeof s.musicInviteMax === 'number' ? s.musicInviteMax : 480}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🔄 角色主动问你要不要换歌</span>
+        <input type="checkbox" id="cs-music-swap" ${(s.musicSwap !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动发一张卡片问你「要换一首吗」，或者挑几首让你点——<span style="color:var(--text);font-weight:600;">卡片里点哪首，就真的换哪首播放</span>。你在聊天里说「换首歌」，或在「分享 → 让 TA 换一首」，角色也有概率答应；不答应会在聊天里回你一句（小垫片，不弹窗）。随机固定间隔触发（下方可设区间）。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
+        <input type="number" id="cs-music-swap-min" min="1" max="1440" step="1" value="${typeof s.musicSwapMin === 'number' ? s.musicSwapMin : 90}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-music-swap-max" min="1" max="1440" step="1" value="${typeof s.musicSwapMax === 'number' ? s.musicSwapMax : 300}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
         <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
       </div>
     </div>
@@ -18380,6 +18959,43 @@ function bindChatSettings(s, onSave, tcChar) {
     maMinEl.onchange = applyMa;
     maMaxEl.onchange = applyMa;
   }
+  // 20261109：角色自主切换播放模式（总开关 + 随机固定间隔），全局设置，即时生效落库
+  const mmsCb = $('#cs-music-mode-switch');
+  if (mmsCb) mmsCb.onchange = async () => {
+    s.musicModeSwitch = mmsCb.checked;
+    chatSettings.musicModeSwitch = mmsCb.checked; // 总设置里 s 是拷贝，必须同步回全局再落库
+    await setSetting('chatSettings', chatSettings);
+    if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; if (mmsCb.checked !== chatSettings.musicModeSwitch) tcChar.chatSettings.musicModeSwitch = mmsCb.checked; else delete tcChar.chatSettings.musicModeSwitch; await saveChar(tcChar); }
+    miniToast(mmsCb.checked ? '角色自主切换播放模式已开启（一起听期间生效）' : '角色自主切换播放模式已关闭');
+  };
+  // 20261109：App 在后台时，是否允许角色做音乐互动（播放/暂停/切歌/切模式/发邀请）
+  //   默认开=允许；关掉后只有前台才动，后台只保留「歌继续放着」，回前台立刻恢复。
+  const mbgCb = $('#cs-music-bg-allow');
+  if (mbgCb) mbgCb.onchange = async () => {
+    s.musicBgAllow = mbgCb.checked;
+    chatSettings.musicBgAllow = mbgCb.checked; // 总设置里 s 可能是拷贝，必须同步回全局再落库
+    await setSetting('chatSettings', chatSettings);
+    if (tcChar) { tcChar.chatSettings = tcChar.chatSettings || {}; if (mbgCb.checked !== chatSettings.musicBgAllow) tcChar.chatSettings.musicBgAllow = mbgCb.checked; else delete tcChar.chatSettings.musicBgAllow; await saveChar(tcChar); }
+    miniToast(mbgCb.checked ? '后台也允许角色播放互动' : '后台不允许角色操作音乐（前台照常）');
+  };
+  const mmsMinEl = $('#cs-music-mode-min');
+  const mmsMaxEl = $('#cs-music-mode-max');
+  if (mmsMinEl && mmsMaxEl) {
+    const applyMms = () => {
+      let lo = Math.min(1440, Math.max(1, parseInt(mmsMinEl.value, 10) || 45));
+      let hi = Math.min(1440, Math.max(1, parseInt(mmsMaxEl.value, 10) || 90));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      mmsMinEl.value = String(lo); mmsMaxEl.value = String(hi);
+      s.musicModeSwitchMin = lo;
+      s.musicModeSwitchMax = hi;
+      chatSettings.musicModeSwitchMin = lo;
+      chatSettings.musicModeSwitchMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      miniToast('角色切模式间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    mmsMinEl.onchange = applyMms;
+    mmsMaxEl.onchange = applyMms;
+  }
   // 20261106：角色音乐操作「小垫片」提示方式（chat/toast/off），全局设置，即时生效落库
   const masSel = $('#cs-music-action-style');
   if (masSel) masSel.onchange = async () => {
@@ -18416,6 +19032,47 @@ function bindChatSettings(s, onSave, tcChar) {
     };
     miMinEl.onchange = applyMi;
     miMaxEl.onchange = applyMi;
+  }
+  // 20261109：角色主动问「要不要换一首」/ 让玩家点歌（开关 + 随机间隔，即时生效落库）
+  const msCb = $('#cs-music-swap');
+  if (msCb) msCb.onchange = async () => {
+    s.musicSwap = msCb.checked;
+    chatSettings.musicSwap = msCb.checked;
+    await setSetting('chatSettings', chatSettings);
+    // tcChar 存在 = 这是「角色个人主页」的设置弹窗，只覆盖该角色
+    if (tcChar) {
+      tcChar.chatSettings = tcChar.chatSettings || {};
+      if (msCb.checked !== chatSettings.musicSwap) tcChar.chatSettings.musicSwap = msCb.checked;
+      else delete tcChar.chatSettings.musicSwap;
+      await saveChar(tcChar);
+    }
+    _musicSwapUntil = {};   // 改了开关 → 清空计时，下次扫描按新设置重新播种
+    miniToast(msCb.checked ? '角色会主动问你要不要换歌' : '角色主动换歌互动已关闭');
+  };
+  const msMinEl = $('#cs-music-swap-min');
+  const msMaxEl = $('#cs-music-swap-max');
+  if (msMinEl && msMaxEl) {
+    const applyMs = () => {
+      let lo = Math.min(1440, Math.max(1, parseInt(msMinEl.value, 10) || 90));
+      let hi = Math.min(1440, Math.max(1, parseInt(msMaxEl.value, 10) || 300));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      msMinEl.value = String(lo); msMaxEl.value = String(hi);
+      s.musicSwapMin = lo;
+      s.musicSwapMax = hi;
+      chatSettings.musicSwapMin = lo;
+      chatSettings.musicSwapMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      if (tcChar) {
+        tcChar.chatSettings = tcChar.chatSettings || {};
+        tcChar.chatSettings.musicSwapMin = lo;
+        tcChar.chatSettings.musicSwapMax = hi;
+        saveChar(tcChar).catch(() => {});
+      }
+      _musicSwapUntil = {};
+      miniToast('角色换歌互动间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    msMinEl.onchange = applyMs;
+    msMaxEl.onchange = applyMs;
   }
   // 20261104：角色偷偷查看玩家歌单开关 + 随机间隔（全局设置，即时生效落库）
   const mpCb = $('#cs-music-peek');
@@ -19072,6 +19729,7 @@ async function showChatSettingsModal() {
   openModal(chatSettingsHtml(settingsView, '聊天设置', '这里是总设置，对所有访客生效；单个访客可在其主页单独覆盖'));
   bindChatSettings(chatSettings, async () => {
     await setSetting('chatSettings', chatSettings);
+    _seasonPushGaps();   // 20261109：四季开着时，新间隔立刻生效
     miniToast('聊天设置已保存');
     closeModal();
   });
@@ -19090,13 +19748,14 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicSwap','musicSwapMin','musicSwapMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','musicModeSwitch','musicModeSwitchMin','musicModeSwitchMax','musicBgAllow','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
     // 20261028：行程标签写回角色对象（c.scheduleTags）
     c.scheduleTags = s.scheduleTags;
     await saveChar(c);
+    _seasonPushGaps();   // 20261109：四季开着时，新间隔立刻生效
     miniToast('已保存该访客的聊天设置');
     closeModal();
   }, c); // 20261008b：传角色引用，打字卡设置即时按差异落库（tcPersist）

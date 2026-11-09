@@ -809,6 +809,10 @@ window.bmMusic = (function () {
     //   这里清掉全局 M.state.lyrics 残留（它是遥控模式 _refreshExternalLyric 写的），
     //   避免 parseLrc(M.state.lyrics || cur.lrc) 优先读到遥控旧歌词。
     state.lyrics = '';
+    // 20261109 修复「外部原生悬浮窗不跟着切歌换封面/歌词」：
+    //   切歌瞬间（song.lrc/pic 可能还没补全）先推一次全量，歌名/封面立刻换掉，
+    //   不再等异步补词完成才更新（此前直连补词慢或失败时，悬浮窗一直停在上一首）。
+    try { if (nativeFloat() && floatScopeNow() === 'overlay') setTimeout(() => { try { pushNativeState(false); } catch (e0) {} }, 0); } catch (e1) {}
     // 20261104：显式切歌（play）一律从头播放，清掉断点续播进度；
     //   只有「刷新/重进后点播放键」走 resume() 才续播到上次进度。
     _resumeAt = 0;
@@ -1835,6 +1839,301 @@ window.bmMusicUI = (function () {
   }
 
   /* ============================================================
+     角色自主「切换播放模式」（20261109 新增，用户定案）
+     ------------------------------------------------------------------
+     触发：app.js __proactiveScan 里的 musicModeSwitch 分支，按玩家设置的随机固定间隔
+           （musicModeSwitchMin~Max，默认 45~90 分钟）到点调用本函数。
+
+     可选集合（4 选 1，纯随机）：
+       · mirror  镜像搜索
+       · remote  后台遥控（遥控外部 App）
+       · direct  网易云直连（= mode:mirror + _netEaseDirect:true，与 remote 互斥）
+       · local   本地与解析 —— 本地曲库一首歌都没有时【绝不选】（选了也放不出声）
+
+     规则（用户 20261109 明确）：
+       · 角色可以切走玩家手动选的「本地与解析」，不锁定玩家选择；
+       · 切完立刻 M.saveSession() 落库 —— 角色这次的选择会【顶替】玩家上次的记忆，
+         下次进音乐页记住的就是角色切的那个；
+       · 切完发一条通知（复用 _sayMusicAction），自动遵循玩家在聊天设置里选的
+         「发到聊天框（默认） / 短暂提示条 / 不提示」。
+     只在「正在和该角色一起听歌」时触发，避免玩家没在听歌时角色乱改模式。
+     ============================================================ */
+  async function charSwitchPlayMode(charId) {
+    try {
+      const c = getCharById(charId);
+      if (!c) return;
+      // 只在跟这个角色一起听歌时才有意义（没在一起听，切模式玩家看不见）
+      if (!(M.state.charId === charId && M.state.togetherSince)) return;
+      const isApp = !!(M.isApp && M.isApp());
+      // 本地曲库数量（决定 local 能不能进候选池）
+      let localCount = 0;
+      try { const lib = await M.getLocalLibrary(); localCount = Array.isArray(lib) ? lib.length : 0; } catch (e) { localCount = 0; }
+      // 候选池
+      const pool = ['mirror'];
+      if (localCount > 0) pool.push('local');
+      if (isApp) { pool.push('remote'); pool.push('direct'); }
+      if (!pool.length) return;
+      // 当前模式（直连优先判定：直连时 mode 仍是 mirror，光看 mode 会误判）
+      const cur = _netEaseDirect ? 'direct' : (M.state.mode || 'mirror');
+      // 尽量别切到「本来就是这个」，否则等于没切
+      let cand = pool.filter(x => x !== cur);
+      if (!cand.length) cand = pool.slice();
+      const target = cand[Math.floor(Math.random() * cand.length)];
+      // 执行
+      if (target === 'mirror') {
+        if (_netEaseDirect) { await _netEaseSetDirect(false); }
+        setMode('mirror');
+      } else if (target === 'local') {
+        if (_netEaseDirect) { await _netEaseSetDirect(false); }
+        setMode('local');
+      } else if (target === 'remote') {
+        setMode('remote');            // setMode 内部会自动关掉直连
+      } else if (target === 'direct') {
+        setMode('mirror');            // 先把 mode 归位，再开直连
+        await _netEaseSetDirect(true);
+      }
+      // 落库（顶替玩家上次记忆）
+      try { M.saveSession(); } catch (e2) {}
+      // 通知玩家（自动遵循 chat / toast / off）
+      const label = ({ mirror: '镜像搜索', remote: '后台遥控', direct: '网易云直连', local: '本地与解析' })[target] || target;
+      _sayMusicAction(c, '把播放模式换成了「' + label + '」');
+    } catch (e) {}
+  }
+
+  /* ============================================================
+     20261109 新增：换歌互动（双向）
+     --------------------------------------------------------------
+     ① 玩家 → 角色（playerAskSongSwap）
+        入口一：分享弹窗「🎧 让 TA 换一首」按钮
+        入口二：聊天框直接发「换首歌 / 换一首 / 这首歌不好听」→ app.js 识别后调本函数
+        角色【概率同意】：基础 62%，正在一起听时 72%（陪着听的时候更好说话）。
+          同意 → 从播放列表随机抽一首（≠当前）播放；列表里没有能播的就按关键词搜一首。
+          拒绝 → 在聊天框留一条「小垫片」（type:'musicAction' 居中玻璃胶囊），
+                 文案按语气随机，不是生硬的"已拒绝"。
+     ② 角色 → 玩家（charAskSongSwap，随机固定间隔 musicSwapMin~Max 触发）
+        形态随机二选一：
+          a. mode:'ask'  —— 问「要不要换一首」，卡片两个按钮：换吧 / 就听这首
+          b. mode:'pick' —— 让玩家点歌，卡片列 3 首候选 + 「让 TA 帮我选」
+        玩家点完 → playPickedSong 真正播放 + 一条垫片确认 + 卡片标记已选。
+     ============================================================ */
+
+  // 拒绝文案池（角色语气，纯动作句；渲染层会单独补角色名）
+  const _swapRefusePool = [
+    '摇了摇头：这首正好，先不换',
+    '按住切歌的手：再听一会儿吧',
+    '说这首还没听完，不给你换',
+    '笑着拒绝：现在这首歌，正合我意',
+    '把耳机往你那边挪了挪：别急，听完这首',
+    '说「换歌」两个字伤感情，不换',
+    '假装没听见，继续跟着哼',
+  ];
+  // 同意文案池（{song} 会替换成歌名）
+  const _swapAgreePool = [
+    '换了一首《{song}》，这个更像此刻的心情',
+    '把《{song}》放给你听',
+    '挑了一首《{song}》，应该合你耳朵',
+    '切到《{song}》了，一起听',
+    '想了想，换成了《{song}》',
+  ];
+  const _swapPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  /* 找一首「现在就能播」的歌。
+     返回 null = 没找到；返回 { __remote:true } = 后台遥控模式（只能发 next 给外部 App）。
+     顺序：播放列表随机（优先已有 url）→ 列表里没有再搜关键词（AI 按角色卡 / 固定池）。 */
+  async function _swapResolveSong(c) {
+    try {
+      const isRemote = (M.state.mode === 'remote') && !_netEaseDirect;
+      if (isRemote) return { __remote: true };
+      const pl = (M.state.playlist || []).filter(s => s && s.name);
+      if (pl.length) {
+        let idx = 0, guard = 0;
+        do { idx = Math.floor(Math.random() * pl.length); } while (
+          pl.length > 1 && M.state.current && pl[idx] && pl[idx].id === M.state.current.id && guard++ < 10
+        );
+        const s = pl[idx];
+        if (s && s.url) return s;
+        if (s) { try { const f = await M.fetchSongDetail(s); if (f && f.url) return f; } catch (e) {} }
+      }
+      // 列表里没有能播的 → 搜一首新的
+      let kw = '';
+      try { kw = await _aiMusicSearchWord(c); } catch (e) {}
+      if (!kw) kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)];
+      if (_netEaseDirect) {
+        const list = await _netEaseSearch(kw);
+        if (!list || !list.length) return null;
+        const s = list[Math.floor(Math.random() * list.length)];
+        const u = await _netEaseSongUrl(s.id);
+        if (!u || !u.url) return null;
+        return { id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' };
+      }
+      const res = await M.search(kw);
+      if (!res || !res.length) return null;
+      const s = res[Math.floor(Math.random() * res.length)];
+      const full = await M.fetchSongDetail(s);
+      return (full && full.url) ? full : null;
+    } catch (e) { return null; }
+  }
+
+  /* 取 n 首候选（给「让玩家点歌」卡片用）：优先播放列表，不足用搜索补。
+     每项只保留 {id,name,artist,pic,url}，不带 base64，卡片渲染用 URL 图。 */
+  async function _swapCandidates(c, n) {
+    const out = [];
+    const seen = {};
+    const push = (s) => {
+      if (!s || !s.name || seen[s.id]) return;
+      seen[s.id] = 1;
+      out.push({ id: s.id, name: s.name, artist: s.artist || '', pic: s.pic || '', url: s.url || '' });
+    };
+    const pl = M.state.playlist || [];
+    const pool = pl.slice();
+    // 洗牌后取，避免每次都前几首
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+    for (const s of pool) { if (out.length >= n) break; if (M.state.current && s.id === M.state.current.id) continue; push(s); }
+    if (out.length < n) {
+      try {
+        let kw = '';
+        try { kw = await _aiMusicSearchWord(c); } catch (e) {}
+        if (!kw) kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)];
+        const res = await M.search(kw);
+        if (res && res.length) {
+          for (const s of res) { if (out.length >= n) break; push(s); }
+        }
+      } catch (e) {}
+    }
+    return out;
+  }
+
+  /* 玩家请求角色换一首（按钮 / 聊天框共用）。opts.src = 'btn' | 'chat' 便于文案微调。 */
+  async function playerAskSongSwap(charId, opts) {
+    try {
+      const c = getCharById(charId);
+      if (!c) return { ok: false, reason: 'nochar' };
+      const nm = c.name || 'TA';
+      const say = (t) => { _sayMusicAction(c, t); };
+      const together = (M.state.charId === charId && M.state.togetherSince);
+      // 概率同意
+      const p = together ? 0.72 : 0.62;
+      const agree = Math.random() < p;
+      if (!agree) {
+        const cur = M.state.current && M.state.current.name ? M.state.current.name : '这首';
+        say(_swapPick(_swapRefusePool).replace(/\{song\}/g, cur));
+        return { ok: false, refused: true };
+      }
+      const song = await _swapResolveSong(c);
+      if (!song) { say('想换一首，可没找到合适的，先听这首吧'); return { ok: false, reason: 'nosong' }; }
+      if (song.__remote) {
+        // 后台遥控：只能让外部 App 下一首
+        await _remoteAction({ bridge: 'next', sayText: '换了一首', local: () => M.next() }, (t) => say(t || '换了一首'));
+        return { ok: true, remote: true };
+      }
+      M.state.current = song;
+      M.addToQueue(song);
+      try { await M.play(song); } catch (e) {}
+      say(_swapPick(_swapAgreePool).replace(/\{song\}/g, song.name || ''));
+      return { ok: true, song: song };
+    } catch (e) { return { ok: false, reason: String(e) }; }
+  }
+
+  /* 角色主动邀请玩家换歌 / 让玩家点歌。由 app.js __proactiveScan 的 musicSwap 分支调用。 */
+  async function charAskSongSwap(charId) {
+    try {
+      const c = getCharById(charId);
+      if (!c) return;
+      const songs = await _swapCandidates(c, 3);
+      if (!songs || !songs.length) return;
+      const pickMode = Math.random() < 0.5;
+      const msg = {
+        id: uid('msg'),
+        charId: c.id,
+        from: 'them',
+        type: 'songpick',
+        content: {
+          mode: pickMode ? 'pick' : 'ask',
+          title: pickMode ? '想听什么？我挑了几首' : '要换一首吗',
+          tip: pickMode ? '点一首，我就放给你听' : '这首听腻了的话，我给你换一首',
+          songs: songs,
+          answered: false,
+          time: Date.now(),
+        },
+        time: Date.now(),
+      };
+      if (typeof idbPut === 'function') await idbPut('messages', msg);
+      const onChat = (document.body.dataset.view === 'chat' && typeof currentCharId !== 'undefined' && currentCharId === c.id);
+      try {
+        if (typeof appendMessage === 'function' && onChat) appendMessage(msg);
+        else if (typeof renderChatList === 'function') renderChatList();
+      } catch (e) {}
+      // 不在聊天页时补一条未读 + 系统通知（与其它主动消息一致）
+      if (!onChat) {
+        try {
+          if (typeof _ev === 'function' && typeof _saveUnreadEvents === 'function') { const e = _ev(c.id); e.msgs = (e.msgs || 0) + 1; _saveUnreadEvents(); } 
+        } catch (e) {}
+        try {
+          if (typeof notifyIncoming === 'function') notifyIncoming(c, pickMode ? '想听什么？我挑了几首，你点一首' : '要不要换一首歌？', '音乐邀请', 'msg');
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
+
+  /* 玩家点了角色发来的点歌卡 / 换歌卡。idx = 歌曲下标；idx === -1 表示「让 TA 帮我选」。 */
+  async function playPickedSong(msgId, idx) {
+    try {
+      const m = await idbGet('messages', msgId);
+      if (!m) return;
+      const ct = m.content || {};
+      if (ct.answered) { if (window.miniToast) miniToast('这张卡片已经选过啦'); return; }
+      const c = getCharById(m.charId);
+      const nm = c ? (c.name || 'TA') : 'TA';
+      const say = (t) => { if (c) _sayMusicAction(c, t); };
+
+      // 「让 TA 帮我选」→ 走玩家请求逻辑（角色自己挑）
+      if (idx === -1) {
+        ct.answered = true; ct.picked = -1; ct.pickedName = '';
+        await idbPut('messages', m);
+        try { if (typeof renderMessages === 'function') await renderMessages(m.charId); } catch (e) {}
+        if (c) await playerAskSongSwap(m.charId, { src: 'card' });
+        return;
+      }
+
+      const song = (ct.songs || [])[idx];
+      if (!song) return;
+      // 后台遥控模式：只能让外部 App 切歌
+      if ((M.state.mode === 'remote') && !_netEaseDirect) {
+        await _remoteAction({ bridge: 'next', sayText: `${nm} 在外面的播放器里换了首歌`, local: () => M.next() }, (t) => say(t || '换了一首'));
+      } else {
+        let full = song;
+        if (!full.url) { try { full = await M.fetchSongDetail(song); } catch (e) {} }
+        if (full && full.url) {
+          M.state.current = full;
+          M.addToQueue(full);
+          try { await M.play(full); } catch (e) {}
+        } else if (window.miniToast) {
+          miniToast('这首歌暂时放不出来，换一首试试');
+          return;
+        }
+      }
+      ct.answered = true; ct.picked = idx; ct.pickedName = song.name || '';
+      await idbPut('messages', m);
+      try { if (typeof renderMessages === 'function') await renderMessages(m.charId); } catch (e) {}
+      say(`换成了《${song.name || ''}》，你点的这首`);
+    } catch (e) {}
+  }
+
+  /* 角色问「要不要换」→ 玩家点「就听这首」= 不换，回一条垫片收场。 */
+  async function declineSongSwap(msgId) {
+    try {
+      const m = await idbGet('messages', msgId);
+      if (!m || !m.content) return;
+      if (m.content.answered) return;
+      m.content.answered = true; m.content.declined = true;
+      await idbPut('messages', m);
+      try { if (typeof renderMessages === 'function') await renderMessages(m.charId); } catch (e) {}
+      const c = getCharById(m.charId);
+      if (c) _sayMusicAction(c, '那就继续听这首，正好我也没听够');
+    } catch (e) {}
+  }
+
+  /* ============================================================
      角色偷偷查看玩家歌单（20261104）：角色像查岗/主动搜歌一样，按玩家设置的固定间隔
      随机「偷看」玩家的歌单（含歌单 + 收藏曲库）。偷看后随机触发三种后续结果，每一种
      都会在玩家歌单里留一条「足迹」提醒（kind:'peek'），并在聊天里发小横条告诉玩家：
@@ -2355,6 +2654,15 @@ window.bmMusicUI = (function () {
     // 另外两个模式的功能面板（搜索/遥控/本地）自动隐藏，但按钮本身不灰、不锁。
     const modeBtns = overlay.querySelectorAll('.bm-mode');
     function setMode(mode) {
+      // 20261109：网页端不能切「后台遥控」。该模式依赖原生 BmRemoteControl（读系统媒体会话 +
+      //   发 MediaSession 指令），浏览器里没有插件，切过去只会「按钮亮着但什么都不动」。
+      //   直接拒绝并提示；若残留遥控态（如从 App 端同步过来的会话），强制回镜像搜索。
+      if (mode === 'remote' && !(M.isApp && M.isApp())) {
+        if (M.state.mode === 'remote') M.state.mode = 'mirror';
+        try { if (typeof miniToast === 'function') miniToast('「后台遥控」只能在 App 端使用'); } catch (e) {}
+        renderModePanel(M.state.mode);
+        return;
+      }
       M.state.mode = mode;
       modeBtns.forEach(b => {
         const isOn = b.dataset.mode === mode;
@@ -2625,7 +2933,8 @@ window.bmMusicUI = (function () {
           const d = _livePlayback().duration;
           if (d > 0) {
             const t = (parseInt(progSlider.value, 10) / 1000) * d;
-            _remoteAction({ bridge: 'seek', args: { position: Math.round(t * 1000) }, local: () => {} }, null);
+            /* 20261109：先试后记忆（不预置灰）——见 _remoteSeekTry */
+            _remoteSeekTry(t);
           }
         } else {
           const a = M.state.audio;
@@ -3533,6 +3842,91 @@ window.bmMusicUI = (function () {
     // 无插件 → 本地降级执行（Web 演示 / 未装插件），保证可播
     if (act.local) { try { await act.local(); } catch (e) {} }
     if (say && act.sayText) say(act.sayText);
+  }
+
+  /* ---------- 20261109：遥控拖进度条「先试后记忆」（用户定案） ----------
+     用户原话：「不是说我们要先试一下能不能够拖动吗？…不能说让这个滑块
+     直接就不能拖动，直接把它灰掉啊」。
+     ⇒ 滑块永远可拖，绝不预先置灰。松手后走这条：
+        ① 先真发一次 seek 给外部 App（MediaSession.transportControls.seekTo）；
+        ② 等 1.6s 读外部真实 position 复核（±3 秒内算成功）——
+           只看「指令有没有发出去」是假阳性，必须看外部播到哪了；
+        ③ 结果按【包名】记一笔（kv bmRemoteSeekCaps，1=能拖 0=拖不动）：
+           记成 0 的 App 下次拖**仍然先试**（用户要的就是「先试」），
+           只是失败时提示更明确；一旦试成功立刻翻回 1，绝不做成一刀切禁用；
+        ④ 失败要把界面回弹到外部真实进度，不能把滑块留在不存在的进度上。 */
+  const _SEEK_CAP_KEY = 'bmRemoteSeekCaps';
+  let _remoteSeekCaps = null;      // { 'com.netease.cloudmusic': 1|0 }
+  let _seekTrySeq = 0;             // 连拖防串：只有最后一次拖动的结果算数
+  async function _seekCapLoad() {
+    if (_remoteSeekCaps) return _remoteSeekCaps;
+    try {
+      const v = await getSetting(_SEEK_CAP_KEY, null);
+      _remoteSeekCaps = (v && typeof v === 'object') ? v : {};
+    } catch (e) { _remoteSeekCaps = {}; }
+    return _remoteSeekCaps;
+  }
+  async function _seekCapSet(appKey, ok) {
+    if (!appKey) return;
+    try {
+      const m = await _seekCapLoad();
+      if (m[appKey] === (ok ? 1 : 0)) return;
+      m[appKey] = ok ? 1 : 0;
+      await setSetting(_SEEK_CAP_KEY, m);
+    } catch (e) {}
+  }
+  // 外部 App 的包名（原生 getMediaState 带的 packageName；拿不到就退回目标 App 标识）
+  async function _externalAppKey() {
+    try {
+      const br = _remoteBridge();
+      if (br && typeof br.getMediaState === 'function') {
+        const st = await br.getMediaState();
+        if (st && st.packageName) return String(st.packageName);
+      }
+    } catch (e) {}
+    return '_' + (_remoteTargetApp || 'unknown');
+  }
+  /* 返回 Promise<boolean>：这一次到底有没有拖过去。
+     targetSec 单位秒（和 onSeek / 进度条一致）。 */
+  async function _remoteSeekTry(targetSec) {
+    if (!(targetSec >= 0)) return false;
+    /* 不在这里判模式：三个调用点（听歌页 / 软件内悬浮窗 / 系统悬浮窗）
+       已经各自按模式分流过了，这里只保证「有原生遥控桥、且桥能 seek」。 */
+    let br = null;
+    try { br = _remoteBridge(); } catch (e) { br = null; }
+    if (!br || typeof br.seek !== 'function') return false;
+    const seq = ++_seekTrySeq;
+    const caps = await _seekCapLoad();
+    const appKey = await _externalAppKey();
+    const known = caps[appKey];        // 1=上次能拖 0=上次拖不动 undefined=没试过
+    try {
+      _remoteAction({ bridge: 'seek', args: { position: Math.round(targetSec * 1000) }, local: () => {} }, null);
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 1600));
+    if (seq !== _seekTrySeq) return false;   // 期间又拖了一次，这一轮作废
+    let real = null;
+    try {
+      const br = _remoteBridge();
+      if (br && typeof br.getMediaState === 'function') {
+        const st = await br.getMediaState();
+        if (st && st.hasSession && typeof st.position === 'number') real = st.position;
+      }
+    } catch (e) {}
+    const ok = (real !== null && Math.abs(real - targetSec) <= 3);
+    await _seekCapSet(appKey, ok);
+    if (ok) {
+      if (known === 0 && window.miniToast) window.miniToast('这个 App 其实能拖 · 已记住');
+      return true;
+    }
+    if (window.miniToast) {
+      window.miniToast(known === 1
+        ? '这次没拖过去 · 这个 App 偶尔会拒一次'
+        : '这个 App 不支持拖动进度 · 只能切歌');
+    }
+    try { await _refreshLiveExternal(true); } catch (e) {}
+    try { if (typeof refreshPlayerUI === 'function') refreshPlayerUI(); } catch (e) {}
+    try { if (typeof window.__bmUpdateProgress === 'function') window.__bmUpdateProgress(); } catch (e) {}
+    return false;
   }
 
   /* ---------- 网易云直连（模式二升级，20261105） ----------
@@ -5928,6 +6322,20 @@ window.bmMusicUI = (function () {
     if (!nativeFloat()) return;
     const p = window.Capacitor.Plugins.BmMusicFloat;
     let _lastPushedSec = -1;   // 上次已推的秒数：position 未变则不推，避免暂停时反复 update 造成悬浮窗闪动
+    let _nativeBeatKey = _livePlayback().name + '|' + _livePlayback().artist;   // 20261109：上次已推的歌名|歌手，变了才推全量
+    /* 20261109 真机定位的根因修复（悬浮窗歌词永远不滚/不换句）：
+       500ms 心跳此前只推 { position }，原生层也因此只会走 onlyProgress 分支——
+       歌词文本永远停在 show() 那一刻。只要 show 时歌词还没到（镜像搜索补拉 LRC、
+       网易云直连换源、遥控模式后搜歌词），原生层就永远只有 0 句，之后无论怎么
+       播都不会再收到歌词 → 「三种模式歌词都不滚」。
+       这里加一个「歌词指纹」：歌词内容长度/来源/歌曲名任一变化，立刻补推全量
+       （封面 + 完整 lyricLines），最迟 500ms 内送达原生层。 */
+    const _lyricSig = () => {
+      const c = (M.state.current) || {};
+      const l = M.state.lyrics || c.lrc || '';
+      return (M.state.lyrics ? 'S' : 'C') + '|' + l.length + '|' + (c.name || '');
+    };
+    let _nativeLyricKey = _lyricSig();
     const beat = async () => {
       try {
         // 20261106 修复「进度条来回串」：遥控模式下内置 audio.currentTime≈0（残留旧歌），
@@ -5938,9 +6346,33 @@ window.bmMusicUI = (function () {
         // 20261106 修复「暂停状态下悬浮窗仍闪动」：position 没变化（暂停/缓冲）时跳过推送，
         //   原生层无需再 updateProgressUi（setText/setTranslationX 相同值仍会触发重绘闪烁）。
         //   只有秒数真正前进才推，且 seek 跳变也天然会推（sec 变化大）。
+        // 20261109 修复「镜像搜索模式换歌后外部悬浮窗歌词/封面不跟随」：
+        //   歌名检测必须放在 position 去重【之前】。此前放在之后，一旦暂停或切歌瞬间
+        //   position 没变就直接 return，全量永远推不出去 → 悬浮窗长期停在上一首。
+        //   现在只要「歌名|歌手」变了，无条件推全量（封面 + 完整 lyricLines），
+        //   由原生层按新 position 重建高亮并滚动。
+        try {
+          const lp = _livePlayback();
+          const nowKey = (lp.name || '') + '|' + (lp.artist || '');
+          const nowSig = _lyricSig();
+          if (nowKey !== _nativeBeatKey || nowSig !== _nativeLyricKey) {
+            _nativeBeatKey = nowKey;
+            _nativeLyricKey = nowSig;
+            _lastPushedSec = sec;
+            const r1 = await p.update(await buildNativeState()).catch(() => null);
+            if (r1 && r1.ok === false && r1.reason === 'no_window') { try { await pushNativeState(true); } catch (e) {} }
+            return;
+          }
+        } catch (e) {}
         if (sec === _lastPushedSec) return;
         _lastPushedSec = sec;
-        await p.update({ position: sec });
+        /* 20261109 真机：原生窗口被移除后 update 会回 no_window，这里立刻重建，
+           避免「双击后悬浮窗消失、之后再也不出现」。 */
+        const rr = await p.update({ position: sec }).catch(() => null);
+        if (rr && rr.ok === false && rr.reason === 'no_window') {
+          _lastPushedSec = -1;
+          try { await pushNativeState(true); } catch (e) {}
+        }
       } catch (e) { /* 原生层已销毁等异常，静默忽略 */ }
     };
     _nativeHeartbeatTimer = setInterval(beat, 500);
@@ -5994,12 +6426,44 @@ window.bmMusicUI = (function () {
     reg('onPrev', _remotePrev);
     reg('onNext', _remoteNext);
     reg('onSeek', (info) => {
+      // 20261109 修复「遥控模式下拖外部悬浮窗进度条，音乐不跟着走」：
+      //   原实现无条件改内置 audio.currentTime —— 但遥控模式出声的是外部 App（网易云等），
+      //   内置 audio 根本没在播，改它对听感毫无作用，滑块随即被「外部真实进度」心跳拉回原位。
+      //   现按模式分流：遥控外部 App → 发 seek 给原生（MediaSession.transportControls.seekTo）；
+      //   本地解析 / 网易云直连（App 内自己的播放器）→ 改内置 audio.currentTime。
+      //   注意 Java 传上来的 position 单位是【秒】，bridge.seek 要毫秒，故 *1000。
       try {
-        const a = M.state.audio;
-        if (a && info && typeof info.position === 'number') { try { a.currentTime = info.position; } catch (e) {} }
+        const pos = (info && typeof info.position === 'number') ? info.position : -1;
+        if (pos < 0) return;
+        if (_isRemoteNow()) {
+          /* 20261109：先试后记忆（不预置灰）——见 _remoteSeekTry */
+          _remoteSeekTry(pos);
+        } else {
+          const a = M.state.audio;
+          if (a) { try { a.currentTime = pos; } catch (e) {} }
+        }
       } catch (e) {}
     });
-    reg('onMode', () => { M.cyclePlayMode(); updateCtrlState(); });
+    /* 20261109 修复「原生悬浮窗左下角循环模式按钮点了没用」：
+       原生层已先本地切好并把新值（once/order/shuffle/one）回传 —— 这样即使 App 挂后台、
+       JS 被系统冻结，玩家点一下也有即时图标变化。JS 这边只负责：
+         ① 把内存态对齐成原生选的那个（不再自己再 cycle 一次，否则会跳两档）；
+         ② 落库（回前台后软件内 UI 与下次启动都记住）；
+         ③ 刷新软件内控制键 + 把完整状态推回原生，保证两边图标/状态永远一致。 */
+    reg('onMode', (info) => {
+      try {
+        const md = (info && typeof info.mode === 'string') ? info.mode : '';
+        if (md && ['once', 'order', 'shuffle', 'one'].indexOf(md) >= 0) {
+          M.state.playMode = md;
+        } else {
+          M.cyclePlayMode();   // 兜底：老版本插件不传 mode 时仍按原逻辑循环
+        }
+        try { updateCtrlState(); } catch (e) {}
+        try { M.saveSession(); } catch (e) {}
+        try { refreshPlayerUI(); } catch (e) {}
+        pushNativeState(false);
+      } catch (e) {}
+    });
     reg('onList', () => { /* 原生列表由插件自绘，无需 JS 处理 */ });
     reg('onEnd', () => { endTogether(); });
     reg('onSelect', (info) => {
@@ -6011,9 +6475,36 @@ window.bmMusicUI = (function () {
         }
       } catch (e) {}
     });
-    reg('onEnterApp', () => { /* 双击回应用，恢复软件内状态 */ });
+    reg('onEnterApp', () => {
+      // 20261109（用户定案「方案 A」）：双击外部悬浮窗 → 原生已把 App 拉到前台、
+      //   并且【不再拆掉浮窗】（见 BmMusicFloatPlugin.bringAppToFront 的注释）。
+      //   这里负责「跳到一起听歌页」，让玩家双击就进到播放界面。
+      try {
+        const cid = (M.state && M.state.charId) ? M.state.charId : '';
+        if (typeof showMusicPage === 'function') showMusicPage(cid || undefined);
+      } catch (e) {}
+    });
     reg('onCollapse', () => {});
   }
+
+  /* 20261109 修复「App 挂后台后外部原生悬浮窗歌词不实时滚动」：
+     - 切到后台【前】推一次完整状态（含 duration / playing / 完整 lyricLines），
+       原生层持有这些才能在 JS 心跳被系统冻结后继续自推歌词高亮；
+     - 回到前台立刻校准一次，修掉后台期间原生自推累积的误差，
+       并重拉外部真实态（遥控模式换过歌时能马上跟上）。 */
+  try {
+    document.addEventListener('visibilitychange', function () {
+      try {
+        if (!nativeFloat()) return;
+        if (document.visibilityState === 'hidden') {
+          pushNativeState(false);
+        } else {
+          pushNativeState(false);
+          if (typeof _refreshLiveExternal === 'function') _refreshLiveExternal(true);
+        }
+      } catch (e) {}
+    });
+  } catch (e) {}
 
   // 悬浮方式切换（软件内 / 其他应用）——音乐页按钮、聊天设置共用。
   //   切到 overlay：移除 DOM 悬浮、走原生系统层（含权限自动检测，未授权自动跳系统设置页，失败回退软件内）。
@@ -6025,7 +6516,28 @@ window.bmMusicUI = (function () {
       const fw = document.getElementById('bm-music-float');
       if (fw) fw.remove();
       bindNativeFloat();
+      // 20261109 修复「切到外部悬浮窗卡好几秒才出来」根因：
+      //   原来直接 pushNativeState(true) → buildNativeState() 要把封面/头像/播放列表
+      //   逐个 fetch 转 base64，网络图慢时整块阻塞，悬浮窗迟迟不出现。
+      //   现在先 show 一份轻量态（不转图）让悬浮窗立刻出现，再异步补全封面/歌词。
+      try {
+        const p = window.Capacitor.Plugins.BmMusicFloat;
+        const chk = await p.checkPermission();
+        if (chk && chk.granted) {
+          const lp = _livePlayback();
+          await p.show({
+            title: lp.name || '', artist: lp.artist || '', cover: '',
+            lyric: '', lyricLines: [], playing: !!lp.playing,
+            position: lp.position, duration: lp.duration || 0,
+            mode: M.state.playMode, charName: '', charAvatar: '', myAvatar: '',
+            myName: playerName() || '我', togetherText: '', together: false,
+            textMode: _floatTextMode(), bgMode: _floatBgMode(),
+            playlist: [], playIndex: 0,
+          });
+        }
+      } catch (e) {}
       await pushNativeState(true);
+      _startNativeHeartbeat();
     } else {
       await hideNativeFloat();
       renderFloat();
@@ -6380,7 +6892,8 @@ window.bmMusicUI = (function () {
           const d = _livePlayback().duration;
           if (d > 0) {
             const t = (parseInt(fprog.value, 10) / 1000) * d;
-            _remoteAction({ bridge: 'seek', args: { position: Math.round(t * 1000) }, local: () => {} }, null);
+            /* 20261109：先试后记忆（不预置灰）——见 _remoteSeekTry */
+            _remoteSeekTry(t);
           }
         } else {
           const a = M.state.audio;
@@ -6805,7 +7318,9 @@ window.bmMusicUI = (function () {
     } catch (e) {}
   })();
 
-  return { showMusicPage, refreshPlayerUI, renderFloat, closeMusicPage, backMusicPage, showMusicLib, showThemePicker, resetFloatClosed, showInviteCard, startTogether, endTogether, charAutoMusic, charInviteTogether, charPeekPlaylist, charEarListen, charCollect, getTogetherTotal, setFloatScopeAndApply };
+  return { showMusicPage, refreshPlayerUI, renderFloat, closeMusicPage, backMusicPage, showMusicLib, showThemePicker, resetFloatClosed, showInviteCard, startTogether, endTogether, charAutoMusic, charInviteTogether, charPeekPlaylist, charEarListen, charCollect, charSwitchPlayMode, getTogetherTotal, setFloatScopeAndApply,
+    // 20261109 新增：换歌互动（玩家让角色换 / 角色问要不要换 / 角色让玩家点歌）
+    playerAskSongSwap, charAskSongSwap, playPickedSong, declineSongSwap };
 })();
 
 /* app.js 引用的全局入口 */
