@@ -126,6 +126,8 @@ public class BmMusicFloatPlugin extends Plugin {
     /* 迷你播放列表视图（20261109：改成独立系统悬浮窗，自己的 window + 可拖动 + 可关闭） */
     private View miniListPanel;
     private WindowManager.LayoutParams miniListParams;
+    /* 20261109：记住玩家把迷你列表拖到的位置（关掉再开 / 选歌重建时沿用，不跳回默认位） */
+    private int miniListX = Integer.MIN_VALUE, miniListY = Integer.MIN_VALUE;
 
     /* 进度条 */
     private View progressTrack;
@@ -329,7 +331,15 @@ public class BmMusicFloatPlugin extends Plugin {
         }
         Integer d = call.getInt("duration");
         if (d != null) durationSec = d;
-        if (call.hasOption("mode")) playMode = call.getString("mode", "order");
+        if (call.hasOption("mode")) {
+            playMode = call.getString("mode", "order");
+            /* 20261109 真机修复「循环/单曲/随机图标不同步」：
+               原来这里只把 playMode 存下来、从不重绘图标 —— 玩家在软件内（或音乐页）
+               切了播放模式后把状态推上来，原生悬浮窗左下角的图标还是旧的那个，
+               点下去又按旧值循环，看起来就像「这个键坏了 / 点了没用」。
+               现在每次收到 mode 都立刻按新值重绘图标，两边永远一致。 */
+            refreshModeIcon();
+        }
         if (call.hasOption("charName")) charName = call.getString("charName");
         if (call.hasOption("charAvatar")) {
             String ca = call.getString("charAvatar", "");
@@ -372,6 +382,11 @@ public class BmMusicFloatPlugin extends Plugin {
                     }
                 }
             } catch (Throwable t) {}
+            /* 20261109：列表正开着时，曲目/顺序变了要跟着刷新（否则原生小窗停在旧列表）。
+               重建会沿用上一次拖到的位置（miniListX/Y），玩家不会感觉窗口乱跳。 */
+            if (miniListPanel != null) {
+                try { dismissMiniList(); showMiniList(); } catch (Throwable t) {}
+            }
         }
         Integer pi = call.getInt("playIndex");
         if (pi != null) miniPlayIndex = pi;
@@ -942,11 +957,21 @@ public class BmMusicFloatPlugin extends Plugin {
     private void showMiniList() {
         if (overlayRoot == null || windowManager == null) return;
         try {
-            int listW = dp(220);
-            int itemH = dp(42);
-            int headH = dp(28);
-            int maxItems = Math.min(miniPlaylist.size(), 5);
-            int listH = headH + itemH * Math.max(1, maxItems) + dp(6);
+            /* 20261109 用户定案：原生迷你列表要和软件内那个小窗「一模一样」。
+               软件内 .bm-float-minilist 是 width:min(240px,68vw) / max-height:176px /
+               圆角 12 / 1px 描边 / 头部可拖 + ✕ 关闭 + 点行切歌。
+               这里按 240dp 宽、最多 4 行、圆角 12 对齐，避免做成「大列表」。 */
+            /* 20261109 用户定案「内外一模一样」：逐项对齐软件内 .bm-float-minilist ——
+               width:min(240px,68vw)、max-height:176px、头部 29、行高 38、封面 28/r5、
+               表头下一条 1px 分隔线、正文超出可滚动、选中行不关闭弹窗。 */
+            android.util.DisplayMetrics dmL = android.content.res.Resources.getSystem().getDisplayMetrics();
+            int listW = Math.min(dp(240), (int) (dmL.widthPixels * 0.68f));
+            int itemH = dp(38);
+            int headH = dp(29);
+            int maxBodyH = dp(176) - headH - dp(6);          // 正文最大可见高度
+            int rowsH = itemH * Math.max(1, miniPlaylist.size());
+            int bodyH = Math.min(rowsH, maxBodyH);
+            int listH = headH + dp(1) + bodyH + dp(6);
 
             // 跟随主题配色
             boolean isLightText = "light".equals(textMode);
@@ -991,21 +1016,29 @@ public class BmMusicFloatPlugin extends Plugin {
                 @Override public void onClick(View v) { dismissMiniList(); }
             });
             head.addView(closeBtn, new LinearLayout.LayoutParams(dp(20), dp(20)));
-            // 分隔线
+            col.addView(head, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, headH));
+            /* 20261109：原来分隔线挂在横向 head 里（宽被压成 0，实际看不见）→ 移出来单独一条 */
             View div = new View(getContext());
             div.setBackgroundColor(lineColor);
-            head.addView(div);
-            col.addView(head, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, headH));
+            col.addView(div, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
 
-            // 行
+            // 行（正文可滚动，对应软件内 .bm-fml-body overflow-y:auto）
+            android.widget.ScrollView body = new android.widget.ScrollView(getContext());
+            body.setVerticalScrollBarEnabled(false);
+            body.setFillViewport(false);
+            LinearLayout rows = new LinearLayout(getContext());
+            rows.setOrientation(LinearLayout.VERTICAL);
+            body.addView(rows, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            col.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, bodyH));
+
             if (miniPlaylist.isEmpty()) {
                 TextView empty = makeText(11, dimColor, false);
                 empty.setText("暂无播放列表");
                 empty.setGravity(Gravity.CENTER);
                 empty.setPadding(dp(10), dp(14), dp(10), dp(14));
-                col.addView(empty, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                rows.addView(empty, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             } else {
-                for (int i = 0; i < miniPlaylist.size() && i < 8; i++) {
+                for (int i = 0; i < miniPlaylist.size(); i++) {
                     JSObject s = miniPlaylist.get(i);
                     final int idx = i;
                     String name = optStr(s, "name", "");
@@ -1068,14 +1101,18 @@ public class BmMusicFloatPlugin extends Plugin {
                             JSObject data = new JSObject();
                             data.put("index", idx);
                             fireJsEvent("onSelect", data);
+                            /* 20261109 对齐软件内：选歌后小窗「不关闭」，只把高亮换到新行。
+                               重开时沿用上次拖到的位置（miniListX/Y），不会跳回默认位置。 */
+                            miniPlayIndex = idx;
                             dismissMiniList();
+                            try { if (miniListPanel == null) showMiniList(); } catch (Throwable t) {}
                         }
                     });
-                    col.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, itemH));
+                    rows.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, itemH));
                 }
             }
 
-            panel.addView(col, new FrameLayout.LayoutParams(listW, ViewGroup.LayoutParams.WRAP_CONTENT));
+            panel.addView(col, new FrameLayout.LayoutParams(listW, listH));
 
             /* 20261109 真机修复（用户明确要求「真实唤出原生播放列表悬浮窗，可拖可关，
                和软件内一致」）：
@@ -1094,6 +1131,16 @@ public class BmMusicFloatPlugin extends Plugin {
             int lx = baseX + baseW0 + dp(8);
             if (lx + listW > dmW.widthPixels) lx = Math.max(0, baseX - listW - dp(8));   // 右边放不下 → 挪到左边
             int ly = Math.max(0, Math.min(baseY, dmW.heightPixels - listH - dp(8)));
+            /* 20261109：把整块钳进屏幕（与软件内 6px 边距一致），
+               并且如果玩家上次拖动过，就沿用上次的位置而不是跳回默认位。 */
+            int margin = dp(6);
+            if (miniListX != Integer.MIN_VALUE) {
+                lx = Math.max(margin, Math.min(dmW.widthPixels - listW - margin, miniListX));
+                ly = Math.max(margin, Math.min(dmW.heightPixels - listH - margin, miniListY));
+            } else {
+                lx = Math.max(margin, Math.min(dmW.widthPixels - listW - margin, lx));
+                ly = Math.max(margin, Math.min(dmW.heightPixels - listH - margin, ly));
+            }
 
             int winType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                     ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -1116,8 +1163,22 @@ public class BmMusicFloatPlugin extends Plugin {
                 @Override public boolean onTouch(View v, android.view.MotionEvent e) {
                     switch (e.getActionMasked()) {
                         case android.view.MotionEvent.ACTION_DOWN:
-                            // 点到关闭按钮不触发拖动（交给 closeBtn 的 onClick）
+                            /* 20261109 真机隐患修复：原来无条件 return true，表头把触摸吃掉了，
+                               子控件（✕ 关闭）永远收不到点击 → 列表关不掉。
+                               现在先判断落点是否在 ✕ 上：是则不拦截，交给 closeBtn 自己处理。 */
                             dragging = false;
+                            try {
+                                if (closeBtn != null) {
+                                    float[] loc = new float[2];
+                                    loc[0] = e.getX(); loc[1] = e.getY();
+                                    float cx = closeBtn.getLeft() + closeBtn.getWidth() / 2f;
+                                    float cy = closeBtn.getTop() + closeBtn.getHeight() / 2f;
+                                    float hit = Math.max(closeBtn.getWidth(), dp(36)) / 2f;
+                                    if (Math.abs(loc[0] - cx) < hit && Math.abs(loc[1] - cy) < hit) {
+                                        return false;   // 点在关闭按钮上 → 不拦截
+                                    }
+                                }
+                            } catch (Throwable t) {}
                             lastX = e.getRawX(); lastY = e.getRawY();
                             return true;
                         case android.view.MotionEvent.ACTION_MOVE: {
@@ -1133,8 +1194,10 @@ public class BmMusicFloatPlugin extends Plugin {
                                 miniListParams.x += (int) dx;
                                 miniListParams.y += (int) dy;
                                 android.util.DisplayMetrics dm = android.content.res.Resources.getSystem().getDisplayMetrics();
-                                miniListParams.x = Math.max(-listW + dp(48), Math.min(dm.widthPixels - dp(48), miniListParams.x));
-                                miniListParams.y = Math.max(0, Math.min(dm.heightPixels - dp(48), miniListParams.y));
+                                /* 20261109：整块不出屏（与软件内 6px 边距一致），别留半截在屏幕外 */
+                                int mg = dp(6);
+                                miniListParams.x = Math.max(mg, Math.min(dm.widthPixels - listW - mg, miniListParams.x));
+                                miniListParams.y = Math.max(mg, Math.min(dm.heightPixels - listH - mg, miniListParams.y));
                                 try { windowManager.updateViewLayout(panel, miniListParams); } catch (Throwable t) {}
                             }
                             return true;
@@ -1142,6 +1205,10 @@ public class BmMusicFloatPlugin extends Plugin {
                         case android.view.MotionEvent.ACTION_UP:
                         case android.view.MotionEvent.ACTION_CANCEL:
                             // 未发生拖动时（纯点击），返回 false 让 closeBtn 的 click 正常触发
+                            if (dragging && miniListParams != null) {
+                                miniListX = miniListParams.x;
+                                miniListY = miniListParams.y;   // 记住位置，下次打开沿用
+                            }
                             dragging = false;
                             return false;
                     }

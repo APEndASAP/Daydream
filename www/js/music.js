@@ -6868,9 +6868,13 @@ window.bmMusicUI = (function () {
     const fmBtn = fw.querySelector('#bm-float-mode');
     if (fmBtn) fmBtn.onclick = (e) => { e.stopPropagation(); M.cyclePlayMode(); updateCtrlState(); };
     const flBtn = fw.querySelector('#bm-float-list');
-    // 20261106：悬浮窗「播放列表」按钮改为打开软件内部同一个完整播放列表面板（底部半屏、网易云样式），
-    //   与音乐页点「播放列表」完全一致，不再是那个小的 showFloatMiniList 迷你列表。
-    if (flBtn) flBtn.onclick = (e) => { e.stopPropagation(); showPlaylist(); };
+    /* 20261109 用户定案：软件内悬浮窗的「播放列表」按钮恢复成【小迷你列表】
+       （贴悬浮窗弹出、可拖动、右上角 ✕ 可关、点行直接切歌）。
+       20261106 那次把它改成 showPlaylist() 底部半屏大面板是理解错了需求 ——
+       玩家要的是「悬浮窗旁边弹出一个小列表」，不是整个抽屉。
+       大面板仍保留在「音乐页 → 播放列表」入口，两者互不影响。
+       对应的原生（软件外）悬浮窗也有同款小迷你列表，见 BmMusicFloatPlugin.showMiniList()。 */
+    if (flBtn) flBtn.onclick = (e) => { e.stopPropagation(); showFloatMiniList(fw); };
     // 20261104：三级悬浮窗（card）播放进度条——可拖动 seek + 实时显示当前/总时长
     const fprog = fw.querySelector('#bm-float-progress-slider');
     if (fprog) {

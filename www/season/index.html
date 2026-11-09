@@ -430,7 +430,11 @@ body{
 .cam-view{position:relative;flex:1 1 auto;overflow:hidden;background:#0f0e0c}
 .cam-view canvas{position:absolute;left:-4%;top:-4%;width:108%;height:108%;z-index:0}
 #camCanvas.off{display:none}
-#camLive{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;
+#camLive{position:absolute;left:0;top:0;width:100%;height:100%;
+  /* 20261109 真机实测：现在按 ASK 请求拿到的是 1080×1920 竖屏流（见 camOpenStream 注释），
+     竖流塞竖框 cover 只裁极窄一条，1× 就是该镜头的完整视野。
+     个别机型若仍回落横屏，camApplyFit() 会自动改用 contain，避免又被裁死。 */
+  object-fit:cover;transform-origin:center center;
   display:none;background:#000;z-index:1}
 #camLive.on{display:block}
 .phone.cam #camLive{display:none}
@@ -530,6 +534,12 @@ body{
   box-shadow:0 0 0 1px rgba(0,0,0,.25) inset;
 }
 #camFocusRing.go{animation:camFocusPop .72s ease-out 1}
+/* 20261109：对焦中（真扫描阶段）——细框常亮 + 轻微呼吸，代表镜头正在跑 */
+#camFocusRing.busy{opacity:1;animation:camFocusBusy .5s ease-in-out infinite alternate}
+@keyframes camFocusBusy{
+  from{transform:scale(.96);border-color:rgba(242,236,221,.55)}
+  to{transform:scale(1.06);border-color:rgba(242,236,221,.95)}
+}
 @keyframes camFocusPop{
   0%{opacity:0;transform:scale(1.5)}
   22%{opacity:1;transform:scale(1)}
@@ -5528,14 +5538,137 @@ function camTrack(){
   try { return (camStream && camStream.getVideoTracks()) ? camStream.getVideoTracks()[0] : null; }
   catch (e){ return null; }
 }
-function camWideLens(){ return camLenses.length > 1 ? camLenses[camLenses.length - 1] : null; }
+/* ★★ 20261109 真机定案（OnePlus 13 / PJZ110 实测，务必先读完再改）
+   WebView 在 ColorOS 上枚举出的是「物理镜头」，label 形如 "camera2 0, facing back"，
+   四个后摄的 getCapabilities() 完全一致（4096x3072、zoom=null），所以：
+     · 按「像素量最小＝最广角」排序是错的 —— 四条完全一样，排序等于没排；
+     · 末位经常就是主摄自己 → 0.5× 与 1× 画面一模一样；
+     · 而 camLenses[0] 拿到的是 camera2 4（微距/长焦），近距离全虚焦、视野还窄
+       → 这就是「照片特别大、还糊、怎么都缩不小」的真正原因。
+   真机画面标定结论（同一场景取帧做尺度匹配）：
+     camera2 0 / 2 → 主摄，两者视场≈相同（误差 e≈576）
+     camera2 3     → 超广角，比主摄宽约 1.45 倍
+     camera2 4     → 微距/长焦，不可当主摄
+   ⇒ 主摄固定取 "camera2 0"，超广角用一次真实画面标定找，结果按设备缓存。 */
+const CAM_MAP_KEY = 'bmCamLensMap';
+let _camCalibrating = null;
+function camLensKey(){
+  return camLenses.map(function(l){ return (l.label || '') + '#' + String(l.id).slice(0, 8); }).sort().join('|');
+}
+function camMainLens(){
+  const byZero = camLenses.find(function(l){ return /camera2 0,/i.test(l.label || ''); });
+  return byZero || camLenses[0] || null;
+}
+function camWideLens(){
+  return camLenses.find(function(l){ return l.role === 'wide'; }) || null;
+}
 
 /* 把「界面倍数」解析成「用哪颗镜头 + 下发多少 zoom」 */
 function camResolve(){
   const wide = camWideLens();
   const useWide = !!wide && camZoom < 0.75;
-  const lens = useWide ? wide : (camLenses[0] || null);
+  const lens = useWide ? wide : camMainLens();
   return { useWide: useWide, lens: lens, hw: useWide ? 1 : camZoom };
+}
+
+/* ===== 超广角标定（只做一次，按设备缓存）=====
+   做法：短开每一颗后摄，取 48×48 中心画面，与主摄比对「同一场景的缩放倍率」。
+   候选比主摄宽 1.25 倍以上才算超广角；标定失败不硬凑（0.5× 直接置灰，
+   总比切过去发现画面没变化强）。 */
+function _camGrab64(st){
+  return new Promise(function(res){
+    try {
+      const doc = document;
+      const v = doc.createElement('video');
+      v.muted = true; v.playsInline = true; v.srcObject = st;
+      v.play().then(function(){
+        setTimeout(function(){
+          try {
+            const vw = v.videoWidth, vh = v.videoHeight;
+            const side = Math.min(vw, vh);
+            const cv = doc.createElement('canvas'); cv.width = 48; cv.height = 48;
+            const g = cv.getContext('2d');
+            g.drawImage(v, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, 48, 48);
+            const d = g.getImageData(0, 0, 48, 48).data;
+            const px = new Float32Array(48 * 48);
+            for (let i = 0; i < 48 * 48; i++){
+              px[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
+            }
+            v.srcObject = null;
+            res(px);
+          } catch (e){ res(null); }
+        }, 620);
+      }).catch(function(){ res(null); });
+    } catch (e){ res(null); }
+  });
+}
+function _camCropScale(px, k){
+  if (k <= 1.001) return px;
+  const N = 48, side = N / k, off = (N - side) / 2, out = new Float32Array(N * N);
+  for (let y = 0; y < N; y++){
+    for (let x = 0; x < N; x++){
+      const sx = Math.min(N - 1, Math.round(off + (x + 0.5) / N * side));
+      const sy = Math.min(N - 1, Math.round(off + (y + 0.5) / N * side));
+      out[y * N + x] = px[sy * N + sx];
+    }
+  }
+  return out;
+}
+function _camSsd(a, b){
+  let s = 0;
+  for (let i = 0; i < a.length; i++){ const d = a[i] - b[i]; s += d * d; }
+  return s / a.length;
+}
+function _camBestK(a, b){          /* a 更广时：a 的中心 1/k 区域放大 k 倍 ≈ b 全幅 */
+  let best = Infinity, bk = 1;
+  for (let k = 1.0; k <= 2.81; k += 0.15){
+    const e = _camSsd(_camCropScale(a, k), b);
+    if (e < best){ best = e; bk = k; }
+  }
+  return { k: bk, e: best };
+}
+async function camCalibrateWide(){
+  if (camWideLens()) return true;
+  if (_camCalibrating) return _camCalibrating;
+  const main = camMainLens();
+  if (!main || camLenses.length < 2) return false;
+  _camCalibrating = (async function(){
+    const key = camLensKey();
+    let mainPx = null;
+    try {
+      const st = await navigator.mediaDevices.getUserMedia({
+        audio: false, video: { deviceId: { exact: main.id }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
+      mainPx = await _camGrab64(st);
+      st.getTracks().forEach(function(t){ t.stop(); });
+    } catch (e){ mainPx = null; }
+    if (!mainPx) return false;
+    let bestLens = null, bestK = 0, bestE = Infinity;
+    for (let i = 0; i < camLenses.length; i++){
+      const l = camLenses[i];
+      if (l.id === main.id) continue;
+      let px = null;
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({
+          audio: false, video: { deviceId: { exact: l.id }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        px = await _camGrab64(st);
+        st.getTracks().forEach(function(t){ t.stop(); });
+      } catch (e){ px = null; }
+      if (!px) continue;
+      const r = _camBestK(px, mainPx);
+      if (r.k >= 1.25 && r.e < bestE){ bestE = r.e; bestK = r.k; bestLens = l; }
+      await new Promise(function(r2){ setTimeout(r2, 220); });
+    }
+    if (!bestLens) return false;
+    camLenses.forEach(function(l){ if (l.role === 'wide') l.role = ''; });
+    bestLens.role = 'wide'; bestLens.wideK = Math.round(bestK * 100) / 100;
+    try {
+      localStorage.setItem(CAM_MAP_KEY, JSON.stringify({ key: key, wideId: bestLens.id, k: bestLens.wideK }));
+    } catch (e){}
+    return true;
+  })();
+  try { return await _camCalibrating; } finally { _camCalibrating = null; }
 }
 
 /* 开流（deviceId 为空则按 facingMode），并设连续自动对焦 */
@@ -5546,29 +5679,37 @@ async function camOpenStream(deviceId){
     camStream = null;
   }
   let st;
-  /* ★ 20261109 用户反馈「哪个档位的摄像头都太大（视野太窄）」：
-     根因是以前请求 1440x1440 方形流，而取景框是 9:16 竖屏，object-fit:cover
-     会横向裁掉约 43% 的画面 → 看起来像一直贴着放大。
-     这里直接请求 9:16 竖屏流（aspectRatio + 竖屏宽高），cover 几乎不裁切，
-     1× 就是这颗镜头的真实完整视野，等价于「以前 0.5× 的观感」，0.5× 再靠
-     切超广角镜头继续变广。 */
-  const VERT = { aspectRatio: { ideal: 9 / 16 }, width: { ideal: 1080 }, height: { ideal: 1920 } };
+  /* ★★ 20261109 真机实测（OnePlus 13 / PJZ110，逐条实测，别再改回去）
+     「怎么缩都特别大」的真正根因：
+     ① 旧代码显式要 1080×1920 竖屏，WebView 却返回 1920×1080 **横屏**；
+        横图塞进竖屏取景框、object-fit:cover 只能保留中间约 44% 宽度 = 固定 2.2 倍裁切。
+        于是 1× 已经被裁死，切 0.5× 超广角仍被同一条规则裁掉 —— 怎么缩都不够广。
+     ② 实测发现 WebView 的宽高是「互换上报」的：请求 width:1920 / height:1080，
+        实际拿到的是 **1080×1920 竖屏**（正是我们要的竖屏高清流）；
+        而请求 1080×1920 反而给了横屏。
+     ⇒ 故意按「横屏措辞」请求，换回真正的竖屏流；1× = 这颗镜头的完整视野。 */
+  const ASK = { width: { ideal: 1920 }, height: { ideal: 1080 } };
   if (deviceId){
     st = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: Object.assign({ deviceId: { exact: deviceId } }, VERT)
+      audio: false, video: Object.assign({ deviceId: { exact: deviceId } }, ASK)
     });
   } else {
     const fm = camFacing === 'back' ? 'environment' : 'user';
-    const mk = (fo) => ({ audio: false, video: Object.assign({ facingMode: fo }, VERT) });
-    try { st = await navigator.mediaDevices.getUserMedia(mk({ exact: fm })); }
-    catch (e0){ st = await navigator.mediaDevices.getUserMedia(mk({ ideal: fm })); }
+    try { st = await navigator.mediaDevices.getUserMedia({ audio:false, video: Object.assign({ facingMode:{ exact: fm } }, ASK) }); }
+    catch (e0){ st = await navigator.mediaDevices.getUserMedia({ audio:false, video: Object.assign({ facingMode:{ ideal: fm } }, ASK) }); }
   }
   camStream = st;
   if (live){
     live.srcObject = st;
     live.classList.add('on');
+    /* videoWidth 要等元数据到了才有值 → 一到就重算一次铺满方式 */
+    if (!live.__fitBound){
+      live.__fitBound = true;
+      live.addEventListener('loadedmetadata', function(){ try { camApplyFit(); } catch (e) {} });
+      live.addEventListener('resize', function(){ try { camApplyFit(); } catch (e) {} });
+    }
     try { await live.play(); } catch (e){}
+    camApplyFit();
   }
   camLiveOn = true;
   const cvs = $('#camCanvas'); if (cvs) cvs.classList.add('off');
@@ -5603,6 +5744,50 @@ async function camProbeLenses(){
     if (camStream){ try { camStream.getTracks().forEach(function(t){ t.stop(); }); } catch (e){} camStream = null; }
     camLiveOn = false;
     const out = [];
+    /* 20261109 真机实测（OnePlus 13 四颗后摄，同一时刻同一场景）：
+         camera2 4 → 清晰度 75 ；camera2 0/2/3 → 1797 / 2263 / 3671（差 24~49 倍）
+       camera2 4 是景深/微距辅助镜头，出图全虚。它偏偏排在枚举列表第一位，
+       一旦主摄 label 认不出来（个别机型真的会变），fallback 到它 = 拍出来又糊又大。
+       所以在探测阶段顺手给每颗量一次清晰度，按「中位数的 1/10」把辅助镜头摘掉。
+       ① 相对判据：不受场景明暗影响；② camera2 0 永不摘；③ 摘完不足 2 颗就不摘。
+       阈值取 1/10（而不是更宽的 1/6）：真超广角就算分辨率低，通常也只差 2~4 倍，
+       不能误伤；实测那颗辅助镜头是 1/30，余量足够。 */
+    const _lsV = document.createElement('video');
+    _lsV.muted = true; _lsV.playsInline = true;
+    const _lsC = document.createElement('canvas'); _lsC.width = 96; _lsC.height = 96;
+    const _lsG = _lsC.getContext('2d');
+    async function lensSharp(stream){
+      try {
+        _lsV.srcObject = stream;
+        try { await _lsV.play(); } catch (e) {}
+        for (let i = 0; i < 14 && !_lsV.videoWidth; i++) await new Promise(function(r){ setTimeout(r, 70); });
+        if (!_lsV.videoWidth) return 0;
+        /* 等自动曝光收敛，别拿第一帧的暗片当「糊」 */
+        await new Promise(function(r){ setTimeout(r, 200); });
+        _lsG.drawImage(_lsV, 0, 0, 96, 96);
+        const d = _lsG.getImageData(0, 0, 96, 96).data;
+        const G = new Float32Array(96 * 96);
+        for (let i = 0, p = 0; i < d.length; i += 4, p++){
+          G[p] = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+        }
+        let s = 0, s2 = 0, c = 0;
+        for (let y = 1; y < 95; y++){
+          for (let x = 1; x < 95; x++){
+            const i0 = y * 96 + x;
+            const lap = 4 * G[i0] - G[i0-1] - G[i0+1] - G[i0-96] - G[i0+96];
+            s += lap; s2 += lap * lap; c++;
+          }
+        }
+        const mean = s / c;
+        return Math.round(s2 / c - mean * mean);
+      } catch (e) { return 0; }
+      finally { try { _lsV.srcObject = null; } catch (e) {} }
+    }
+    /* 同一次会话内缓存，重进相机不再重复量（只多花第一次的 1 秒多） */
+    const _sharpKey = 'bmLensSharp:' + pool.map(function(d){ return d.label || ''; }).sort().join('|');
+    let _sharpCache = null;
+    try { _sharpCache = JSON.parse(sessionStorage.getItem(_sharpKey) || 'null'); } catch (e){ _sharpCache = null; }
+    const _sharpNew = {};
     for (let k = 0; k < pool.length; k++){
       try {
         const st = await navigator.mediaDevices.getUserMedia({
@@ -5613,18 +5798,56 @@ async function camProbeLenses(){
         const tk = st.getVideoTracks()[0];
         const ss = (tk.getSettings && tk.getSettings()) || {};
         const cc = (tk.getCapabilities && tk.getCapabilities()) || {};
+        let sh = 0;
+        if (_sharpCache && typeof _sharpCache[pool[k].deviceId] === 'number'){
+          sh = _sharpCache[pool[k].deviceId];
+        } else {
+          try { sh = await lensSharp(st); } catch (e) { sh = 0; }
+          _sharpNew[pool[k].deviceId] = sh;
+        }
         out.push({
           id: pool[k].deviceId,
           label: pool[k].label || ('镜头' + (k + 1)),
           w: ss.width || 0, h: ss.height || 0,
           zmin: (cc.zoom && cc.zoom.min) || 1,
-          zmax: (cc.zoom && cc.zoom.max) || 1
+          zmax: (cc.zoom && cc.zoom.max) || 1,
+          sharp: sh
         });
         st.getTracks().forEach(function(t){ t.stop(); });
       } catch (e){}
     }
-    out.sort(function(a, b){ return (b.w * b.h) - (a.w * a.h); });
-    if (out.length) camLenses = out;
+    /* 20261109：不再按像素量排序（真机四条能力完全相同，排序没有意义）。
+       这里只标角色：主摄 = "camera2 0" 优先，超广角从设备缓存里恢复。 */
+    if (out.length){
+      camLenses = out;
+      /* 摘掉辅助镜头（景深/微距）：清晰度不到中位数 1/6 的，判为出不了图的辅助镜头 */
+      try {
+        const vals = out.map(function(l){ return l.sharp || 0; })
+          .filter(function(v){ return v > 0; })
+          .sort(function(a, b){ return a - b; });
+        const med = vals.length ? vals[Math.floor(vals.length / 2)] : 0;
+        if (med > 80){
+          const aux = out.filter(function(l){
+            if (/camera2 0,/i.test(l.label || '')) return false;   /* 主摄永不摘 */
+            return (l.sharp || 0) > 0 && (l.sharp || 0) * 10 < med;
+          });
+          const keep = out.filter(function(l){ return aux.indexOf(l) < 0; });
+          if (aux.length && keep.length >= 2) camLenses = keep;
+        }
+      } catch (e) {}
+      if (Object.keys(_sharpNew).length){
+        try { sessionStorage.setItem(_sharpKey, JSON.stringify(Object.assign({}, _sharpCache || {}, _sharpNew))); } catch (e) {}
+      }
+      const byZero = camLenses.find(function(l){ return /camera2 0,/i.test(l.label || ''); });
+      if (byZero) byZero.role = 'main';
+      try {
+        const saved = JSON.parse(localStorage.getItem(CAM_MAP_KEY) || 'null');
+        if (saved && saved.key === camLensKey() && saved.wideId){
+          const w = camLenses.find(function(l){ return l.id === saved.wideId; });
+          if (w && w !== byZero){ w.role = 'wide'; w.wideK = saved.k || 0; }
+        }
+      } catch (e){}
+    }
     return camLenses;
   })();
   try { return await _camProbing; } finally { _camProbing = null; }
@@ -5635,6 +5858,7 @@ async function camSwitchLens(idx){
   if (idx < 0 || idx >= camLenses.length || idx === camLensIdx) return;
   camLensIdx = idx;
   try { await camOpenStream(camLenses[idx].id); } catch (e){}
+  camApplyFit();
 }
 
 /* 读能力表 → 刷新档位可用性 */
@@ -5643,8 +5867,9 @@ function camRefreshCaps(){
   camCap = (t && t.getCapabilities) ? (t.getCapabilities() || {}) : null;
   const zr = camCap && camCap.zoom;
   camZoomMax = (zr && typeof zr.max === 'number' && zr.max > 1) ? Math.min(8, zr.max) : 3;
-  /* 0.5× 可用：有第二颗后置镜头（真超广角），或设备 zoom 本身支持 <1 */
-  const hasWide = camLenses.length > 1;
+  /* 0.5× 可用：标定出的超广角存在，或设备 zoom 本身支持 <1（20261109 真机：
+     四条镜头 zoom 全为 null，所以这里只能靠标定，绝不再用「镜头数>1」蒙） */
+  const hasWide = !!camWideLens();
   const zminOk = !!(zr && typeof zr.min === 'number' && zr.min < 1);
   camZoomMin = (hasWide || zminOk) ? 0.5 : 1;
   /* 曝光补偿能力：有范围才启用长按调曝光 */
@@ -5701,7 +5926,131 @@ function camExpoHide(){
   if (el) el.classList.remove('on');
 }
 
-/* 点击对焦：真·点哪对哪（pointsOfInterest），并对用户给出对焦框反馈 */
+/* ===== 相机铺满方式（20261109 真机定案）=====
+   取景框是竖屏；流拿到竖屏 → cover 铺满（裁极少）；万一某机型给横屏流 →
+   自动改用 contain，宁可留边也绝不再把画面裁成 2.2 倍。 */
+let camFit = 'cover';
+function camFitMode(){
+  return camFit;
+}
+function camApplyFit(){
+  const live = $('#camLive'), box = $('#camView');
+  if (!live || !box) return;
+  const vw = live.videoWidth, vh = live.videoHeight;
+  if (!vw || !vh) return;
+  const r = box.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const boxAr = r.width / r.height, vidAr = vw / vh;
+  /* 关键判据：cover 会往哪个方向裁？
+       · 流比框「更宽」（vidAr > boxAr）→ cover 只能裁左右 → **横 CANVAS 被裁死**（旧病根）
+         ⇒ 改用 contain，宁可上下留边，也绝不再砍视野。
+       · 流比框「更窄」（vidAr < boxAr）→ cover 裁上下，左右视野完整，属正常相机行为
+         ⇒ 保持 cover，画面铺满、无黑边。 */
+  camFit = (vidAr > boxAr * 1.02) ? 'contain' : 'cover';
+  live.style.objectFit = camFit;
+}
+
+/* 点击对焦：真·自动对焦（20261109 真机定案，别改回假框）
+   —— 真机能力表实测结论（OnePlus 13 / PJZ110）：
+      · pointsOfInterest：四颗后摄全部 **不支持** → 浏览器层面根本没法「点哪对哪」，
+        以前的写法每次都掉进 else，只重复设置一次 continuous，玩家看到的就是纯动画；
+      · focusDistance：四颗后摄全部 **支持**（有 min/max/step），focusMode 支持 manual；
+      · 所以改成真扫描对焦（反差对焦）：沿 focusDistance 逐档下发给镜头 ——
+        镜头马达真的会动 —— 每档抓一帧算清晰度（Laplacian 方差），挑最清晰那档锁住。
+        对焦结果因此是「量出来的」，不是画出来的。 */
+let camFocusLock = null;   /* {d: 锁定的 focusDistance, v: 清晰度} */
+function _camSharpness(nx, ny){
+  const live = $('#camLive');
+  if (!live || !live.videoWidth) return -1;
+  const vw = live.videoWidth, vh = live.videoHeight;
+  const s = Math.max(48, Math.min(360, Math.min(vw, vh)));
+  const sx = Math.max(0, Math.min(vw - s, (nx || 0.5) * vw - s / 2));
+  const sy = Math.max(0, Math.min(vh - s, (ny || 0.5) * vh - s / 2));
+  const N = 64;
+  const cv = document.createElement('canvas');
+  cv.width = N; cv.height = N;
+  const g = cv.getContext('2d');
+  try { g.drawImage(live, sx, sy, s, s, 0, 0, N, N); } catch (e) { return -1; }
+  let d;
+  try { d = g.getImageData(0, 0, N, N).data; } catch (e) { return -1; }
+  const px = new Float32Array(N * N);
+  for (let i = 0; i < N * N; i++) px[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
+  let sum = 0, n = 0;
+  for (let y = 1; y < N - 1; y++){
+    for (let x = 1; x < N - 1; x++){
+      const i = y * N + x;
+      const l = px[i - N] + px[i + N] + px[i - 1] + px[i + 1] - 4 * px[i];
+      sum += l * l; n++;
+    }
+  }
+  return n ? sum / n : -1;
+}
+async function camAutoFocus(nx, ny){
+  const t = camTrack();
+  if (!t || !t.applyConstraints) return { ok: false, why: 'no-track' };
+  const c = camCap || {};
+  const modes = Array.isArray(c.focusMode) ? c.focusMode : [];
+  const fd = c.focusDistance;
+  const canManual = modes.indexOf('manual') >= 0;
+  /* 下发一档焦距，等马达走到位 + 传感器出新帧（真机低于 150ms 会读到上一档的旧帧） */
+  async function setD(dv){
+    try { await t.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: dv }] }); }
+    catch (e) { return false; }
+    await new Promise(function(r){ setTimeout(r, 180); });
+    return true;
+  }
+  if (fd && typeof fd.min === 'number' && typeof fd.max === 'number' && fd.max > fd.min && canManual){
+    /* 20261109 真机实测（OnePlus 13 后摄）：focusDistance 是**屈光度**（1/米），
+       范围 0.65 ~ 46.1 —— 换算下来是 1.5m ~ 2cm。
+       ① 按全范围线性均分，近距段只会分到 1 档，拍植物（20~50cm）几乎没精度；
+       ② 所以只扫「拍照真正用得到的距离」：约 3m ~ 8cm 对应的屈光度区间（12 ≈ 8cm）；
+       ③ 用「粗扫 6 档 + 在最佳档附近细扫 5 档」两段式 —— 精度更高，总耗时反而更短。 */
+    const lo = fd.min;
+    const hi = Math.min(fd.max, Math.max(lo + 2, 12));
+    let best = { v: -1, d: null };
+    const STEP = 6;
+    for (let i = 0; i < STEP; i++){
+      const dv = lo + (hi - lo) * i / (STEP - 1);
+      if (!(await setD(dv))) break;
+      const v = _camSharpness(nx, ny);
+      if (v > best.v) best = { v: v, d: dv };
+    }
+    if (best.d != null && hi > lo){
+      const span = (hi - lo) / (STEP - 1);
+      const a = Math.max(lo, best.d - span / 2), b = Math.min(hi, best.d + span / 2);
+      for (let i = 0; i <= 4; i++){
+        const dv = a + (b - a) * i / 4;
+        if (!(await setD(dv))) break;
+        const v = _camSharpness(nx, ny);
+        if (v > best.v) best = { v: v, d: dv };
+      }
+    }
+    /* 场景本身没有高频（全黑 / 被遮住 / 纯色墙），清晰度全程都贴着 1，
+       这时候锁死焦距只会更糊 —— 交回镜头自动连续对焦。 */
+    if (best.d != null && best.v >= 4){
+      try { await t.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: best.d }] }); } catch (e) {}
+      camFocusLock = { d: best.d, v: Math.round(best.v) };
+      return { ok: true, mode: 'sweep', sharp: Math.round(best.v), at: Math.round(best.d * 100) / 100 };
+    }
+    if (best.d != null){
+      try { await t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+      camFocusLock = null;
+      return { ok: false, why: 'flat-scene', sharp: Math.round(best.v) };
+    }
+  }
+  /* 退路：真触发一次 single-shot —— 镜头会实际跑一遍对焦行程（不是空转） */
+  if (modes.indexOf('single-shot') >= 0){
+    try {
+      await t.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+      await new Promise(function(r){ setTimeout(r, 720); });
+      const v = _camSharpness(nx, ny);
+      return { ok: true, mode: 'single-shot', sharp: Math.round(v) };
+    } catch (e) {}
+  }
+  return { ok: false, why: 'no-focus-api' };
+}
+
+/* 点击对焦入口：先摆框（跟着手指），再真的去对；对上了才让它「啪」一下 */
 function camFocusAt(nx, ny){
   const view = $('#camView');
   if (!view) return;
@@ -5714,28 +6063,24 @@ function camFocusAt(nx, ny){
   ring.classList.remove('go');
   ring.style.left = (nx * 100) + '%';
   ring.style.top  = (ny * 100) + '%';
+  ring.classList.add('busy');          /* 对焦中：细框常亮，不做假动画 */
   void ring.offsetWidth;
-  ring.classList.add('go');
 
   const t = camTrack();
-  if (!t || !t.applyConstraints) return;
-  const c = camCap || {};
-  const modes = Array.isArray(c.focusMode) ? c.focusMode : [];
+  if (!t || !t.applyConstraints){ ring.classList.remove('busy'); return; }
   _camFocusTimers.forEach(function(h){ clearTimeout(h); });
   _camFocusTimers = [];
-  if (Array.isArray(c.pointsOfInterest) && modes.indexOf('single-shot') >= 0){
-    try {
-      t.applyConstraints({ advanced: [{ focusMode: 'single-shot', pointsOfInterest: [{ x: nx, y: ny }] }] })
-        .then(function(){
-          _camFocusTimers.push(setTimeout(function(){
-            try { t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){}); } catch (e){}
-          }, 1600));
-        })
-        .catch(function(){});
-    } catch (e){}
-  } else if (modes.indexOf('continuous') >= 0){
-    try { t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){}); } catch (e){}
-  }
+  camAutoFocus(nx, ny).then(function(res){
+    ring.classList.remove('busy');
+    if (res && res.ok){
+      ring.classList.add('go');        /* 真对上了才给「合焦」动画 */
+    } else if (t && t.applyConstraints){
+      /* 场景太平/太暗时扫描不出峰谷：不锁死焦距，交回连续对焦，并如实告诉玩家原因，
+         不要假装对上了（这是上一版「假框」最招人烦的地方）。 */
+      if (res && res.why === 'flat-scene') toast('画面太平或太暗，换个位置再点一下');
+      try { t.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){}); } catch (e) {}
+    }
+  });
 }
 
 /* 每张照片可以带自己的原图；没有就用示例图 */
@@ -5792,16 +6137,15 @@ async function startCam(){
         camOpenStream(null),
         new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('timeout')); }, 6000); })
       ]);
-      /* ② 拿到权限后探测镜头组：有第二颗后摄 = 有超广角，0.5× 才能切过去 */
+      /* ② 拿到权限后探测镜头组：主摄认 "camera2 0"，超广角靠标定缓存 */
       camProbeLenses().then(function(){
-        if (!camStream){
-          const id = camLenses.length ? camLenses[0].id : null;
-          camLensIdx = 0;
-          camOpenStream(id).catch(function(){});
-        } else if (camLenses.length > 1){
-          /* 探测时把流停了，重建到主摄 */
-          camLensIdx = 0;
-          camOpenStream(camLenses[0].id).catch(function(){});
+        const main = camMainLens();
+        const mi = main ? camLenses.indexOf(main) : 0;
+        if (!camStream || camLenses.length > 1){          /* 探测时把流停了，重建到「真正的主摄」。
+             20261109：绝不再拿 camLenses[0] —— 真机上它是 camera2 4（微距/长焦），
+             又糊又窄，就是「拍出来特别大」的元凶。 */
+          camLensIdx = Math.max(0, mi);
+          camOpenStream(main ? main.id : null).catch(function(){});
         } else {
           camRefreshCaps();
         }
@@ -5880,6 +6224,20 @@ function camApplyZoom(){
 /* snap=true 吸附到最近档位（**只给档位按钮用**）；
    false = 保留玩家拖到的任意倍率（双指松手走这条，20261109 用户要求） */
 function setCamZoom(z, snap){
+  /* 20261109：玩家一旦想要 0.5×（点按钮或双指缩到 0.75 以下）而超广角还没标定过，
+     现场标定一次（只此一次，约 2 秒），标定成功才真的切过去。 */
+  if (z < 0.75 && !camWideLens() && !_camCalibrating && camLenses.length > 1){
+    toast('正在找这颗手机的超广角…');
+    camCalibrateWide().then(function(ok){
+      if (ok){
+        camRefreshCaps();                       /* 先让 camZoomMin 变成 0.5 */
+        camZoom = Math.max(camZoomMin, Math.min(camZoomMax, z));
+        camApplyZoom();                         /* 再真正切到广角镜头 */
+      }
+      else { if (camZoom < 1) camZoom = 1; camRefreshCaps(); toast('这台设备没有暴露可用的超广角'); }
+    });
+    return;
+  }
   camZoom = Math.max(camZoomMin, Math.min(camZoomMax, z));
   if (snap !== false){
     let best = CAM_ZOOM_STEPS[0], bd = 1e9;
@@ -6007,6 +6365,9 @@ function camZoomBind(){
     el.addEventListener('click', function(ev){
       ev.stopPropagation();
       if (el.classList.contains('dis')){
+        /* 20261109：以前这里直接判「没超广角」。真机上其实有，只是没标定过，
+           所以改成现场标定一次（成功就切过去，失败才提示）。 */
+        if (Number(el.dataset.z) < 1 && camLenses.length > 1){ setCamZoom(Number(el.dataset.z)); return; }
         toast('这台设备的网页相机没暴露超广角镜头');
         return;
       }
@@ -6015,26 +6376,63 @@ function camZoomBind(){
   });
 }
 
-/* 把 video 当前画面按 cover 规则截成一张图；camZoom 越大裁得越靠中心 = 拉近对焦 */
-function grabLiveFrame(){
-  const live = $('#camLive'), box = $('#camView');
-  if (!live || !camLiveOn || !live.videoWidth) return null;
-  const vw = live.videoWidth, vh = live.videoHeight;
-  const W = box.clientWidth || 390, H = box.clientHeight || 500;
+/* 把一帧位图按「取景框看到的范围」裁出来（cover/contain + 倍数都一致），并压到合适尺寸 */
+function cropToView(src){
+  const box = $('#camView');
+  const W = (box && box.clientWidth) || 390, H = (box && box.clientHeight) || 500;
+  /* 20261109 修：<video> 的 .width/.height 是 HTML 属性，未设置时为 0（CSS 用的是 100%），
+     直接取会得到 0×0 → canvas 尺寸 0 → toDataURL 返回 "data:,"（空白照片）。
+     视频一律优先取 videoWidth/videoHeight，图片/ImageBitmap 才用 width/height。 */
+  const vw = src.videoWidth || src.width, vh = src.videoHeight || src.height;
+  if (!vw || !vh) return null;
   const ar = W / H;
-  let sw = vw, sh = vh;
-  if (vw / vh > ar){ sw = vh * ar; } else { sh = vw / ar; }
-  /* 按倍数从中心裁切：zoom=2 时裁切区域长宽各减半，等效 2× 拉近 */
+  let sw = vw, sh = vh, sx = 0, sy = 0;
+  if (camFit === 'contain'){
+    /* contain：整幅都看得见 → 照片也用整幅，不裁 */
+    sw = vw; sh = vh;
+  } else {
+    if (vw / vh > ar){ sw = vh * ar; } else { sh = vw / ar; }
+    sx = (vw - sw) / 2; sy = (vh - sh) / 2;
+  }
   const z = Math.max(0.5, Math.min(3, camZoom || 1));
   const zs = sw / z, zh = sh / z;
-  const sx = (vw - zs) / 2, sy = (vh - zh) / 2;
+  const zx = sx + (sw - zs) / 2, zy = sy + (sh - zh) / 2;
   const out = document.createElement('canvas');
-  const long = 1024;
-  out.width = long; out.height = Math.round(long * (H / W));
+  const long = Math.min(1600, Math.max(900, Math.round(zs)));
+  out.width = long;
+  out.height = Math.round(long * (zh / zs));
   const g = out.getContext('2d');
   if (camFacing === 'front'){ g.translate(out.width, 0); g.scale(-1, 1); }
-  g.drawImage(live, sx, sy, zs, zh, 0, 0, out.width, out.height);
-  return out.toDataURL('image/jpeg', 0.9);
+  g.drawImage(src, zx, zy, zs, zh, 0, 0, out.width, out.height);
+  return out.toDataURL('image/jpeg', 0.92);
+}
+
+/* 拍照：优先 ImageCapture 全分辨率原图（真机实测 3072×4096 / 1.04MB / 1.5s），
+   拿不到才退回「从预览流截一帧」（低清但不会失败）。 */
+async function grabPhoto(){
+  try {
+    const t = camTrack();
+    if (t && typeof ImageCapture !== 'undefined'){
+      const ic = new ImageCapture(t);
+      const blob = await ic.takePhoto();
+      if (blob && blob.size > 20000){
+        const bm = await createImageBitmap(blob);
+        if (bm && bm.width > 600){
+          const url = cropToView(bm);
+          try { bm.close && bm.close(); } catch (e) {}
+          if (url) return url;
+        }
+      }
+    }
+  } catch (e) {}
+  return grabLiveFrame();
+}
+
+function grabLiveFrame(){
+  const live = $('#camLive');
+  if (!live || !camLiveOn || !live.videoWidth) return null;
+  /* 20261109：和预览用同一套「铺满方式 + 倍数」裁切，保证所见即所得 */
+  return cropToView(live);
 }
 
 /* ============================================================
@@ -6376,12 +6774,19 @@ async function shoot(){
   const fl = $('#camFlash');
   if (fl){ fl.classList.add('go'); setTimeout(() => fl.classList.remove('go'), 320); }
   let img = null;
-  /* 20261109：纯网页拍照，从 #camLive 当前帧按倍数裁切 */
+  /* 20261109：优先 ImageCapture 全分辨率原图（真机 3072×4096），拿不到才回退截帧 */
   if (camLiveOn){
-    const url = grabLiveFrame();
+    const url = await grabPhoto();
     if (url){
       try { img = await loadImageFromDataUrl(url); } catch (e) { img = null; }
     }
+  }
+  /* 20261109：取不到画面（权限被收回 / 流被系统中断 / 空帧）时，不要往墙上塞一张空白照片，
+     直接提示重拍，避免玩家以为「拍出来是黑的」是 bug。 */
+  if (!img){
+    shooting = false;
+    toast('没拿到画面，再按一次');
+    return;
   }
   await wait(240);
   addPhotoFromImage(img, '实拍');
