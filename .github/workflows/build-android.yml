@@ -96,6 +96,9 @@ jobs:
           echo "bm-music-float 插件已固化到 node_modules"
           ls -la node_modules/bm-music-float/android/src/main/java/com/bairimeng/musicfloat/
 
+      # 20261109：已移除 bm-camera 原生相机插件（用户要求回到四季原界面，
+      #   变焦+点击对焦全部在 season/index.html 内用 getUserMedia + MediaStreamTrack 自研实现）。
+
       - name: 生成安卓原生壳
         run: npx cap add android
 
@@ -342,6 +345,15 @@ jobs:
           NODE_EOF
           node /tmp/register-bm-music-float.js
 
+      # 20261109：已移除 BmCamera 原生相机插件注册（插件整体删除，改用网页 getUserMedia）。
+
+
+      # 20261108：注入 WebChromeClient 相机授权处理——四季「采集」相机 getUserMedia 根因修复。
+      #   根因：Capacitor 的 BridgeWebChromeClient 只处理 file chooser（onShowFileChooser）和
+      #   地理定位权限，不处理 getUserMedia 的 onPermissionRequest 相机请求，导致
+      #   navigator.mediaDevices.getUserMedia 在 APK 里直接失败、回退到 demo 占位图。
+      #   做法：包装 BridgeActivity 已有的 WebChromeClient，只重写 onPermissionRequest 对相机
+      #   请求 grant，其余所有方法（onShowFileChooser/onJsAlert 等）委托原实现，不破坏 file chooser。
       - name: 注入 WebChromeClient 相机授权（20261108）
         run: |
           cat > /tmp/inject-webchrome.js <<'NODE_EOF'
@@ -380,13 +392,16 @@ jobs:
           if (impBlock) {
             s = s.replace(/(package [\s\S]*?;)/, '$1\n' + impBlock);
           }
-          // 2. 在 onCreate 的 super.onCreate 之后注入 installCameraChromeClient() 调用
+          // 2. 在 super.onCreate 之后注入 installCameraChromeClient() 调用
+          //    ★ 20261109 根因修复：原来注入在 super.onCreate **之前**，那一刻 bridge 还是 null，
+          //      bridge.getWebView() 抛 NPE 被 catch 吞掉 → WebChromeClient 压根没装上 →
+          //      APK 里 getUserMedia 拿不到相机（采集功能等于废掉）。必须放到 super.onCreate 之后。
           if (s.includes('public void onCreate(')) {
             s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
-              '    installCameraChromeClient();\n    $1');
+              '$1\n    installCameraChromeClient();');
           } else {
             s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
-              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    installCameraChromeClient();\n    super.onCreate(savedInstanceState);\n  }\n}');
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    super.onCreate(savedInstanceState);\n    installCameraChromeClient();\n  }\n}');
           }
           // 3. 追加 installCameraChromeClient 方法（多行 Java 用 join 拼，避免破坏 YAML 缩进）
           if (!s.includes('private void installCameraChromeClient()')) {
@@ -408,6 +423,7 @@ jobs:
               '          }',
               '          if (cam) {',
               '            if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {',
+              '              pendingCamReq = request;',
               '              requestPermissions(new String[]{ Manifest.permission.CAMERA }, 9001);',
               '              return;',
               '            }',
@@ -425,10 +441,32 @@ jobs:
               '      android.util.Log.w("BaiRiMeng", "installCameraChromeClient failed: " + t);',
               '    }',
               '  }',
+              '  /* 20261109：系统授权框回答后，把挂起的 getUserMedia 请求补 grant ——',
+              '     原实现只 requestPermissions 就 return，PermissionRequest 一直悬着，',
+              '     玩家点了「允许」相机也不会出画面。 */',
+              '  @Override',
+              '  public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {',
+              '    super.onRequestPermissionsResult(requestCode, permissions, grantResults);',
+              '    if (requestCode == 9001 && pendingCamReq != null) {',
+              '      boolean ok = grantResults != null && grantResults.length > 0',
+              '        && grantResults[0] == PackageManager.PERMISSION_GRANTED;',
+              '      try {',
+              '        if (ok) pendingCamReq.grant(new String[]{ PermissionRequest.RESOURCE_VIDEO_CAPTURE });',
+              '        else pendingCamReq.deny();',
+              '      } catch (Throwable t) {}',
+              '      pendingCamReq = null;',
+              '    }',
+              '  }',
               ''
             ].join('\n');
             // 插到最后一个 } 之前（类结尾）
             s = s.replace(/\}\s*$/, method + '}');
+          }
+          /* 20261109：挂起中的相机授权请求（Activity 字段，供匿名 WebChromeClient 写入）
+             注意判断字段声明本身，不能判断 'pendingCamReq' —— 方法体里已经出现过这个名字。 */
+          if (!s.includes('private PermissionRequest pendingCamReq')) {
+            s = s.replace(/(public class MainActivity extends BridgeActivity[^{]*\{)/,
+              '$1\n  private PermissionRequest pendingCamReq;\n');
           }
           fs.writeFileSync(p, s);
           console.log('MainActivity.java 已注入 WebChromeClient 相机授权');
