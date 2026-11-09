@@ -482,6 +482,20 @@ body{
   font-size:11px;font-family:system-ui,'Microsoft YaHei';color:#e6dfc9;letter-spacing:1px;
   text-shadow:2px 2px 0 rgba(0,0,0,.65);
 }
+/* ===== 相机倍数（20261108：双指缩放 + 点选倍数对焦）===== */
+.cam-zoom{
+  position:absolute;left:50%;bottom:48px;z-index:6;transform:translateX(-50%);
+  display:flex;gap:6px;padding:5px;border-radius:22px;
+  background:rgba(16,14,11,.62);border:1px solid rgba(242,236,221,.25);
+  box-shadow:0 2px 8px rgba(0,0,0,.4);
+}
+.cz-i{
+  min-width:42px;height:30px;padding:0 10px;display:flex;align-items:center;justify-content:center;
+  border-radius:16px;font-size:12px;font-family:system-ui,'Microsoft YaHei';
+  color:#c9c1ac;letter-spacing:.5px;cursor:pointer;white-space:nowrap;
+  transition:background .15s,color .15s;
+}
+.cz-i.on{background:#f2ecdd;color:#1d1a16;font-weight:600}
 .cam-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:5}
 .cam-flash.go{animation:flash .26s steps(3) 1}
 @keyframes flash{0%{opacity:.92}60%{opacity:.35}100%{opacity:0}}
@@ -1973,6 +1987,12 @@ body{
             <div class="cam-x" id="camClose"><i></i></div>
           </div>
           <div class="cam-tip">轻点快门 · 或按空格</div>
+          <div class="cam-zoom" id="camZoom">
+            <div class="cz-i on" data-z="0.5">0.5×</div>
+            <div class="cz-i" data-z="1">1×</div>
+            <div class="cz-i" data-z="2">2×</div>
+            <div class="cz-i" data-z="3">3×</div>
+          </div>
           <div class="cam-flash" id="camFlash"></div>
         </div>
         <div class="cam-bar">
@@ -5176,7 +5196,9 @@ document.querySelectorAll('#dexLegend .dxl').forEach(t => t.addEventListener('cl
 }));
 
 $('#btnBack').addEventListener('click', goUp);      /* ← 返回上一级 */
-$('#btnClose').addEventListener('click', closeSeason); /* × 关闭四季 */
+/* 20261108 修复：× 此前直接 closeSeason()（整个关掉四季），违反「子页面关闭=回上一层」的
+   导航铁律。改为 goUp()：子页面时=返回上一级，栈见底（根页面）时 goUp 内部才调 closeSeason 关四季。 */
+$('#btnClose').addEventListener('click', goUp);
 $('#cover').addEventListener('click', openBook);
 
 /* 翻页 */
@@ -5401,6 +5423,63 @@ let camTimer = null, camTick = 0, shooting = false, camFacing = 'back';
 let burstCount = 0;         /* 本轮连拍拍了几张（提示用，识别版 addPhotoFromImage 的 skipOpen 分支用到） */
 let camStream = null, camLiveOn = false;
 let pendingCam = null;      /* 刚拍到的原图（Image），送给下一张照片 */
+/* ===== 相机缩放（20261108：双指捏合 + 倍数按钮）===== */
+let camZoom = 1;            /* 当前倍数 0.5~3，1 = 原生视野 */
+const CAM_ZOOM_MIN = 0.5, CAM_ZOOM_MAX = 3;
+const CAM_ZOOM_STEPS = [0.5, 1, 2, 3];
+let _czTouch = null;        /* 双指缩放中间态 { startDist, startZoom, cx, cy } */
+
+/* ===== 原生相机桥接（20261108：bm-camera / CameraX，替换 getUserMedia）=====
+   真机 APK 里网页 getUserMedia 拿不到超广角/长焦镜头、控制不了对焦变焦，
+   0.5× 是 CSS 缩小留黑边。故改为：四季 iframe 发 season-cam 给主项目 →
+   主项目调原生 BmCamera 插件（CameraX）→ 结果经 season-cam-result 回传。
+   网页端（无原生）自动回退 getUserMedia。 */
+let _bmNativeCam = null;      /* null=未探测，true=原生可用，false=回退网页 */
+let _bmNativeCamOn = false;   /* 原生预览是否已打开 */
+let _bmCamReqSeq = 0;         /* 请求序号，用于回传匹配 */
+let _bmCamWaiters = {};       /* reqId -> resolve 函数 */
+let _bmCamCaptureCb = null;   /* 拍照回调（拍完拿到 dataUrl 后走 addPhotoFromImage） */
+
+/* 发 season-cam 请求，返回 Promise<result> */
+function bmNativeCamRequest(action, payload){
+  return new Promise(function(resolve){
+    if (!window.parent || window.parent === window){ resolve({ ok:false, reason:'no_host' }); return; }
+    const reqId = ++_bmCamReqSeq;
+    _bmCamWaiters[reqId] = resolve;
+    const msg = { type: 'season-cam', action: action, reqId: reqId };
+    if (payload) Object.assign(msg, payload);
+    try { window.parent.postMessage(msg, '*'); } catch(e){ delete _bmCamWaiters[reqId]; resolve({ ok:false, reason:String(e) }); }
+    // 兜底：4s 没回就超时
+    setTimeout(function(){
+      if (_bmCamWaiters[reqId]){ delete _bmCamWaiters[reqId]; resolve({ ok:false, reason:'timeout' }); }
+    }, 4000);
+  });
+}
+/* 收到主项目回传 */
+function bmNativeCamOnResult(d){
+  if (d && d.reqId != null && _bmCamWaiters[d.reqId]){
+    const fn = _bmCamWaiters[d.reqId];
+    delete _bmCamWaiters[d.reqId];
+    fn(d);
+  }
+}
+/* 探测原生相机是否可用 */
+async function bmNativeCamDetect(){
+  if (_bmNativeCam !== null) return _bmNativeCam;
+  const r = await bmNativeCamRequest('checkPermission');
+  // checkPermission 回 ok:true 表示主项目有 BmCamera 插件（即使未授权也返回 granted:false）
+  if (r && r.ok === true){
+    _bmNativeCam = true;
+    // 未授权则先申请
+    if (!r.granted){
+      const rr = await bmNativeCamRequest('requestPermission');
+      if (!rr || !rr.granted){ _bmNativeCam = false; }
+    }
+  } else {
+    _bmNativeCam = false;
+  }
+  return _bmNativeCam;
+}
 
 /* 每张照片可以带自己的原图；没有就用示例图 */
 function srcImgFor(p){ return (p && p.img) ? p.img : srcImg; }
@@ -5443,11 +5522,34 @@ function startJitter(){
 }
 function stopJitter(){ if (camTimer){ clearInterval(camTimer); camTimer = null; } }
 
-/* 真的打开手机相机：APK 里走 WebChromeClient 授权，浏览器里会弹权限 */
+/* 真的打开手机相机：APK 里优先走原生 CameraX（bm-camera 插件，超广角/对焦/变焦），
+   网页端/无原生时回退 getUserMedia */
 async function startCam(){
   const live = $('#camLive');
   /* 先把示例画面跑起来，等真相机就绪再切过去，避免黑屏 */
   if (!camLiveOn) startJitter();
+  /* ==== 原生相机优先 ==== */
+  const useNative = await bmNativeCamDetect();
+  if (useNative && !_bmNativeCamOn){
+    const openR = await bmNativeCamRequest('open', { options: { facing: camFacing, factor: camZoom } });
+    if (openR && openR.ok){
+      _bmNativeCamOn = true;
+      /* 原生预览层浮在 WebView 之上，网页的 #camLive 隐藏（避免黑底透出） */
+      if (live) live.classList.remove('on');
+      const cvs = $('#camCanvas'); if (cvs) cvs.classList.add('off');
+      stopJitter();
+      const t = $('#camThumb');
+      if (imgReady && t){
+        const tc = t.getContext('2d');
+        tc.clearRect(0,0,40,40);
+        tc.drawImage(srcImg, 0, 0, srcImg.width, srcImg.height, 0, 0, 40, 40);
+      }
+      return;
+    }
+    // 原生打开失败 → 回退网页
+    _bmNativeCam = false;
+  }
+  /* ==== 网页 getUserMedia 回退 ==== */
   if (live && !camStream){
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('no-gum');
@@ -5485,6 +5587,11 @@ async function startCam(){
 }
 function stopCam(){
   stopJitter();
+  /* 关闭原生相机 */
+  if (_bmNativeCamOn){
+    _bmNativeCamOn = false;
+    bmNativeCamRequest('close').catch(function(){});
+  }
   if (camStream){
     try { camStream.getTracks().forEach(function(tr){ tr.stop(); }); } catch (e) {}
     camStream = null;
@@ -5495,7 +5602,93 @@ function stopCam(){
   const cvs = $('#camCanvas'); if (cvs) cvs.classList.remove('off');
 }
 
-/* 把 video 当前画面按 cover 规则截成一张图 */
+/* ===== 相机缩放（20261108）=====
+   camZoom 同时作用在 #camLive（真实相机画面）和 #camCanvas（示例画面）上，
+   用 transform:scale 从中心放大；拍摄时 grabLiveFrame 按 camZoom 从画面中心
+   裁一块更小的区域 = 拉近对焦的效果。
+   双指捏合：touchstart 记两指初始距离 → touchmove 按距离比缩放。
+   倍数按钮：点选 0.5/1/2/3×，直接 setCamZoom。 */
+function applyCamZoom(){
+  const s = camZoom;
+  const live = $('#camLive'), cvs = $('#camCanvas');
+  const tf = 'scale(' + s + ')';
+  if (live) live.style.transform = tf;
+  if (cvs) cvs.style.transform = tf;
+  document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
+    el.classList.toggle('on', Number(el.dataset.z) === camZoom);
+  });
+  /* 原生相机：同步变焦到原生镜头（setLens 吸附物理镜头，无黑边） */
+  if (_bmNativeCamOn){
+    bmNativeCamRequest('setLens', { factor: camZoom }).catch(function(){});
+  }
+}
+/* snap=true 时吸附到最近档位（倍数按钮点选 / 双指松手时用）；
+   snap=false 时平滑跟手（双指捏合拖动中），松手再吸附。 */
+function setCamZoom(z, snap){
+  camZoom = Math.max(CAM_ZOOM_MIN, Math.min(CAM_ZOOM_MAX, z));
+  if (snap !== false){
+    let best = CAM_ZOOM_STEPS[0], bd = 1e9;
+    CAM_ZOOM_STEPS.forEach(function(st){ const d = Math.abs(st - camZoom); if (d < bd){ bd = d; best = st; } });
+    camZoom = best;
+  }
+  applyCamZoom();
+}
+function camZoomBind(){
+  const view = $('#camView');
+  if (!view) return;
+  view.addEventListener('touchstart', function(e){
+    if (e.touches.length === 2){
+      _czTouch = {
+        startDist: Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                              e.touches[0].clientY - e.touches[1].clientY),
+        startZoom: camZoom
+      };
+    }
+  }, { passive: true });
+  view.addEventListener('touchmove', function(e){
+    if (e.touches.length !== 2 || !_czTouch) return;
+    const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                         e.touches[0].clientY - e.touches[1].clientY);
+    if (_czTouch.startDist <= 0) return;
+    /* 拖动中平滑跟手，不吸附（吸附会跳档、手感发硬） */
+    const nz = _czTouch.startZoom * (d / _czTouch.startDist);
+    camZoom = Math.max(CAM_ZOOM_MIN, Math.min(CAM_ZOOM_MAX, nz));
+    /* 原生：双指平滑变焦（不吸附物理镜头，走数码变焦） */
+    if (_bmNativeCamOn){
+      bmNativeCamRequest('zoomTo', { factor: camZoom }).catch(function(){});
+    } else {
+      applyCamZoom();
+    }
+    // 更新按钮高亮（不吸附）
+    document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
+      el.classList.toggle('on', Number(el.dataset.z) === camZoom);
+    });
+  }, { passive: true });
+  view.addEventListener('touchend', function(e){
+    if (e.touches.length < 2 && _czTouch){
+      _czTouch = null;
+      setCamZoom(camZoom, true);   /* 松手吸附到最近档位，按钮高亮准确 */
+    }
+  });
+  /* 单击对焦：原生相机点击对焦，网页端无效果 */
+  view.addEventListener('click', function(e){
+    if (_bmNativeCamOn){
+      const box = view.getBoundingClientRect();
+      const x = (e.clientX - box.left) / box.width;
+      const y = (e.clientY - box.top) / box.height;
+      bmNativeCamRequest('focusAt', { x: x, y: y }).catch(function(){});
+    }
+  });
+  /* 倍数按钮点选 */
+  document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
+    el.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      setCamZoom(Number(el.dataset.z));
+    });
+  });
+}
+
+/* 把 video 当前画面按 cover 规则截成一张图；camZoom 越大裁得越靠中心 = 拉近对焦 */
 function grabLiveFrame(){
   const live = $('#camLive'), box = $('#camView');
   if (!live || !camLiveOn || !live.videoWidth) return null;
@@ -5504,13 +5697,16 @@ function grabLiveFrame(){
   const ar = W / H;
   let sw = vw, sh = vh;
   if (vw / vh > ar){ sw = vh * ar; } else { sh = vw / ar; }
-  const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+  /* 按倍数从中心裁切：zoom=2 时裁切区域长宽各减半，等效 2× 拉近 */
+  const z = Math.max(0.5, Math.min(3, camZoom || 1));
+  const zs = sw / z, zh = sh / z;
+  const sx = (vw - zs) / 2, sy = (vh - zh) / 2;
   const out = document.createElement('canvas');
   const long = 1024;
   out.width = long; out.height = Math.round(long * (H / W));
   const g = out.getContext('2d');
   if (camFacing === 'front'){ g.translate(out.width, 0); g.scale(-1, 1); }
-  g.drawImage(live, sx, sy, sw, sh, 0, 0, out.width, out.height);
+  g.drawImage(live, sx, sy, zs, zh, 0, 0, out.width, out.height);
   return out.toDataURL('image/jpeg', 0.9);
 }
 
@@ -5853,7 +6049,13 @@ async function shoot(){
   const fl = $('#camFlash');
   if (fl){ fl.classList.add('go'); setTimeout(() => fl.classList.remove('go'), 320); }
   let img = null;
-  if (camLiveOn){
+  /* 原生相机优先：调原生 capture 拿 base64 */
+  if (_bmNativeCamOn){
+    const r = await bmNativeCamRequest('capture');
+    if (r && r.ok && r.dataUrl){
+      try { img = await loadImageFromDataUrl(r.dataUrl); } catch (e) { img = null; }
+    }
+  } else if (camLiveOn){
     const url = grabLiveFrame();
     if (url){
       try { img = await loadImageFromDataUrl(url); } catch (e) { img = null; }
@@ -5865,14 +6067,25 @@ async function shoot(){
 }
 
 $('#shutter').addEventListener('click', shoot);
-$('#camBack').addEventListener('click', () => showView('vWall'));
-$('#camClose').addEventListener('click', () => showView('vWall'));
+/* 20261108 修复：相机页的「←」和「×」此前直接 showView('vWall') 跳回照片墙，
+   跳过 viewStack 层级 —— 从图鉴/书签/星球进来拍照时，点返回应该回到「进来前的页面」，
+   而不是硬跳照片墙。统一改走 goUp() 栈式返回（和右滑手势 / 物理返回键同一条路）。 */
+$('#camBack').addEventListener('click', () => goUp());
+$('#camClose').addEventListener('click', () => goUp());
 $('#camSwitch').addEventListener('click', async () => {
   camFacing = camFacing === 'back' ? 'front' : 'back';
+  /* 原生相机：直接切前后摄，不重启预览 */
+  if (_bmNativeCamOn){
+    await bmNativeCamRequest('switchFacing');
+    toast(camFacing === 'back' ? '后置镜头' : '前置镜头');
+    return;
+  }
   stopCam();
   await startCam();
   toast(camFacing === 'back' ? '后置镜头' : '前置镜头');
 });
+/* 相机缩放：双指捏合 + 倍数按钮（20261108） */
+camZoomBind();
 /* 相册：从手机里挑一张，一样走像素化流程 */
 const camAlbumEl = $('#camAlbum'), camFileEl = $('#camFile');
 if (camAlbumEl && camFileEl){
@@ -6021,8 +6234,10 @@ function stepPhoto(step){
 
 // 触摸
 const bodyEl = $('#bodyScroll');
-bodyEl.addEventListener('touchstart', e => { const t = e.touches[0]; gStart(t.clientX, t.clientY); }, { passive: true });
-bodyEl.addEventListener('touchmove', e => { const t = e.touches[0]; gMove(t.clientX, t.clientY); }, { passive: true });
+/* 20261108：双指（>=2 根手指）时是「相机缩放捏合」，不是滑动手势 —— 直接忽略，
+   避免双指缩放时第一根手指横向漂移被误判成「右滑退出」。 */
+bodyEl.addEventListener('touchstart', e => { if (e.touches.length >= 2) return; const t = e.touches[0]; gStart(t.clientX, t.clientY); }, { passive: true });
+bodyEl.addEventListener('touchmove', e => { if (e.touches.length >= 2) return; const t = e.touches[0]; gMove(t.clientX, t.clientY); }, { passive: true });
 bodyEl.addEventListener('touchend', e => { const t = e.changedTouches[0]; gEnd(t.clientX, t.clientY); }, { passive: true });
 
 // 鼠标拖拽（PC） + 键盘
@@ -6474,6 +6689,51 @@ let _HOST_CARD_POOL = null;
         }
       } catch(e){}
     }
+    // 20261108：主 App 物理返回键/安卓边缘侧滑统一走 bmInternalBack()，
+    // 它发 season-back 给这里 → 四季内部 goUp() 逐层弹（栈见底才 closeSeason 关层）。
+    // 这样真机 APK 的返回手势由主 App 的 Capacitor backButton / history 守卫接管，
+    // 不再依赖 iframe 里会被安卓系统边缘手势抢走的 touch 监听，不会大退整个 App。
+    if (d.type === 'season-back'){
+      try { if (typeof goUp === 'function') goUp(); } catch(e){}
+    }
+    // 20261108：主 App 主动扫描（__proactiveScan，前台 15s / 后台 60s）每次给这里发 season-tick，
+    // 让「TA 自己把种子种下去」即使四季层没开、玩家不在四季页面，也能按时结算（taSeedTick）。
+    // 种下后回发 season-taplant 给主项目，主项目据此弹通知提醒玩家。
+    if (d.type === 'season-tick'){
+      try {
+        if (typeof taSeedTick === 'function'){
+          const before = (PLANET && PLANET.plants) ? PLANET.plants.length : 0;
+          taSeedTick();
+          const after = (PLANET && PLANET.plants) ? PLANET.plants.length : 0;
+          // 种下了新株 → 通知主项目（带角色名 + 株数变化），主项目负责弹通知
+          if (after > before && window.parent && window.parent !== window){
+            try {
+              window.parent.postMessage({ type: 'season-taplant', charName: (PLANET && PLANET.owner) || 'TA', count: after - before }, '*');
+            } catch(e){}
+          }
+        }
+      } catch(e){}
+    }
+    // 20261108：主项目原生相机（bm-camera / CameraX）回传结果——四季据此驱动采集相机。
+    if (d.type === 'season-cam-result'){
+      try { if (typeof bmNativeCamOnResult === 'function') bmNativeCamOnResult(d); } catch(e){}
+    }
+    // 20261108：原生相机层的按钮事件（返回/前后摄/快门）——由主项目转发。
+    if (d.type === 'season-cam-event'){
+      try {
+        if (d.event === 'bmcam-photo' && d.dataUrl){
+          // 原生快门拍完 → 走 addPhotoFromImage
+          loadImageFromDataUrl(d.dataUrl).then(function(im){
+            addPhotoFromImage(im, '实拍');
+          }).catch(function(){});
+        } else if (d.event === 'bmcam-back'){
+          // 原生返回键 → 栈式返回（和四季 HTML 的返回键一致）
+          if (typeof goUp === 'function') goUp();
+        } else if (d.event === 'bmcam-switch'){
+          if (d.facing) camFacing = d.facing;
+        }
+      } catch(e){}
+    }
   });
   // 通知父页面四季已就绪，请求注入角色/字卡
   if (window.parent && window.parent !== window){
@@ -6568,7 +6828,12 @@ function _seasonApply(d){
   }
   if (d.planet && typeof d.planet === 'object'){
     const gp = d.planet;
-    if (Array.isArray(gp.plants)) PLANET.plants = gp.plants.map(pl => Object.assign({}, pl));
+    if (Array.isArray(gp.plants)) PLANET.plants = gp.plants
+      /* 20261108 清理：demo 调试（?seed=N 的 seedPlanetDemoMore）种下的植物 no 从 500 起编，
+         真实书签 seqNo 从 1 递增，两者绝不重叠。升级时把 no>=500 的调试株过滤掉，
+         避免「打包前忘清 demo」的残留植物/开花继续留在老玩家的星球上。 */
+      .filter(pl => !(pl && pl.no != null && pl.no >= 500))
+      .map(pl => Object.assign({}, pl));
     if (gp.pool && typeof gp.pool === 'object'){
       Object.keys(gp.pool).forEach(k => { PLANET.pool[k] = (gp.pool[k] || []).map(pl => Object.assign({}, pl)); });
     }
@@ -7168,8 +7433,9 @@ const SEASON_RULES = {
   /* ★ 演示倍速是「加速倍数」，不是倒数 ★
      timeScale = 360 → 4 分钟算一天（86400000 ÷ 360 ms）。
      所以 5 档苗纯放置要 5÷0.6 ≈ 8.3 天 ≈ 33 分钟，陪着一路浇约 14 分钟。
-     接主项目时把它改成 1，就是真的一天一天长，不再烧真实时间。 */
-  timeScale: 360,
+     接主项目时把它改成 1，就是真的一天一天长，不再烧真实时间。
+     20261108 已接主项目：改成 1，真实节奏（一天一天长）。 */
+  timeScale: 1,
   climateSpread: 0.35,              /* 气候×季相的影响权重，只做 ±25% 微调 */
 
   /* ---- 加速（单位：天） ---- */
@@ -7785,8 +8051,10 @@ function stageInfoOf(pl, kOverride){
     local: stageLocalOf(k, n, cv),      /* 这一档内部走到哪（0~1） */
     curve: cv,
     name: names[i] || names[names.length - 1],
-    /* 最后一档才是「开花」；烧苗 / 枯死的永远开不了 */
-    boo: (i === n - 1) && !pl.burned && !pl.dead
+    /* 最后一档才是「开花」；烧苗 / 枯死的永远开不了。
+       20261108 用户定案：没浇灌过爱意（loveCount 为 0）不能开花 ——
+       只要成长期间浇灌过至少一次爱意，就允许开花。没浇过的停在花苞档。 */
+    boo: (i === n - 1) && !pl.burned && !pl.dead && ((pl.loveCount || 0) >= 1)
   };
 }
 function stageNameOf(pl){
@@ -14833,7 +15101,10 @@ function familyOf(name, desc){
 function isBloomed(pl){
   if (!pl || pl.burned || pl.dead) return false;
   const s = stageInfoOf(pl);
-  return s.i === s.n - 1;
+  /* 20261108：没浇灌过爱意（loveCount=0）不算开花 —— 和 stageInfoOf.boo 同一条规则。
+     否则「视觉上停在花苞」但凝星门槛（sea_* 九株全开 / plum_* ≥6 株真开花）仍把它当
+     已开花，会出现「没浇爱意也凝出花海星」的矛盾。 */
+  return s.i === s.n - 1 && ((pl.loveCount || 0) >= 1);
 }
 function isMature(pl){
   if (!pl || pl.burned || pl.dead) return false;

@@ -6521,6 +6521,19 @@ async function _doAnnivCelebration(c, annivList) {
       }
     }
   } catch (e) {}
+
+  // —— 20261108：四季「TA 自己把种子种下去」的后台调度 ——
+  //     四季数据在 iframe 的 localStorage 里，主项目读不到；这里每次主动扫描（前台 15s /
+  //     后台 60s）给四季 iframe 发一个 season-tick，让 iframe 内部 taSeedTick() 结算到点的
+  //     taPlanAt（TA 自己种种子）。这样即使玩家不在四季页面、四季层没开，TA 也会按时种下；
+  //     iframe 种下后会回发 season-taplant，主项目据此弹通知。彻底关掉 App 进程仍不种（
+  //     需原生 Service，属后续工程），但「前台/后台回来」这一最痛的场景已覆盖。
+  try {
+    const _seasonFrame = document.getElementById('season-frame');
+    if (_seasonFrame && _seasonFrame.contentWindow) {
+      _seasonFrame.contentWindow.postMessage({ type: 'season-tick' }, '*');
+    }
+  } catch (e) {}
 }
 
 /* 角色向玩家转账（char_to_me，待领取）：从访客钱包真扣款，玩家可在卡片内领取或退回
@@ -8588,7 +8601,23 @@ function bmInternalBack() {
     }
     return true;
   }
-  // 5) 音乐页（一起听歌）开着 → 栈式返回：先关音乐页内子层弹窗，子层关完才退音乐页回聊天页
+  // 5) 四季层开着 → 栈式返回：发 season-back 给 iframe，让四季内部 goUp() 逐层弹
+  //   （20261108 修复：此前安卓边缘返回/物理返回键在四季层会直接大退整个 App——
+  //    四季 iframe 自己手写的 touch 手势在安卓系统边缘手势区会被系统抢走、且 passive 拦不住，
+  //    所以统一交给主 App 的 Capacitor backButton / history 守卫接管：这里消费掉返回，
+  //    转成 season-back 消息，四季内部逐层 goUp()，栈见底才回发 season-close 关层回聊天页）
+  const seasonLayer = document.getElementById('season-layer');
+  if (seasonLayer && seasonLayer.classList.contains('show')) {
+    const sframe = document.getElementById('season-frame');
+    if (sframe && sframe.contentWindow) {
+      try { sframe.contentWindow.postMessage({ type: 'season-back' }, '*'); }
+      catch (e) { if (typeof closeSeasonLayer === 'function') closeSeasonLayer(); }
+    } else if (typeof closeSeasonLayer === 'function') {
+      closeSeasonLayer();
+    }
+    return true;
+  }
+  // 6) 音乐页（一起听歌）开着 → 栈式返回：先关音乐页内子层弹窗，子层关完才退音乐页回聊天页
   //   （20261105 修复：音乐页内开弹窗时按返回键/右滑，此前直接退出整个音乐页，应改为先关弹窗）
   const musicPage = document.getElementById('bm-music-page');
   if (musicPage) {
@@ -11567,9 +11596,99 @@ async function _seasonPushInit() {
     } else if (d.type === 'season-save-image') {
       // 四季保存图片：主项目侧落地（预留，四季若已自行下载则无需处理）
       try { if (d.name && d.dataUrl) { const a = document.createElement('a'); a.href = d.dataUrl; a.download = d.name || 'season.png'; document.body.appendChild(a); a.click(); a.remove(); } } catch (e) {}
+    } else if (d.type === 'season-taplant') {
+      // 20261108：四季「TA 自己把种子种下去」到点结算后回发，主项目弹通知提醒玩家
+      const tn = (d.charName && d.charName !== 'TA') ? d.charName : 'TA';
+      try {
+        const _sc = (characters || []).find(x => x.name === tn) || null;
+        if (_sc) notifyIncoming(_sc, tn + ' 把一颗种子种到了自己的星球上，回四季看看吧', '四季 · 星球有了新芽', 'msg');
+      } catch (e) {}
+    } else if (d.type === 'season-cam') {
+      // 20261108：四季采集相机走原生 CameraX（bm-camera 插件）——iframe 无法直接访问
+      // Capacitor 原生插件，故经 postMessage 桥接：iframe 发 season-cam{action,...}，
+      // 主项目调 window.Capacitor.Plugins.BmCamera，结果经 season-cam-result 回传。
+      _seasonCamBridge(d, ev.source);
     }
   });
 })();
+
+/* 20261108：四季原生相机桥接——iframe 发 season-cam{action,...}，
+   主项目调 bm-camera 插件（CameraX），结果经 season-cam-result 回传 iframe。
+   action: open / close / capture / setLens / zoomTo / focusAt / switchFacing / checkPermission
+   网页端（无插件）统一回 { ok:false, reason:'no_native' }，四季据此回退 getUserMedia。 */
+async function _seasonCamBridge(d, source){
+  const BC = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmCamera;
+  const reply = (payload) => {
+    try {
+      const frame = document.getElementById('season-frame');
+      const target = (frame && frame.contentWindow) ? frame.contentWindow : source;
+      if (target && target.postMessage) target.postMessage(Object.assign({ type: 'season-cam-result', reqId: d.reqId }, payload), '*');
+    } catch (e) {}
+  };
+  if (!BC){
+    reply({ ok: false, reason: 'no_native' });
+    return;
+  }
+  const a = d.action;
+  try {
+    if (a === 'checkPermission'){
+      const r = await BC.checkPermission();
+      reply({ ok: true, granted: !!r.granted });
+    } else if (a === 'requestPermission'){
+      const r = await BC.requestPermission();
+      reply({ ok: true, granted: !!r.granted });
+    } else if (a === 'open'){
+      const r = await BC.open(d.options || {});
+      reply(r || { ok: true });
+    } else if (a === 'close'){
+      const r = await BC.close();
+      reply(r || { ok: true });
+    } else if (a === 'capture'){
+      const r = await BC.capture();
+      reply(r || { ok: false });
+    } else if (a === 'setLens'){
+      const r = await BC.setLens({ factor: d.factor != null ? d.factor : 1 });
+      reply(r || { ok: true });
+    } else if (a === 'zoomTo'){
+      const r = await BC.zoomTo({ factor: d.factor != null ? d.factor : 1 });
+      reply(r || { ok: true });
+    } else if (a === 'focusAt'){
+      const r = await BC.focusAt({ x: d.x != null ? d.x : 0.5, y: d.y != null ? d.y : 0.5 });
+      reply(r || { ok: true });
+    } else if (a === 'switchFacing'){
+      const r = await BC.switchFacing();
+      reply(r || { ok: true });
+    } else {
+      reply({ ok: false, reason: 'unknown_action' });
+    }
+  } catch (e){
+    reply({ ok: false, reason: String(e && e.message || e) });
+  }
+}
+
+/* 20261108：原生相机（BmCamera）事件 → 转发给四季 iframe。
+   原生层按钮（返回/前后摄/快门）由插件自己处理，但结果要同步给四季：
+   - bmcam-photo：原生快门拍完，回传 dataUrl 给四季走 addPhotoFromImage
+   - bmcam-back：原生返回键点了，让四季 goUp()（栈式返回）
+   - bmcam-switch：前后摄切换，同步 facing 给四季（四季 camFacing 保持一致） */
+function _seasonCamListenersInit(){
+  const BC = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.BmCamera;
+  if (!BC || typeof BC.addListener !== 'function') return;
+  const fwd = (type, payload) => {
+    try {
+      const frame = document.getElementById('season-frame');
+      if (frame && frame.contentWindow){
+        frame.contentWindow.postMessage(Object.assign({ type: 'season-cam-event', event: type }, payload || {}), '*');
+      }
+    } catch (e) {}
+  };
+  try {
+    BC.addListener('bmcam-photo', (d) => { fwd('bmcam-photo', d); });
+    BC.addListener('bmcam-back', () => { fwd('bmcam-back', {}); });
+    BC.addListener('bmcam-switch', (d) => { fwd('bmcam-switch', d); });
+  } catch (e) {}
+}
+_seasonCamListenersInit();
 
 /* 20261104：番茄钟 postMessage 桥接——收 iframe 的 ready/settle/close，
    并把主项目真实访客列表（name/avatar/color/emoji）推给番茄钟原型 */

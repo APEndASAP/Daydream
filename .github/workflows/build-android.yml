@@ -18,6 +18,7 @@ on:
       - 'bm-background/**'
       - 'bm-remote-control/**'
       - 'bm-music-float/**'
+      - 'bm-camera/**'
       - '.github/workflows/build-android.yml'
 
 jobs:
@@ -44,6 +45,14 @@ jobs:
         run: echo "ANDROID_HOME=$ANDROID_HOME" && sdkmanager --version || true
 
       - name: 安装依赖
+        # 20261108：sharp（@capacitor/assets 依赖）安装需两个二进制，都走 GitHub release 下载、
+        #   偶发 504 超时导致构建反复失败：
+        #   ① libvips（C 库）→ npm_config_sharp_libvips_binary_host 指 npmmirror 镜像；
+        #   ② sharp 主二进制（prebuild-install）→ npm_config_sharp_binary_host 指 npmmirror 镜像。
+        #   两者都配，避免任一环节 504 回退到 node-gyp 源码编译（缺 vips 头文件必失败）。
+        env:
+          npm_config_sharp_libvips_binary_host: https://npmmirror.com/mirrors/sharp-libvips
+          npm_config_sharp_binary_host: https://npmmirror.com/mirrors/sharp
         run: npm install
 
       # bm-overlay 为本地 file: 依赖，npm 默认 symlink 可能被 cap sync 跳过；
@@ -88,8 +97,31 @@ jobs:
           echo "bm-music-float 插件已固化到 node_modules"
           ls -la node_modules/bm-music-float/android/src/main/java/com/bairimeng/musicfloat/
 
+      # 20261108：固化本地原生相机插件 bm-camera（CameraX）——四季「采集」相机从
+      #   getUserMedia 换成原生 CameraX，才能切超广角/长焦镜头、点击对焦、平滑变焦（网页拿不到多镜头）。
+      - name: 固化本地原生相机插件 bm-camera
+        run: |
+          rm -rf node_modules/bm-camera
+          cp -r bm-camera node_modules/bm-camera
+          echo "bm-camera 插件已固化到 node_modules"
+          ls -la node_modules/bm-camera/android/src/main/java/com/bairimeng/camera/
+
       - name: 生成安卓原生壳
         run: npx cap add android
+
+      # 20261108：gradle wrapper 默认从 services.gradle.org 下载 gradle 发行版，构建期偶发
+      #   超时（10000ms timeout）导致「插件隔离测试」「assembleDebug」反复失败。
+      #   这里把 distributionUrl 改成腾讯云镜像，绕过 services.gradle.org 抖动。
+      - name: 配置 gradle 国内镜像（20261108）
+        run: |
+          GRADLE_WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
+          if [ -f "$GRADLE_WRAPPER" ]; then
+            sed -i 's#services\.gradle\.org/distributions/gradle-[0-9.]*-all\.zip#mirrors.cloud.tencent.com/gradle/gradle-8.2.1-all.zip#' "$GRADLE_WRAPPER"
+            echo "gradle 发行版镜像已配置:"
+            cat "$GRADLE_WRAPPER"
+          else
+            echo "未找到 gradle-wrapper.properties，跳过"
+          fi
 
       # 20261002cf：注册 BmOverlay 悬浮窗插件到 MainActivity（关键修复）。
       #   Capacitor 6 的 cap add 生成的 MainActivity 默认只 extends BridgeActivity，不会自动
@@ -320,6 +352,48 @@ jobs:
           NODE_EOF
           node /tmp/register-bm-music-float.js
 
+      # 20261108：注册 BmCamera 原生相机插件到 MainActivity。
+      #   与 BmOverlay/BmMusicFloat 等同构——Capacitor 6 不会自动实例化自定义插件，必须手动 registerPlugin。
+      #   CAMERA 权限在插件自身 AndroidManifest.xml 里声明，cap sync 会合并进主工程。
+      - name: 注册 BmCamera 插件到 MainActivity（20261108）
+        run: |
+          cat > /tmp/register-bm-camera.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmCameraPlugin.class)')) {
+            console.log('BmCameraPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          const imp = 'import com.bairimeng.camera.BmCameraPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          if (s.includes('public void onCreate(')) {
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmCameraPlugin.class);\n    $1');
+          } else {
+            s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmCameraPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}');
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmCameraPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-camera.js
+
       # 20261108：注入 WebChromeClient 相机授权处理——四季「采集」相机 getUserMedia 根因修复。
       #   根因：Capacitor 的 BridgeWebChromeClient 只处理 file chooser（onShowFileChooser）和
       #   地理定位权限，不处理 getUserMedia 的 onPermissionRequest 相机请求，导致
@@ -410,7 +484,7 @@ jobs:
               '    }',
               '  }',
               ''
-            ].join('\\n');
+            ].join('\n');
             // 插到最后一个 } 之前（类结尾）
             s = s.replace(/\}\s*$/, method + '}');
           }
