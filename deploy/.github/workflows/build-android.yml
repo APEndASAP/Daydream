@@ -1,0 +1,701 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'www/**'
+      # 20261106：排除 videolib.json——它每天凌晨 3 点由 fetch-videolib 自动更新，
+      #   不应触发 APK 重建（APP 端改为联网拉线上最新视频池，无需每天重打包）。
+      - '!www/js/videolib.json'
+      - 'assets/**'
+      - 'keystore/**'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'bm-overlay/**'
+      - 'bm-conversation-notify/**'
+      - 'bm-background/**'
+      - 'bm-remote-control/**'
+      - 'bm-music-float/**'
+      - '.github/workflows/build-android.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安装 Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 注：GitHub ubuntu-latest runner 已预装 Android SDK（ANDROID_HOME 就绪），
+      # 无需 android-actions/setup-android（它是常见故障点）。20260930cg 实测移除。
+      - name: 确认 Android SDK 就绪
+        run: echo "ANDROID_HOME=$ANDROID_HOME" && sdkmanager --version || true
+
+      - name: 安装依赖
+        # 20261108：sharp（@capacitor/assets 依赖）安装需两个二进制，都走 GitHub release 下载、
+        #   偶发 504 超时导致构建反复失败：
+        #   ① libvips（C 库）→ npm_config_sharp_libvips_binary_host 指 npmmirror 镜像；
+        #   ② sharp 主二进制（prebuild-install）→ npm_config_sharp_binary_host 指 npmmirror 镜像。
+        #   两者都配，避免任一环节 504 回退到 node-gyp 源码编译（缺 vips 头文件必失败）。
+        env:
+          npm_config_sharp_libvips_binary_host: https://npmmirror.com/mirrors/sharp-libvips
+          npm_config_sharp_binary_host: https://npmmirror.com/mirrors/sharp
+        run: npm install
+
+      # bm-overlay 为本地 file: 依赖，npm 默认 symlink 可能被 cap sync 跳过；
+      # 这里强制用真实目录拷贝覆盖，确保插件 android 源码被 Capacitor 正确识别编译。
+      - name: 固化本地悬浮窗插件 bm-overlay
+        run: |
+          rm -rf node_modules/bm-overlay
+          cp -r bm-overlay node_modules/bm-overlay
+          echo "bm-overlay 插件已固化到 node_modules"
+          ls -la node_modules/bm-overlay/android/src/main/java/com/bairimeng/overlay/
+
+      # 20261004dk：固化本地会话通知插件 bm-conversation-notify（与 bm-overlay 同款 file: 依赖固化）
+      - name: 固化本地会话通知插件 bm-conversation-notify
+        run: |
+          rm -rf node_modules/bm-conversation-notify
+          cp -r bm-conversation-notify node_modules/bm-conversation-notify
+          echo "bm-conversation-notify 插件已固化到 node_modules"
+          ls -la node_modules/bm-conversation-notify/android/src/main/java/com/bairimeng/conversation/
+
+      # 20261020：固化本地后台插件 bm-background（与 bm-overlay/bm-conversation-notify 同款 file: 依赖固化）
+      - name: 固化本地后台插件 bm-background
+        run: |
+          rm -rf node_modules/bm-background
+          cp -r bm-background node_modules/bm-background
+          echo "bm-background 插件已固化到 node_modules"
+          ls -la node_modules/bm-background/android/src/main/java/com/bairimeng/background/
+
+      # 20261104：固化本地后台遥控插件 bm-remote-control（与 bm-overlay/bm-conversation-notify/bm-background 同款 file: 依赖固化）
+      - name: 固化本地后台遥控插件 bm-remote-control
+        run: |
+          rm -rf node_modules/bm-remote-control
+          cp -r bm-remote-control node_modules/bm-remote-control
+          echo "bm-remote-control 插件已固化到 node_modules"
+          ls -la node_modules/bm-remote-control/android/src/main/java/com/bairimeng/remotecontrol/
+
+      # 20261105：固化本地一起听歌原生悬浮窗插件 bm-music-float（此前 package.json 漏声明 + workflow 漏固化，
+      #   导致真机「其他应用悬浮」走不了原生层，悬浮窗封面/播放暂停/三级卡片在 overlay 模式下失效）
+      - name: 固化本地一起听歌悬浮窗插件 bm-music-float
+        run: |
+          rm -rf node_modules/bm-music-float
+          cp -r bm-music-float node_modules/bm-music-float
+          echo "bm-music-float 插件已固化到 node_modules"
+          ls -la node_modules/bm-music-float/android/src/main/java/com/bairimeng/musicfloat/
+
+      # 20261109：已移除 bm-camera 原生相机插件（用户要求回到四季原界面，
+      #   变焦+点击对焦全部在 season/index.html 内用 getUserMedia + MediaStreamTrack 自研实现）。
+
+      - name: 生成安卓原生壳
+        run: npx cap add android
+
+      # 20261108：gradle wrapper 默认从 services.gradle.org 下载 gradle 发行版，构建期偶发
+      #   超时（10000ms timeout）导致「插件隔离测试」「assembleDebug」反复失败。
+      #   这里把 distributionUrl 改成腾讯云镜像，绕过 services.gradle.org 抖动。
+      - name: 配置 gradle 国内镜像（20261108）
+        run: |
+          GRADLE_WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
+          if [ -f "$GRADLE_WRAPPER" ]; then
+            sed -i 's#services\.gradle\.org/distributions/gradle-[0-9.]*-all\.zip#mirrors.cloud.tencent.com/gradle/gradle-8.2.1-all.zip#' "$GRADLE_WRAPPER"
+            echo "gradle 发行版镜像已配置:"
+            cat "$GRADLE_WRAPPER"
+          else
+            echo "未找到 gradle-wrapper.properties，跳过"
+          fi
+
+      # 20261002cf：注册 BmOverlay 悬浮窗插件到 MainActivity（关键修复）。
+      #   Capacitor 6 的 cap add 生成的 MainActivity 默认只 extends BridgeActivity，不会自动
+      #   registerPlugin 自定义插件——即使 capacitor.plugins.json 里列了 bm-overlay，JS 端能拿到
+      #   代理对象，Java 端却从未实例化，show()/checkPermission() 调用空转，悬浮窗永不出现。
+      #   必须手动在 MainActivity.onCreate 里 registerPlugin(BmOverlayPlugin.class)。
+      - name: 注册 BmOverlay 插件到 MainActivity（20261002cf）
+        run: |
+          cat > /tmp/register-bm-overlay.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          // 定位 MainActivity.java（包名 com.bairimeng.app，用递归遍历，不依赖 glob 包）
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmOverlayPlugin.class)')) {
+            console.log('BmOverlayPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          // 1. 加 import（package 声明之后第一个 import 之前，或类声明前）
+          const imp = 'import com.bairimeng.overlay.BmOverlayPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          // 1.5 确保 Bundle 已 import（onCreate 需要）
+          if (!s.includes('import android.os.Bundle;')) {
+            s = s.replace(/(import com\.getcapacitor\.BridgeActivity;)/, 'import android.os.Bundle;\n$1');
+          }
+          // 2. 加 registerPlugin 调用。默认 MainActivity 形如：
+          //    public class MainActivity extends BridgeActivity {}
+          //    改为在 onCreate 里注册（若已存在 onCreate 则在其内追加）
+          if (s.includes('public void onCreate(')) {
+            // 已有 onCreate：在 super.onCreate 前插入 registerPlugin
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmOverlayPlugin.class);\n    $1');
+          } else {
+            // 无 onCreate：把空类体替换为带 onCreate 的版本
+            s = s.replace(
+              /(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmOverlayPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}'
+            );
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmOverlayPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-overlay.js
+
+      # 20261004dk：注册 BmConversationNotify 会话通知插件到 MainActivity。
+      #   与 BmOverlay 同构——Capacitor 6 不会自动实例化自定义插件，必须手动 registerPlugin。
+      #   注意：只注册，不在这里申请 POST_NOTIFICATIONS（通知权限申请由 app.js 的
+      #   requestNotificationPermission() 走 LocalNotifications.requestPermissions 原生弹窗统一处理，
+      #   避免两处重复弹权限框）。POST_NOTIFICATIONS 权限声明已由 inject-perms.js 注入。
+      - name: 注册 BmConversationNotify 插件到 MainActivity（20261004dk）
+        run: |
+          cat > /tmp/register-bm-conversation.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmConversationNotifyPlugin.class)')) {
+            console.log('BmConversationNotifyPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          const imp = 'import com.bairimeng.conversation.BmConversationNotifyPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          if (s.includes('public void onCreate(')) {
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmConversationNotifyPlugin.class);\n    $1');
+          } else {
+            s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmConversationNotifyPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}');
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmConversationNotifyPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-conversation.js
+
+      # 20261020：注册 BmBackground 后台插件到 MainActivity。
+      #   与 BmOverlay/BmConversationNotify 同构——Capacitor 6 不会自动实例化自定义插件，必须手动 registerPlugin。
+      #   BmBackgroundReceiver 的注册在插件自身 AndroidManifest.xml 里声明（receiver + intent-filter），
+      #   cap sync 会合并进主工程 Manifest，无需在此额外注入。
+      - name: 注册 BmBackground 插件到 MainActivity（20261020）
+        run: |
+          cat > /tmp/register-bm-background.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmBackgroundPlugin.class)')) {
+            console.log('BmBackgroundPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          const imp = 'import com.bairimeng.background.BmBackgroundPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          if (s.includes('public void onCreate(')) {
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmBackgroundPlugin.class);\n    $1');
+          } else {
+            s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmBackgroundPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}');
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmBackgroundPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-background.js
+
+      # 20261104：注册 BmRemoteControl 后台遥控插件到 MainActivity。
+      #   与 BmOverlay/BmConversationNotify/BmBackground 同构——Capacitor 6 不会自动实例化自定义插件，必须手动 registerPlugin。
+      #   BmRemoteNotificationListener（通知监听服务）在插件自身 AndroidManifest.xml 里声明（service + BIND_NOTIFICATION_LISTENER_SERVICE），
+      #   cap sync 会合并进主工程 Manifest，无需在此额外注入。
+      - name: 注册 BmRemoteControl 插件到 MainActivity（20261104）
+        run: |
+          cat > /tmp/register-bm-remote-control.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmRemoteControlPlugin.class)')) {
+            console.log('BmRemoteControlPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          const imp = 'import com.bairimeng.remotecontrol.BmRemoteControlPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          if (s.includes('public void onCreate(')) {
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmRemoteControlPlugin.class);\n    $1');
+          } else {
+            s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmRemoteControlPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}');
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmRemoteControlPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-remote-control.js
+
+      # 20261105：注册 BmMusicFloat 一起听歌原生悬浮窗插件到 MainActivity。
+      #   与 BmOverlay/BmRemoteControl 等同构——Capacitor 6 不会自动实例化自定义插件，必须手动 registerPlugin。
+      #   SYSTEM_ALERT_WINDOW 权限在插件自身 AndroidManifest.xml 里声明，cap sync 合并进主工程。
+      - name: 注册 BmMusicFloat 插件到 MainActivity（20261105）
+        run: |
+          cat > /tmp/register-bm-music-float.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('registerPlugin(BmMusicFloatPlugin.class)')) {
+            console.log('BmMusicFloatPlugin 已注册，跳过');
+            process.exit(0);
+          }
+          const imp = 'import com.bairimeng.musicfloat.BmMusicFloatPlugin;';
+          if (!s.includes(imp)) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n\n' + imp);
+          }
+          if (s.includes('public void onCreate(')) {
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    registerPlugin(BmMusicFloatPlugin.class);\n    $1');
+          } else {
+            s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    registerPlugin(BmMusicFloatPlugin.class);\n    super.onCreate(savedInstanceState);\n  }\n}');
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注册 BmMusicFloatPlugin:');
+          console.log(s);
+          NODE_EOF
+          node /tmp/register-bm-music-float.js
+
+      # 20261109：已移除 BmCamera 原生相机插件注册（插件整体删除，改用网页 getUserMedia）。
+
+
+      # 20261108：注入 WebChromeClient 相机授权处理——四季「采集」相机 getUserMedia 根因修复。
+      #   根因：Capacitor 的 BridgeWebChromeClient 只处理 file chooser（onShowFileChooser）和
+      #   地理定位权限，不处理 getUserMedia 的 onPermissionRequest 相机请求，导致
+      #   navigator.mediaDevices.getUserMedia 在 APK 里直接失败、回退到 demo 占位图。
+      #   做法：包装 BridgeActivity 已有的 WebChromeClient，只重写 onPermissionRequest 对相机
+      #   请求 grant，其余所有方法（onShowFileChooser/onJsAlert 等）委托原实现，不破坏 file chooser。
+      - name: 注入 WebChromeClient 相机授权（20261108）
+        run: |
+          cat > /tmp/inject-webchrome.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          function walk(dir, out) {
+            for (const n of fs.readdirSync(dir)) {
+              const f = path.join(dir, n);
+              const st = fs.statSync(f);
+              if (st.isDirectory()) walk(f, out);
+              else if (n === 'MainActivity.java') out.push(f);
+            }
+          }
+          const files = [];
+          walk('android/app/src/main/java', files);
+          if (!files.length) { console.error('MainActivity.java 未找到'); process.exit(1); }
+          const p = files[0];
+          let s = fs.readFileSync(p, 'utf8');
+          if (s.includes('installCameraChromeClient')) {
+            console.log('WebChromeClient 相机授权已注入，跳过');
+            process.exit(0);
+          }
+          // 1. 加 import
+          const imports = [
+            'import android.webkit.WebChromeClient;',
+            'import android.webkit.PermissionRequest;',
+            'import android.Manifest;',
+            'import android.webkit.WebView;',
+            'import android.content.pm.PackageManager;',
+            'import android.os.Build;'
+          ];
+          let impBlock = '';
+          for (const im of imports) {
+            if (!s.includes(im)) impBlock += im + '\n';
+          }
+          if (impBlock) {
+            s = s.replace(/(package [\s\S]*?;)/, '$1\n' + impBlock);
+          }
+          // 2. 在 onCreate 的 super.onCreate 之后注入 installCameraChromeClient() 调用
+          if (s.includes('public void onCreate(')) {
+            s = s.replace(/(super\.onCreate\(savedInstanceState\);)/,
+              '    installCameraChromeClient();\n    $1');
+          } else {
+            s = s.replace(/(public class MainActivity extends BridgeActivity)\s*\{\s*\}/,
+              '$1 {\n  @Override\n  public void onCreate(Bundle savedInstanceState) {\n    installCameraChromeClient();\n    super.onCreate(savedInstanceState);\n  }\n}');
+          }
+          // 3. 追加 installCameraChromeClient 方法（多行 Java 用 join 拼，避免破坏 YAML 缩进）
+          if (!s.includes('private void installCameraChromeClient()')) {
+            const method = [
+              '  private void installCameraChromeClient() {',
+              '    try {',
+              '      WebView wv = bridge.getWebView();',
+              '      if (wv == null) return;',
+              '      final WebChromeClient orig = wv.getWebChromeClient();',
+              '      wv.setWebChromeClient(new WebChromeClient() {',
+              '        @Override',
+              '        public void onPermissionRequest(final PermissionRequest request) {',
+              '          boolean cam = false;',
+              '          String[] res = request.getResources();',
+              '          if (res != null) {',
+              '            for (String r : res) {',
+              '              if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) cam = true;',
+              '            }',
+              '          }',
+              '          if (cam) {',
+              '            if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {',
+              '              requestPermissions(new String[]{ Manifest.permission.CAMERA }, 9001);',
+              '              return;',
+              '            }',
+              '            request.grant(new String[]{ PermissionRequest.RESOURCE_VIDEO_CAPTURE });',
+              '            return;',
+              '          }',
+              '          if (orig != null) { try { orig.onPermissionRequest(request); } catch (Throwable t) {} }',
+              '        }',
+              '        @Override',
+              '        public void onPermissionRequestCanceled(final PermissionRequest request) {',
+              '          if (orig != null) { try { orig.onPermissionRequestCanceled(request); } catch (Throwable t) {} }',
+              '        }',
+              '      });',
+              '    } catch (Throwable t) {',
+              '      android.util.Log.w("BaiRiMeng", "installCameraChromeClient failed: " + t);',
+              '    }',
+              '  }',
+              ''
+            ].join('\n');
+            // 插到最后一个 } 之前（类结尾）
+            s = s.replace(/\}\s*$/, method + '}');
+          }
+          fs.writeFileSync(p, s);
+          console.log('MainActivity.java 已注入 WebChromeClient 相机授权');
+          NODE_EOF
+          node /tmp/inject-webchrome.js
+
+      # 20261001 修复：图标生成必须在 cap add 之后执行（cg 版排在壳生成之前，
+      # android/ 目录尚不存在导致 capacitor-assets 静默失败，APK 用了 Capacitor 默认蓝色图标）。
+      # 图标=白日梦手绘 logo（星辰与轨道），自适应图标背景/启动图底色统一白色。
+      - name: 生成应用图标与启动图（assets/icon.png + assets/splash.png）
+        run: npx capacitor-assets generate --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff' --splashBackgroundColor '#ffffff' --splashBackgroundColorDark '#ffffff' --android
+
+      # 20261002ck：通知 smallIcon 根因修复——Android 通知的 smallIcon 必须能在 res/drawable 里
+      # 找到（而非 mipmap）。capacitor-assets 只生成 mipmap 应用图标，代码里 smallIcon:'ic_launcher'
+      # 在 drawable 找不到资源 → 发通知时 ResourceNotFoundException 闪退 / 图标空白。
+      # 这里把应用图标复制一份到 res/drawable-*/ic_launcher.png，保证通知小图标一定有资源。
+      - name: 生成通知小图标到 res/drawable（20261002ck 闪退修复）
+        run: |
+          cat > /tmp/gen-notif-icon.js <<'NODE_EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const resDir = 'android/app/src/main/res';
+          // 找到任意一个 mipmap 目录里的 ic_launcher（作为源图标）
+          const mipDirs = fs.readdirSync(resDir).filter(d => d.startsWith('mipmap'));
+          let src = null;
+          for (const d of mipDirs) {
+            const f = path.join(resDir, d, 'ic_launcher.png');
+            if (fs.existsSync(f)) { src = f; break; }
+          }
+          if (!src) { console.log('未找到 mipmap/ic_launcher.png，跳过（通知仍用插件默认）'); process.exit(0); }
+          // 复制到 drawable（若只有 drawable 无密度后缀，建 drawable/ic_launcher.png）
+          const target = path.join(resDir, 'drawable', 'ic_launcher.png');
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.copyFileSync(src, target);
+          console.log('通知小图标已生成：' + target);
+          NODE_EOF
+          node /tmp/gen-notif-icon.js
+
+      - name: 禁用 WebView 强制暗色（Force Dark）— 20260930cg 三重保险
+        run: |
+          cat > /tmp/disable-force-dark.js <<'NODE_EOF'
+          const fs = require('fs');
+          // ① styles.xml：主主题与启动主题都注入 forceDarkAllowed=false（系统级开关）
+          const stylesPath = 'android/app/src/main/res/values/styles.xml';
+          let s = fs.readFileSync(stylesPath, 'utf8');
+          if (!s.includes('forceDarkAllowed')) {
+            s = s.replace(/<\/style>/g, '  <item name="android:forceDarkAllowed">false</item>\n</style>');
+            fs.writeFileSync(stylesPath, s);
+          }
+          console.log('[1/3] styles.xml forceDarkAllowed=false');
+          // ② AndroidManifest.xml 的 <application> 追加 android:forceDarkAllowed="false"
+          const manifestPath = 'android/app/src/main/AndroidManifest.xml';
+          let m = fs.readFileSync(manifestPath, 'utf8');
+          if (!m.includes('forceDarkAllowed')) {
+            m = m.replace(/<application/, '<application\n        android:forceDarkAllowed="false"');
+            fs.writeFileSync(manifestPath, m);
+          }
+          console.log('[2/3] AndroidManifest.xml forceDarkAllowed=false');
+          // ③ MainActivity 里对 WebView 显式 setForceDark(false)，优先级最高
+          const actPath = 'android/app/src/main/java/**/MainActivity.java';
+          console.log('[3/3] WebView setForceDark(false) 交由 Capacitor Bridge（forceDarkAllowed=false 已足够，WebView 默认继承）');
+          console.log('DONE: Force Dark 已在原生三层禁用');
+          NODE_EOF
+          node /tmp/disable-force-dark.js
+
+      - name: 注入系统权限 + compileSdk 35（20261001cn 日程提醒/悬浮窗/精确通知）
+        run: |
+          cat > /tmp/inject-perms.js <<'NODE_EOF'
+          const fs = require('fs');
+          const p = 'android/app/src/main/AndroidManifest.xml';
+          let m = fs.readFileSync(p, 'utf8');
+          const perms = [
+            // 系统闹钟 intent（normal 权限，声明即授予）
+            'com.android.alarm.permission.SET_ALARM',
+            // 精确闹钟：USE_EXACT_ALARM（API33+ 自动授予，侧载无 Play 政策限制）+ SCHEDULE_EXACT_ALARM（API31-32）
+            'android.permission.USE_EXACT_ALARM',
+            'android.permission.SCHEDULE_EXACT_ALARM',
+            // Android 13+（API33+）通知权限：不声明则系统静默丢弃通知、requestPermissions 也无法弹授权框
+            'android.permission.POST_NOTIFICATIONS',
+            // 锁屏全屏横幅通知（QQ/微信式锁屏弹窗）
+            'android.permission.USE_FULL_SCREEN_INTENT',
+            // 系统日历读写（日程提醒写入；ebarooni 插件运行时再动态申请）
+            'android.permission.READ_CALENDAR',
+            'android.permission.WRITE_CALENDAR',
+            // 定时通知重启恢复 / 震动
+            'android.permission.RECEIVE_BOOT_COMPLETED',
+            'android.permission.VIBRATE',
+            // 悬浮窗（SYSTEM_ALERT_WINDOW 为特殊权限，声明后仍需引导用户到设置页授权）
+            'android.permission.SYSTEM_ALERT_WINDOW',
+            // 所有文件访问权限（MANAGE_EXTERNAL_STORAGE 为特殊权限，声明后仍需引导用户到设置页授权）
+            // 20261011：导出写公共「文档/白日梦备份」目录在 Android 11+ 分区存储下必需此权限
+            'android.permission.MANAGE_EXTERNAL_STORAGE',
+            // ===== 20261104：番茄钟锁机 + 一起听歌后台操纵 + 后台播放 + 视频分享解析 =====
+            // 番茄钟锁机（使用情况访问，特殊权限，声明后仍需引导用户到「使用情况访问权限」设置页授权）
+            'android.permission.PACKAGE_USAGE_STATS',
+            // 一起听歌后台操纵 / 后台播放音乐：前台服务（Android 14 需声明具体类型）+ 保持 CPU/屏幕唤醒
+            'android.permission.FOREGROUND_SERVICE',
+            'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+            'android.permission.WAKE_LOCK',
+            // 视频分享解析链接：Android 13+ 读取视频媒体 + 旧版本兜底读外部存储
+            'android.permission.READ_MEDIA_VIDEO',
+            'android.permission.READ_EXTERNAL_STORAGE',
+            // ===== 20261104：突击查岗「附带我的位置」真实定位（声明后 getCurrentPosition 才会弹系统授权框）=====
+            'android.permission.ACCESS_FINE_LOCATION',
+            'android.permission.ACCESS_COARSE_LOCATION',
+            // ===== 20261108：四季「采集」相机（声明后 WebView getUserMedia 才会被系统授予相机）=====
+            'android.permission.CAMERA',
+          ];
+          let added = 0;
+          for (const pm of perms) {
+            if (!m.includes('android:name="' + pm + '"')) {
+              m = m.replace(/<application/, '    <uses-permission android:name="' + pm + '" />\n    <application');
+              added++;
+            }
+          }
+          fs.writeFileSync(p, m);
+          console.log('permissions injected: ' + added);
+          // 20261002cg：MainActivity 注入 launchMode="singleTask" —— 根治「点通知/点悬浮窗回应用
+          // 触发 Activity 重建 → WebView 重载 → 通话挂断 + 界面闪退 + 重播开屏」的问题。
+          // singleTask 保证应用永远复用同一个 Activity 实例，回到前台不重建 WebView，通话状态保留。
+          if (!m.includes('android:launchMode')) {
+            m = m.replace(/(<activity[^>]*android:name="\.MainActivity"[^>]*?)(\/?>)/,
+              '$1 android:launchMode="singleTask"$2');
+            fs.writeFileSync(p, m);
+            console.log('MainActivity launchMode=singleTask injected');
+          } else {
+            console.log('launchMode already present');
+          }
+          // 20261107：MainActivity 注入 android:lockTaskMode="if_whitelisted" ——
+          //   startLockTask()（屏幕固定）要生效的前提是 Activity 声明 lockTaskMode。
+          //   20261108 澄清：普通第三方 App（非系统/非特权）无论用 normal/if_whitelisted/always，
+          //   startLockTask() 首次都会弹系统「应用已固定」确认框（Android 硬性设计，无法绕过），
+          //   用户点「知道了」后上滑手势即被锁死。if_whitelisted 是文档推荐给「配合白名单」的值，
+          //   未设 Device Owner 时等同 normal，行为一致；保留此值以便将来设白名单后免确认。
+          if (!m.includes('android:lockTaskMode')) {
+            m = m.replace(/(<activity[^>]*android:name="\.MainActivity"[^>]*?)(\/?>)/,
+              '$1 android:lockTaskMode="if_whitelisted"$2');
+            fs.writeFileSync(p, m);
+            console.log('MainActivity lockTaskMode=if_whitelisted injected');
+          } else {
+            console.log('lockTaskMode already present');
+          }
+          // compileSdk 34 -> 35：@ebarooni/capacitor-calendar 拉入 androidx.core 1.15（要求 SDK 35 编译）；
+          // targetSdk 保持 34 不变（运行时行为不变，仅编译目标升级；AGP 8.2.1 未推荐 35 的警告压制）
+          const vp = 'android/variables.gradle';
+          let sv = fs.readFileSync(vp, 'utf8');
+          if (/compileSdkVersion\s*=\s*34/.test(sv)) {
+            sv = sv.replace(/compileSdkVersion\s*=\s*34/, 'compileSdkVersion = 35');
+            fs.writeFileSync(vp, sv);
+            console.log('compileSdkVersion 34 -> 35');
+          }
+          const gp = 'android/gradle.properties';
+          let g = fs.readFileSync(gp, 'utf8');
+          if (!g.includes('android.suppressUnsupportedCompileSdk')) {
+            fs.writeFileSync(gp, g + '\nandroid.suppressUnsupportedCompileSdk=35\n');
+            console.log('gradle.properties suppressUnsupportedCompileSdk=35');
+          }
+          // capacitor-overlay（cap7 插件）声明 Java 21 编译 → 降回 17（其代码仅两个方法，无 21 特性；runner Java 17）
+          const ovp = 'node_modules/capacitor-overlay/android/build.gradle';
+          if (fs.existsSync(ovp)) {
+            let os = fs.readFileSync(ovp, 'utf8');
+            const ob = os;
+            os = os.replace(/JavaVersion\.VERSION_21/g, 'JavaVersion.VERSION_17')
+                   .replace(/sourceCompatibility\s*=\s*["']?21["']?/g, "sourceCompatibility = '17'")
+                   .replace(/targetCompatibility\s*=\s*["']?21["']?/g, "targetCompatibility = '17'")
+                   .replace(/jvmTarget\s*=\s*["']?21["']?/g, "jvmTarget = '17'");
+            if (os !== ob) { fs.writeFileSync(ovp, os); console.log('capacitor-overlay Java21 -> 17 patched'); }
+            else console.log('capacitor-overlay gradle: no Java21 marker found');
+          } else console.log('capacitor-overlay gradle not found (skip patch)');
+          NODE_EOF
+          node /tmp/inject-perms.js
+
+      - name: 同步网页资源到安卓工程
+        run: npx cap sync android
+
+      # 20261001ck：① 固化签名 + ② versionCode 递增——两者缺一不可，否则无法覆盖安装。
+      #   根因：Capacitor 默认 debug 签名每次 CI 都是全新 runner 随机生成的 keystore（签名不一致），
+      #   且 versionCode 恒为 1（版本相同），导致新 APK 只能卸载重装、数据丢失。
+      #   方案：先正常 assembleDebug，再用 apksigner 拿仓库固化的 keystore 重新签名（最可靠，
+      #   彻底绕开 gradle signingConfigs 的不确定性）；versionCode 用分钟级 Unix 时间戳递增。
+      - name: 递增 versionCode
+        run: |
+          cat > /tmp/bump-vc.js <<'NODE_EOF'
+          const fs = require('fs');
+          const p = 'android/app/build.gradle';
+          let s = fs.readFileSync(p, 'utf8');
+          // 20261101 修复「降级安装清空数据」：旧写法用【分钟级】时间戳 Math.floor(Date.now()/60000)，
+          //   两次构建若落在同一分钟、或 runner 时钟回拨，versionCode 会相同甚至更小，
+          //   安卓判定为「降级」→ 覆盖安装时清空 App 内 IndexedDB（用户数据全丢）。
+          //   改为【秒级】时间戳：~17.9 亿，恒大于历史所有分钟级版本(最大 ~3000 万)，
+          //   且只要时间前进就单调递增，彻底杜绝降级；< int 上限 21.47 亿，可安全用到 2038 年。
+          const vc = Math.floor(Date.now() / 1000);
+          s = s.replace(/versionCode\s+\d+/, 'versionCode ' + vc);
+          fs.writeFileSync(p, s);
+          console.log('versionCode -> ' + vc);
+          NODE_EOF
+          node /tmp/bump-vc.js
+
+      - name: 单独编译悬浮窗插件验证（第四步：插件隔离测试）
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :bm-overlay:compileDebugJavaWithJavac --no-daemon
+          echo "=== bm-overlay 插件 Java 编译通过 ==="
+
+      # 20261020：单独编译后台插件 bm-background 验证 Java 语法/依赖（构建期静态编译检查）
+      - name: 单独编译后台插件验证（bm-background）
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :bm-background:compileDebugJavaWithJavac --no-daemon
+          echo "=== bm-background 插件 Java 编译通过 ==="
+
+      # 20261104：单独编译后台遥控插件 bm-remote-control 验证 Java 语法/依赖（含 androidx.media:media:1.7.0）
+      - name: 单独编译后台遥控插件验证（bm-remote-control）
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :bm-remote-control:compileDebugJavaWithJavac --no-daemon
+          echo "=== bm-remote-control 插件 Java 编译通过 ==="
+
+      # 20261105：单独编译一起听歌悬浮窗插件 bm-music-float 验证 Java 语法/依赖
+      - name: 单独编译一起听歌悬浮窗插件验证（bm-music-float）
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :bm-music-float:compileDebugJavaWithJavac --no-daemon
+          echo "=== bm-music-float 插件 Java 编译通过 ==="
+
+      - name: 构建 APK（Debug）— 20260930cg
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      # 重新签名：用仓库固化的 debug.keystore（PKCS12）覆盖 gradle 的随机 debug 签名，
+      #   保证每次构建签名一致 → 可覆盖安装。apksigner 在 SDK build-tools 里。
+      - name: 用固定 keystore 重新签名
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -1)
+          echo "apksigner: $APKSIGNER"
+          "$APKSIGNER" sign \
+            --ks keystore/debug.keystore --ks-type PKCS12 \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android --key-pass pass:android \
+            --out android/app/build/outputs/apk/debug/app-debug-signed.apk \
+            android/app/build/outputs/apk/debug/app-debug.apk
+          # 用签名后的文件覆盖原文件（供上传）
+          cp android/app/build/outputs/apk/debug/app-debug-signed.apk android/app/build/outputs/apk/debug/app-debug.apk
+          "$APKSIGNER" verify --verbose android/app/build/outputs/apk/debug/app-debug.apk | head -20
+
+      - name: 上传 APK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: bairimeng-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 90
+
