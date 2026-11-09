@@ -274,6 +274,8 @@ body{
 .btn:active{transform:translate(2px,3px);box-shadow:inset -3px -3px 0 rgba(0,0,0,.35),inset 3px 3px 0 rgba(255,255,255,.16)}
 .btn.ghost{background:var(--paper2);color:var(--ink);box-shadow:inset -3px -3px 0 rgba(0,0,0,.10),4px 4px 0 rgba(34,31,26,.20)}
 .btn[disabled]{background:#9a9484;color:#d8d2c2;box-shadow:none;cursor:default}
+/* 20261109：球上已经选中落点时，按钮不再只说「种下去」，直接把坐标写上去 */
+.btn.ready{background:#3f4b39;letter-spacing:1px;font-size:14.5px}
 .btn-row{display:flex;gap:8px}
 .hint{margin-top:9px;font-size:11px;font-family:system-ui,'Microsoft YaHei';color:#6f6a5b;line-height:1.75;letter-spacing:.2px}
 /* ============ 书签册（书本） ============ */
@@ -1433,6 +1435,19 @@ body{
 .slot.on{border-style:solid;border-color:var(--accent);background:rgba(0,0,0,.04);font-weight:700;}
 .slot.used{opacity:.32;cursor:not-allowed;}
 
+/* 20261109：种子库「在球上选位置」（替代原来的 1~9 号按钮） */
+.seed-ball-wrap{margin:12px auto 0;max-width:352px;width:100%;}
+/* 20261109：种子库选位的球，直接复用主星球那张底图（plBase）——
+   同一块星空、同一个像素大陆、同一个球半径，不再单独画一颗。
+   画布按主星球逻辑尺寸 160×160 输出，CSS 放大 + pixelated 保持像素风。 */
+#seedBall{display:block;width:100%;height:auto;cursor:crosshair;
+  image-rendering:pixelated;
+  border:1px solid rgba(0,0,0,.28);background:#080b13;
+  touch-action:manipulation;
+  filter:drop-shadow(0 8px 22px rgba(40,34,22,.22));}
+.sb-hint{margin:8px auto 0;max-width:340px;text-align:center;font-size:11.5px;
+  line-height:1.6;color:#6b6252;}
+
 .pl-imprint{margin:12px 0 2px;border:1px solid var(--accent);color:var(--accent);
   background:linear-gradient(180deg,rgba(255,255,255,.80),rgba(0,0,0,.05)),var(--paper);
   text-align:center;padding:12px;font-size:13px;letter-spacing:.22em;cursor:pointer;position:relative;}
@@ -1517,7 +1532,17 @@ body{
 /* 跳过引导：独立放在屏幕右上角（聚光灯阴影之外），不跟讲解卡片挤一起。
    它永远是「整体跳过」，走到哪一步点它都直接结束整段引导。 */
 .sg-skip{
-  position:absolute;right:14px;top:14px;z-index:9001;
+  position:absolute;right:14px;top:56px;z-index:9001;
+  font-size:12px;letter-spacing:.5px;color:#f2ead8;
+  background:rgba(26,23,18,.42);border:1px solid rgba(255,252,242,.28);
+  border-radius:999px;padding:7px 14px;cursor:pointer;
+  pointer-events:auto;
+}
+/* 20261109：重看引导（只在 ?guide= 预览模式出现，正式版不显示）。
+   点它 = 清掉这份演示存档 + 重新塞示例图 + 从第 1 步重播，
+   所以同一个页面可以反复看，不用手动清缓存。 */
+.sg-replay{
+  position:absolute;left:14px;top:56px;z-index:9001;
   font-size:12px;letter-spacing:.5px;color:#f2ead8;
   background:rgba(26,23,18,.42);border:1px solid rgba(255,252,242,.28);
   border-radius:999px;padding:7px 14px;cursor:pointer;
@@ -1976,7 +2001,7 @@ body{
     <section class="view" id="vPlanet">
       <div class="pghead">
         <div class="pgtitle">星球</div>
-        <div class="pgsub">PLANET · <span id="plOwner">小满的星球</span></div>
+        <div class="pgsub">PLANET · <span id="plOwner">星球</span></div>
       </div>
       <div class="planet-card">
         <canvas id="plCanvas" width="160" height="160"></canvas>
@@ -2059,7 +2084,11 @@ body{
       <div class="seed-grid" id="seedGrid"></div>
       <div id="seedPlantBox" style="display:none">
         <div class="hint" id="seedPickHint">※ 选好位置，把种子种进星球。</div>
-        <div class="slot-row" id="slotRow"></div>
+        <!-- 20261109：不再给 1~9 号按钮，直接给一颗可点的星球，玩家在球上选落点 -->
+        <div class="seed-ball-wrap">
+          <canvas id="seedBall" width="160" height="160"></canvas>
+        </div>
+        <div class="sb-hint" id="sbHint">※ 点星球上一个空圆圈，把种子种在那里</div>
         <div class="btn" id="seedPlantBtn">种 下 去</div>
       </div>
       <div class="hint">※ 这里的种子都是你送给 TA 的书签。TA 手里拿到种子后，会自己找时间种下；<br>你想抢先，就在上面挑一个位置替 TA 种 —— 谁先种下，种子库里就少哪一颗。</div>
@@ -2178,7 +2207,7 @@ body{
     <div class="lb-card">
       <div class="lb-top">
         <canvas class="lb-av" id="lbAv" width="22" height="22"></canvas>
-        <div class="lb-from" id="lbFrom">小满</div>
+        <div class="lb-from" id="lbFrom"></div>
       </div>
       <div class="lb-t" id="lbT">一起浇灌爱意？</div>
       <div class="lb-q" id="lbQ"></div>
@@ -4169,13 +4198,14 @@ function openTicket(p){
     : '※ 这是当时打印出来的那张票根。送给角色后，TA 会收下一颗种子放进种子库 —— 你可以替 TA 挑位置种下，TA 也会自己找时间种。';
   const nt = $('#tkNote');
   if (nt){
-    /* 纸笺上写谁的落款：你写了寄语就是你的手迹，没写才显示 TA 的回话 */
-    const line = p.myMsg || p.giftMsg;
+    /* 20261109：便签只写「角色给这枚书签的留言」（一签一角色最多一条）。
+       玩家寄语不再是便签主角 —— 它在星球下方被角色回应（见 nxGiftText）。 */
+    const line = p.noteText || '';
     if (line){
       nt.className = 'tk-note on';
       nt.innerHTML = '<div class="tkn-tape"></div>' +
         '<div class="tkn-q">「' + nxEsc(line) + '」</div>' +
-        '<div class="tkn-by">—— ' + (p.myMsg ? '你' : (p.giftedTo || '')) + ' · ' + (p.giftedAt || '') + '</div>';
+        '<div class="tkn-by">—— ' + nxEsc(p.noteBy || p.giftedTo || '') + ' · ' + (p.giftedAt || '') + '</div>';
     } else {
       nt.className = 'tk-note';
       nt.innerHTML = '';
@@ -4637,14 +4667,14 @@ function buildBookPage(host, idx){
     wrap.className = 'bp-ticket';
     host.appendChild(wrap);
     mountTicket(wrap, p, true);
-    /* 纸笺：你写的寄语优先，没写才显示 TA 的回话；只在「本角色单人」模式里贴 */
-    const noteLine = p.myMsg || p.giftMsg;
+    /* 20261109：便签＝角色给这枚书签的留言；只在「本角色单人」模式里贴 */
+    const noteLine = p.noteText || '';
     if (noteLine && bookScope === 'char'){
       const nt = document.createElement('div');
       nt.className = 'tk-note on';
       nt.innerHTML = '<div class="tkn-tape"></div>' +
         '<div class="tkn-q">「' + nxEsc(noteLine) + '」</div>' +
-        '<div class="tkn-by">—— ' + (p.myMsg ? '你' : (p.giftedTo || '')) + ' · ' + (p.giftedAt || '') + '</div>';
+        '<div class="tkn-by">—— ' + nxEsc(p.noteBy || p.giftedTo || '') + ' · ' + (p.giftedAt || '') + '</div>';
       host.appendChild(nt);
     }
     const bar = document.createElement('div');
@@ -5164,7 +5194,6 @@ srcImg.onload = () => {
   renderBookPage();
   renderBookGrid();
   renderDex();
-  seedPlanetDemo();
   /* 调试：?seed=N 在星球上铺 N 株（不同经纬度），用来看分布 */
   try {
     const sd = Number(new URLSearchParams(location.search).get('seed') || 0);
@@ -5422,6 +5451,8 @@ function batchDelete(){
       const i = PHOTOS.findIndex(p => p.id === id);
       if (i < 0) return;
       const p = PHOTOS[i];
+      /* 20261109：玩家主动删掉那张示例图 → 记一笔，以后不再自动塞回来 */
+      if (p.demo){ try { localStorage.setItem('bmSeasonDemoGone', '1'); } catch(e){} }
       PLANET.plants = PLANET.plants.filter(x => x.no !== p.no);
       PHOTOS.splice(i, 1);
     });
@@ -5846,7 +5877,8 @@ function camApplyZoom(){
     if (cvs) cvs.style.transform = tf;
   }
 }
-/* snap=true 吸附到最近档位（按钮点选 / 双指松手）；false 平滑跟手 */
+/* snap=true 吸附到最近档位（**只给档位按钮用**）；
+   false = 保留玩家拖到的任意倍率（双指松手走这条，20261109 用户要求） */
 function setCamZoom(z, snap){
   camZoom = Math.max(camZoomMin, Math.min(camZoomMax, z));
   if (snap !== false){
@@ -5922,10 +5954,20 @@ function camZoomBind(){
     const nz = _czTouch.startZoom * (d / _czTouch.startDist);
     camZoom = Math.max(camZoomMin, Math.min(camZoomMax, nz));
     _czDragging = true;
-    /* 只改 CSS：相对手势起点的倍率，GPU 合成，跟手不卡 */
+    /* 只改 CSS：GPU 合成，跟手不卡，中间任何位置都能停。
+       ★ 20261109 修两处：
+         ① CSS transform 是「绝对值」不是叠加 ——
+            有硬件变焦时基线是 1，用相对倍率 rel（镜头已经放大过了）；
+            没有硬件变焦时基线是 startZoom，必须用绝对 camZoom，否则一上手就跳。
+         ② 任何情况下 scale 都不低于 1 —— 低于 1 就是周边黑框。
+            0.5× 不靠缩画面实现，而是松手后切那颗真实超广角镜头。 */
     const rel = camZoom / (_czTouch.startZoom || 1);
+    const _t = camTrack();
+    const _zr = camCap && camCap.zoom;
+    const _hwOk = !!(_t && camLiveOn && _zr && typeof _zr.min === 'number' && _zr.max > _zr.min);
+    const cssZ = Math.max(1, _hwOk ? rel : camZoom);
     const live = $('#camLive'), cvs = $('#camCanvas');
-    const tf = 'scale(' + rel + ')';
+    const tf = cssZ === 1 ? '' : 'scale(' + cssZ + ')';
     if (live) live.style.transform = tf;
     if (cvs) cvs.style.transform = tf;
     document.querySelectorAll('#camZoom .cz-i').forEach(function(el){
@@ -5944,7 +5986,9 @@ function camZoomBind(){
     if (_czTouch && e.touches.length < 2){
       _czTouch = null;
       _czDragging = false;
-      setCamZoom(camZoom, true);     /* 松手提交：吸附档位 + 真正下发 track zoom */
+      /* 20261109：松手**不吸附档位** —— 玩家想停在哪就停在哪。
+         这里只把「CSS 跟手缩放」换成等值的镜头变焦，画面视觉连续。 */
+      setCamZoom(camZoom, false);
     }
   });
 
@@ -6868,23 +6912,29 @@ if(document.readyState === 'loading'){
    skins    每个角色手里已经拿到的「星球形态」key 数组 {viewId: [key...]}
    skin     每个角色现在正在用的形态 {viewId: key}（空 = 自己那颗默认星球）
    roundLove 这一轮累计浇过多少次爱意 —— 烧苗/变异的判定依据 */
-const PLANET = { owner:'小满', ownerId:'xm', viewId:'xm', plants:[], pool:{}, inited:false,
+/* 20261109：owner 不再默认「小满」（演示角色已删）。空 = 还没收到 season-init，
+   收到后由 currentCharId 填成真实角色；页面上的「XX的星球」也走空态文案。 */
+const PLANET = { owner:'', ownerId:'', viewId:'', plants:[], pool:{}, inited:false,
                  loveDay:null, careDay:null, skins:{}, skin:{}, roundLove:0,
                  /* mutSeeds：凝星时从「变异株」身上收回来的异变种子（种下去直接是变异株）。
                     见 mutSeedDrop / seedPool / plantSeedAt —— 这是攒满九株全变异的唯一通路。 */
-                 mutSeeds:[] };
+                 mutSeeds:[],
+                 /* 20261109：按角色记「这个角色已经收到过哪些品类的书签」。
+                    键 = charId，值 = { 'plant:栀子':true, 'planet:海':true }。
+                    用途：某个角色第一次收到该品类时一定回一句（见 giftReply）。 */
+                 seenKinds:{} };
 const PL_W = 160, PL_CX = 80, PL_CY = 88, PL_R = 54;
 const PL_MAX = 9;                 /* 一颗星球最多 9 株：3×3 密度刚好，再多就糊成一片 */
 let plBase = null, plTimer = null, plantHit = null, plWarm = false;
 let _taTickN = 0;      /* 降频用计数器：TA 自种那件事不需要每帧查（见 taSeedTick） */
 
-/* ---- 角色（demo 内置 3 位；接主项目时换成真实角色列表） ----
-   20261108：接入主项目——改为 let，由 season-init 消息替换成主项目真实角色列表 */
-let CHARS = [
-  { id:'xm', name:'小满', tag:'住在山脚 · 话少',   tone:'quiet' },
-  { id:'al', name:'阿岚', tag:'一路向北 · 爱跑',   tone:'bold'  },
-  { id:'zx', name:'知夏', tag:'守着河口 · 细心',   tone:'warm'  }
-];
+/* ---- 角色列表 ----
+   20261108：接入主项目 —— 改为 let，由 season-init 的 chars 替换成主项目真实角色。
+   20261109 用户定案：「不会出现没有角色这种情况（必须先新建角色才能看到四季），
+   所以不用留那几个模拟角色，模拟角色的数据全都删掉」。
+   ⇒ 这里初始就是空数组，**不再有任何演示角色兜底**。四季只认主项目下发的真实角色：
+     没下发 = 没角色 = 送书签/选角色这些入口直接提示，绝不凭空造一个假角色。 */
+let CHARS = [];
 /* TA 收下书签时回的那句话
    ★ 20261108 改：以前这些台词都说「已经种下了」——那时候 doGift 确实直接把苗
      插进星球。现在送书签只是**交一颗种子**（种子先进种子库，TA 过一阵才自己种），
@@ -6908,9 +6958,42 @@ const GIFT_LINES = {
     '先放着，这几天我要挑个水汽正好的地方。'
   ]
 };
-function charById(id){ return CHARS.find(c => c.id === id) || CHARS[0]; }
+/* 取角色：找不到就返回一个空壳（只有 id 空 + 名字占位），绝不回落到演示角色。
+   真实运行时 season-init 一定会带 currentCharId，走不到这里的兜底分支。 */
+function charById(id){ return CHARS.find(c => c.id === id) || CHARS[0] || { id:'', name:'TA', tag:'', tone:'warm' }; }
 /* 20261108：接入主项目——主项目下发的真实字卡池（season-init 消息注入） */
 let _HOST_CARD_POOL = null;
+/* 20261109：按角色隔离的资源配置（season-init 注入）
+   _HOST_CARD_POOLS[charId] = { scene:[], plant:[], miss:[], ask:[], tail:[] }
+     该角色自己的回复字卡（主项目已按它的禁用词/禁用分组过滤好），
+     字卡模式下四季本地拼句就用这份，别的角色的卡不会串进来。
+   _HOST_CHAR_ID：玩家这次是从谁的聊天页进来的。
+   _HOST_MODE：'card' | 'ai'，由主项目按该角色在主项目的模式下发。 */
+let _HOST_CARD_POOLS = null;
+let _HOST_CHAR_ID = '';
+/* 20261109：批量补留言时静音 toast（进四季一次性补好几条，别弹一串） */
+let _nxQuiet = false;
+/* 请求-响应表：向宿主要一句话（AI 模式用） */
+const _hostReqMap = Object.create(null);
+let _hostReqSeq = 0;
+/* 20261109：把主项目下发的「三组随机固定区间」写进 INTERACT（单位分钟 → 毫秒）。
+   season-init（进页面）+ season-gaps（玩家在聊天设置里改完、四季正开着）共用这一份，
+   两边绝不各写一遍 —— 否则改一处漏一处就会出现「设置里改了但四季不认」的假生效。 */
+function applySeasonGaps(g){
+  if (!g || typeof g !== 'object') return false;
+  if (typeof INTERACT === 'undefined') return false;
+  if (typeof g.careGapMin === 'number') INTERACT.careMinMs = g.careGapMin * 60000;
+  if (typeof g.careGapMax === 'number') INTERACT.careMaxMs = g.careGapMax * 60000;
+  if (typeof g.cardGapMin === 'number') INTERACT.cardMinMs = g.cardGapMin * 60000;
+  if (typeof g.cardGapMax === 'number') INTERACT.cardMaxMs = g.cardGapMax * 60000;
+  if (typeof g.aiGapMin === 'number') INTERACT.aiMinMs = g.aiGapMin * 60000;
+  if (typeof g.aiGapMax === 'number') INTERACT.aiMaxMs = g.aiGapMax * 60000;
+  /* demo 兼容：单值字段（careGap/cardGap/aiGap）仍可覆盖秒级演示值 */
+  if (typeof g.careGap === 'number') INTERACT.careGapMs = g.careGap * 60000;
+  if (typeof g.cardGap === 'number') INTERACT.cardGapMs = g.cardGap * 60000;
+  if (typeof g.aiGap === 'number') INTERACT.aiMinGapMs = g.aiGap * 60000;
+  return true;
+}
 /* 20261108：接入主项目——监听父页面 season-init 消息，替换角色列表 + 字卡池 */
 (function seasonHostBridge(){
   window.addEventListener('message', function(ev){
@@ -6918,8 +7001,10 @@ let _HOST_CARD_POOL = null;
     if (!d || typeof d !== 'object') return;
     if (d.type === 'season-init'){
       try {
-        if (Array.isArray(d.chars) && d.chars.length){
-          CHARS = d.chars.map(c => ({
+        if (Array.isArray(d.chars)){
+          /* 主项目有角色 → 全用真实角色（选角色、送书签、星球归属都跟着走）。
+             20261109：主项目 0 角色时不再回落演示角色 —— 直接留空数组。 */
+          CHARS = d.chars.filter(function(c){ return c && c.id != null; }).map(c => ({
             id: String(c.id), name: c.name || 'TA',
             tag: c.tag || '', tone: c.tone || 'warm'
           }));
@@ -6927,23 +7012,18 @@ let _HOST_CARD_POOL = null;
         if (d.cardPool && typeof d.cardPool === 'object'){
           _HOST_CARD_POOL = d.cardPool;
         }
-        // 20261108：主项目下发的角色互动节奏（随机固定区间，分钟 → 毫秒），覆盖 INTERACT 的硬编码值
-        if (d.seasonGaps && typeof d.seasonGaps === 'object'){
-          try {
-            if (typeof INTERACT !== 'undefined'){
-              if (typeof d.seasonGaps.careGapMin === 'number') INTERACT.careMinMs = d.seasonGaps.careGapMin * 60000;
-              if (typeof d.seasonGaps.careGapMax === 'number') INTERACT.careMaxMs = d.seasonGaps.careGapMax * 60000;
-              if (typeof d.seasonGaps.cardGapMin === 'number') INTERACT.cardMinMs = d.seasonGaps.cardGapMin * 60000;
-              if (typeof d.seasonGaps.cardGapMax === 'number') INTERACT.cardMaxMs = d.seasonGaps.cardGapMax * 60000;
-              if (typeof d.seasonGaps.aiGapMin === 'number') INTERACT.aiMinMs = d.seasonGaps.aiGapMin * 60000;
-              if (typeof d.seasonGaps.aiGapMax === 'number') INTERACT.aiMaxMs = d.seasonGaps.aiGapMax * 60000;
-              // demo 兼容：单值字段（careGap/cardGap/aiGap）仍可覆盖秒级演示值
-              if (typeof d.seasonGaps.careGap === 'number') INTERACT.careGapMs = d.seasonGaps.careGap * 60000;
-              if (typeof d.seasonGaps.cardGap === 'number') INTERACT.cardGapMs = d.seasonGaps.cardGap * 60000;
-              if (typeof d.seasonGaps.aiGap === 'number') INTERACT.aiMinGapMs = d.seasonGaps.aiGap * 60000;
-            }
-          } catch(e){}
+        /* 20261109：按角色字卡池（charId → 该角色那套回复字卡） */
+        if (d.cardPools && typeof d.cardPools === 'object'){
+          _HOST_CARD_POOLS = d.cardPools;
         }
+        /* 20261109：互动模式不再写死，按该角色在主项目的模式走
+           card = 字卡模式（含打字卡）；ai = AI 模式（内容由宿主生成） */
+        if (d.mode === 'ai' || d.mode === 'card'){
+          try { if (typeof INTERACT !== 'undefined') INTERACT.mode = (d.mode === 'ai' ? 'ai' : 'typecard'); } catch(e){}
+        }
+        // 20261108：主项目下发的角色互动节奏（随机固定区间，分钟 → 毫秒），覆盖 INTERACT 的硬编码值
+        // 20261109：逻辑抽到 applySeasonGaps()，和 season-gaps 热更新共用一份
+        applySeasonGaps(d.seasonGaps);
         // 若有指定当前角色，把星球视角 + 「当前角色」定格都切到该角色。
         // ★ 20261108 修：以前只改 ownerId 不改 viewId，而 PLANET 初始 viewId='xm'（demo 内置），
         //   CHARS 被主项目替换后 'xm' 已失效 → 书签集「当前角色」/ 星球都绑错成 CHARS[0]。
@@ -6958,6 +7038,7 @@ let _HOST_CARD_POOL = null;
               PLANET.owner = c.name;
               if (!PLANET.pool[c.id]) PLANET.pool[c.id] = PLANET.plants;
               if (typeof bookScopeCharId !== 'undefined'){ bookScopeCharId = c.id; bookScopeCharName = c.name; }
+              _HOST_CHAR_ID = c.id;
             }
           } catch(e){}
         }
@@ -6967,6 +7048,19 @@ let _HOST_CARD_POOL = null;
     // 它发 season-back 给这里 → 四季内部 goUp() 逐层弹（栈见底才 closeSeason 关层）。
     // 这样真机 APK 的返回手势由主 App 的 Capacitor backButton / history 守卫接管，
     // 不再依赖 iframe 里会被安卓系统边缘手势抢走的 touch 监听，不会大退整个 App。
+    /* 20261109：宿主回话（AI 模式生成的一句话；null = 这回不说话） */
+    if (d.type === 'season-gen-result'){
+      try {
+        const cb = d.reqId ? _hostReqMap[d.reqId] : null;
+        if (typeof cb === 'function') cb(d);
+      } catch(e){}
+      return;
+    }
+    /* 20261109：玩家在聊天设置里改完「三组随机固定间隔」，四季页若正开着就热更新 */
+    if (d.type === 'season-gaps'){
+      try { applySeasonGaps(d.seasonGaps); } catch(e){}
+      return;
+    }
     if (d.type === 'season-back'){
       try { if (typeof goUp === 'function') goUp(); } catch(e){}
     }
@@ -6994,6 +7088,107 @@ let _HOST_CARD_POOL = null;
     try { window.parent.postMessage({ type: 'season-ready' }, '*'); } catch(e){}
   }
 })();
+
+/* ============================================================
+   20261109：向宿主（主项目）要一句话
+   ------------------------------------------------------------
+   AI 模式：主项目拿「角色卡 + 记忆宫殿 + 世界树 + 四季实时现场」
+            去生成，可能返回 null —— 那就是「这回不想说话」，
+            绝不硬塞文案（这是 AI 模式和字卡模式最大的区别）。
+   字卡模式：主项目直接回 null，四季本地用该角色的字卡池拼句，
+            少一次往返。
+   超时（默认 9s）或没有宿主（单独打开 demo）→ 一律回落本地池，
+   保证离线可用、永不空白。
+   ============================================================ */
+/* 20261109：把四季发生的事上报给主项目（弹通知 / 写记忆宫殿 / 判断阶段成长）。
+   没有宿主（单独打开 demo）时静默跳过，不影响本地体验。 */
+function seasonHostEvent(kind, data){
+  if (!(window.parent && window.parent !== window)) return;
+  try {
+    window.parent.postMessage(Object.assign({ type: 'season-event', kind: kind }, data || {}), '*');
+  } catch(e){}
+}
+
+function seasonAskHostRaw(kind, payload, timeoutMs){
+  return new Promise(function(resolve){
+    if (!(window.parent && window.parent !== window)) { resolve(null); return; }
+    const reqId = 'sq' + (++_hostReqSeq) + '_' + Date.now();
+    let done = false;
+    const finish = function(v){
+      if (done) return;
+      done = true;
+      try { clearTimeout(timer); } catch(e){}
+      delete _hostReqMap[reqId];
+      resolve(v || null);
+    };
+    const timer = setTimeout(function(){ finish(null); }, timeoutMs || 9000);
+    _hostReqMap[reqId] = finish;
+    try {
+      window.parent.postMessage({
+        type: 'season-gen-request',
+        reqId: reqId,
+        charId: (typeof PLANET !== 'undefined' && (PLANET.viewId || PLANET.ownerId)) || _HOST_CHAR_ID || '',
+        kind: kind,
+        payload: payload || {}
+      }, '*');
+    } catch(e){ finish(null); }
+  });
+}
+
+/* ============================================================
+   20261109：把后台排队的事件正式加载成留言
+   ------------------------------------------------------------
+   用户定案：角色在后台做的照顾/邀请，**后台只发通知**，
+   留言要等玩家真正点进四季才「正式加载」到星球下方。
+   · 爱意邀请：累积多次合并成一条，写明几次；
+   · 照料：一条一条放回去（这是它真做过的动作，要留痕）；
+   · 阶段：一句「又长了一阶」。
+   ============================================================ */
+function seasonFlushPending(){
+  try {
+    const q = PLANET.pending;
+    if (!q) return;
+    let changed = false;
+    Object.keys(q).forEach(function(cid){
+      const list = (q[cid] || []).slice();
+      if (!list.length) return;
+      const ch = charById(cid);
+      const name = ch ? ch.name : 'TA';
+      const loveN = list.filter(function(x){ return x.kind === 'love'; }).length;
+      const cares = list.filter(function(x){ return x.kind === 'care'; });
+      const stages = list.filter(function(x){ return x.kind === 'stage'; });
+      _nxQuiet = true;
+      if (loveN > 0){
+        const txt = (loveN > 1)
+          ? ('我不在的时候，' + name + '找过你 ' + loveN + ' 次，想邀你一起浇灌爱意')
+          : (name + '想邀你一起浇灌爱意，你当时不在');
+        nxPush(cid, 'love', txt, { merged: loveN });
+      }
+      cares.forEach(function(x){
+        nxPush(cid, 'care', '你不在的时候，' + name + '给「' + (x.name || '那株') + '」浇了水', { plantId: x.plantId });
+      });
+      stages.forEach(function(x){
+        nxPush(cid, 'star', '「' + (x.name || '那株') + '」又长了一阶', { plantId: x.plantId });
+      });
+      _nxQuiet = false;
+      if (PLANET.pending) delete PLANET.pending[cid];
+      changed = true;
+    });
+    if (changed){
+      try { seasonSave(); } catch(e){}
+      try { renderNotes(); } catch(e){}
+    }
+  } catch(e){}
+}
+
+/* 只要那句话（响应里的 text）；要 action/plantId 时用 seasonAskHostRaw */
+function seasonAskHost(kind, payload, timeoutMs){
+  return seasonAskHostRaw(kind, payload, timeoutMs).then(function(r){
+    return (r && r.text) || null;
+  }).catch(function(){ return null; });
+}
+/* 20261109：进页面后把后台排队的照顾/邀请正式加载成留言 */
+setTimeout(function(){ try { seasonFlushPending(); } catch(e){} }, 2500);
 
 /* ============================================================
    四季数据持久化 + 导出/导入（20261108）
@@ -7055,6 +7250,11 @@ function seasonSerialize(){
     planet.mutSeeds = (PLANET.mutSeeds || []).slice();
     planet.notes = (PLANET.notes || []).map(n => Object.assign({}, n));
     planet.viewId = PLANET.viewId;
+    planet.seenKinds = Object.assign({}, PLANET.seenKinds || {});
+    /* 20261109：后台排队的事件 + 后台结算状态（爱意冷却/阶段快照/照料时间）
+       必须一起存，否则四季一保存就把主项目刚写进去的队列冲掉了。 */
+    planet.pending = Object.assign({}, PLANET.pending || {});
+    planet.bg = Object.assign({}, PLANET.bg || {});
   } catch(e){}
   return {
     __season: true, version: '1.0', exportedAt: Date.now(),
@@ -7121,6 +7321,9 @@ function _seasonApply(d){
     if (gp.roundLove != null) PLANET.roundLove = gp.roundLove;
     if (Array.isArray(gp.mutSeeds)) PLANET.mutSeeds = gp.mutSeeds.slice();
     if (Array.isArray(gp.notes)) PLANET.notes = gp.notes.map(n => Object.assign({}, n));
+    if (gp.seenKinds && typeof gp.seenKinds === 'object') PLANET.seenKinds = Object.assign({}, gp.seenKinds);
+    if (gp.pending && typeof gp.pending === 'object') PLANET.pending = Object.assign({}, gp.pending);
+    if (gp.bg && typeof gp.bg === 'object') PLANET.bg = Object.assign({}, gp.bg);
   }
   if (Array.isArray(d.impFound) && typeof IMP_FOUND !== 'undefined'){ IMP_FOUND.clear(); d.impFound.forEach(x => IMP_FOUND.add(x)); }
   if (d.mutSeen && typeof MUT_SEEN !== 'undefined'){ MUT_SEEN = Object.assign({}, d.mutSeen); }
@@ -7173,7 +7376,7 @@ function nxPush(byId, kind, text, ref){
   PLANET.notes.push(n);
   if (PLANET.notes.length > 80) PLANET.notes.splice(0, PLANET.notes.length - 80);
   try { renderNotes(); } catch(e){}
-  try { if (kind !== 'love' && typeof curView !== 'undefined' && curView === 'vPlanet') toast(ch.name + ' 留了一句话'); } catch(e){}
+  try { if (!_nxQuiet && kind !== 'love' && typeof curView !== 'undefined' && curView === 'vPlanet') toast(ch.name + ' 留了一句话'); } catch(e){}
   return n;
 }
 function notesOf(id){ return PLANET.notes.filter(n => n.byId === id); }
@@ -7287,8 +7490,15 @@ const CARD_SRC = { playerRate: 0.5 };
    分类沿用主项目那套即可（scene 画面 / plant 植物 / miss 心事 /
    ask 发问 / tail 尾巴）；主项目若没有分类，全部塞进 scene 也能用。 */
 function playerCardPool(kind){
-  // 20261108：接入主项目——优先读主项目下发的字卡池（season-init 注入），
-  //   主项目字卡无 scene/plant/miss 分类，统一放 scene，其他 kind 回退 scene。
+  // 20261109：按角色隔离——先说清「现在是谁的星球」，只拿这个角色自己的字卡。
+  //   优先级：按角色池 charCardPools[charId] → 旧的整体池 _HOST_CARD_POOL → 本地占位。
+  //   这样 A 角色的卡绝不会跑到 B 角色的星球上说出口。
+  const cid = (typeof PLANET !== 'undefined' && (PLANET.viewId || PLANET.ownerId)) || _HOST_CHAR_ID || '';
+  if (_HOST_CARD_POOLS && cid && _HOST_CARD_POOLS[cid]){
+    const own = _HOST_CARD_POOLS[cid];
+    const p = own[kind] || own.scene || [];
+    if (p && p.length) return p;
+  }
   if (_HOST_CARD_POOL){
     const p = _HOST_CARD_POOL[kind] || _HOST_CARD_POOL.scene || [];
     return p;
@@ -7316,6 +7526,33 @@ function pickOne(arr, nm){
  *   掷一次 → 玩家字卡？→ 是：抽 2~3 张拼句（画面 → 心事/发问 → 尾巴）
  *                     → 否：从对应场景的内置池抽 1 句
  */
+/* 字卡模式：按实时苗况挑一个更贴切的卡组 */
+function cardKindByState(pl){
+  try {
+    if (!pl) return 'scene';
+    if (pl.burned || pl.dead) return 'miss';
+    const g = growOf(pl);
+    if (g < 25) return 'miss';
+    const wAt = (typeof lastWaterAtOf === 'function') ? lastWaterAtOf(pl) : 0;
+    if (wAt && (Date.now() - wAt) > 4 * 86400000) return 'miss';   /* 好几天没水了 */
+  } catch(e){}
+  return (Math.random() < 0.5) ? 'scene' : 'plant';
+}
+
+/* 角色挑哪株：七成挑「最久没浇水」的那株（它确实看到了谁最渴），三成随机 */
+function plantNeedingCare(id){
+  const list = PLANET.plants.filter(function(p){ return (p.byId || PLANET.ownerId) === id; });
+  if (!list.length) return null;
+  let best = null, bestGap = -1;
+  list.forEach(function(p){
+    const w = (typeof lastWaterAtOf === 'function') ? (lastWaterAtOf(p) || p.t0 || 0) : (p.t0 || 0);
+    const gap = Date.now() - w;
+    if (gap > bestGap){ bestGap = gap; best = p; }
+  });
+  if (Math.random() < 0.7) return best;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
 function seasonDrawCard(ch, pl, scene){
   const nm = pl ? pl.name : '那株';
   const sc = (scene === 'book') ? 'book' : 'planet';
@@ -7332,7 +7569,9 @@ function seasonDrawCard(ch, pl, scene){
     };
     /* 2~3 张：先给一个画面，再给一句心事或发问，抽到 3 张时收一句尾巴 */
     const n = (Math.random() < 0.58) ? 2 : 3;
-    const parts = [one(Math.random() < 0.5 ? 'scene' : 'plant')];
+    /* 20261109：先看眼下的苗况再决定抽哪一类 —— 苗快不行了说「心事」，
+       正常时说「画面/植物」。这就是字卡模式下角色「看到」状态的体现。 */
+    const parts = [one(cardKindByState(pl))];
     parts.push(one(Math.random() < 0.55 ? 'miss' : 'ask'));
     if (n === 3) parts.push(one('tail'));
     const body = parts.filter(Boolean).join('。').replace(/\{n\}/g, nm);
@@ -7351,15 +7590,156 @@ function nxDrawText(ch, pl, scene){ return seasonDrawCard(ch, pl, scene); }
    接主项目时在「翻开书签集 / 收到一枚新星球票」时调用它即可。 */
 function bookNoteLine(ch){ return seasonDrawCard(ch, null, 'book'); }
 
+/* ============================================================
+   20261109：书签便签留言（书签集留言）
+   ------------------------------------------------------------
+   ★ 用户定案
+     · 位置：书签下方那张带胶带的小纸条（.tk-note）
+     · 内容：书签集自己的池子抽 1 句，或回复字卡拼 2~3 张
+     · 时机：纯随机 —— 可能收下当时就留，可能过几天「又翻到这张书签」才留，
+             也可能一直不留。不压低概率，五五开看运气。
+     · 次数：一签 + 一角色 最多一条。留过就封口，不再出第二条。
+     · 后续机会挂在角色现有互动节拍上（bookNoteTick），不另开定时器。
+   ============================================================ */
+const BOOK_NOTE_CHANCE = 0.5;
+
+/* 这枚书签还能不能由这个角色留言 */
+function bookNoteOpen(ch, p){
+  if (!p || !ch) return false;
+  if (p.noteById && p.noteById === ch.id) return false;      /* 已留过 → 封口 */
+  if (p.giftedToId && p.giftedToId !== ch.id) return false;   /* 送给了别人 */
+  return true;
+}
+
+/* 生成一句便签留言：AI 模式问宿主，字卡模式/失败回落本地池 */
+async function bookNoteMake(ch, p){
+  let text = null;
+  if (INTERACT.mode === 'ai'){
+    text = await seasonAskHost('book', {
+      bookName: p.name || '', kind: p.kind || 'plant',
+      imprintKey: p.imprintKey || '', myMsg: p.myMsg || '',
+      scene: 'book'
+    });
+  }
+  if (!text) text = seasonDrawCard(ch, p, 'book');
+  return text || '';
+}
+
+/* 落一条便签留言（一签一角色只留一条，写在这里守住唯一入口） */
+function bookNoteSet(ch, p, text){
+  if (!p || !ch || !text) return;
+  if (p.noteById === ch.id) return;
+  p.noteById = ch.id;
+  p.noteBy = ch.name;
+  p.noteAt = Date.now();
+  p.noteText = String(text);
+  try { seasonSave(); } catch(e){}
+  try { if (typeof renderBookGrid === 'function') renderBookGrid(); } catch(e){}
+  try { if (curView === 'vBook') renderBookPage(); } catch(e){}
+  try { if (curView === 'vTicket' && curTicket === p) openTicket(p); } catch(e){}
+  try { toast(ch.name + ' 在书签上留了一句话'); } catch(e){}
+  seasonHostEvent('book-note', {
+    charId: ch.id, bookNo: p.no, bookName: p.name, text: String(text), at: Date.now()
+  });
+}
+
+/* 掷一次：现在要不要留。force=true 跳过掷骰 */
+function bookNoteTry(ch, p, force){
+  if (!bookNoteOpen(ch, p)) return false;
+  if (!force && Math.random() >= BOOK_NOTE_CHANCE) return false;
+  bookNoteMake(ch, p).then(function(text){
+    if (text) bookNoteSet(ch, p, text);
+  }).catch(function(){});
+  return true;
+}
+
+/* 挂在角色互动节拍上：翻一遍「收到的、还没留过言的书签」，随机挑一枚试一次。
+   ★ 这就是「过几天又翻到这张书签」的实现——不新建定时器，借角色本来活动的时间点。 */
+function bookNoteTick(ch, id){
+  try {
+    const pool = PHOTOS.filter(function(x){
+      return x && x.giftedToId === id && !x.noteById;
+    });
+    if (!pool.length) return;
+    const p = pool[Math.floor(Math.random() * pool.length)];
+    bookNoteTry(ch, p, false);
+  } catch(e){}
+}
+
 /* ---- 收到书签：回一句话（会引你写的那句寄语）----
    20261108 用户纠正：收到书签后角色回的这句，**不能是固定的预设句**，
    应该走「随机抽回复字卡（2~3 张拼句）或后台内置池（1 句）」那套
    seasonDrawCard 逻辑，跟抽卡留言同一条路。玩家写了寄语时，前面引一句
    「『寄语』——」，后面接随机抽出来的留言；没写寄语就直接是随机抽的结果。 */
 function nxGiftText(ch, p, myMsg){
+  /* ⚠️ 20261109 起本函数只作为「本地文本」兜底，正式流程走 giftReply()。
+     giftReply 负责三档时机 + AI/字卡两种内容来源 + 上报宿主。 */
   const back = seasonDrawCard(ch, p, 'planet');
   if (myMsg) return '「' + myMsg + '」——' + back;
   return back;
+}
+
+/* ============================================================
+   20261109：收到书签的回应（星球/植物下方留言列）
+   ------------------------------------------------------------
+   ★ 用户定案的三档时机
+     ① 玩家写了寄语            → **立刻**回应（内容针对那句寄语）
+     ② 该角色**首次收到该品类**  → **一定**回一次
+        （品类具体到每一种：栀子、樱花、每种星球各算一次）
+     ③ 其余情况                → **当时随机**，可能回可能不回；
+        没回就没了，不像便签那样以后还有机会。
+   ★ 内容来源
+     AI 模式：把「寄语 + 书签 + 是否首次」交给宿主生成（可拒绝 → 不推）
+     字卡模式：seasonDrawCard —— 回复字卡 2~3 张拼句 / 内置池 1 句
+   ============================================================ */
+function bookKindKey(p){
+  const kind = (p && (p.kind === 'planet' || p.src === 'planet')) ? 'planet' : 'plant';
+  return kind + ':' + ((p && (p.imprintKey || p.name || p.title)) || '');
+}
+function seenKindGet(chId, key){
+  try { return !!(PLANET.seenKinds && PLANET.seenKinds[chId] && PLANET.seenKinds[chId][key]); }
+  catch(e){ return false; }
+}
+function seenKindMark(chId, key){
+  try {
+    if (!PLANET.seenKinds) PLANET.seenKinds = {};
+    if (!PLANET.seenKinds[chId]) PLANET.seenKinds[chId] = {};
+    PLANET.seenKinds[chId][key] = true;
+  } catch(e){}
+}
+
+function giftReply(ch, p, myMsg){
+  if (!ch || !p) return null;
+  const key = bookKindKey(p);
+  const first = !seenKindGet(ch.id, key);
+  seenKindMark(ch.id, key);          /* 不管这回回不回，品类都算「收到过」 */
+  const must = !!myMsg || first;
+  /* ③ 随机档：五五开，没中就真的没有这一条了 */
+  if (!must && Math.random() >= 0.5) return null;
+
+  const push = function(text){
+    if (!text) return;
+    const line = myMsg ? ('「' + myMsg + '」——' + text) : text;
+    const n = nxPush(ch.id, 'gift', line, { no: p.no });
+    if (n) seasonHostEvent('gift-reply', {
+      charId: ch.id, bookNo: p.no, bookName: p.name, text: line,
+      first: first, hasMsg: !!myMsg, at: Date.now()
+    });
+  };
+
+  if (INTERACT.mode === 'ai'){
+    seasonAskHost('reply', {
+      bookName: p.name || '', kind: p.kind || 'plant',
+      imprintKey: p.imprintKey || '', myMsg: myMsg || '',
+      first: first, scene: 'planet'
+    }).then(function(text){
+      /* AI 模式允许「这回不想说话」——null 就真的不推，不硬塞 */
+      if (text) push(text);
+    }).catch(function(){});
+  } else {
+    push(seasonDrawCard(ch, p, 'planet'));
+  }
+  return true;
 }
 
 /* ---- 凝星落印：按这颗星球是怎么来的说一句 ---- */
@@ -8004,7 +8384,33 @@ function seasonRandGap(minMs, maxMs){
   return lo + Math.floor(Math.random() * (hi - lo + 1));
 }
 
-/* AI 模式下喂给模型的上下文 */
+/* ---- 20261109：角色「看到」的实时状态 ----
+   用户要求：不管字卡模式还是 AI 模式，这个角色都要能看到自己星球上
+   每一株植物眼下长到第几阶段、什么时候浇过水/施过肥、有没有烧苗变异，
+   以及它收到过哪些书签、每枚书签的便签上写了什么。
+   字卡模式拿它来「挑哪株照顾、抽哪一类卡」，AI 模式直接塞进 prompt。 */
+function lastFertAtOf(pl){
+  const acts = (pl && pl.acts) || [];
+  for (let i = acts.length - 1; i >= 0; i--){
+    if (acts[i] && acts[i].k === '施肥') return acts[i].t || 0;
+  }
+  return 0;
+}
+function daysSince(ts){
+  if (!ts) return null;
+  return Math.round((Date.now() - ts) / 86400000 * 10) / 10;
+}
+function booksOfChar(id){
+  try {
+    return PHOTOS.filter(function(x){ return x && x.giftedToId === id; }).map(function(x){
+      return {
+        no: x.no, name: x.name, kind: x.kind || 'plant',
+        imprintKey: x.imprintKey || '', at: x.giftedAt || '',
+        myMsg: x.myMsg || '', taNote: x.noteText || ''
+      };
+    });
+  } catch(e){ return []; }
+}
 function buildAiContext(ch){
   const id = PLANET.viewId || PLANET.ownerId;
   const list = PLANET.plants.filter(function(p){ return (p.byId || PLANET.ownerId) === id; });
@@ -8014,20 +8420,48 @@ function buildAiContext(ch){
     today: todayStr(),
     plants: list.map(function(p){
       const s = stageInfoOf(p);
+      const wAt = (typeof lastWaterAtOf === 'function') ? lastWaterAtOf(p) : 0;
+      const fAt = lastFertAtOf(p);
       return {
         id: p.id, name: p.name,
         stage: s.name, stageIdx: s.i, stageN: s.n,
-        burned: !!p.burned, mutant: !!p.mutantAt,
+        growPct: Math.round(growOf(p)),
+        burned: !!p.burned, mutant: !!p.mutantAt, dead: !!p.dead,
+        lastWaterAt: wAt || null, lastFertAt: fAt || null,
+        daysNoWater: daysSince(wAt), daysNoFert: daysSince(fAt),
         loveToday: loveQuotaOf(p), loveTotal: p.loveCount || 0
       };
+    }),
+    /* 它收到过的书签（含自己写在便签上的那句话）——角色要记得这些 */
+    books: booksOfChar(id),
+    notes: (typeof notesOf === 'function' ? notesOf(id) : []).slice(-5).map(function(n){
+      return { kind: n.kind, text: n.text, at: n.at };
     })
   };
 }
 
-/* AI 决策钩子：主项目在这里换成真实模型调用。
-   demo 默认返回 null＝交给本地字卡兜底，所以没有 AI 也能跑。 */
+/* ---- 20261109：AI 决策钩子（真接主项目） ----
+   用户定案：AI 模式下「什么时候照料、什么时候留言、什么时候邀请浇灌爱意」
+   全部由 AI 自己决定；它也可以决定这一轮什么都不做。
+   四季不调模型——把实时现场交给宿主，宿主用「角色卡 + 记忆宫殿 + 世界树」
+   生成决策再回传：
+     { action:'care'|'love'|'card'|'none', plantId?, text?, delayMs? }
+   没有宿主（单独打开 demo）→ 本地随机决策，保证 demo 也能跑。 */
+function localDecide(ctx){
+  const r = Math.random();
+  const list = (ctx && ctx.plants) || [];
+  const pl = list.length ? list[Math.floor(Math.random() * list.length)] : null;
+  if (!pl) return null;
+  if (r < 0.45) return { action: 'care', plantId: pl.id };
+  if (r < 0.75) return { action: 'card', plantId: pl.id };
+  return null;                       /* 留白：什么也不做 */
+}
 function seasonAiDecide(ctx){
-  return Promise.resolve(null);
+  if (!(window.parent && window.parent !== window)) return Promise.resolve(localDecide(ctx));
+  return seasonAskHostRaw('decide', ctx).then(function(r){
+    if (!r || !r.action || r.action === 'none') return null;
+    return { action: r.action, plantId: r.plantId || '', text: r.text || '' };
+  }).catch(function(){ return null; });
 }
 
 function aiTick(ch, id){
@@ -8035,11 +8469,12 @@ function aiTick(ch, id){
      「最小间隔」字面含义就是「两次 AI 动作之间至少隔这么久」，取区间下限最稳。 */
   const cool = (typeof INTERACT !== 'undefined' && INTERACT.aiMinMs) ? INTERACT.aiMinMs : INTERACT.aiMinGapMs;
   if (Date.now() - INTERACT.lastAt < cool) return;
+  try { bookNoteTick(ch, id); } catch(e){}
   const ctx = buildAiContext(ch);
   Promise.resolve(seasonAiDecide(ctx)).then(function(dec){
     if (!dec || !dec.action || dec.action === 'none') return;
     INTERACT.lastAt = Date.now();
-    const pl = dec.plantId ? PLANET.plants.find(function(x){ return x.id === dec.plantId; }) : null;
+    const pl = dec.plantId ? PLANET.plants.find(function(x){ return x.id === dec.plantId; }) : plantNeedingCare(id);
     if (dec.action === 'card'){
       nxPush(id, 'draw', dec.text || seasonDrawCard(ch, pl, 'planet'), { plantId: pl && pl.id });
     } else if (dec.action === 'care' && pl){
@@ -8066,6 +8501,8 @@ function startCharLife(){
     if (!PLANET.plants.length) { scheduleNext(); return; }
     const id = PLANET.viewId || PLANET.ownerId;
     const ch = charById(id);
+    /* 20261109：借这个节拍顺手翻一下还没留言的书签（「过几天又翻到了」） */
+    try { bookNoteTick(ch, id); } catch(e){}
     /* ---- AI 模式：交给模型决策 ---- */
     if (INTERACT.mode === 'ai'){ aiTick(ch, id); scheduleNext(); return; }
     /* ---- 字卡模式：本地池子随机 ---- */
@@ -8074,7 +8511,7 @@ function startCharLife(){
     if (last && Date.now() - last.at < INTERACT.cardGapMs * 0.7) { scheduleNext(); return; }
     const roll = Math.random();
     if (roll < 0.55){
-      const pl = PLANET.plants[Math.floor(Math.random()*PLANET.plants.length)];
+      const pl = plantNeedingCare(id) || PLANET.plants[0];
       nxPush(id, 'draw', seasonDrawCard(ch, pl, 'planet'), { plantId: pl.id });
     } else if (roll < 0.78){
       try { maybeCharInvite(true); } catch(e){}
@@ -10252,6 +10689,8 @@ function plCols(pl){
 }
 
 function seedPlanetDemoMore(n){
+  /* 20261109：演示角色已删。没有真实角色就不铺这些假植株（?seed= 调试也只会空转）。 */
+  if (!CHARS.length) return;
   const names = ['宽叶车前草','白车轴草','蒲公英','荠菜','酢浆草','婆婆纳','早熟禾','牛筋草','马唐'];
   for (let i=0;i<n;i++){
     if (PLANET.plants.length >= PL_MAX) break;
@@ -10679,7 +11118,7 @@ function renderPlanetList(){
   if ($('#plNum1')) $('#plNum1').textContent = pad2(PLANET.plants.length) + '/' + PL_MAX;
   if ($('#plNum2')) $('#plNum2').textContent = pad2(waiting);
   if ($('#plNum3')) $('#plNum3').textContent = pad2(grown);
-  if ($('#plOwner')) $('#plOwner').textContent = PLANET.owner + '的星球';
+  if ($('#plOwner')) $('#plOwner').textContent = PLANET.owner ? (PLANET.owner + '的星球') : '星球';
   if (typeof updateImprintBtn === 'function') updateImprintBtn();
   /* 每日浇水 / 施肥额度：列表每次都重算一遍，跨零点也能自己翻页 */
   if (typeof updateCareBtns === 'function') updateCareBtns();
@@ -11243,26 +11682,17 @@ function closeSkinSheet(){
     $('#phone').classList.remove('sheeting');
   }
 }
-function seedPlanetDemo(){
-  if (PLANET.inited) return;
-  PLANET.inited = true;
-  const p = PHOTOS[0];
-  if (p && p.made){
-    p.giftedTo = '小满';
-    p.giftedToId = 'xm';
-    p.giftedAt = todayStr();
-    p.giftMsg = '种子我收下了。放在朝南的坡上，那里晒得到太阳。';
-    const pl = addPlant(p, CHARS[0]);
-    if (pl){ pl.grow = 55; }
-  }
-  renderPlanetList();
-}
+/* 20261109：演示角色删掉后，「自动把第一张照片送给小满」这条演示逻辑一并删除
+   （它会把玩家真实的第一张照片硬塞给不存在的角色）。真机流程不依赖它：
+   玩家要自己点「送给角色」→ 选真实角色 → 送出。 */
 
 /* ---- 赠送：选角色 → 写寄语 → 送出 ---- */
 let giftTarget = null, giftPick = null;
 function openGiftSheet(p){
   if (!p || !p.made) return;
   if (p.giftedTo){ toast('已经送过 ' + p.giftedTo + ' 了'); return; }
+  /* 20261109：没有真实角色就送不了（演示角色已删）—— 明确提示，不静默空列表 */
+  if (!CHARS.length){ toast('还没有角色 · 先去新建一个角色'); return; }
   /* 送书签 = 交一颗种子，不再占星球位置（20261108 改）——
      种子先进种子库，等玩家替 TA 种、或 TA 自己种。
      所以这里不再检查「星球上满了」，那种情况下种子在库里排队，不会丢。 */
@@ -11339,8 +11769,16 @@ function doGift(p, ch){
      TA 收下这张邮票，回你一颗种下去 100% 长出这颗星的种子。
      票本身留在书签集里当凭证（还是邮票花边），不删不改。 */
   const isStamp = (p.kind === 'planet' || p.src === 'planet');
+  /* 20261109：上报宿主——这枚书签进了谁的手（写记忆宫殿 + 判断是否首次收到该品类） */
+  seasonHostEvent('book-gift', {
+    charId: ch.id, bookNo: p.no, bookName: p.name, kind: p.kind || 'plant',
+    imprintKey: p.imprintKey || '', myMsg: myMsg, at: Date.now()
+  });
+  /* 20261109：便签留言——纯随机链路。可能当场留，也可能一直等到某个节拍才留。 */
+  setTimeout(function(){ try { bookNoteTry(ch, p, false); } catch(e){} }, 1500);
+
   if (isStamp){
-    try { nxPush(ch.id, 'gift', nxGiftText(ch, p, myMsg), { no: p.no }); } catch(e){}
+    try { giftReply(ch, p, myMsg); } catch(e){}
     /* TA 回赠这颗星种的同时，玩家手里就多了一种「星球形态」——
        星球页那颗「换星球形态」按钮靠这个清单才有得选（见 planetSkinsOf）。 */
     const gotSkin = addPlanetSkin(ch.id, p.imprintKey);
@@ -11366,7 +11804,7 @@ function doGift(p, ch){
         ② 这颗种子自然出现在种子库（seedPool 按 giftedTo 带出来，不用另存一份）；
         ③ 给 TA 排一个「自己动手种」的时间点 taPlanAt —— 到点之前玩家可以先替 TA 种。
      ⇒ 星球满了不再算「送不出去」：种子在库里等着，等凝星收一轮腾出位置再种。 */
-  try { nxPush(ch.id, 'gift', nxGiftText(ch, p, myMsg), { no: p.no }); } catch(e){}
+  try { giftReply(ch, p, myMsg); } catch(e){}
   p.taPlanted = 0;
   p.taPlanAt = Date.now() + taSeedWaitMs(ch);
   closeGiftSheet();
@@ -12198,13 +12636,89 @@ function cullPlant(){
 
 /* ================= v5：星球印记 / 种子库 / 图鉴分栏 ================= */
 
-/* ---- 9 个坑位：球面固定位置，玩家自选（纬度仍按植物原生带提示） ---- */
+/* ---- 9 个坑位：球面固定位置（旧存档兜底用；新种子走 slotLayoutFor 动态生成） ---- */
 const PL_SLOTS = [
   { lat: 26, lon: -34 }, { lat: 26, lon: 2 }, { lat: 26, lon: 38 },
   { lat: 0,  lon: -34 }, { lat: 0,  lon: 2 }, { lat: 0,  lon: 38 },
   { lat: -26, lon: -34 }, { lat: -26, lon: 2 }, { lat: -26, lon: 38 }
 ];
 function slotUsed(i){ return PLANET.plants.some(pl => pl.slot === i); }
+
+/* ============================================================
+   20261109：九个候选落点改为「按这颗种子物种的真实分布纬度生成」
+   ------------------------------------------------------------
+   用户原话：
+     「这个 123456789，就这九个位置不要是固定的位置，要根据不同的植物的
+       真实生长的经纬度来决定…每一轮重新生成九个位置。然后如果是这个植物
+       它不能够生长在这个经纬度的话到时候再随机生成」
+   ⇒ 做法：
+     ① 先取该物种原生纬度带 nativeLat(name)（PL_LAT 表；查不到就退回 26~50）；
+     ② 在这个带里随机布 9 个点，经度落在可见面 -56°~56°；点与点之间要求
+        「角距离」够远（拒绝采样），排不开就逐轮放宽，绝不死循环；
+     ③ 每颗种子一套布局，用 sid/名字做确定性种子 —— 同一颗种子每次打开
+        看到的位置完全一致（否则选好的位置会乱跳），换一颗种子就是新一套点，
+        这就是「每一轮重新生成」；
+     ④ 已种下的植株不受候选点影响：它们有自己的 lat/lon，按真实经纬度画，
+        候选点会避开已占用的球面区域。
+   ============================================================ */
+function sbHash(s){
+  let h = 2166136261;
+  s = String(s || 'x');
+  for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+function sbRnd(seed){
+  let n = seed >>> 0;
+  return function(){
+    n = (n + 0x6D2B79F5) | 0;
+    let t = Math.imul(n ^ (n >>> 15), 1 | n);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+let _slotLayout = null, _slotLayoutKey = '';
+function slotLayoutFor(item){
+  const key = String((item && (item.sid || item.seedId || item.name)) || 'none');
+  if (_slotLayout && _slotLayoutKey === key) return _slotLayout;
+  const rnd = sbRnd(sbHash(key));
+  const rg = nativeLat(item && item.name);
+  let lo = Math.max(-68, Math.min(66, rg[0]));
+  let hi = Math.max(-68, Math.min(66, rg[1]));
+  if (hi < lo){ const t = lo; lo = hi; hi = t; }
+  /* 带太窄放不下 9 个点 → 以带中心往两侧放宽（"长不了就随机生成"的兜底） */
+  if (hi - lo < 44){
+    const mid = (lo + hi) / 2, half = 22;
+    lo = Math.max(-70, mid - half); hi = Math.min(70, mid + half);
+  }
+  const out = [];
+  for (let i = 0; i < 9; i++){
+    let lat = lo, lon = 0, ok = false, gap = 0.62;
+    for (let tries = 0; tries < 220 && !ok; tries++){
+      if (tries > 120) gap = 0.34;          /* 排不开就允许挤一点 */
+      lat = lo + rnd() * (hi - lo);
+      lon = -56 + rnd() * 112;
+      let near = 99;
+      for (let j = 0; j < out.length; j++){
+        const dLat = (out[j].lat - lat) / 30, dLon = (out[j].lon - lon) / 30;
+        const d = Math.sqrt(dLat*dLat + dLon*dLon);
+        if (d < near) near = d;
+      }
+      ok = (near > gap);
+      if (tries > 200) ok = true;           /* 真挤不下也要落一个，绝不空着 */
+    }
+    out.push({ lat: Math.round(lat * 10) / 10, lon: Math.round(lon * 10) / 10 });
+  }
+  _slotLayout = out; _slotLayoutKey = key;
+  return out;
+}
+/* 球面距离（按度数归一化，够用来判「这个点是不是已经种着东西」） */
+function ballDist(a, b){
+  const dLat = (a.lat - b.lat) / 30, dLon = (a.lon - b.lon) / 30;
+  return Math.sqrt(dLat*dLat + dLon*dLon);
+}
+function slotOccupied(sl){
+  return PLANET.plants.some(function(pl){ return ballDist(pl, sl) < 0.34; });
+}
 function firstFreeSlot(){
   for (let i = 0; i < PL_SLOTS.length; i++) if (!slotUsed(i)) return i;
   return -1;
@@ -15088,7 +15602,14 @@ function renderSeed(){
         cv.getContext('2d').drawImage(out, 0, 0);
       }
     } catch (e) { drawSilhouette(cv, 46); }
-    cell.addEventListener('click', () => { seedPick = it; seedSlot = -1; renderSeed(); });
+    cell.addEventListener('click', () => {
+      seedPick = it; seedSlot = -1;
+      const bcv = $('#seedBall');
+      if (bcv){ try { bcv.removeAttribute('data-picked'); } catch(e){} }
+      renderSeed();
+      /* 20261109：种子库上面压着一张书签票，不滚的话球在屏幕外，玩家以为没反应 */
+      setTimeout(scrollSeedBall, 140);
+    });
   });
   const box = $('#seedPlantBox');
   if (seedPick){
@@ -15099,26 +15620,174 @@ function renderSeed(){
     box.style.display = 'none';
   }
 }
+/* ============================================================
+   20261109：种子落点＝直接在球上点位置（不再用 1~9 号按钮）
+   ------------------------------------------------------------
+   用户原话：「不要 123456789 就选数字来种…让玩家真的可以根据球的那个位置，
+   就是可以看到球，选择球的位置」。
+   20261109 二次定案（用户看到自绘球后）：「直接复用这个星球，不要再单独
+   画一张了…那张图丑爆了」。
+   ⇒ 不再自绘：底图直接用主星球那一张 plBase（buildPlanet 产物：星空 +
+     同一块像素大陆 + 同一个球半径），只是在上门叠候选圆圈。
+   ============================================================ */
+const SB_W = PL_W;            /* 与主星球同一坐标系（160×160） */
+let _sbBase = null;
+function sbProject(lat, lon){ return plProject(lat, lon); }
+/* 底图：直接把主星球那颗球「拿过来用」——
+   把 #plCanvas 的当前画面整张贴过去（drawImage），不在这里重画任何一笔。
+   主星球还没渲染过（没进过星球页）时，先让它按自己的流程画一帧。 */
+function sbBase(){
+  const pl = document.getElementById('plCanvas');
+  if (pl && pl.width && pl.height && plBase) return pl;
+  if (!plBase) { try { rebuildPlanetBase(); } catch(e){} }
+  try { drawPlanetFrame(); } catch(e){}
+  return document.getElementById('plCanvas') || _sbDrawOwnBall();
+}
+/* 兜底自绘（旧实现，仅在 plBase 不可用时使用） */
+function _sbDrawOwnBall(){
+  const SB_CX = 80, SB_CY = 88, SB_R = 54;
+  const cv = document.createElement('canvas'); cv.width = SB_W; cv.height = SB_W;
+  const g = cv.getContext('2d');
+  const grd = g.createRadialGradient(SB_CX - SB_R*0.34, SB_CY - SB_R*0.40, SB_R*0.08, SB_CX, SB_CY, SB_R*1.02);
+  grd.addColorStop(0, '#2f5478'); grd.addColorStop(0.55, '#1b3350'); grd.addColorStop(1, '#0b1626');
+  g.beginPath(); g.arc(SB_CX, SB_CY, SB_R, 0, 6.2832); g.fillStyle = grd; g.fill();
+  g.save();
+  g.beginPath(); g.arc(SB_CX, SB_CY, SB_R, 0, 6.2832); g.clip();
+  const step = 4;
+  for (let py = 0; py < SB_W; py += step){
+    for (let px = 0; px < SB_W; px += step){
+      const dx = (px - SB_CX) / SB_R, dy = (py - SB_CY) / SB_R;
+      const r2 = dx*dx + dy*dy;
+      if (r2 > 1) continue;
+      const z = Math.sqrt(1 - r2);
+      const lat = Math.asin(-dy) * 180 / Math.PI;
+      const lon = Math.atan2(dx, z) * 180 / Math.PI;
+      const n = fbm((lat + 90) * 0.055 + 3, (lon + 180) * 0.055 + 7);
+      if (n < 0.42) continue;                     /* 海：留底色 */
+      const pole = Math.abs(lat) > 62;
+      const col = pole ? '216,232,255' : (n > 0.58 ? '92,146,98' : '62,112,80');
+      const a = Math.min(0.92, 0.32 + (n - 0.42) * 2.2);
+      g.fillStyle = 'rgba(' + col + ',' + a.toFixed(2) + ')';
+      g.fillRect(px, py, step, step);
+    }
+  }
+  g.restore();
+  /* 大气边缘 */
+  const rim = g.createRadialGradient(SB_CX, SB_CY, SB_R*0.86, SB_CX, SB_CY, SB_R);
+  rim.addColorStop(0, 'rgba(150,200,255,0)');
+  rim.addColorStop(1, 'rgba(170,215,255,0.34)');
+  g.beginPath(); g.arc(SB_CX, SB_CY, SB_R, 0, 6.2832); g.fillStyle = rim; g.fill();
+  _sbBase = cv; return cv;
+}
 function renderSlots(){
-  const row = $('#slotRow');
-  if (!row) return;
-  row.innerHTML = '';
-  PL_SLOTS.forEach((sl, i) => {
-    const used = slotUsed(i);
-    const d = document.createElement('div');
-    d.className = 'slot' + (used ? ' used' : '');
-    d.textContent = used ? '已 种' : (i + 1) + ' 号';
-    if (!used) d.addEventListener('click', () => {
-      seedSlot = i;
-      renderSlots();
-    });
-    if (seedSlot === i && !used) d.classList.add('on');
-    row.appendChild(d);
+  const cv = $('#seedBall');
+  if (!cv) return;
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, SB_W, SB_W);
+  /* 整颗球（连星空、连已经种下的植株）都是主星球那一帧，原样贴过来 */
+  g.drawImage(sbBase(), 0, 0);
+  const lay = slotLayoutFor(seedPick);
+  /* 候选点：绿=在原生带里，琥珀=偏出原生带（能种，但长得慢） */
+  const nat = nativeLat(seedPick && seedPick.name);
+  const natMid = (nat[0] + nat[1]) / 2;
+  lay.forEach(function(sl, i){
+    const pr = sbProject(sl.lat, sl.lon);
+    if (pr.k <= 0.04) return;                     /* 转到背面就先不画 */
+    const used = slotOccupied(sl);
+    const on = (seedSlot === i) && !used;
+    const good = Math.abs(sl.lat - natMid) < 24;
+    /* 20261109：选中的那个点加一圈外光环 —— 球上「我到底点了哪儿」要一眼看到 */
+    if (on){
+      g.save();
+      g.beginPath(); g.arc(pr.x, pr.y, 8.5, 0, 6.2832);
+      g.strokeStyle = 'rgba(255,243,207,.60)'; g.lineWidth = 0.8; g.stroke();
+      g.beginPath(); g.arc(pr.x, pr.y, 11, 0, 6.2832);
+      g.strokeStyle = 'rgba(255,243,207,.24)'; g.lineWidth = 0.5; g.stroke();
+      g.restore();
+    }
+    g.save();
+    g.beginPath(); g.arc(pr.x, pr.y, on ? 5.4 : 4, 0, 6.2832);
+    g.fillStyle = used ? 'rgba(120,120,120,0.32)'
+      : on ? 'rgba(255,232,170,0.95)'
+      : (good ? 'rgba(126,196,132,0.26)' : 'rgba(226,178,92,0.26)');
+    g.fill();
+    g.lineWidth = on ? 1.3 : 0.9;
+    g.strokeStyle = used ? 'rgba(170,170,170,0.55)'
+      : on ? '#fff3cf'
+      : (good ? 'rgba(150,225,160,0.95)' : 'rgba(240,196,110,0.95)');
+    g.stroke();
+    g.restore();
+    if (used){
+      /* 「已种」两个字在 160 画布上放不下，改画一个实心小方块占位 */
+      g.fillStyle = 'rgba(240,240,240,0.85)';
+      g.fillRect(pr.x - 2, pr.y - 2, 4, 4);
+    }
   });
+  /* 提示条：选中了哪个位置、什么气候、合不合适 */
+  const tip = $('#sbHint');
+  if (tip){
+    if (seedSlot < 0 || !lay[seedSlot]) tip.textContent = '※ 点星球上一个空圆圈，把种子种在那里';
+    else {
+      const sl = lay[seedSlot], cl = climateOf(sl.lat);
+      const okHere = Math.abs(sl.lat - natMid) < 24;
+      tip.textContent = latStr(sl.lat) + ' · ' + lonStr(sl.lon) + ' · ' + cl.k
+        + '（' + cl.note + '）· '
+        + (okHere ? '适合「' + (seedPick ? seedPick.name : '') + '」'
+                  : '偏出原生纬度带，长得慢一些');
+    }
+  }
+  /* 20261109：选中之后按钮直接把坐标报出来（「就种在这里 · 34°N 35°W」），
+     让「在球上选位 → 种下」变成一句话，而不是让玩家再猜按钮管不管用 */
+  const pbtn = $('#seedPlantBtn');
+  if (pbtn){
+    const sel = (seedSlot >= 0 && lay[seedSlot] && !slotOccupied(lay[seedSlot])) ? lay[seedSlot] : null;
+    if (sel){
+      pbtn.textContent = '就种在这里 · ' + latStr(sel.lat) + ' ' + lonStr(sel.lon);
+      pbtn.classList.add('ready');
+    } else {
+      pbtn.textContent = '先在球上点个位置';
+      pbtn.classList.remove('ready');
+    }
+  }
 }
 let seedSlot = -1;
+/* 20261109：把球滚到屏幕中间。
+   种子库顶部还压着一张「这颗种子来自哪张书签」的大票，球在它下面，
+   小屏上不滚就整个在视口外 —— 玩家会以为点了种子没反应。 */
+function scrollSeedBall(){
+  const el = document.querySelector('.seed-ball-wrap') || document.querySelector('#seedBall');
+  if (!el || !el.scrollIntoView) return;
+  try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e){}
+}
+
+/* 点击球面选位：找最近的候选点（显示尺寸下约 31px 内算点中），点空白不误选 */
+function sbHit(ev){
+  const cv = $('#seedBall');
+  if (!cv || !seedPick) return;
+  const r = cv.getBoundingClientRect();
+  if (!r.width) return;
+  const x = (ev.clientX - r.left) / r.width * SB_W;
+  const y = (ev.clientY - r.top) / r.height * SB_W;
+  const lay = slotLayoutFor(seedPick);
+  let best = -1, bestD = 1e9;
+  lay.forEach(function(sl, i){
+    const pr = sbProject(sl.lat, sl.lon);
+    if (pr.k <= 0.04) return;
+    const d = Math.sqrt((pr.x - x) * (pr.x - x) + (pr.y - y) * (pr.y - y));
+    if (d < bestD){ bestD = d; best = i; }
+  });
+  /* 160 坐标系下 15 ≈ 显示 33px 的热区：点圆圈附近都算，点空白不误选 */
+  if (best < 0 || bestD > 15){ toast('点圆圈里 · 那些才是能种的位置'); return; }
+  const sl = lay[best];
+  if (slotOccupied(sl)){ toast('这个位置已经种着东西了'); return; }
+  seedSlot = best;
+  /* 新手引导靠这个属性判断「玩家真的在球上选好了一个位置」 */
+  try { cv.setAttribute('data-picked', '1'); } catch(e){}
+  renderSlots();
+}
 function plantSeedAt(item, slotIdx){
-  const sl = PL_SLOTS[slotIdx];
+  /* 20261109：落点可以是坐标对象（球上点选），也可以还是旧的下标（兜底） */
+  const sl = (slotIdx && typeof slotIdx === 'object') ? slotIdx : (PL_SLOTS[slotIdx] || PL_SLOTS[0]);
   const cl = climateOf(sl.lat);
   const fit = seasonFit(item.season, bmSeasonOfDate());
   const dur = Math.round(26000 / (cl.v * fit));
@@ -15129,7 +15798,10 @@ function plantSeedAt(item, slotIdx){
     r: rarityOfItem(item),
     clV: cl.v, fit: fit,
     desc: item.desc || '', dexNo: item.dex || 0, form: formOf(item.name),
-    lat: sl.lat, lon: sl.lon, nat: nativeLat(item.name), slot: slotIdx,
+    lat: sl.lat, lon: sl.lon, nat: nativeLat(item.name),
+    /* 20261109：落点改成坐标后，slot 索引不再有意义（存 -1）；
+       旧存档里的数字 slot 仍然保留可读 */
+    slot: (typeof slotIdx === 'object' ? -1 : slotIdx),
     climate: cl.k, cnote: cl.note, ccolor: cl.c,
     byId: 'me', by: '你',
     acts: [{ t: Date.now(), k: '种下', by: '你' }],
@@ -15144,6 +15816,13 @@ function plantSeedAt(item, slotIdx){
      同时让 seedPool 知道它已经被种下去了。 */
   if (item.mut){ pl.mutantAt = Date.now(); pl.fromMutSeed = item.seedId || ''; }
   PLANET.plants.push(pl);
+  /* 20261109：种下一株 → 上报，让角色把「我们一起种的这株」记进记忆宫殿 */
+  try {
+    seasonHostEvent('plant', {
+      charId: pl.byId || PLANET.ownerId, plantId: pl.id,
+      name: pl.name, at: Date.now()
+    });
+  } catch(e){}
   try { seasonSave(); } catch(e){}
   return pl;
 }
@@ -15193,16 +15872,24 @@ function bindV5(){
   if ($('#seedPlantBtn')) $('#seedPlantBtn').addEventListener('click', () => {
     if (!seedPick){ toast('先选一种种子'); return; }
     if (PLANET.plants.length >= PL_MAX){ toast('星球上满了（' + PL_MAX + ' 株）· 先收一轮'); return; }
-    if (seedSlot < 0){ toast('选一个还没种的位置'); return; }
-    const pl = plantSeedAt(seedPick, seedSlot);
+    if (seedSlot < 0){ toast('先在星球上点一个位置'); return; }
+    /* 20261109：落点取「这颗种子那一套球面候选点」里的坐标 */
+    const lay = slotLayoutFor(seedPick);
+    const sl = lay[seedSlot];
+    if (!sl){ toast('先在星球上点一个位置'); return; }
+    if (slotOccupied(sl)){ toast('这个位置已经种着东西了'); return; }
+    const pl = plantSeedAt(seedPick, sl);
     const cl = climateOf(pl.lat);
-    toast('已种下 · ' + pl.name + ' · ' + cl.note);
+    toast('已种下 · ' + pl.name + ' · ' + latStr(pl.lat) + ' · ' + cl.note);
     seedPick = null; seedSlot = -1;
     renderSeed();
     renderPlanetList();
     drawPlanetFrame();
     if (typeof updateImprintBtn === 'function') updateImprintBtn();
   });
+  /* 20261109：球面选位——点星球上任意候选圆圈落种（不再用 1~9 号按钮） */
+  const sbCv = $('#seedBall');
+  if (sbCv) sbCv.addEventListener('click', sbHit);
   if ($('#plSeedGo')) $('#plSeedGo').addEventListener('click', () => {
     seedPick = null; seedSlot = -1;
     showView('vSeed');
@@ -15891,6 +16578,12 @@ function doImprint(){
   /* 兜底：意外情况下动画没挂上，也照样把票收进书签集，不让这一轮白凝 */
   PHOTOS.push(rec);
   IMP_FOUND.add(imp.k); impSave();
+  /* 20261109：凝出一颗星球 → 上报，让角色记住「我们一起凝出过它」 */
+  try {
+    seasonHostEvent('star', {
+      charId: PLANET.ownerId, star: imp.n || '', key: imp.k || '', at: Date.now()
+    });
+  } catch(e){}
   toast('凝星成功 · ' + imp.n);
   setTimeout(() => {
     bookScope = 'all';
@@ -16866,12 +17559,19 @@ window.addEventListener('load', () => { try { bindV5b(); } catch (e) { console.w
       catch(e){}
     }
 
+    /* 20261109：九株的球面站位改用它们各自的真实经纬度（落点已不固定），
+       取不到就退回 PL_SLOTS 兜底。 */
+    function seedProject(i){
+      const sp = SEED && SEED[i];
+      if (sp && typeof sp.lat === 'number' && typeof sp.lon === 'number') return plProject(sp.lat, sp.lon);
+      return plProject(PL_SLOTS[i].lat, PL_SLOTS[i].lon);
+    }
     function buildMorph(){
       const A = document.createElement('canvas'); A.width = W; A.height = H;
       const ag = A.getContext('2d');
       if (plBase) ag.drawImage(plBase, 0, 0);
       for (let i = 0; i < 9; i++){
-        const pr = plProject(PL_SLOTS[i].lat, PL_SLOTS[i].lon);
+        const pr = seedProject(i);
         drawSeed(ag, pr, 1, i);
       }
       const B = document.createElement('canvas'); B.width = W; B.height = H;
@@ -17058,7 +17758,7 @@ window.addEventListener('load', () => { try { bindV5b(); } catch (e) { console.w
           if (q <= 0) continue;
           q = Math.min(1, q);
           const e = 1 - Math.pow(1 - q, 2);
-          const pr = plProject(PL_SLOTS[i].lat, PL_SLOTS[i].lon);
+          const pr = seedProject(i);
           drawSeed(g, pr, e, i);
         }
         cv.style.clipPath = 'circle(40% at 50% 53%)';
@@ -17280,10 +17980,14 @@ window.addEventListener('load', () => { try { bindV5b(); } catch (e) { console.w
    ============================================================ */
 const SG_KEY = 'bmSeasonGuideDone';
 /* ============================================================
-   20261108 交互式全流程演示引导（点真实按钮推进，10 步）。
-   用户原话：「用这张示例图把整个流程改一下，让玩家从拍照到存入照片墙，
-   到点击照片墙打印书签，然后书签存入书签集，然后把书签集里的书签送给角色，
-   随后到角色，随后到星球种子库，选种子种到星球上，全流程做一个新手引导。」
+   20261109 交互式全流程演示引导（点真实按钮推进，10 步）。
+   用户原话：「照片墙里可以留一张图就是像素画的图留一张让玩家看一下会有什么效果，
+   开局的时候就是带着玩家跑一遍流程…带着玩家解锁那个车前草，因为我们那个示例图
+   就是车前草嘛。新手引导流程就是带着玩家跑一遍解锁那个车前草，然后给玩家一颗
+   种子先种着，要不然这个四季功能太难搞了。」
+   ⇒ 开局墙上就有一张示例像素画（车前草，未制签）；引导从它开始，玩家亲手
+     制签 → 送角色 → 去种子库 → 在星球上点位置 → 种下，跑完正好解锁车前草，
+     并且种子库里那颗种子已经落进 TA 的星球。
    ⇒ 每一步都高亮一个真实按钮，玩家亲手点下去才推进（act = 目标按钮选择器）；
      点错了不进，点对了流程自然往前走。
    每条 step 字段：
@@ -17291,33 +17995,43 @@ const SG_KEY = 'bmSeasonGuideDone';
      s   高亮锚点（选择器）
      act 玩家要点哪个按钮（选择器；点它才推进）
      t/d 卡片标题/说明
-     waitFor 点下 act 后要等的元素/状态（打印动画播完、浮层弹出）才推进
+     waitFor 点下 act 后要等的元素/状态（打印动画播完、浮层弹出、球上选中位置）才推进
    ============================================================ */
 const SG_STEPS = [
-  { v:'vWall',    s:'#wall .ph-add', act:'#wall .ph-add', t:'种子从一张照片开始',
-    d:'点这个「拍照」，拍一株植物，它就会变成一颗能种下去的种子。' },
-  { v:'vCamera',  s:'#shutter',      act:'#shutter',      t:'按一下快门',
-    d:'对准一株植物，点圆圆的快门。没有真相机时就用示例图替你拍一张。' },
+  { v:'vWall',    s:'#wall .ph:not(.ph-add)', act:'#wall .ph:not(.ph-add)', t:'这张就是像素画',
+    d:'墙上先给你留了一张示例图（宽叶车前草）。点开它，看看一张照片最后会变成什么样。' },
   { v:'vPhoto',   s:'#btnMake',      act:'#btnMake',      t:'照片会变成一张书签',
     d:'它已经被压成像素画。点「制成书签」，打印机会把它逐字印出来、编上号、收进书签集。',
     waitFor:'.press.done', waitFocus:'.press-body' },
-  { v:'vPhoto',   s:'.tk-final',     act:'#tkFinalGift',  t:'书签印好了',
-    d:'打印完成，打印机和书签一起停在中间，下面弹出四个按钮。点「送给角色」，把这颗种子交给 TA。',
-    union:['.press-body','.tk-final'] },
+  /* 20261109 修：原来 union 把「打印机 + 四按钮」整块圈进来 → 高亮洞几乎满屏，
+     卡片被挤到底部，正好压住「送给角色」按钮。现在只圈那排按钮，卡片贴顶。 */
+  { v:'vPhoto',   s:'.tkf-acts',     act:'#tkFinalGift',  t:'书签印好了', cardAt:'top',
+    d:'打印完成，打印机和书签一起停在中间，下面弹出四个按钮。点「送给角色」，把这颗种子交给 TA。' },
   { v:'vPhoto',   s:'.gf-i',         act:'.gf-i',         t:'选一个角色',
     d:'点一下要送给谁。TA 收下后，这颗种子就会出现在 TA 的种子库里。' },
   { v:'vPhoto',   s:'#giftSend',     act:'#giftSend',     t:'写句寄语，然后送出',
     d:'可以先写一句寄语（不想写就留空），再点「送出」。' },
+  /* 20261109 补：结果浮层按定案「只有点关闭才收」，所以必须让玩家亲手关一次，
+     否则打印票一直盖在屏幕上，后面的星球/种子库根本点不到（上一版就卡在这）。 */
+  { v:'vPhoto',   s:'#tkFinalClose', act:'#tkFinalClose', t:'收掉这张票',
+    d:'书签已经送出去了。点「关闭」把打印结果收起来，我们再去 TA 的星球。' },
   { v:'vPlanet',  s:'#plSeedGo',     act:'#plSeedGo',     t:'去 TA 的种子库',
     d:'书签已经变成一颗种子，躺在 TA 的种子库里。点「待播种」进去看看。' },
   { v:'vSeed',    s:'.seedc',        act:'.seedc',        t:'挑一颗种子',
-    d:'点这颗种子，选一个空位置，替 TA 把它种下去。' },
-  { v:'vSeed',    s:'#seedPlantBtn', act:'#seedPlantBtn', t:'种下去',
-    d:'选好位置后，点「种下去」。它就会落在 TA 的星球上，慢慢长大。' },
+    d:'点这颗种子，下面会出现 TA 的星球。' },
+  { v:'vSeed',    s:'#seedBall',     act:'#seedBall',     t:'在星球上挑一个位置',
+    d:'点球上一个空圆圈，就在这里种下它。绿圈是它原生纬度带里最合适的地方，琥珀圈也能种、只是长得慢。',
+    waitFor:'#seedBall[data-picked]' },
+  { v:'vSeed',    s:'#seedPlantBtn', act:'#seedPlantBtn', t:'种下去', cardAt:'top',
+    d:'选好位置后，按钮会变成「就种在这里 · 经纬度」。点它，这株就落在 TA 的星球上了。' },
   { v:'vPlanet',  s:'.planet-card',  act:'.planet-card',  t:'种下啦',
-    d:'种子已经种在 TA 的星球上。以后每天回来照看它，陪它长成一颗星球吧。' }
+    d:'种子已经种在 TA 的星球上，图鉴里的「宽叶车前草」也一起解锁了。以后每天回来照看它吧。' }
 ];
 let sgIdx = 0, sgReady = false;
+/* 当前步骤希望卡片贴哪：'' 自动 / 'top' 贴顶 / 'bottom' 贴底。
+   用模块变量而不是函数参数 —— 因为聚光灯会被「延迟重画」（滚动补偿、
+   waitFocus 轮询）二次调用，参数会丢，卡片又被打回原位。 */
+let sgCardAt = '';
 let sgActEl = null, sgActHandler = null;   /* 交互式：当前步骤要监听的目标按钮 + 其一次性监听器 */
 
 function sgBuild(){
@@ -17328,6 +18042,7 @@ function sgBuild(){
   wrap.id = 'sguide';
   wrap.innerHTML =
     '<div id="sgHole"></div>' +
+    (sgIsGuideMode() ? '<button class="sg-replay" id="sgReplay">↺ 重看引导</button>' : '') +
     '<button class="sg-skip" id="sgSkip">跳过引导</button>' +
     '<div id="sgCard">' +
       '<div class="sg-n" id="sgN"></div>' +
@@ -17337,6 +18052,9 @@ function sgBuild(){
   box.appendChild(wrap);
   /* 跳过 = 整体跳过整个新手引导（不是逐步跳过），走到哪一步点它都直接结束。 */
   document.getElementById('sgSkip').addEventListener('click', function(){ sgEnd(); });
+  /* 预览模式才有：一键回到第 1 步，连演示数据一起重置（可反复看） */
+  const _rp = document.getElementById('sgReplay');
+  if (_rp) _rp.addEventListener('click', function(){ try { sgReplay(); } catch(e){} });
   /* 纯交互式：只有点高亮目标按钮才推进，没有「下一步」按钮。 */
   document.addEventListener('keydown', function(e){
     if (e.key === 'Escape'){ const w = document.getElementById('sguide'); if (w && w.classList.contains('on')) sgEnd(); }
@@ -17368,6 +18086,21 @@ function sgPaint(){
       if (st.v === 'vBook' && typeof openBook === 'function') setTimeout(openBook, 300);
     }
   } catch (e) {}
+
+  /* 20261109：走到「在星球上挑一个位置」这一步，先把球滚到屏幕中间 ——
+     种子库顶部压着一张书签票，球在它下面，小屏上不滚就整个在视口外，
+     玩家既看不到也点不到。滚完（smooth 约 400ms）再重画聚光灯，
+     否则高亮洞还停在滚动前的位置。 */
+  if (st.s === '#seedBall'){
+    setTimeout(function(){
+      scrollSeedBall();
+      setTimeout(function(){ try { sgFocus(st.s, st.union, st.cardAt); } catch(e){} }, 620);
+    }, 400);
+  }
+
+  /* 20261109：打印完成的「已收录」提示条正好落在四按钮那一排上，
+     引导走到这一步先把它收掉，别让它压住「保存图片 / 关闭」。 */
+  if (sgIdx === 2){ try { const _t = $('#toast'); if (_t) _t.classList.remove('show'); } catch(e){} }
 
   /* 2) 绑定目标按钮的点击监听：玩家亲手点高亮目标 → 推进下一步。
      一次性监听，推进时解绑，避免重复触发。
@@ -17401,19 +18134,27 @@ function sgPaint(){
   }
 
   /* 3) 画高亮洞（默认框 s；带 union 时框多个元素的合并包围盒） */
-  sgFocus(st.s, st.union);
+  sgCardAt = st.cardAt || '';
+  sgFocus(st.s, st.union, st.cardAt);
 }
 
 /* 量目标位置并重画聚光灯洞 + 卡片位置。
    selector = 单个选择器；unionArr = 多个选择器，取合并包围盒（覆盖一整块区域） */
-function sgFocus(selector, unionArr){
+let _sgFocusTok = 0;
+function sgFocus(selector, unionArr, cardAt){
   const box  = document.getElementById('phone');
   const hole = document.getElementById('sgHole');
   const card = document.getElementById('sgCard');
   if (!box || !hole) return;
-  /* 等一帧再量位置：切视图/上移动画后布局要落定，不然量到的是旧坐标 */
-  requestAnimationFrame(function(){
-    requestAnimationFrame(function(){
+  /* 等一帧再量位置：切视图/上移动画后布局要落定，不然量到的是旧坐标。
+     20261109：再加一条 setTimeout 兜底 —— WebView / 无头浏览器在个别状态下会暂停
+     requestAnimationFrame，只挂 rAF 的话聚光灯和卡片就停在默认位置（洞 0×0 → 整屏压黑、
+     卡片贴 0），玩家看到的就是「讲解把按钮压住了」。rAF 和兜底谁先到谁执行，只跑一次。 */
+  const tok = ++_sgFocusTok;
+  let done = false;
+  const run = function(){
+    if (done || tok !== _sgFocusTok) return;
+    done = true;
       let rect = null;
       if (unionArr && unionArr.length){
         /* 合并多个元素的包围盒（比如「打印机 + 四按钮」整体一块） */
@@ -17448,18 +18189,23 @@ function sgFocus(selector, unionArr){
       hole.style.width  = w + 'px';
       hole.style.height = h + 'px';
 
-      /* 卡片避让：高亮在下半屏就翻到上面去，绝不许盖住被讲的东西 */
+      /* 卡片避让：高亮在下半屏就翻到上面去，绝不许盖住被讲的东西。
+         优先用 sgCardAt（当前步骤定死的规则），参数只在 sgPaint 里设一次。 */
       card.style.display = 'block';
       const ch = card.offsetHeight;
       const cy = y + h / 2;
+      const at = sgCardAt;
       let top;
-      if (cy > b.height * 0.56) top = y - ch - 14;   /* 洞在下半屏 → 卡片翻到洞上面 */
-      else top = y + h + 14;                          /* 洞在上半屏 → 卡片放在洞下面 */
+      if (at === 'top') top = 86;   /* 贴顶但让开「重看/跳过」这排按钮（它们占 56~86） */
+      else if (at === 'bottom') top = b.height - ch - 78;
+      else if (cy > b.height * 0.56) top = y - ch - 14;      /* 洞在下半屏 → 卡片翻到洞上面 */
+      else top = y + h + 14;                                 /* 洞在上半屏 → 卡片放在洞下面 */
       /* 再夹一次边界：最上面留 10px，最下面给底部导航留 78px */
       top = Math.max(10, Math.min(top, b.height - ch - 78));
       card.style.top = top + 'px';
-    });
-  });
+  };
+  requestAnimationFrame(function(){ requestAnimationFrame(run); });
+  setTimeout(run, 140);
 }
 
 /* 解绑当前步骤的目标按钮监听（切步前/结束时调用，防止串步） */
@@ -17468,6 +18214,47 @@ function unbindSgAct(){
     try { sgActEl.removeEventListener('click', sgActHandler, true); } catch (e) {}
   }
   sgActEl = null; sgActHandler = null;
+}
+
+/* ============================================================
+   20261109：引导预览模式（可反复查看）
+   ------------------------------------------------------------
+   用户原话：「新手引导我需要看一个预览，就是单独给我打开一个
+   可以查看、反复查看新手引导的这个预览」。
+   ⇒ URL 带 guide= 时，左上角出现「↺ 重看引导」。
+     点它 = 清掉这份演示存档（bmSeason* 全清）→ 重新塞示例图 →
+     从第 1 步重播，所以同一页面能反复看，不用手动清缓存。
+   ⇒ 带 reset=1 时，首次进入也先清一遍，保证从空存档开始跑完整流程。
+   ⚠️ 只清 bmSeason* 前缀（四季自己的存档），不碰主项目/其他模块的数据。
+   ============================================================ */
+function sgIsGuideMode(){ return /[?&]guide=/.test(location.search); }
+function sgResetSeasonData(){
+  try {
+    const ks = [];
+    for (let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if (k && k.indexOf('bmSeason') === 0) ks.push(k);
+    }
+    for (let i = 0; i < ks.length; i++) localStorage.removeItem(ks[i]);
+  } catch(e){}
+  /* 内存里的也清一遍（reset=1 时 seasonLoad 还没跑，清掉就真从空开始） */
+  try { PHOTOS.length = 0; } catch(e){}
+  try { PLANET.plants.length = 0; PLANET.pool = {}; PLANET.inited = false; } catch(e){}
+  try { if (typeof IMP_FOUND !== 'undefined' && IMP_FOUND.clear) IMP_FOUND.clear(); } catch(e){}
+  try { if (typeof MUT_SEEN !== 'undefined') MUT_SEEN = {}; } catch(e){}
+  try { seqNo = 0; } catch(e){}
+  seedPick = null;
+  seedSlot = -1;
+}
+/* 重看：清档 → 重新给示例图 → 从第一步重播 */
+function sgReplay(){
+  sgResetSeasonData();
+  try { seedDemoPhoto(); } catch(e){}
+  try { renderWall('all'); } catch(e){}
+  try { renderPlanetList(); } catch(e){}
+  try { renderSeed(); } catch(e){}
+  try { drawPlanetFrame(); } catch(e){}
+  sgStart();
 }
 
 function sgStart(){
@@ -17518,12 +18305,48 @@ function sgMaybeAuto(){
 }
 
 /* 对外暴露（主项目用）：bmSeasonGuide.start() 可在设置页做「重看新手引导」 */
-window.bmSeasonGuide = { start: sgStart, end: sgEnd, maybeAuto: sgMaybeAuto, shouldRun: sgShouldRun };
+window.bmSeasonGuide = { start: sgStart, end: sgEnd, maybeAuto: sgMaybeAuto, shouldRun: sgShouldRun, replay: sgReplay };
+/* 20261109：引导预览 reset=1 —— 必须在 seasonLoad 之前清，才是真的从空存档跑整条流程 */
+try { if (/[?&]reset=1/.test(location.search)) sgResetSeasonData(); } catch(e){}
 sgMaybeAuto();
 
 /* 20261108：启动时恢复四季持久化数据（星球/书签集/照片墙图鉴跟着角色走、可单独备份）。
    必须在所有数据定义（PLANET/PHOTOS/IMP_FOUND/MUT_SEEN）之后调用，故放文件末尾。 */
 try { seasonLoad(); } catch(e){}
+
+/* ============================================================
+   20261109：开局留一张示例像素画（宽叶车前草）
+   ------------------------------------------------------------
+   用户原话：「照片墙里可以留一张图就是像素画的图留一张让玩家看一下会有什么效果，
+   开局的时候就是带着玩家跑一遍流程…带着玩家解锁那个车前草，因为我们那个示例图
+   就是车前草嘛」。
+   ⇒ 空墙（新玩家）时塞一张「未制签」的示例照片：像素画直接显示在墙上，
+     玩家一眼看到成品长什么样；随后新手引导就用这张照片跑完整流程
+     （制签 → 送角色 → 去种子库 → 在球上选位置 → 种下），跑完正好解锁车前草。
+   ⇒ 不塞给老玩家（墙上有照片就不加）；玩家删掉后也不再自动回来（bmSeasonDemoGone）。
+   ⚠️ img 故意留 null：像素化走 srcImg（src.png 示例原图），不用额外存一张大图。
+   ============================================================ */
+function seedDemoPhoto(){
+  try {
+    if (localStorage.getItem('bmSeasonDemoGone')) return false;
+    if (PHOTOS.some(function(p){ return p && p.demo; })) return false;
+    if (PHOTOS.length) return false;
+    PHOTOS.push({
+      id: 1, no: 0, dex: 1,
+      crop: { r: .88, cx: .5, cy: .5 },
+      season: 'autumn',
+      name: '宽叶车前草', latin: 'Plantago asiatica', cnf: 96, src: 'demo',
+      made: false, date: todayStr(),
+      desc: '叶脉像车辙，路边最常见的一味草药。',
+      place: '示例图', rare: 1, fresh: false,
+      demo: true, img: null
+    });
+    return true;
+  } catch (e) { return false; }
+}
+/* 示例图可能还没解码完：没 ready 就先不画，srcImg.onload 里会统一 renderWall 一次 */
+try { if (seedDemoPhoto() && imgReady) renderWall('all'); } catch(e){}
+
 /* 兜底：离开页面/关 App 前再落一次盘，防止「刚种下就切走」丢最后一点数据 */
 try { window.addEventListener('beforeunload', function(){ seasonSave(); }); } catch(e){}
 </script>
