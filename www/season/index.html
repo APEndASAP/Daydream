@@ -16389,13 +16389,19 @@ function impSave(){
 }
 let impPage = 0, impFilter = 'all';
 const IMP_PER = 32;
-/* 20261110d 用户要求：星球图鉴里「已经凝出来的」也优先排到前面，没凝的接在后面；
-   两摞内部都保持原来的排列顺序（不按凝星先后乱插）。 */
-function impOwnFirst(list){
-  const a = [], b = [];
-  list.forEach(d => (impOwned(d) ? a : b).push(d));
-  return a.concat(b);
-}
+/* 20261111f 用户要求：星球图鉴也跟植物图鉴一样，「已解锁的排前面，后面继续按顺序」。
+   ------------------------------------------------------------
+   之前两套规则打架：普通项按「已解锁优先」，但初见星/枯亡星/赤心星这三颗跨季星球
+   被无条件钉在最前 —— 于是没解锁的枯亡星、赤心星反而压在真正已解锁的星球前面
+   （实测：解锁了花塔星，「？？？」仍坐在它前面）。
+   现在统一成一条规则：
+     ① 已解锁的一摞在前、未解锁的一摞在后；
+     ② 两摞内部都保持 IMPRINTS 原顺序（不按解锁先后乱插，与植物图鉴一致）；
+     ③ 唯一例外是初见星：它恒为已解锁，固定第一格（起始星不能被挤走）。
+   跨季三颗在「季节/花海/异变」档里仍会补回列表（否则换季就消失），
+   但同样遵守 ①②，不再无条件置顶。 */
+const IMP_PIN = d => !!d && (d.t === 'origin' || d.t === 'wither' || d.t === 'burn');
+
 function impFiltered(){
   let list;
   if (impFilter === 'own') list = IMPRINTS.filter(d => impOwned(d));
@@ -16404,19 +16410,16 @@ function impFiltered(){
   else if (impFilter === 'mut')  list = IMPRINTS.filter(d => d.t === 'mut');
   else if (impFilter === 'all')  list = IMPRINTS.slice();
   else list = IMPRINTS.filter(d => d.t !== 'sea' && d.s === impFilter);
-  /* 初见星与枯亡星都永远坐在最前面两格：换季节看图鉴它们也不该消失 ——
-     一个是「一开始就在脚下」，一个是「长废了也只有这一颗」，都不属于任何季相。
-     这两三颗是「钉住」的，不参与「已点亮优先」重排，否则起始星会被挤走。 */
+  /* 季节档会把跨季三颗 filter 掉 → 补回（不消失），但仍参与下面的解锁排序 */
   if (impFilter !== 'sea' && impFilter !== 'mut'){
-    const pin = IMPRINTS.filter(d => d.t === 'origin' || d.t === 'wither' || d.t === 'burn');
-    list = list.filter(d => d.t !== 'origin' && d.t !== 'wither' && d.t !== 'burn');
-    list = impOwnFirst(list);                     /* ← 20261110d：已点亮在前 */
-    if (impFilter === 'own') list = pin.filter(d => impOwned(d)).concat(list);
-    else list = pin.concat(list);
-  } else {
-    list = impOwnFirst(list);                     /* 花海 / 异变两档也按已点亮优先 */
+    const extra = IMPRINTS.filter(d => IMP_PIN(d) && list.indexOf(d) < 0);
+    list = list.concat(extra);
   }
-  return list;
+  const own = list.filter(impOwned);
+  const locked = list.filter(d => !impOwned(d));
+  const originFirst = own.filter(d => d.t === 'origin');   /* 初见星：恒解锁，固定第一格 */
+  const restOwn = own.filter(d => d.t !== 'origin');
+  return originFirst.concat(restOwn, locked);
 }
 function impTypeCN(d){
   if (d.t === 'origin') return '起始 · 脚下的第一颗';
