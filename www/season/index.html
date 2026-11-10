@@ -1830,6 +1830,31 @@ body{
   pointer-events:auto;
 }
 /* ============================================================
+   20261112：新手引导 · PC 宽屏适配（手机端一个像素都不动）
+   ------------------------------------------------------------
+   用户原话：「四季的新手引导没做 pc 端宽屏的兼容，按钮位置不对，
+             手机端不要动」。
+   病根：引导层 #sguide 是铺满整个 #phone 的，而 PC 上 #phone 已经
+   拆壳铺满窗口（左侧 116px 竖导航 + 右侧内容区），于是：
+     ①「跳过引导」right:14/top:56 正好骑在顶栏 ✕ 上；
+     ②「↺ 重看引导」left:14/top:56 压在左侧竖导航上；
+     ③ 讲解卡片 left:16 / right:16 把 1334px 全吃满，变成一条横杠。
+   做法（只在这一档生效，<1000px 的原有规则原样保留）：
+     ① 两个按钮改对齐「内容区」的左右边距，并落到顶栏下方 84px；
+     ② 卡片限宽 460px，横向居中在内容区（118 + 内容区一半 = 50% + 58px）；
+     ③ 卡片纵向钳制值在 JS 里同步改成 128 / 24（见 sgFocus）。
+   ============================================================ */
+@media (min-width:1000px){
+  .sg-skip{right:clamp(24px,3.2vw,64px);top:84px}
+  /* 重看引导挪到「跳过引导」左边成一组：放内容区左边缘会正好压住「照片墙」大标题 */
+  .sg-replay{left:auto;right:calc(clamp(24px,3.2vw,64px) + 92px);top:84px}
+  #sgCard{
+    left:calc(50% + 58px);right:auto;
+    width:min(460px,62vw);
+    transform:translateX(-50%);
+  }
+}
+/* ============================================================
    PC / 宽屏适配（v63 · 20261108）
    ------------------------------------------------------------
    用户原话：「界面宽度到一定程度的时候，中间那个界面区就要充斥整个界面」
@@ -20305,13 +20330,19 @@ function sgFocus(selector, unionArr, cardAt){
       const ch = card.offsetHeight;
       const cy = y + h / 2;
       const at = sgCardAt;
+      /* 20261112：PC 宽屏（#phone 已拆壳铺满窗口）没有底部 tabbar，但顶部多了
+         顶栏 + 「↺ 重看引导 / 跳过引导」那排按钮（到 84 + 34px），所以钳制值分开取。
+         手机端仍旧 10 / 78，一行没动。 */
+      const _pcWide = b.width >= 1000;
+      const _topMin = _pcWide ? 128 : 10;
+      const _botPad = _pcWide ? 24 : 78;
       let top;
-      if (at === 'top') top = 86;   /* 贴顶但让开「重看/跳过」这排按钮（它们占 56~86） */
-      else if (at === 'bottom') top = b.height - ch - 78;
+      if (at === 'top') top = _pcWide ? 128 : 86;   /* 贴顶但让开「重看/跳过」这排按钮（它们占 56~86） */
+      else if (at === 'bottom') top = b.height - ch - _botPad;
       else if (cy > b.height * 0.56) top = y - ch - 14;      /* 洞在下半屏 → 卡片翻到洞上面 */
       else top = y + h + 14;                                 /* 洞在上半屏 → 卡片放在洞下面 */
-      /* 再夹一次边界：最上面留 10px，最下面给底部导航留 78px */
-      top = Math.max(10, Math.min(top, b.height - ch - 78));
+      /* 再夹一次边界：最上面留 _topMin，最下面给底部导航（手机）/ 窗口边（PC）留 _botPad */
+      top = Math.max(_topMin, Math.min(top, b.height - ch - _botPad));
       card.style.top = top + 'px';
   };
   requestAnimationFrame(function(){ requestAnimationFrame(run); });
