@@ -1673,6 +1673,58 @@ let charSchedTags = ['工作', '学习', '上班', '回家'];
 let selfEventSeq = 1;          // AI 事件回填用的自增 id
 /* 后台事件1：角色做自己的事——内容来源按模式分：
    拒绝告知=固定句式；告知时字卡模式抽行程标签、AI 模式由主项目 AI 生成 */
+/* 20261111：「角色做自己的事」——具体的小动作文案池（字卡模式用）。
+   原来的实现只会把行程标签拼成「去工作了」，太干；这里补一批生活化的小事，
+   跟行程标签按 6:4 混着用：既保留「从行程里抽字卡」的设计，又不会每次都同一句。 */
+const SELF_EVENT_POOL = [
+  '给自己泡了杯热茶，捧着杯子在窗边站了一会儿',
+  '把桌上摊开的东西一件件收拾整齐了',
+  '靠在椅背上闭了会儿眼，什么也没做',
+  '翻了几页一直没看完的书',
+  '去窗边站了会儿，看楼下的人来人往',
+  '把外套挂好，顺手理了理袖口',
+  '削了个苹果，切成小块放在盘子里',
+  '洗了把脸，回来时鬓角还带着点水汽',
+  '在纸上随手画了几笔，自己看了一会儿',
+  '把手机扣在桌上，安静待了一阵',
+  '弯腰把门口的鞋摆正了',
+  '给自己倒了杯水，慢慢喝完',
+  '去门口取了快递，顺手拆开看了看',
+  '把背包里的东西一样样归了位',
+  '抬头看了眼窗外的天色，看了挺久',
+  '把耳机线绕好，收进了口袋里',
+  '拉开抽屉找了会儿东西，又轻轻推回去',
+  '揉了揉有点酸的肩颈，继续待着',
+];
+/* 20261111：行程分支的「中途细节」短句（少量保留）。
+   只留能发生在桌前、发生在专注状态里的事；「天擦黑 / 松了下来 / 走得比平时晚」
+   那种下班收尾叙事全部删掉——番茄钟是陪着你一起专注的场景，不是下班流水账。 */
+const SCHED_CARD_DETAIL = [
+  '顺手把桌上的东西理了理',
+  '中间还接了通电话',
+  '碰上点小麻烦，耽误了一会儿',
+  '比预想的顺利一些',
+  '把拖了好几天的事终于做完了',
+  '空调开得有点冷',
+  '中间有好一阵没说话，就那么待着',
+  '把该回的消息一条条回完了',
+  '翻出之前记的东西看了半天',
+  '桌上那杯水一直没顾上喝',
+  '抬头看了两次时间',
+  '耳机一直没摘',
+  '把窗户推开透了会儿气',
+];
+/* 回复字卡为空时的兜底（正常情况用字卡库「陪伴回复」预设 compReplies） */
+const SCHED_REPLY_FALLBACK = ['累了就歇会儿', '我一直在呢', '别太拼了'];
+/* 20261111：「角色不想告知自己做了什么」的几句固定文案。
+   用户 20261104 定稿的原句是「{名字} 做了一件自己的小事，不太想告诉你」，
+   这里补几种语气变体，避免每次都被同一种说法戳穿。结算页里 🤫 开头的那条就是它。 */
+const SELF_SECRET_POOL = [
+  '{name} 做了一件自己的小事，不太想告诉你',
+  '{name} 刚才忙了会儿别的，问起来只笑不语',
+  '{name} 悄悄去处理了点事，没打算说',
+  '{name} 做了点什么，最后只是摇了摇头，没说',
+];
 /* 后台事件2：角色想找你互动但忍住了（内建文案池，静默） */
 const HELD_EVENT_POOL = [
   '想发消息给你，但看到你专注的样子，又轻轻放下了手机',
@@ -1696,17 +1748,44 @@ function pickFromPool(pool, tag){
   while(used.has(idx) && guard++ < 20) idx = Math.floor(Math.random()*pool.length);
   return { text: pool[idx], idx };
 }
-/* 字卡模式：从角色行程标签抽 1~2 个，拼成「角色做自己的事」描述 */
+/* 字卡模式：角色做自己的事——两条来源各占一半（50% / 50%）。
+   ① 一半从「动作小事池」SELF_EVENT_POOL 抽一句完整的；
+   ② 另一半走行程：先抽 1~2 个行程标签（去X了），再抽 1~2 句字卡——
+      字卡来自字卡库「陪伴回复」预设（compReplies），不是自己另写；
+      只抽一句时，一半概率先补一句桌前的中途细节，再落字卡。
+   例：去学习了，桌上那杯水一直没顾上喝，累了就歇会儿 / 去上班了，我一直在呢。 */
 function selfEventFromTags(){
+  if(Math.random() < 0.5){
+    const used = new Set(sessionEvents.filter(e=>e._tag==='self').map(e=>e.text));
+    const cand = SELF_EVENT_POOL.filter(t=>!used.has(t));
+    const pool = cand.length ? cand : SELF_EVENT_POOL;
+    return pool[Math.floor(Math.random()*pool.length)];
+  }
+  // —— 行程分支：先抽行程 ——
   const pool = charSchedTags.slice();
   const n = Math.random() < 0.4 ? 2 : 1;
   const chosen = [];
   for(let i=0;i<n && pool.length;i++){
     chosen.push(pool.splice(Math.floor(Math.random()*pool.length),1)[0]);
   }
-  if(chosen.length===0) return '在忙自己的事';
-  if(chosen.length===1) return `去${chosen[0]}了`;
-  return `去${chosen.join('和')}了`;
+  if(chosen.length===0) return SELF_EVENT_POOL[Math.floor(Math.random()*SELF_EVENT_POOL.length)];
+  /* 用户定稿用「去{标签}了」——去回家了 / 去上班了 / 去画画了，比「回家去了」更顺口。 */
+  let text = (chosen.length===1) ? `去${chosen[0]}了` : `去${chosen[0]}和${chosen[1]}了`;
+  // —— 再抽 1~2 句「字卡」拼上去：字卡取字卡库「陪伴回复」预设 ——
+  const reps = (compReplies && compReplies.length) ? compReplies.slice() : SCHED_REPLY_FALLBACK.slice();
+  const pickRep = () => { const i = Math.floor(Math.random()*reps.length); return reps.splice(i,1)[0] || ''; };
+  if(Math.random() < 0.5){
+    // 抽两句字卡
+    text += `，${pickRep()}`;
+    const r2 = pickRep();
+    if(r2) text += `，${r2}`;
+  } else {
+    // 只抽一句：一半概率先补一句桌前的中途细节，再落字卡
+    if(Math.random() < 0.5) text += `，${SCHED_CARD_DETAIL[Math.floor(Math.random()*SCHED_CARD_DETAIL.length)]}`;
+    const r1 = pickRep();
+    if(r1) text += `，${r1}`;
+  }
+  return text;
 }
 /* 后台随机触发一次独立事件：随机决定是「做自己的事」还是「想找你但忍住了」，
    也可能什么都不发生（「可能随机出来，也可能随机不出来」）。不弹前台，只记录。 */
@@ -1720,8 +1799,9 @@ function triggerBgEvent(){
   if(kind === 'self'){
     // 事件1：角色做自己的事——先随机决定「拒绝告知」还是「告知」
     if(Math.random() < 0.35){
-      // 拒绝告知：固定句式（不弹前台，只记录）
-      sessionEvents.push({ text:`${name} 做了一件自己的小事，不太想告诉你`, secret:true, at:Date.now(), _tag:'self' });
+      // 拒绝告知：固定句式池（不弹前台，只记录；结算页显示时前面带 🤫）
+      const tpl = SELF_SECRET_POOL[Math.floor(Math.random()*SELF_SECRET_POOL.length)];
+      sessionEvents.push({ text: tpl.replace(/\{name\}/g, name), secret:true, at:Date.now(), _tag:'self' });
       return;
     }
     // 告知：按模式生成内容
@@ -2315,7 +2395,7 @@ function addSettleRecord(){
   const fid = charFolderOf(c).id;   // 挂到角色默认文件夹
   // 20261104：结算前兜底——AI 模式可能有尚未回填的「角色做自己的事」事件，补一句兜底文案
   for(const ev of sessionEvents){
-    if(ev._pendingAI && !ev.text) ev.text = '在忙自己的一点小事';
+    if(ev._pendingAI && !ev.text) ev.text = SELF_EVENT_POOL[Math.floor(Math.random()*SELF_EVENT_POOL.length)];
     delete ev._pendingAI;
   }
   const rec = {
@@ -2384,9 +2464,9 @@ function openSessionSettle(){
     <div class="ss-row"><span class="k">专注任务</span><span class="v">${r.task}</span></div>
     <div class="ss-row"><span class="k">专注模式</span><span class="v">${r.mode}</span></div>
     <div class="ss-row"><span class="k">陪伴角色</span><span class="v">${c.name}</span></div>`;
-  // 角色处理的事（详细）
+  // TA 处理的事（详细）
   const evHtml = (r.events||[]).map(ev=>`<div class="ss-row"><span class="k">· ${ev.secret?'🤫':''}${ev.text}</span></div>`).join('');
-  if(evHtml) document.getElementById('ssRows').innerHTML += `<div style="margin-top:8px;font-size:12px;opacity:.6;">角色处理的事</div>${evHtml}`;
+  if(evHtml) document.getElementById('ssRows').innerHTML += `<div style="margin-top:8px;font-size:12px;opacity:.6;">TA 处理的事</div>${evHtml}`;
   document.getElementById('ssReply').innerHTML = `<span class="who">${c.name}：</span>${r.reply}`;
   document.getElementById('sessionSettle').classList.add('show');
 }
@@ -2684,7 +2764,7 @@ function openSettleDetail(fid, rid){
     <div class="detail-row"><span class="k">专注任务</span><span class="v">${r.task}</span></div>
     <div class="detail-row"><span class="k">陪伴角色</span><span class="v">${c.name}</span></div>
     <div class="detail-row"><span class="k">专注模式</span><span class="v">${r.mode}</span></div>
-    <div style="margin-top:12px;"><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:8px;">角色处理的事</div>${eventsHtml || '<div style="font-size:12px;color:var(--ink2);">这次 TA 没有特别的事</div>'}</div>`;
+    <div style="margin-top:12px;"><div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:8px;">TA 处理的事</div>${eventsHtml || '<div style="font-size:12px;color:var(--ink2);">这次 TA 没有特别的事</div>'}</div>`;
   body.appendChild(card);
   // 成果区块
   const ab = document.createElement('div');

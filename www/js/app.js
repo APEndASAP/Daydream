@@ -85,6 +85,9 @@ let chatSettings = {
   musicPeek: true,                 // 20261104：互动A——角色偷偷查看玩家歌单/随机收藏/后台随机听歌记录（默认开启）
   musicPeekMin: 60,                // 20261104：角色偷看玩家歌单间隔下限（分钟）
   musicPeekMax: 240,               // 20261104：角色偷看玩家歌单间隔上限（分钟）
+  musicShare: true,                // 20261111：角色主动「分享一首歌」给你（卡片式，不要求一起听，默认开）
+  musicShareMin: 180,              // 20261111：主动分享歌曲随机间隔下限（分钟）
+  musicShareMax: 600,              // 20261111：主动分享歌曲随机间隔上限（分钟）
   musicActionStyle: 'chat',        // 20261106：角色主动音乐操作「小垫片」形式：'chat'=发到聊天框(默认) / 'toast'=短暂提示条 / 'off'=不提示
   earListenMin: 40,                // 20261105：角色「戴耳机听自己歌单」生成幽灵听歌记录间隔下限（分钟）
   earListenMax: 360,               // 20261105：角色「戴耳机听自己歌单」间隔上限（分钟）
@@ -3902,8 +3905,11 @@ function msgBodyHtml(m, oneLine = false) {
       //   外观同款，只换标签文案 —— 不再走「一起听歌邀请」。
       const mcc = m.content || {};
       const _fromMe = (m.from === 'me') || !!mcc.fromMe;
+      /* 20261111：歌卡可以点开就播（角色主动分享的、玩家分享的都行）。
+         「一起听歌已结束」那张（ended）不是歌，不给播放。 */
+      const _playable = !mcc.ended && !!mcc.name;
       const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">♪</span>`;
-      return `<div class="msg-card msg-music-card">
+      return `<div class="msg-card msg-music-card"${_playable ? ` data-song-play="${m.id}" style="cursor:pointer;"` : ''}>
         <span class="msg-card-tag">${_fromMe ? '🎶 我把这首歌分享给你' : '🎶 听到这首歌，TA 想对你说'}</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
           ${cover}
@@ -3914,6 +3920,7 @@ function msgBodyHtml(m, oneLine = false) {
         </div>
         ${mcc.lyric ? `<div style="margin-top:8px;font-size:12.5px;line-height:1.6;color:var(--text-secondary);font-style:italic;">「${escapeHtml(mcc.lyric)}」</div>` : ''}
         <div style="margin-top:8px;font-size:13px;line-height:1.6;color:var(--purple-soft);word-break:break-word;">${escapeHtml(mcc.wish || '这首歌，送给你。')}</div>
+        ${_playable ? `<div style="margin-top:8px;font-size:11.5px;color:var(--text-tertiary);">▶ 点开听听</div>` : ''}
       </div>`;
     }
     case 'songpick': {
@@ -3942,13 +3949,18 @@ function msgBodyHtml(m, oneLine = false) {
       }).join('');
       /* 20261110：遥控外部 App 模式没法「点哪首播哪首」，卡面如实标注，
          不再写「已换成《X》」（那是直连模式才成立的说法）。 */
+      /* 20261111 用户定案：卡片分两种语境——正在一起听 / 还没一起听（发出邀约）。
+         together === false 才是邀约；老卡片没有这个字段，按「一起听」兜底，行为与以前一致。 */
+      const tg = (sp.together !== false);
       const footHtml = done
-        ? `<div style="margin-top:10px;font-size:11.5px;color:var(--text-tertiary);">${sp.declined ? '你说先听这首' : (sp.remoteFallback ? '外部播放器只能切歌 · 已切到下一首' : (pickedName ? ('已换成《' + escapeHtml(pickedName) + '》') : '已交给 TA 挑'))}</div>`
+        ? `<div style="margin-top:10px;font-size:11.5px;color:var(--text-tertiary);">${sp.declined ? (tg ? '你说先听这首' : '你说先不听了') : (sp.remoteFallback ? '外部播放器只能切歌 · 已切到下一首' : (pickedName ? ('已换成《' + escapeHtml(pickedName) + '》') : '已交给 TA 挑'))}</div>`
         : (sp.mode === 'pick'
             ? `<button class="btn" data-songpick-rand="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">让 ${escapeHtml(((characters.find(x => x.id === m.charId) || {}).name) || 'TA')} 帮我选</button>`
-            : `<button class="btn" data-songpick-no="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">就听这首</button>`);
+            : `<button class="btn" data-songpick-no="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">${tg ? '就听这首' : '先不了'}</button>`);
       return `<div class="msg-card msg-song-card" data-songpick="${m.id}">
-        <span class="msg-card-tag">🎧 ${sp.mode === 'pick' ? 'TA 想让你点一首' : 'TA 想换首歌'}</span>
+        <span class="msg-card-tag">🎧 ${sp.mode === 'pick'
+          ? (tg ? 'TA 想让你点一首' : 'TA 想和你一起听歌')
+          : (tg ? 'TA 想换首歌' : 'TA 想约你一起听歌')}</span>
         <div style="margin-top:7px;font-size:13.5px;font-weight:600;line-height:1.5;">${escapeHtml(sp.title || '要换一首吗')}</div>
         <div style="margin-top:3px;font-size:12px;color:var(--text-secondary);line-height:1.55;">${escapeHtml(sp.tip || '')}</div>
         ${rowHtml}
@@ -4377,6 +4389,13 @@ function appendMessage(m, scroll = true, container = null) {
       if (window.bmMusicUI && window.bmMusicUI.declineSongSwap) window.bmMusicUI.declineSongSwap(m.id);
     };
   }
+
+  /* 20261111：歌卡点开就播——角色主动分享的、我分享给 TA 的，都能直接点开听 */
+  const songPlayEl = row.querySelector('[data-song-play]');
+  if (songPlayEl) songPlayEl.onclick = (ev) => {
+    ev.stopPropagation();
+    if (window.bmMusicUI && window.bmMusicUI.playSongFromCard) window.bmMusicUI.playSongFromCard(m.id);
+  };
 
   // 超频礼物卡片（20260929ap 重做）：未打开 → 播打开动画 → 紫色星际弹窗；已打开/我送的 → 直接弹窗
   const giftEl = row.querySelector('[data-gift-card]');
@@ -6073,6 +6092,7 @@ let _musicAutoUntil = {}; // 20261104：角色主动搜歌/切歌/收藏——�
 let _musicModeSwitchUntil = {}; // 20261109：角色自主切换播放模式——按角色记录「下次可切换时间点」（随机固定间隔，独立开关）
 let _musicInviteUntil = {}; // 20261104：角色主动邀请玩家一起听歌——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
 let _musicSwapUntil = {};   // 20261109：角色主动问「要不要换一首」/ 让玩家点歌——按角色记录「下次触发时间点」
+let _musicShareUntil = {};  // 20261111：角色主动分享一首歌（卡片）——按角色记录「下次触发时间点」
 let _musicPeekUntil = {}; // 20261104：角色偷偷查看玩家歌单——按角色记录「下次触发时间点」（随机固定间隔，独立开关）
 let _earListenUntil = {}; // 20261105：角色「戴耳机听歌」生成幽灵听歌记录——按角色记录「下次触发时间点」（随机固定间隔，独立）
 let _charCollectUntil = {}; // 20261105：一起听歌时角色随机收藏歌曲——按角色记录「下次触发时间点」（随机固定间隔）
@@ -6396,6 +6416,26 @@ async function __proactiveScan() {
         }
       } else if (_musicSwapUntil[c.id]) {
         delete _musicSwapUntil[c.id];
+      }
+
+      // —— 角色主动分享一首歌给你（20261111：卡片式，不需要一起听）——
+      //     跟「一起听时的音乐卡片」不是一回事：那张用的是当前在播的那首，
+      //     这里歌是另外挑的/现搜的新歌，语义是「我听到这首，想到你，发给你」。
+      if (s.musicShare !== false && _musicBgOk) {
+        const shLo = Math.max(1, Math.min(1440, parseInt(s.musicShareMin, 10) || 180));
+        const shHi = Math.max(1, Math.min(1440, parseInt(s.musicShareMax, 10) || 600));
+        const shIvMin = Math.min(shLo, shHi), shIvMax = Math.max(shLo, shHi);
+        const nextShIv = () => shIvMin + Math.floor(Math.random() * (shIvMax - shIvMin + 1));
+        if (!_musicShareUntil[c.id]) {
+          _musicShareUntil[c.id] = now + nextShIv() * 60000;   // 首次播种
+        } else if (now >= _musicShareUntil[c.id]) {
+          _musicShareUntil[c.id] = now + nextShIv() * 60000;   // 重排下一次
+          try {
+            if (window.bmMusicUI && window.bmMusicUI.charShareSong) await window.bmMusicUI.charShareSong(c.id);
+          } catch (e) {}
+        }
+      } else if (_musicShareUntil[c.id]) {
+        delete _musicShareUntil[c.id];
       }
 
       // —— 角色偷偷查看玩家歌单（20261104：角色随机偷看玩家歌单，留足迹提醒）——
@@ -12459,6 +12499,15 @@ async function _pomodoroGenCompInteract(p) {
 }
 /* 番茄钟「角色做自己的事」AI 生成：字卡模式不需要（iframe 本地抽标签），
    AI 模式由主项目 callAI 生成一句贴合角色的「TA 刚做了什么事」，回传给 iframe。 */
+/* 20261111：AI 关着 / 生成失败时的兜底文案池（原来固定一句「在忙自己的一点小事」） */
+const _pomoSelfFallback = [
+  '在忙自己的一点小事',
+  '给自己倒了杯水，慢慢喝完',
+  '把桌边的东西收拾了一下',
+  '靠在椅背上歇了会儿',
+  '翻了几页没看完的书',
+];
+const _pickPomoSelfFallback = () => _pomoSelfFallback[Math.floor(Math.random() * _pomoSelfFallback.length)];
 async function _pomodoroGenSelfEvent(p) {
   const frame = document.getElementById('pomodoro-frame');
   try {
@@ -12479,13 +12528,13 @@ async function _pomodoroGenSelfEvent(p) {
         }
       }
     } catch (e) { text = ''; }
-    if (!text) text = '在忙自己的一点小事';
+    if (!text) text = _pickPomoSelfFallback();
     if (frame && frame.contentWindow) {
       frame.contentWindow.postMessage({ type: 'pomodoro-self-event-result', eventId: p.eventId, text }, '*');
     }
   } catch (e) {
     if (frame && frame.contentWindow) {
-      frame.contentWindow.postMessage({ type: 'pomodoro-self-event-result', eventId: p.eventId, text: '在忙自己的一点小事' }, '*');
+      frame.contentWindow.postMessage({ type: 'pomodoro-self-event-result', eventId: p.eventId, text: _pickPomoSelfFallback() }, '*');
     }
   }
 }
@@ -18900,6 +18949,20 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span>🎶 角色主动分享一首歌给你</span>
+        <input type="checkbox" id="cs-music-share" ${(s.musicShare !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会随机挑一首（或现搜一首）歌，配一句歌词和一句话，做成歌卡发到聊天里——<span style="color:var(--text);font-weight:600;">不需要你们正在一起听</span>，<span style="color:var(--text);font-weight:600;">点开卡片就直接播</span>。跟「一起听时发的那张」不同：那张分享的是当前正在播的歌，这张是 TA 专门找给你的。</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
+        <input type="number" id="cs-music-share-min" min="1" max="1440" step="1" value="${typeof s.musicShareMin === 'number' ? s.musicShareMin : 180}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">～</span>
+        <input type="number" id="cs-music-share-max" min="1" max="1440" step="1" value="${typeof s.musicShareMax === 'number' ? s.musicShareMax : 600}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最大间隔（分钟）">
+        <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+      </div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
         <span>👀 角色偷偷查看你的歌单</span>
         <input type="checkbox" id="cs-music-peek" ${(s.musicPeek === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
@@ -19371,6 +19434,47 @@ function bindChatSettings(s, onSave, tcChar) {
     };
     msMinEl.onchange = applyMs;
     msMaxEl.onchange = applyMs;
+  }
+  // 20261111：角色主动分享一首歌（卡片式）+ 随机间隔
+  const shCb = $('#cs-music-share');
+  if (shCb) shCb.onchange = async () => {
+    const oldGlobal = chatSettings.musicShare;   // 先记下全局值，才能判断角色是否「和全局一样」
+    s.musicShare = shCb.checked;
+    chatSettings.musicShare = shCb.checked;
+    await setSetting('chatSettings', chatSettings);
+    if (tcChar) {
+      tcChar.chatSettings = tcChar.chatSettings || {};
+      if (shCb.checked !== oldGlobal) tcChar.chatSettings.musicShare = shCb.checked;   // 与全局不同 → 存角色覆盖
+      else delete tcChar.chatSettings.musicShare;                                     // 与全局相同 → 跟随全局
+      await saveChar(tcChar);
+    }
+    _musicShareUntil = {};   // 改了开关 → 清空计时，下次扫描按新设置重新播种
+    miniToast(shCb.checked ? '角色会主动分享歌给你' : '角色主动分享歌曲已关闭');
+  };
+  const shMinEl = $('#cs-music-share-min');
+  const shMaxEl = $('#cs-music-share-max');
+  if (shMinEl && shMaxEl) {
+    const applySh = () => {
+      let lo = Math.min(1440, Math.max(1, parseInt(shMinEl.value, 10) || 180));
+      let hi = Math.min(1440, Math.max(1, parseInt(shMaxEl.value, 10) || 600));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      shMinEl.value = String(lo); shMaxEl.value = String(hi);
+      s.musicShareMin = lo;
+      s.musicShareMax = hi;
+      chatSettings.musicShareMin = lo;
+      chatSettings.musicShareMax = hi;
+      setSetting('chatSettings', chatSettings).catch(() => {});
+      if (tcChar) {
+        tcChar.chatSettings = tcChar.chatSettings || {};
+        tcChar.chatSettings.musicShareMin = lo;
+        tcChar.chatSettings.musicShareMax = hi;
+        saveChar(tcChar).catch(() => {});
+      }
+      _musicShareUntil = {};
+      miniToast('角色分享歌曲间隔已设为 ' + lo + '～' + hi + ' 分钟');
+    };
+    shMinEl.onchange = applySh;
+    shMaxEl.onchange = applySh;
   }
   // 20261104：角色偷偷查看玩家歌单开关 + 随机间隔（全局设置，即时生效落库）
   const mpCb = $('#cs-music-peek');

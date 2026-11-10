@@ -1633,6 +1633,72 @@ window.bmMusicUI = (function () {
     } catch (e) {}
   }
 
+  /* ============================================================
+     20261111 新增：两条「因为我喜欢，所以也想让你听」的换歌链路
+     ------------------------------------------------------------------
+     用户原话：这两种要补上——「听到好听的切给你听」「为你搜一首换上」，
+     语义重心是【我喜欢 → 想分享给你】，跟「觉得不好听所以切走」正好相反。
+     两者都走 _sayMusicAction → 聊天框玻璃胶囊垫片（或 toast，随 settings），
+     不额外发卡片。
+
+     ① _pickAnotherPlayable()：从播放列表里挑一首「不是当前在播、且能播」的歌
+        （听到好听的，直接把这首切给你）。
+     ② _searchFreshForYou(c)：专门去搜一首新歌（不是从列表里拿），
+        关键词优先由 AI 按角色卡生成，失败回退固定池。
+     ============================================================ */
+  const _shareGoodPool = [
+    '听到一首《{song}》，觉得特别好听，切给你听',
+    '听着《{song}》就停不下来了，想让你也听听',
+    '把《{song}》切给你了，这首是真的好听',
+    '《{song}》好听到不行，你也听听看',
+    '刚才那首听着听着就想到你，《{song}》给你',
+    '在《{song}》里找到了很喜欢的东西，分你一半',
+  ];
+  const _searchForYouPool = [
+    '专门给你搜了一首《{song}》，听听看',
+    '去搜了一首《{song}》，感觉你会喜欢',
+    '想着你会喜欢，搜了《{song}》来放',
+    '为你找了《{song}》，一起听',
+    '找了一首《{song}》，就当是给你的',
+    '搜到《{song}》的时候就知道，这首得让你听见',
+  ];
+
+  /* 从播放列表里挑一首「不是当前在播」且现在就能播的歌；播不了就当场解析一次。
+     返回 null = 列表里没有别的能播的歌。 */
+  async function _pickAnotherPlayable() {
+    const curId = M.state.current ? M.state.current.id : null;
+    const pl = (M.state.playlist || []).filter(s => s && s.name && s.id !== curId);
+    if (!pl.length) return null;
+    for (let i = pl.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = pl[i]; pl[i] = pl[j]; pl[j] = t; }
+    for (const s of pl) {
+      if (s.url) return s;
+      try { const f = await M.fetchSongDetail(s); if (f && f.url) return f; } catch (e) {}
+    }
+    return null;
+  }
+
+  /* 专门为玩家搜一首新歌（不走播放列表）。返回带 url 的完整歌曲对象 / null。 */
+  async function _searchFreshForYou(c) {
+    try {
+      let kw = '';
+      try { kw = await _aiMusicSearchWord(c); } catch (e) {}
+      if (!kw) kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)];
+      if (_netEaseDirect) {
+        const list = await _netEaseSearch(kw);
+        if (!list || !list.length) return null;
+        const s = list[Math.floor(Math.random() * list.length)];
+        const u = await _netEaseSongUrl(s.id);
+        if (!u || !u.url) return null;
+        return { id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' };
+      }
+      const res = await M.search(kw);
+      if (!res || !res.length) return null;
+      const s = res[Math.floor(Math.random() * res.length)];
+      const full = await M.fetchSongDetail(s);
+      return (full && full.url) ? full : null;
+    } catch (e) { return null; }
+  }
+
   // 动作池：每项 { w: 权重, act: 执行函数 }
   function _charMusicActions(c, nm) {
     const say = (text) => { _sayMusicAction(c, text); };
@@ -1767,6 +1833,27 @@ window.bmMusicUI = (function () {
           try { await M.play(full); } catch(e) {}
           await M.addHistory({ kind: 'ear', charId: c.id, songId: full.id, name: full.name, artist: full.artist || '', album: full.album || '', pic: full.pic || '', ts: Date.now(), listenSec: 0 });
           say(`${nm} 去网上搜了一首《${full.name}》来听`);
+        } },
+      /* 20261111 新增①「听到好听的，切给你听」——从播放列表里挑一首自己觉得好听的，
+         直接切过去放给玩家听。跟「下一首（嫌弃切歌）」语义相反：源头是喜欢，不是嫌弃。
+         遥控外部 App 模式下没法指定播哪首，故不参与。 */
+      { w: (!isRemote && hasList && M.state.playlist.length > 1) ? 3 : 0, act: async () => {
+          const song = await _pickAnotherPlayable();
+          if (!song) return;                       // 列表里没有别的能播的 → 静默，不硬报错
+          M.state.current = song;
+          M.addToQueue(song);
+          try { await M.play(song); } catch (e) {}
+          say(_swapPick(_shareGoodPool).replace(/\{song\}/g, song.name || ''));
+        } },
+      /* 20261111 新增②「专门为你搜一首换上」——不是从列表里拿，而是现搜一首新歌切过来。
+         关键词优先由 AI 按角色卡生成（"我会想给你听什么"），失败回退固定池。 */
+      { w: (!isRemote && (M.state.mode === 'mirror' || _netEaseDirect)) ? 3 : 0, act: async () => {
+          const song = await _searchFreshForYou(c);
+          if (!song) { say(`${nm} 想给你搜一首，但没找到合适的`); return; }
+          M.state.current = song;
+          M.addToQueue(song);
+          try { await M.play(song); } catch (e) {}
+          say(_swapPick(_searchForYouPool).replace(/\{song\}/g, song.name || ''));
         } },
       // 发音乐卡片（歌词 + 寄语）：从当前歌抽一句歌词，寄语抽 2~3 张回复字卡自由组合
       { w: (hasCur && (cur.lrc || cur.name)) ? 3 : 0, act: async () => {
@@ -2041,13 +2128,19 @@ window.bmMusicUI = (function () {
     } catch (e) { return { ok: false, reason: String(e) }; }
   }
 
-  /* 角色主动邀请玩家换歌 / 让玩家点歌。由 app.js __proactiveScan 的 musicSwap 分支调用。 */
+  /* 角色主动邀请玩家换歌 / 让玩家点歌。由 app.js __proactiveScan 的 musicSwap 分支调用。
+     20261111 用户定案：文案与语义按「当前有没有在一起听歌」分两套——
+       · 正在一起听：问「要换一首吗」/「想听什么？我挑了几首」
+       · 没在一起听：问「要不要一起听歌」/「要不要点一首歌一起听」
+         玩家一选（选歌 / 让 TA 帮我选）就等于答应，直接进入一起听模式并自动播放。
+     卡片刻意带上 together 标记，渲染层按它改标签与按钮，点击逻辑按它决定是否 startTogether。 */
   async function charAskSongSwap(charId) {
     try {
       const c = getCharById(charId);
       if (!c) return;
       const songs = await _swapCandidates(c, 3);
       if (!songs || !songs.length) return;
+      const together = !!(M.state.charId === charId && M.state.togetherSince);
       const pickMode = Math.random() < 0.5;
       const msg = {
         id: uid('msg'),
@@ -2056,8 +2149,13 @@ window.bmMusicUI = (function () {
         type: 'songpick',
         content: {
           mode: pickMode ? 'pick' : 'ask',
-          title: pickMode ? '想听什么？我挑了几首' : '要换一首吗',
-          tip: pickMode ? '点一首，我就放给你听' : '这首听腻了的话，我给你换一首',
+          together: together,          // 发卡片当下是否已在一起听（老卡片没有这个字段，渲染层按 true 兜底）
+          title: together
+            ? (pickMode ? '想听什么？我挑了几首' : '要换一首吗')
+            : (pickMode ? '要不要点一首歌一起听' : '要不要一起听歌'),
+          tip: together
+            ? (pickMode ? '点一首，我就放给你听' : '这首听腻了的话，我给你换一首')
+            : (pickMode ? '挑一首，我们一起听' : '我这边正好有空，一起听会儿？'),
           songs: songs,
           answered: false,
           time: Date.now(),
@@ -2076,7 +2174,12 @@ window.bmMusicUI = (function () {
           if (typeof _ev === 'function' && typeof _saveUnreadEvents === 'function') { const e = _ev(c.id); e.msgs = (e.msgs || 0) + 1; _saveUnreadEvents(); } 
         } catch (e) {}
         try {
-          if (typeof notifyIncoming === 'function') notifyIncoming(c, pickMode ? '想听什么？我挑了几首，你点一首' : '要不要换一首歌？', '音乐邀请', 'msg');
+          if (typeof notifyIncoming === 'function') {
+            const nTitle = together
+              ? (pickMode ? '想听什么？我挑了几首，你点一首' : '要不要换一首歌？')
+              : (pickMode ? '想和你点一首歌一起听' : '要不要一起听会儿歌？');
+            notifyIncoming(c, nTitle, together ? '音乐邀请' : '一起听歌', 'msg');
+          }
         } catch (e) {}
       }
     } catch (e) {}
@@ -2092,13 +2195,23 @@ window.bmMusicUI = (function () {
       const c = getCharById(m.charId);
       const nm = c ? (c.name || 'TA') : 'TA';
       const say = (t) => { if (c) _sayMusicAction(c, t); };
+      /* 20261111：卡片是在「还没一起听」的时候发来的 → 玩家一选就等于答应邀约，
+         选完直接进一起听模式（先切歌再 startTogether，让一起听卡片带上这首歌）。 */
+      const needTogether = (ct.together === false) && !(M.state.charId === m.charId && M.state.togetherSince);
 
       // 「让 TA 帮我选」→ 走玩家请求逻辑（角色自己挑）
       if (idx === -1) {
         ct.answered = true; ct.picked = -1; ct.pickedName = '';
         await idbPut('messages', m);
         try { if (typeof renderMessages === 'function') await renderMessages(m.charId); } catch (e) {}
-        if (c) await playerAskSongSwap(m.charId, { src: 'card' });
+        if (c) {
+          const r = await playerAskSongSwap(m.charId, { src: 'card' });
+          // 只有角色真答应了（换了歌）才顺势进一起听；拒绝了就别硬拉人进来
+          if (needTogether && r && r.ok) {
+            startTogether(m.charId);
+            if (window.miniToast) miniToast(`和 ${nm} 一起听歌中`);
+          }
+        }
         return;
       }
 
@@ -2133,23 +2246,155 @@ window.bmMusicUI = (function () {
         say(`尝试更换《${song.name || ''}》，但是好像出了点问题，于是换了一首歌播放`);
         if (window.miniToast) miniToast(`外部 App 只能切歌，没法指定《${song.name || ''}》，已切到下一首`);
       } else {
-        say(`换成了《${song.name || ''}》，你点的这首`);
+        say(needTogether ? `换成了《${song.name || ''}》，那就一起听吧` : `换成了《${song.name || ''}》，你点的这首`);
+      }
+      // 20261111：答应邀约 → 真正进入一起听模式（放最后一步，让「一起听歌」卡片带上刚换的这首）
+      if (needTogether) {
+        startTogether(m.charId);
+        if (window.miniToast) miniToast(`和 ${nm} 一起听歌中`);
       }
     } catch (e) {}
   }
 
-  /* 角色问「要不要换」→ 玩家点「就听这首」= 不换，回一条垫片收场。 */
+  /* 角色问「要不要换」→ 玩家点「就听这首」= 不换，回一条垫片收场。
+     20261111：卡片分两种语境，拒绝文案也跟着分——一起听时是「这首还没听够」，
+     没一起听时是被婉拒了邀约，得是「那我留着，等你有空」这种不尴尬的说法。 */
   async function declineSongSwap(msgId) {
     try {
       const m = await idbGet('messages', msgId);
       if (!m || !m.content) return;
       if (m.content.answered) return;
+      const wasTogether = m.content.together !== false;
       m.content.answered = true; m.content.declined = true;
       await idbPut('messages', m);
       try { if (typeof renderMessages === 'function') await renderMessages(m.charId); } catch (e) {}
       const c = getCharById(m.charId);
-      if (c) _sayMusicAction(c, '那就继续听这首，正好我也没听够');
+      if (c) {
+        _sayMusicAction(c, wasTogether
+          ? _swapPick(['那就继续听这首，正好我也没听够', '行，这首挺好，不换了', '那这首听完再说'])
+          : _swapPick(['那先不听了，我留着，等你有空', '好，那我把歌存着，下次一起听', '行，那就不打扰你，歌我先给你留着']));
+      }
     } catch (e) {}
+  }
+
+  /* ============================================================
+     20261111 新增：角色主动「分享一首歌」给玩家（卡片式）
+     ------------------------------------------------------------------
+     跟动作池里的「发音乐卡片」不是一回事：
+       · 动作池那张只在【正一起听歌】时触发，用的是【当前正在播的那首】；
+       · 这里不要求一起听，歌是【另外挑一首 / 现搜一首新的】，
+         语义就是「我听到这首，想到你，发给你」。
+     卡片复用 type:'musiccard'（from:'them'，标签「🎶 听到这首歌，TA 想对你说」），
+     额外带 share:true，让卡片可点开播放（app.js 的 [data-song-play] → playSongFromCard）。
+     由 app.js __proactiveScan 的 musicShare 分支按随机固定间隔调用。
+     ============================================================ */
+  async function charShareSong(charId) {
+    try {
+      const c = getCharById(charId);
+      if (!c) return { ok: false };
+      // 遥控外部 App 模式读不到具体曲目（只能发 next/prev），不发卡片
+      if (M.state.mode === 'remote' && !_netEaseDirect) return { ok: false };
+      // 挑歌：先从播放列表里找一首「不是当前在播的」，没有就现搜一首新的
+      let song = await _pickAnotherPlayable();
+      if (!song) song = await _searchFreshForYou(c);
+      if (!song || !song.name) return { ok: false };
+      // 补全（要封面和歌词才像样）
+      if (!song.lrc || !song.pic) {
+        try { const f = await M.fetchSongDetail(song); if (f) song = Object.assign({}, song, f); } catch (e) {}
+      }
+      // 抽一句歌词
+      let lyric = '';
+      try {
+        if (song.lrc) {
+          const lines = parseLrc(song.lrc);
+          if (lines && lines.length) lyric = (lines[Math.floor(Math.random() * lines.length)].text || '').trim();
+        }
+      } catch (e) {}
+      // 寄语：抽 2~3 张回复字卡自由组合（与动作池的音乐卡片同一套逻辑）
+      let wish = '';
+      try {
+        if (typeof drawReply === 'function') {
+          const n = 2 + Math.floor(Math.random() * 2);
+          const parts = [];
+          const used = new Set();
+          for (let k = 0; k < n; k++) {
+            let t = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
+            let guard = 0;
+            while (used.has(t) && guard < 6) { t = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []); guard++; }
+            if (t) { used.add(t); parts.push(t); }
+          }
+          wish = parts.filter(Boolean).join('，');
+        }
+      } catch (e) {}
+      if (!wish) wish = _swapPick(['听到这首就想到你', '这首，给你', '不知道你会不会喜欢，但我先发给你了', '刚好听见，就想让你也听听']);
+
+      const cardMsg = {
+        id: uid('msg'),
+        charId: c.id,
+        from: 'them',
+        type: 'musiccard',
+        content: {
+          name: song.name || '',
+          artist: song.artist || '',
+          pic: song.pic || '',
+          lyric: lyric,
+          wish: wish,
+          share: true,            // 标记「主动分享」，卡片可点开播放
+          time: Date.now(),
+        },
+        time: Date.now(),
+      };
+      if (typeof idbPut === 'function') await idbPut('messages', cardMsg);
+      const onChat = (document.body.dataset.view === 'chat' && typeof currentCharId !== 'undefined' && currentCharId === c.id);
+      try {
+        if (typeof appendMessage === 'function' && onChat) appendMessage(cardMsg);
+        else if (typeof renderChatList === 'function') renderChatList();
+      } catch (e) {}
+      if (!onChat) {
+        try {
+          if (typeof _ev === 'function' && typeof _saveUnreadEvents === 'function') { const e = _ev(c.id); e.msgs = (e.msgs || 0) + 1; _saveUnreadEvents(); }
+        } catch (e) {}
+        try {
+          if (typeof notifyIncoming === 'function') notifyIncoming(c, `分享了一首歌：《${song.name || ''}》`, '分享歌曲', 'msg');
+        } catch (e) {}
+      }
+      return { ok: true, song: song };
+    } catch (e) { return { ok: false }; }
+  }
+
+  /* 玩家点开「角色分享的歌卡」→ 找到这首歌并播放。
+     卡片里只存了歌名/歌手（不存直链，避免过期），这里按「歌名 + 歌手」重新搜一次再播。 */
+  async function playSongFromCard(msgId) {
+    try {
+      const m = await idbGet('messages', msgId);
+      if (!m || !m.content) return { ok: false };
+      const ct = m.content;
+      const nm = ct.name || '';
+      if (!nm) return { ok: false };
+      // ① 播放列表里已有同名同歌手 → 直接播，省一次联网
+      let hit = (M.state.playlist || []).find(s => s && s.name === nm && (!ct.artist || !s.artist || s.artist === ct.artist));
+      if (hit && !hit.url) { try { const f = await M.fetchSongDetail(hit); if (f) hit = f; } catch (e) {} }
+      // ② 没有就搜（歌名 + 歌手，提高命中）
+      if (!hit || !hit.url) {
+        try {
+          const res = await M.search((nm + ' ' + (ct.artist || '')).trim());
+          if (res && res.length) {
+            const s = res.find(x => x.name === nm) || res[0];
+            const f = await M.fetchSongDetail(s);
+            if (f && f.url) hit = f;
+          }
+        } catch (e) {}
+      }
+      if (!hit || !hit.url) {
+        if (window.miniToast) miniToast('这首歌暂时放不出来，换一首试试');
+        return { ok: false };
+      }
+      M.state.current = hit;
+      M.addToQueue(hit);
+      try { await M.play(hit); } catch (e) {}
+      if (window.miniToast) miniToast(`正在播放《${hit.name || nm}》`);
+      return { ok: true, song: hit };
+    } catch (e) { return { ok: false }; }
   }
 
   /* ============================================================
@@ -7753,6 +7998,7 @@ window.bmMusicUI = (function () {
   return { showMusicPage, refreshPlayerUI, renderFloat, closeMusicPage, backMusicPage, showMusicLib, showThemePicker, resetFloatClosed, showInviteCard, startTogether, endTogether, charAutoMusic, charInviteTogether, charPeekPlaylist, charEarListen, charCollect, charSwitchPlayMode, getTogetherTotal, setFloatScopeAndApply,
     // 20261109 新增：换歌互动（玩家让角色换 / 角色问要不要换 / 角色让玩家点歌）
     playerAskSongSwap, charAskSongSwap, playPickedSong, declineSongSwap,
+    charShareSong, playSongFromCard,
     // 20261110 新增：播放列表重抓 / 分享歌卡 / 角色评论（落库 + 随机 + 延迟补评）
     refreshAllSongs, sendSongCard, charCommentPublish, charCommentMaybe, charCommentTick };
 })();

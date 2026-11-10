@@ -65,6 +65,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- 20261111 亮色加固（用户第三次强调）：手机上把系统切到暗色后，
+     手机浏览器（Android Chrome 的「简化深色视图」/ 各家 WebView 的自动反色）
+     会把本来亮色的整页再压暗一遍 —— 表现就是「我选了亮色，界面还是暗暗的」。
+     单靠 CSS 的 color-scheme 在部分浏览器里不够，必须同时在 head 里声明
+     「本页只支持亮色」，这是浏览器判断是否自动暗化的第一依据。 -->
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#e6d7c0" id="seasonThemeColor">
 <title>四季 · 界面预览</title>
 <style>
 @font-face{
@@ -104,8 +111,12 @@
   /* 20261111：显式声明「这一页是亮色界面」。
      手机开暗色模式时，浏览器/WebView 的「强制暗色」会把整页纸色压暗、票据变灰黑 ——
      这就是「网页端四季整个界面都是暗的、开不开暗色都该正常」的根因。
-     写明 color-scheme:light 之后，系统暗色不再改写这一页的底色与控件。 */
-  color-scheme: light;
+     ★ 必须是 only light，不能只写 light：
+       `color-scheme:light` 的含义是「我只支持亮色」，
+         Android Chrome 的「简化深色视图」反而会因此把它自动反色成暗的；
+       `only light` 才是「别替我改，我就长这样」→ 自动暗化直接跳过。
+     暗色主题是玩家自己点「夜」开的（body[data-theme=dark] 里再声明 dark）。 */
+  color-scheme: only light;
 }
 /* ===== 暗色主题（玩家自己切，20261111）=====
    只在 body[data-theme="dark"] 时生效：覆盖整套纸色，--accent 保留季节色。
@@ -125,15 +136,168 @@ body[data-theme="dark"]{
   --cv-c0:#3b372e; --cv-c1:#343028; --cv-c2:#2c2721; --cv-c3:#231f1a;
   --cv-mini:#3e392f; --cv-curl:#4b4436;
   --cv-line:rgba(232,222,192,.30);
-  --veil1:rgba(38,46,38,.30); --veil2:rgba(28,34,28,.42);
+  /* 暗色下薄纱改用深色（见下方 scene-veil 覆盖），这里只需要够深让浅色文字立起来 */
+  --veil1:rgba(22,25,20,.40); --veil2:rgba(14,16,13,.52);
 }
 /* 暗色下：原先用固定深墨（#191713）画的框线在深纸上会看不见，统一提亮 */
 body[data-theme="dark"] .tk-art-wrap,
 body[data-theme="dark"] .ticket{border-color:#6b6353}
+
+/* ============================================================
+   20261111 暗色可读性补丁（玩家反馈「暗色很多地方没注意可读性」）
+   ------------------------------------------------------------
+   这些控件原本写死了「半透明白底 + 深褐色文字」（#5c5344 / #6b6252 / #4f4738），
+   在亮色纸上很好看，但换到深色纸上：
+     ① 半透明白底变成一块块发光的灰白板；
+     ② 深褐色文字贴着深色背景，对比度掉到几乎看不见。
+   统一改成「深色卡片底 + var(--ink2) 文字」，跟着主题走。
+   ============================================================ */
+body[data-theme="dark"] .sx-tab,
+body[data-theme="dark"] .wk-tag,
+body[data-theme="dark"] .slot,
+body[data-theme="dark"] .book-filter,
+body[data-theme="dark"] .pg-bg,
+body[data-theme="dark"] .bp-toc-a,
+body[data-theme="dark"] .seedc,
+body[data-theme="dark"] .wk-card,
+body[data-theme="dark"] .wk-grow,
+body[data-theme="dark"] .wk-grown{
+  background:rgba(255,255,255,.07);
+  color:var(--ink2);
+  border-color:var(--line);
+}
+/* 输入框：底再深一点、字用主墨色，打字才看得清 */
+body[data-theme="dark"] .sx-ask-i{
+  background:rgba(0,0,0,.30); color:var(--ink); border-color:var(--line);
+}
+/* 这两处是纯文字，只改颜色（原来深褐在深底上等于隐形） */
+body[data-theme="dark"] .wk-quote,
+body[data-theme="dark"] .sx-ask-t,
+body[data-theme="dark"] .wk-grown-t,
+body[data-theme="dark"] .dxc-n{ color:var(--ink2); }
+
+/* ============================================================
+   ★ 20261111e 暗色「正文提亮」（用户反馈原文：
+     「暗色模式的一些字还是太不明显了，你可以稍微提亮一点点它的颜色，
+      实在是太影响可读性了，你尤其看这个图鉴页面，根本就看不清」）
+   ------------------------------------------------------------
+   上一轮只处理了「半透明白底 + 深褐字」那批控件，漏掉了**纯正文**：
+   这批颜色是当年给米色纸面（#d6cfbe 附近）调的最深墨 ——
+   #403a2e / #4e4636 / #483f30 / #3c382e ……
+   搬到暗色的深纸（#26241f）上，对比度只剩 1.0~1.3:1 ≈ 看不见。
+   （图鉴详情「习　性 / 生长周期 / 分布纬度」那几段就是 #403a2e，
+     截图里整段像被涂掉了一样。）
+
+   分两档提亮，只改 color，不动任何背景/字号/间距：
+     · --body  #ddd6c4  正文 / 引文 / 描述 —— 要读得舒服，不用刺眼的纯白
+     · --ink2  #b6ae9a  说明 / 标签 / 次数 / 元信息 —— 次要但必须可辨
+   亮色主题一行都不受影响（全部挂在 body[data-theme="dark"] 下）。
+   ============================================================ */
+body[data-theme="dark"]{ --body:#ddd6c4; }
+
+/* 正文档：图上这些原本是 #403a2e / #4e4636 / #483f30 / #4a3f2a / #5d4f36 / #6f6a5c / #7a7466 */
+body[data-theme="dark"] .wk-v,
+body[data-theme="dark"] .wk-quote,
+body[data-theme="dark"] .wk-grown-t,
+body[data-theme="dark"] .wk-grow-tip,
+body[data-theme="dark"] .dxc.own .dxc-n,
+body[data-theme="dark"] .pn-x,
+body[data-theme="dark"] .tkn-q,
+body[data-theme="dark"] .lb-q,
+body[data-theme="dark"] .mut-card-t,
+body[data-theme="dark"] .seedc-n,
+body[data-theme="dark"] .bk-desc,
+body[data-theme="dark"] .dx-d,
+body[data-theme="dark"] .pls-desc{ color:var(--body); }
+
+/* 次要档：原本是 #8b8271 / #6b6252 / #5c5343 / #8a8474 / #7b7565 / #5f5a4e */
+body[data-theme="dark"] .wk-k,
+body[data-theme="dark"] .wk-lock,
+body[data-theme="dark"] .wk-no,
+body[data-theme="dark"] .wk-latin,
+body[data-theme="dark"] .wk-grow-h,
+body[data-theme="dark"] .wk-gs,
+body[data-theme="dark"] .wk-grow.lock .wk-gs,
+body[data-theme="dark"] .wk-grow.lock .wk-gs.on,
+body[data-theme="dark"] .hint,
+body[data-theme="dark"] .photo-note,
+body[data-theme="dark"] .recog-k,
+body[data-theme="dark"] .recog-credit,
+body[data-theme="dark"] .recog-v.latin,
+body[data-theme="dark"] .recog-v small,
+body[data-theme="dark"] .bk-no,
+body[data-theme="dark"] .bk-meta,
+body[data-theme="dark"] .bki-no,
+body[data-theme="dark"] .pgsub,
+body[data-theme="dark"] .pn-t,
+body[data-theme="dark"] .pn-t small,
+body[data-theme="dark"] .pn-c,
+body[data-theme="dark"] .pn-m,
+body[data-theme="dark"] .pn-empty,
+body[data-theme="dark"] .pn-tag,
+body[data-theme="dark"] .slot,
+body[data-theme="dark"] .seedc-c,
+body[data-theme="dark"] .seed-owner,
+body[data-theme="dark"] .seed-empty,
+body[data-theme="dark"] .sb-hint,
+body[data-theme="dark"] .dex-empty,
+body[data-theme="dark"] .dxl,
+body[data-theme="dark"] .dx-b,
+body[data-theme="dark"] .impc-n,
+body[data-theme="dark"] .impc.lock .impc-n,
+body[data-theme="dark"] .mut-card-k,
+body[data-theme="dark"] .mut-card-n,
+body[data-theme="dark"] .mut-card-d,
+body[data-theme="dark"] .tkn-by,
+body[data-theme="dark"] .tk-alias,
+body[data-theme="dark"] .sp-sub,
+body[data-theme="dark"] .pl-sub,
+body[data-theme="dark"] .pls-tm,
+body[data-theme="dark"] .pls-by{ color:var(--ink2); }
+
+/* ★ 选中态修复（20261111e）
+   上一轮那条 `body[data-theme="dark"] .sx-tab{background:rgba(255,255,255,.07)}`
+   特异性 (0,2,1) 比 `.sx-tab.on` 的 (0,2,0) 高，把选中态的 accent 底整个吃掉了：
+   选中和没选中长得一模一样，而且 #fff 白字压在深色底上直接看不见。
+   这里用「浅米块 + 深墨字」做反色（跟亮色里 .plc.on 的写法同一个路子），
+   好处是不依赖季节 accent 的明度 —— 夏季 accent #2f7a4f 本身就深，配白字也不清楚。 */
+body[data-theme="dark"] .sx-tab.on,
+body[data-theme="dark"] .book-filter.on{
+  background:#d8d1bf; color:#1b1a17; border-color:#d8d1bf;
+}
+body[data-theme="dark"] .sx-tab.on small{ color:#3a352c; opacity:.9; }
+/* 选位格子：选中态原来是 rgba(0,0,0,.04)，暗色下跟没选一样，改用浅一档 + accent 边 */
+body[data-theme="dark"] .slot.on{ background:rgba(255,255,255,.16); border-color:var(--accent); }
+
+/* 这两块原本是「浅米色画框 / 半透明白底」，暗色下会变成刺眼白块，压深一档 */
+body[data-theme="dark"] .wk-grow.lock .wk-grow-art{ background:var(--paper2); }
+body[data-theme="dark"] .wk-grown{ background:rgba(255,255,255,.05); }
+body[data-theme="dark"] .wk-grow{ background:rgba(255,255,255,.04); }
+
+body[data-theme="dark"] .pl-imprint{
+  background:linear-gradient(180deg,rgba(255,255,255,.10),rgba(0,0,0,.20)),var(--paper);
+}
+/* ★ 20261111 暗色下背景画的处置（用户两条要求同时满足）：
+   ① 要能看见底下那张像素风景画；② 上面的浅色文字必须读得清。
+   以前的做法是「把画压得更透」→ 冬季雪景本来就亮，白字压在白雪上几乎看不见。
+   正确做法反过来：把画本身压暗（filter），薄纱再加一层深色，
+   文字保持浅色 → 背景成了「暗色剪影」，山形/树影仍在，字清清楚楚。 */
+body[data-theme="dark"] .scene-veil{
+  background-image:
+    radial-gradient(circle at 22% 14%, rgba(255,255,255,.06) 0 1px, transparent 1.4px),
+    radial-gradient(rgba(0,0,0,.12) 1px, transparent 1px),
+    linear-gradient(var(--veil1), var(--veil2));
+}
+body[data-theme="dark"] .scene-bg{ filter:brightness(.42) saturate(.72) contrast(.96); }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;max-width:100%;overflow-x:hidden}
+/* 20261111：根元素先钉一张亮色纸底。
+   浏览器在页面绘出来之前、下拉回弹露出的那一条、以及 PC 端手机壳外的底色，
+   用的都是它 —— 不钉的话系统暗色下会露成深灰，看着就像「整个网页端发暗」。
+   PC 端外圈改跟季节底色走（原来写死 #8f8a7c 灰褐，是「网页端比 APP 暗」的另一个来源）。 */
+html{background:#e6d7c0}
 body{
-  background:#8f8a7c;
+  background:var(--bg);
   font-family:'UF',ui-monospace,monospace;
   color:var(--ink);
   display:flex;align-items:center;justify-content:center;
@@ -176,6 +340,16 @@ body{
   opacity:.75;
 }
 /* ============ 顶栏 ============ */
+/* 20261111：窄屏顶栏曾被挤成一团 —— 标题竖排成「书/签/集」、右上角「冬·第」
+   和「4 天」被拆成两行。根因三条：
+   ① .tb-title / .tb-right 没有 flex:0 0 auto，宽度不够时被压到 min-content，
+      中文的 min-content 就是「一个字宽」，于是一行只剩一个字；
+   ② .tb-right 用 transform:scale(.66) 缩小 —— transform 只改视觉、不改布局，
+      它仍然按 16px 字号的完整宽度占位，白吃 50% 的空间；
+   ③ 全都没写 white-space:nowrap，一旦放不下就在空格处折行。
+   现在：标题/天数不许换行也不许压缩，副标题允许省略号收尾，天数直接用
+   11px 字号（视觉等于原来的 0.66 倍，但占位也是真小），顶栏再兜一层
+   overflow:hidden，任何宽度下都只可能「副标题缩短」，绝不可能换行。 */
 .topbar{
   position:relative;z-index:2;
   display:flex;align-items:center;gap:8px;
@@ -184,6 +358,7 @@ body{
   border-bottom:3px solid var(--shadow);
   box-shadow:inset 0 -3px 0 #d9cfb8;
   flex:0 0 auto;
+  overflow:hidden;
 }
 .tb-back{
   width:34px;height:34px;flex:0 0 auto;
@@ -193,11 +368,19 @@ body{
   box-shadow:inset -2px -2px 0 rgba(0,0,0,.10);
 }
 .tb-back:active{transform:translate(1px,2px);box-shadow:none}
-.tb-title{font-size:16px;letter-spacing:1px;line-height:1}
-.tb-sub{font-size:11px;font-family:system-ui,'Microsoft YaHei';color:var(--ink2);letter-spacing:.6px;margin-left:1px;opacity:.85}
-.tb-right{margin-left:auto;font-size:16px;color:var(--ink2);transform:scale(.66);transform-origin:right center;letter-spacing:1px}
-/* 20261111：右上角亮/暗切换（「夜」=点它变暗 / 「日」=点它变亮） */
-.tb-theme{font-size:12px;line-height:1;color:var(--ink2);margin-left:8px;padding:2px 4px;
+/* 标题：不压缩、不换行（宽度不够时宁可挤后面的副标题） */
+.tb-title{font-size:16px;letter-spacing:1px;line-height:1;flex:0 0 auto;white-space:nowrap}
+/* 副标题：唯一允许收缩的一块，末尾省略号收尾 */
+.tb-sub{font-size:11px;font-family:system-ui,'Microsoft YaHei';color:var(--ink2);letter-spacing:.6px;margin-left:1px;opacity:.85;
+  flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 右上角「冬 · 第 4 天」：原来靠 transform:scale(.66) 缩小，占位仍是 16px 字号的宽度，
+   在 390px 窄屏上正是它把副标题顶出去、把自己挤成两行。改成真字号 11px。 */
+.tb-right{margin-left:auto;font-size:11px;color:var(--ink2);letter-spacing:1px;
+  white-space:nowrap;flex:0 0 auto;font-variant-numeric:tabular-nums}
+/* 20261111：右上角亮/暗切换（「夜」=点它变暗 / 「日」=点它变亮）
+   左侧间距从 8px 收到 4px（再叠 gap 8px 已是 12px），窄屏上把这 4px 让给副标题 */
+.tb-theme{font-size:12px;line-height:1;color:var(--ink2);margin-left:4px;padding:2px 4px;
+  flex:0 0 auto;white-space:nowrap;
   border:1px solid var(--line);border-radius:2px;cursor:pointer;user-select:none;
   -webkit-tap-highlight-color:transparent}
 .tb-theme:active{background:var(--paper2)}
@@ -245,6 +428,13 @@ body{
 }
 .tb-close i::after{transform:translateX(-50%) rotate(-45deg)}
 .tb-close:active{transform:translate(1px,2px);box-shadow:none}
+/* 20261111：360px 这类窄屏（iPhone SE / 多数安卓）再收一档，免得副标题被截成省略号。
+   只压副标题和天数、只压 gap 和左右内边距，标题与按钮尺寸一点不动。 */
+@media (max-width:380px){
+  .topbar{gap:6px;padding-left:8px;padding-right:8px}
+  .tb-sub{font-size:10px;letter-spacing:.2px}
+  .tb-right{font-size:10.5px;letter-spacing:.5px}
+}
 /* ============ 视图 ============ */
 .body{position:relative;z-index:2;flex:1 1 auto;overflow-y:auto;overflow-x:hidden}
 .view{display:none;padding:12px 12px 18px}
@@ -1668,6 +1858,8 @@ body{
   .topbar{grid-column:2;grid-row:1;padding:12px clamp(24px,3vw,56px) 10px;gap:12px}
   .tb-title{font-size:19px;letter-spacing:2.5px}
   .tb-sub{margin-left:4px}
+  /* 宽屏空间够，天数回到正常可读字号（窄屏才是 11px） */
+  .tb-right{font-size:13px;letter-spacing:1.4px}
   .tb-back,.tb-close{width:40px;height:40px;font-size:18px}
   /* —— 底部 tabbar → 左侧竖导航（PC 上这是正经位置）—— */
   .tabbar{
@@ -2604,6 +2796,9 @@ function makeBookFromPhoto(photo, no){
     title: photo.title || '',
     hasImg: photo.hasImg ? 1 : 0, imgId: imgIdOf(photo), img: photo.img || null,
     madeAt: Date.now(),
+    /* 制签这一刻识别还没回来（fresh=true）→ auto=1，
+       等识别结果到了允许 syncBookFromPhoto 把季相/名字补上。 */
+    auto: photo.fresh ? 1 : 0,
     giftLog: [], giftMsg: '', myMsg: ''
   };
   BOOKS.push(bk);
@@ -2614,6 +2809,46 @@ function makeBookFromPhoto(photo, no){
 function dexMark(bk){
   if (!bk || !bk.dex) return;
   if (!DEX_SEEN[bk.dex]) DEX_SEEN[bk.dex] = { at: Date.now(), s: bk.season || '' };
+}
+/* ============================================================
+   20261111：把「照片上的识别结果」同步进「已经制好的那张书签」，
+   并把图鉴点亮 —— 这就是玩家说的「制了签，图鉴却没跟着更新」的根因修复。
+
+   原来的写法只做了一件事：识别完成时，如果玩家【还停在那张照片的详情页】，
+   才调 refreshPhotoRecognize 顺手补一下书签。
+   可识别是异步的（网页端要下 29.5MB 模型，APP 端首次也要加载几秒），
+   玩家通常是「拍完 → 立刻制签 → 返回照片墙」，识别结果回来时早就不在那个页面了，
+   于是书签的 dex 一直是 0、DEX_SEEN 一直没写 → 图鉴格子不亮。
+
+   现在：这个函数在任何时候都能调，不问当前在哪一页。
+   ============================================================ */
+function syncBookFromPhoto(p){
+  if (!p) return null;
+  const bk = bookOfPhoto(p);
+  if (!bk) return null;
+  let changed = false;
+  /* 只补空字段，绝不覆盖玩家自己起的名字 / 改过的季相 */
+  if (!bk.name && p.name){ bk.name = p.name; changed = true; }
+  if (!bk.latin && p.latin){ bk.latin = p.latin; changed = true; }
+  if (!bk.desc && p.desc){ bk.desc = p.desc; changed = true; }
+  if (!bk.dex && p.dex){ bk.dex = p.dex; changed = true; }
+  /* 季相是识别之后才确定的：制签当时若还没识别完（auto=1），跟着结果更新一次 */
+  if (bk.auto && p.season && p.season !== bk.season){
+    bk.season = p.season; bk.auto = 0; changed = true;
+  }
+  const had = bk.dex ? !!DEX_SEEN[bk.dex] : false;
+  dexMark(bk);
+  const now = bk.dex ? !!DEX_SEEN[bk.dex] : false;
+  if (changed || (!had && now)){ try { seasonSave(); } catch (e){} }
+  return bk;
+}
+/* 图鉴/图鉴数/物种志/收藏册一次性刷新（只在真解锁了新物种时才需要重排列表） */
+function refreshDexViews(){
+  try { renderDexCount(); } catch (e){}
+  try { renderDex(); } catch (e){}
+  try { renderWiki(); } catch (e){}
+  try { renderImpDex(); } catch (e){}
+  try { renderWall(currentFilter); } catch (e){}
 }
 /* 送书签 → 发一颗种子（同一角色同一张书签只发一次）
    种子是独立账：之后删书签、删照片都不会把它收回去。 */
@@ -4014,8 +4249,9 @@ function showView(id, opt){
       else { viewStack.push(id); }
     }
   }
-  /* 20261111：离开相机页时「停靠」而不是真停 —— 30 秒内再进相机直接复用这条流，
-     浏览器不会重新弹相机权限（玩家报的「没退出软件却每次都要授权」）。 */
+  /* 20261111：离开相机页时「停靠」一小会儿而不是真停 —— 6 秒内再进相机直接复用这条流，
+     浏览器不会重新弹相机权限（玩家报的「没退出软件却每次都要授权」）。
+     窗口从 30 秒收到 6 秒：只覆盖误触返回，不再长时间占着摄像头（见 CAM_PARK_MS）。 */
   if (isCam) startCam(); else stopCam({ park: true });
   /* 进书签集：先把「当前角色」定格（谁的角色星球进来的就认谁），
      再按常理重放封面。这样「当前角色」筛选永远对得上入口，不会漂移。 */
@@ -4034,6 +4270,9 @@ function showView(id, opt){
   if (id === 'vImpWiki') renderImpWiki();
   if (id === 'vPlanet') startPlanet(); else { stopPlanet(); if (window.closePlantSheet) closePlantSheet(); }
   if (batchCtx) exitBatch();
+  /* 20261111：每次切换页面都自检一次底层像素风景画 ——
+     只要画布是空的就补画（切回照片墙/书签集时最容易被看见）。 */
+  try { ensureSceneBg(); } catch (e){}
 }
 
 function openPhoto(p){
@@ -4194,8 +4433,18 @@ async function printTicket(p, no){
   // 收录（20261111 拆分后：这里生成一张独立书签，照片本身不再带书签字段）
   const bk = makeBookFromPhoto(p, no);
   seqNo = no;
+  /* 20261111：制签当场就把图鉴更新掉。
+     以前这里只 renderWall + bookGoToNo，图鉴要等玩家自己切到图鉴页才重算，
+     而且如果识别还没回来，dex 还是 0 —— 玩家看到的就是「明明制签了，图鉴没更新」。 */
+  const _dexNow = !!(bk && bk.dex && DEX_SEEN[bk.dex]);
+  try { seasonSave(); } catch (e){}
   renderWall(currentFilter);
   bookGoToNo(no);
+  try {
+    renderDexCount();
+    renderDex();
+    if (_dexNow){ renderWiki(); renderImpDex(); }
+  } catch (e){}
   toast('已收录 · ' + pad(no));
 
   /* ---- 定帧上移（全新，20261108 重写）----
@@ -5697,6 +5946,8 @@ function batchMakeBookmarks(){
   });
   renderWall(currentFilter);
   renderDexCount();
+  /* 20261111：批量制签也要把图鉴列表本身刷新（以前只刷了顶上的进度数字） */
+  try { renderDex(); renderWiki(); renderImpDex(); seasonSave(); } catch (e){}
   const n = pool.length;
   exitBatch();
   typeReturn(0.12);
@@ -6050,7 +6301,7 @@ async function camOpenStream(deviceId){
     if (_camParkTimer){ clearTimeout(_camParkTimer); _camParkTimer = null; }
     const kept = _camParked;
     _camParked = null; _camParkedFor = null;
-    return camAttachStream(kept, live);
+    return camAttachStream(kept, live, true);   /* true = 复用：不重下发对焦约束 */
   }
   let st;
   /* ★★ 20261109 真机实测（OnePlus 13 / PJZ110，逐条实测，别再改回去）
@@ -6088,12 +6339,15 @@ async function camOpenStream(deviceId){
   return camAttachStream(st, live);
 }
 
-/* 20261111 权限复用：上次退出相机时把流「停靠」着没真停（30 秒内有效），
+/* 20261111 权限复用：上次退出相机时把流「停靠」一小会儿没真停，
    同一朝向再进相机就直接把它接回来 —— 不再调 getUserMedia，
    浏览器自然也不会再弹一次「允许使用相机」。
-   玩家说的「从来没退出软件，可每次进相机都要重新授权」就是这里。 */
+   玩家说的「从来没退出软件，可每次进相机都要重新授权」就是这里。
+   ★ 20261111 收短（用户报「相机更卡」）：原来 30 秒，等于离开相机后摄像头
+     还在采集半分钟（不挂 video 也在采），手机上发热掉帧；接回时还要重新协商。
+     现在只覆盖「手滑退回又马上点进来」这 6 秒，超过就真释放。 */
 let _camParked = null, _camParkedFor = null, _camParkTimer = null;
-const CAM_PARK_MS = 30000;
+const CAM_PARK_MS = 6000;
 function camParkDrop(){
   if (_camParkTimer){ clearTimeout(_camParkTimer); _camParkTimer = null; }
   if (_camParked){
@@ -6104,7 +6358,7 @@ function camParkDrop(){
 }
 /* 把一条已经开好的流挂到取景框上，并把相机状态推到「已出画」。
    20261111 从 camOpenStream 抽出来：新开流和「停靠复用」走同一段。 */
-async function camAttachStream(st, live){
+async function camAttachStream(st, live, reuse){
   camStream = st;
   if (live){
     live.srcObject = st;
@@ -6124,15 +6378,19 @@ async function camAttachStream(st, live){
   camLiveOn = true;
   const cvs = $('#camCanvas'); if (cvs) cvs.classList.add('off');
   stopJitter();
-  /* 默认连续自动对焦 */
-  try {
-    const tk = camTrack();
-    const cp = (tk && tk.getCapabilities) ? (tk.getCapabilities() || {}) : {};
-    const ms = Array.isArray(cp.focusMode) ? cp.focusMode : [];
-    if (ms.indexOf('continuous') >= 0){
-      try { await tk.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e2){}
-    }
-  } catch (e2){}
+  /* 默认连续自动对焦。
+     ★ 20261111：复用停靠流时跳过 —— 同一条 track、同一个镜头，对焦模式本来就没变；
+     再 applyConstraints 一次会让设备重新协商一次，手机上就是「接回来黑一下再亮」。 */
+  if (!reuse){
+    try {
+      const tk = camTrack();
+      const cp = (tk && tk.getCapabilities) ? (tk.getCapabilities() || {}) : {};
+      const ms = Array.isArray(cp.focusMode) ? cp.focusMode : [];
+      if (ms.indexOf('continuous') >= 0){
+        try { await tk.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e2){}
+      }
+    } catch (e2){}
+  }
   camRefreshCaps();
 }
 
@@ -6558,9 +6816,14 @@ function stopJitter(){ if (camTimer){ clearInterval(camTimer); camTimer = null; 
 /* 真的打开手机相机（20261109 v2：纯网页 getUserMedia，多镜头自动切广角）*/
 async function startCam(){
   const live = $('#camLive');
-  /* 20261111：进相机页就开始后台把识别模型备好 —— 玩家取景、对焦、按快门这段时间
-     正好用来下载，等下拍完就不用再干等 29.5MB（网页端「识别特别久」的主因）。 */
-  bmPlantPrefetch();
+  /* ★ 20261111 回撤（用户报「上轮优化后相机更卡」的网页端主因）：
+     上一版在这里调了 bmPlantPrefetch()，等于「一进相机就开始下 29.5MB」，
+     取景框要和 30MB 的下载 + 解压 + Cache Storage 写入抢带宽和主线程，
+     手机上表现就是取景一顿一顿、快门按下半天没反应。
+     模型预下载改回只在四季首页空闲时跑（见文件末尾 1400ms 那次），
+     相机页本身一个字节都不下 —— 取景要的是流畅，不是提前下模型。 */
+  /* 下面这行故意保留注释，避免以后又被人加回来： */
+  /* bmPlantPrefetch(); */
   /* 先把示例画面跑起来，等真相机就绪再切过去，避免黑屏 */
   if (!camLiveOn) startJitter();
   if (live && !camStream){
@@ -6581,7 +6844,14 @@ async function startCam(){
       } else if (camLoadLensTable()){
         const main = camMainLens();
         camLensIdx = Math.max(0, main ? camLenses.indexOf(main) : 0);
-        if (main && camCurDeviceId() !== main.id){
+        /* ★ 20261111 去掉一次无谓的「开了又关」：
+           原来只要 main 存在且 curDid !== main.id 就重开流，而网页端/部分 WebView
+           getSettings().deviceId 常常是空串 —— 空串永远不等于 main.id，于是
+           「facingMode 已经开好的流」被立刻 stop 掉、再开第二条：每次进相机都黑一下、
+           还要多付一次摄像头启动时间（实测首次进相机 2 次 getUserMedia）。
+           读不到 deviceId 时一律不动，只有「读到了、且确实不是主摄」才切。 */
+        const curDid = camCurDeviceId();
+        if (main && curDid && curDid !== main.id){
           /* 当前流不是主摄（facingMode 在真机上会命中 camera2 4 辅助镜头）→ 切回主摄。
              开流失败说明缓存里的 deviceId 已失效（换设备 / 清过站点数据）→ 清缓存重探。 */
           camOpenStream(main.id).catch(function(){
@@ -7095,8 +7365,9 @@ async function bmModelCacheProbe(){
     return !!hit;
   } catch (e){ return false; }
 }
-/* 进站 / 进相机页调用：后台把模型备好，玩家按快门那一刻多半已经就绪 */
+/* 进站调用：后台把模型备好，玩家按快门那一刻多半已经就绪 */
 let _mdlFollowTimer = null;
+let _mdlWaitCam = null;      /* 相机开着时把预下载往后挪的定时器（见 bmPlantPrefetch） */
 /* 20261111：APK 里模型是包内本地文件（Capacitor 走 https://localhost），
    读起来本来就快，预下反而白占 30MB 缓存 → 直接跳过，等第一次识别再懒加载。 */
 function bmIsAppShell(){
@@ -7111,6 +7382,19 @@ async function bmPlantPrefetch(opt){
   if (bmIsAppShell() && !opt.force){ mdlTipHide(); return; }
   if (BM_PLANT_MODEL.ready){ mdlTipHide(); return; }
   if (BM_PLANT_MODEL.loading) return;
+  /* ★ 20261111 相机优先：取景期间绝不在后台下 30MB。
+     网页端（手机浏览器）的表现最明显 —— 取景框和下载抢带宽/主线程，
+     画面发顿、按快门要等一下才响。退出相机 8 秒后再补下，不影响「提前备好」。 */
+  if (!opt.force && typeof camLiveOn !== 'undefined' && camLiveOn){
+    mdlTipHide();
+    if (!_mdlWaitCam){
+      _mdlWaitCam = setTimeout(function(){
+        _mdlWaitCam = null;
+        try { bmPlantPrefetch(); } catch (e){}
+      }, 8000);
+    }
+    return;
+  }
   const shared = mdlProgRead();
   const fresh = !!(shared && shared.ts && (Date.now() - shared.ts < 25000));
   /* ① 别人（主 App 或上一次调用）正在下：只跟着显示进度，绝不重复下第二份 */
@@ -7151,7 +7435,22 @@ async function bmPlantPrefetch(opt){
     if (!cached) mdlTipFail(); else mdlTipHide();
   }
 }
-function bmPlantEnsureModel(){
+/* 20261111：相机取景期间，别在这里跑重活。
+   把 29.5MB 的 onnx 交给 wasm 解析（＋建 4066 类的会话）是纯 CPU 的几百毫秒到几秒，
+   恰好压在相机页上就是「画面顿、按快门半天没反应」。
+   这里等相机退出再继续，最多等 60 秒；等不到就直接装（宁可慢一次，也不永远卡着）。 */
+async function _bmWaitCamIdle(maxMs){
+  const t0 = Date.now();
+  const lim = maxMs || 60000;
+  /* BM_PLANT_MODEL._urgent：玩家已经点下快门在等识别 —— 立刻结束等待，不许再让路。 */
+  while (typeof camLiveOn !== 'undefined' && camLiveOn && (Date.now() - t0) < lim && !BM_PLANT_MODEL._urgent){
+    await new Promise(function(r){ setTimeout(r, 300); });
+  }
+}
+/* urgent = 玩家正盯着「识别中」等结果（拍完照立刻识别）。
+   这时绝不能因为相机还开着就干等 —— 该让路的只是「后台预加载」。 */
+function bmPlantEnsureModel(urgent){
+  if (urgent) BM_PLANT_MODEL._urgent = true;   /* 打破可能正在进行的相机让路 */
   if (BM_PLANT_MODEL.failed) return Promise.reject(new Error('model-failed'));
   if (BM_PLANT_MODEL.ready) return Promise.resolve(BM_PLANT_MODEL.sess);
   if (BM_PLANT_MODEL.loading) return BM_PLANT_MODEL.loading;
@@ -7173,6 +7472,7 @@ function bmPlantEnsureModel(){
          这个模型导出时已经优化过，关掉在线图优化 + 顺序执行，
          加载快一个量级，识别精度一模一样。
          create 再套一层 120s 超时：宁可报「加载失败」也不要永远停在识别中。 */
+      if (!urgent) await _bmWaitCamIdle(60000);   /* 后台预加载才让路；玩家等结果时不等 */
       const sess = await Promise.race([
         ort.InferenceSession.create(new Uint8Array(buf), {
           executionProviders: ['wasm'],
@@ -7236,7 +7536,8 @@ function bmPlantPreprocess(src){
 
 /* 识别一张图片，返回 { name, latin, cnf }；失败/置信度太低/超时返回 null（由调用方兜底） */
 async function bmPlantRecognize(src){
-  const sess = await bmPlantEnsureModel();
+  /* true = 玩家正在等这次识别结果，别因为相机还开着就往后退 */
+  const sess = await bmPlantEnsureModel(true);
   const inputName = sess.inputNames[0];
   const outputName = sess.outputNames[0];
   const data = bmPlantPreprocess(src);
@@ -7432,10 +7733,24 @@ function addPhotoFromImage(img, label, skipOpen){
     p.cnf = r.cnf;
     p.src = 'pl';
     p.fresh = false;
-    /* 如果正停在这张照片详情页，立即刷新识别结果 */
+    /* ★ 20261111 核心修复：识别是异步的（网页端要下 29.5MB 模型、APP 首次也要加载几秒），
+       玩家几乎总是「拍完 → 立刻制签 → 返回照片墙」。以前这里只在
+       curPhoto === p（还停在那张照片详情页）时才补书签，一旦返回就永远补不上，
+       书签的 dex 停在 0、DEX_SEEN 从没写过 → 图鉴不跟着亮。
+       现在：无条件同步 + 只要点亮了新物种就整片刷新图鉴。 */
+    let _newlyUnlocked = false;
+    try {
+      const _hadIt = p.dex ? !!DEX_SEEN[p.dex] : false;
+      const _bk = syncBookFromPhoto(p);
+      _newlyUnlocked = !!(_bk && _bk.dex && !_hadIt && DEX_SEEN[_bk.dex]);
+    } catch (e){}
     if (curPhoto === p) refreshPhotoRecognize(p);
-    /* 照片墙缩略图刷新一次，让识别结果显示出来 */
-    renderWall('all');
+    if (_newlyUnlocked){
+      refreshDexViews();
+      try { toast('图鉴解锁 · ' + p.name); } catch (e){}
+    } else {
+      renderWall('all');
+    }
   }).catch(function(e){
     p.fresh = false;
     if (curPhoto === p) refreshPhotoRecognize(p);
@@ -7507,18 +7822,7 @@ function refreshPhotoRecognize(p){
   if (card && !p.fresh) card.classList.remove('scanning');
   /* 20261111：万一玩家在识别完成之前就先制签了，把识别结果补进那张书签
      （只补空字段，绝不覆盖玩家自己起的名字/改过的季相） */
-  try {
-    const bk = bookOfPhoto(p);
-    if (bk && (!bk.name || !bk.dex)){
-      bk.name = bk.name || p.name || '';
-      bk.latin = bk.latin || p.latin || '';
-      bk.desc = bk.desc || p.desc || '';
-      bk.dex = bk.dex || p.dex || 0;
-      if (p.season) bk.season = p.season;
-      dexMark(bk);
-      try { seasonSave(); } catch(e){}
-    }
-  } catch(e){}
+  try { syncBookFromPhoto(p); } catch(e){}
   /* 季节在识别后才确定，重新像素化一次，让配色对上正确季相 */
   if (!p.fresh && p.img){
     try {
@@ -7621,17 +7925,32 @@ async function shoot(){
 }
 
 /* ============================================================
-   亮/暗主题（20261111 用户要求）
+   亮/暗主题（20261111 用户要求，前后强调三次）
    ------------------------------------------------------------
-   ① 默认亮色：:root 里写了 color-scheme:light，系统的「强制暗色」
-      不会再改写这一页 —— 这是「网页端整页发暗、开不开暗色都该正常」的根因修复。
-   ② 玩家自己可以切：右上角「夜 / 日」，选择记在 localStorage。
-   ③ 没选过的新玩家跟随系统（prefers-color-scheme），暗色党第一次进来就是暗的。
+   ① 默认亮色，且不跟随系统：head 的 <meta name="color-scheme" content="light">
+      + :root 的 color-scheme: only light（必须是 only，见那里的注释）。
+      这两道一起，手机系统开暗色也不会把这一页自动反色成暗的。
+   ② 玩家自己可以切：右上角「夜 / 日」，选择记在 localStorage（bmSeasonTheme）。
+   ③ 没选过的新玩家 = 亮色（不再读 prefers-color-scheme）。
+      以前读它，手机开暗色一进来整页就是暗的，玩家说「4G 这个界面它就是亮色的呀」。
    ============================================================ */
 const SEASON_THEME_KEY = 'bmSeasonTheme';
 function applySeasonTheme(t){
   const dark = (t === 'dark');
   document.body.setAttribute('data-theme', dark ? 'dark' : 'light');
+  /* 20261111 亮色加固第二道：把「根元素底色」和「浏览器 UI 颜色」一起钉住。
+     ① html 背景：下拉回弹/地址栏收起时露出的就是它，暗色系统下不钉会露深灰；
+     ② theme-color：手机浏览器的地址栏、状态栏取这个值，不钉会跟着系统走成黑的。
+     两者都从当前主题的 --bg 取，季节换色也跟着变，不需要额外维护。 */
+  try {
+    const bg = (getComputedStyle(document.body).getPropertyValue('--bg') || '').trim() || (dark ? '#151412' : '#e6d7c0');
+    document.documentElement.style.background = bg;
+    /* 暗色时根元素也声明 dark：滚动条、表单控件跟着变暗；
+       亮色时必须是 only light —— 这是让浏览器「别自作聪明自动反色」的唯一写法。 */
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'only light';
+    const mt = document.getElementById('seasonThemeColor');
+    if (mt) mt.setAttribute('content', bg);
+  } catch (e){}
   const b = $('#tbTheme');
   if (b){
     b.textContent = dark ? '日' : '夜';
@@ -7641,10 +7960,12 @@ function applySeasonTheme(t){
 function initSeasonTheme(){
   let t = '';
   try { t = localStorage.getItem(SEASON_THEME_KEY) || ''; } catch (e){}
-  if (t !== 'dark' && t !== 'light'){
-    try { t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
-    catch (e){ t = 'light'; }
-  }
+  /* 20261111 用户明确要求（第二次强调）：四季页【默认必须是亮色】，
+     APP 端和网页端都一样 —— 不再跟随系统的暗色模式。
+     以前这里读 prefers-color-scheme，手机开暗色模式一进来整页就是暗的，
+     玩家说「4G 这个界面它就是亮色的呀」。现在只有玩家自己点右上角「夜」
+     才变暗，并且记住了就一直是他选的那个。 */
+  if (t !== 'dark' && t !== 'light') t = 'light';
   applySeasonTheme(t);
 }
 initSeasonTheme();
@@ -7943,9 +8264,20 @@ function px_seed(n){
 }
 
 function drawScene(cv, key){
+  /* 20261111 背景「偶尔整片消失」的根因修复：
+     原来第一句就是 var p = PAL[key]，只要 key 是个没见过的值（存档里存了旧季节名 /
+     wallBgSeason 还没加载出来 / 拼写不一致），p 就是 undefined，读 p.sky 立刻抛错。
+     而【抛错之前】cv.width = SW 已经执行 —— 那一步本身就会把画布清空成透明，
+     于是玩家看到的就是「春夏秋冬底下那张像素画不见了」。
+     现在：key 先兜底成 autumn，并且整段绘制包在 try 里；
+     真出异常时不再清空画布（先画到离屏，成功才盖上去）。 */
+  key = (PAL && PAL[key]) ? key : 'autumn';
   var p = PAL[key];
+  if (!p || !cv) return cv;
   var ctx = cv.getContext('2d');
-  cv.width = SW; cv.height = SH;
+  if (!ctx) return cv;
+  /* ★ 关键：cv.width 的赋值放到【最后】再执行。
+     它本身会清空画布，以前放在第一句，一旦后面抛错就留下一个全透明的空 canvas。 */
   var img = ctx.createImageData(SW, SH);
   var D = img.data;
   var cache = {};
@@ -8119,11 +8451,21 @@ function drawScene(cv, key){
     if(key==='winter' && R()>0.55) put(pxx+1, pyy, p.part);
   }
 
+  /* 全部像素都算完了，这时才动可见画布：先定尺寸（会清空），紧接着贴整幅图 */
+  if (cv.width !== SW) cv.width = SW;
+  if (cv.height !== SH) cv.height = SH;
   ctx.putImageData(img, 0, 0);
   return cv;
 }
 
-  window.bmSeasonScene = function(cv, season){
+  /* ★★ 20261111 根因修复：底下的像素风景画「时有时无」的真凶就在这里。
+     这个入口原来也叫 bmSeasonScene，而开屏动画（约 13800 行）又定义了一次同名的
+     window.bmSeasonScene，签名是 (ctx, kind, tNow) —— 两个定义互相覆盖，谁后执行谁赢。
+     开屏那个一旦赢，把画布传进去会被它当成「绘制目标」，季节名被当成它自己的小景
+     key，查不到调色板就静默 return（不报错！）→ 画布一直是空的。
+     所以玩家看到的是「春夏秋冬底下那张像素画不见了，过一会儿刷新又出来了」。
+     现在：风景画独占 bmSeasonArt，开屏动画继续用自己的名字，永不冲突。 */
+  window.bmSeasonArt = function(cv, season){
     if(!cv) return;
     drawScene(cv, season || 'autumn');
   };
@@ -8152,15 +8494,64 @@ function bmSeasonDay(){
   var t1 = new Date(y, d.getMonth(), d.getDate());
   return Math.floor((t1 - t0) / 86400000) + 1;
 }
+/* 画（或补画）底下的像素风景画。
+   20261111：拆成独立函数 —— 原来只有 bmApplySeason 里那一句，
+   只要那一次时机不对（脚本没就绪 / canvas 被别处清空），背景就永远是空的，
+   而且没有任何地方会再补画。 */
+var _sceneKey = '';
+function paintSceneBg(sd){
+  var cv = document.getElementById('sceneBg');
+  if (!cv) return false;
+  sd = sd || document.body.getAttribute('data-season') || 'autumn';
+  _sceneKey = sd;
+  try {
+    /* 优先用风景画专属入口（不会被开屏动画的同名函数顶掉） */
+    if (window.bmSeasonArt){ window.bmSeasonArt(cv, sd); return true; }
+    if (window.bmSeasonScene){ window.bmSeasonScene(cv, sd); return true; }
+  } catch (e){}
+  return false;
+}
+/* 画布整片空白？（天空+地面会铺满整幅，取四个点，全透明就是没画上） */
+function sceneBgBlank(){
+  var cv = document.getElementById('sceneBg');
+  if (!cv || !cv.getContext) return false;
+  try {
+    var c = cv.getContext('2d');
+    var pts = [[1,1],[cv.width-2,1],[1,cv.height-2],[cv.width>>1,cv.height>>1]];
+    for (var i=0;i<pts.length;i++){
+      var d = c.getImageData(pts[i][0], pts[i][1], 1, 1).data;
+      if (d[3] > 0) return false;
+    }
+    return true;
+  } catch (e){ return false; }
+}
+/* 每次切回照片墙/书签集都自检一次：空白就补画，最多重试 20 帧 */
+function ensureSceneBg(){
+  if (!document.getElementById('sceneBg')) return;
+  if (!sceneBgBlank()) return;
+  if (paintSceneBg(_sceneKey || document.body.getAttribute('data-season'))) return;
+  ensureSceneBg._n = (ensureSceneBg._n || 0) + 1;
+  if (ensureSceneBg._n <= 20) requestAnimationFrame(ensureSceneBg);
+}
+
 function bmApplySeason(season){
   var sd = season;
   if(!sd){
     var qs = new URLSearchParams(location.search).get('season');
     sd = (qs === 'spring' || qs === 'summer' || qs === 'autumn' || qs === 'winter') ? qs : bmSeasonOfDate();
   }
+  /* 只认四种合法季节，别的值会让取色表取不到、背景整片消失 */
+  if (sd !== 'spring' && sd !== 'summer' && sd !== 'autumn' && sd !== 'winter') sd = 'autumn';
   document.body.setAttribute('data-season', sd);
-  var cv = document.getElementById('sceneBg');
-  if(cv && window.bmSeasonScene) window.bmSeasonScene(cv, sd);
+  paintSceneBg(sd);
+  /* 20261111：季节换色会改 --bg，根元素底色与 theme-color 必须跟着重算 ——
+     否则手机上地址栏、下拉回弹那一条还是上一个季节（或默认秋色）的底，
+     看着就是「背景颜色没固定好」。 */
+  try {
+    if (typeof applySeasonTheme === 'function'){
+      applySeasonTheme(document.body.getAttribute('data-theme') || 'light');
+    }
+  } catch (e) {}
   return sd;
 }
 
@@ -8873,7 +9264,13 @@ function _seasonApply(d){
     if (gp.pending && typeof gp.pending === 'object') PLANET.pending = Object.assign({}, gp.pending);
     if (gp.bg && typeof gp.bg === 'object') PLANET.bg = Object.assign({}, gp.bg);
   }
-  if (Array.isArray(d.impFound) && typeof IMP_FOUND !== 'undefined'){ IMP_FOUND.clear(); d.impFound.forEach(x => IMP_FOUND.add(x)); }
+  if (Array.isArray(d.impFound) && typeof IMP_FOUND !== 'undefined'){
+    IMP_FOUND.clear();
+    d.impFound.forEach(x => IMP_FOUND.add(x));
+    /* 20261111e：导入的是老数据时，数组里没有 'origin'（这个 key 后来才有），
+       clear 之后必须补回来，否则初见星在图鉴里变回问号。 */
+    IMP_FOUND.add('origin');
+  }
   if (d.mutSeen && typeof MUT_SEEN !== 'undefined'){ MUT_SEEN = Object.assign({}, d.mutSeen); }
   if (d.titles) { try { localStorage.setItem('bmSeasonTitles', JSON.stringify(d.titles)); } catch(e){} }
   if (d.bookTitle != null) { try { localStorage.setItem('bmSeasonBookTitle', String(d.bookTitle)); } catch(e){} }
@@ -15969,6 +16366,23 @@ try {
   if (raw) JSON.parse(raw).forEach(k => IMP_FOUND.add(k));
 } catch (e) {}
 IMP_FOUND.add('origin');          /* 初始星球一开始就在脚下，图鉴里当然要有它 */
+/* ============================================================
+   ★ 20261111e 「初见星永远算已解锁」提成不变式（用户反馈：
+     「初见星它不是打开的时候就已经是解锁好的吗？为什么它底下还是问号？」）
+   ------------------------------------------------------------
+   根因：图鉴格子里的**图**是 `d.t === 'origin' ? drawOriginPlanet(...)`，
+        起点星无条件画真身；而**名字**用的是 `IMP_FOUND.has(d.k)`。
+        两套判定不一致 → 图片是彩色真身、名字却是 ？？？。
+   而 IMP_FOUND 里的 'origin' 会被主项目导入冲掉：
+        _seasonApply() 里 IMP_FOUND.clear() 之后再灌入老数据 d.impFound，
+        那份老数组里没有 'origin'（这个 key 是后来才加的）→ origin 就没了，
+        连 FOUND 计数都从 01 掉回 00（截图里正是 00 / 138）。
+   ⇒ 所以判定不再直接问 IMP_FOUND，图鉴/百科/筛选/计数全部走 impOwned()。
+     只要 d.t === 'origin'，任何情况下都算已解锁。 ============================================================ */
+function impOwned(d){
+  if (!d) return false;
+  return d.t === 'origin' || IMP_FOUND.has(d.k);
+}
 function impSave(){
   try { localStorage.setItem('bmSeasonImpFound', JSON.stringify(Array.from(IMP_FOUND))); } catch (e) {}
   try { seasonSave(); } catch(e){}
@@ -15979,12 +16393,12 @@ const IMP_PER = 32;
    两摞内部都保持原来的排列顺序（不按凝星先后乱插）。 */
 function impOwnFirst(list){
   const a = [], b = [];
-  list.forEach(d => (IMP_FOUND.has(d.k) ? a : b).push(d));
+  list.forEach(d => (impOwned(d) ? a : b).push(d));
   return a.concat(b);
 }
 function impFiltered(){
   let list;
-  if (impFilter === 'own') list = IMPRINTS.filter(d => IMP_FOUND.has(d.k));
+  if (impFilter === 'own') list = IMPRINTS.filter(d => impOwned(d));
   else if (impFilter === 'four') list = IMPRINTS.filter(d => d.t === 'four');
   else if (impFilter === 'sea')  list = IMPRINTS.filter(d => d.t === 'sea');
   else if (impFilter === 'mut')  list = IMPRINTS.filter(d => d.t === 'mut');
@@ -15997,7 +16411,7 @@ function impFiltered(){
     const pin = IMPRINTS.filter(d => d.t === 'origin' || d.t === 'wither' || d.t === 'burn');
     list = list.filter(d => d.t !== 'origin' && d.t !== 'wither' && d.t !== 'burn');
     list = impOwnFirst(list);                     /* ← 20261110d：已点亮在前 */
-    if (impFilter === 'own') list = pin.filter(d => IMP_FOUND.has(d.k)).concat(list);
+    if (impFilter === 'own') list = pin.filter(d => impOwned(d)).concat(list);
     else list = pin.concat(list);
   } else {
     list = impOwnFirst(list);                     /* 花海 / 异变两档也按已点亮优先 */
@@ -16875,7 +17289,7 @@ function renderImpDex(){
   const to = Math.min(from + IMP_PER, all.length);
   for (let i = from; i < to; i++){
     const d = all[i];
-    const own = IMP_FOUND.has(d.k);
+    const own = impOwned(d);
     const cell = document.createElement('div');
     cell.className = 'impc ' + (own ? 'own' : 'lock');
     const cv = document.createElement('canvas');
@@ -16896,7 +17310,8 @@ function renderImpDex(){
   }
   const pn = $('#ipgNum');
   if (pn) pn.textContent = (impPage + 1) + ' / ' + pages;
-  const got = IMP_FOUND.size;
+  /* 20261111e：计数也走 impOwned —— 初见星永远算一颗，别让它从 01 掉成 00 */
+  const got = IMPRINTS.filter(impOwned).length;
   if ($('#impProg')) $('#impProg').textContent = 'FOUND · ' + pad2(got) + ' / ' + IMPRINTS.length;
   if ($('#impBar')) $('#impBar').style.width = Math.max(1.2, Math.round(got / IMPRINTS.length * 1000) / 10) + '%';
   if ($('#dxTabI')) $('#dxTabI').textContent = got + ' / ' + IMPRINTS.length;
@@ -17027,7 +17442,7 @@ function impTicketOf(d){
 function renderImpWiki(){
   const d = impWikiD;
   if (!d) return;
-  const own = IMP_FOUND.has(d.k);
+  const own = impOwned(d);
 
   /* ---- 头图：和星球图鉴的格子用同一套画法 ----
      初见星必须画「真身」（renderOriginFrame），不能另画一颗，
@@ -18040,7 +18455,9 @@ function impUnlockPop(imp, onClose){
   /* 「你手上第 N 颗」：正式流程里这张卡是在凝星剧场的打印环节就写进 IMP_FOUND 了，
      等弹窗弹出时它已经在里面 —— 这时候再加 1 就会多算一颗。验收台反着来
      （先 delete 再播），这时它确实不在里面。所以按「在不在」决定加不加。 */
-  const got = IMP_FOUND.has(imp.k) ? IMP_FOUND.size : IMP_FOUND.size + 1;
+  /* 20261111e：计数统一走 impOwned（初见星永远算一颗），
+     否则 IMP_FOUND 里丢了 origin 时，「第 N 颗」会整体少一。 */
+  const got = IMPRINTS.filter(x => impOwned(x) || x === imp).length;
 
   const mask = document.createElement('div');
   mask.id = 'impUnlock';
