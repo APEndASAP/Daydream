@@ -2964,6 +2964,79 @@ body.glass-ui.glass-low .msg-row.me .bubble {
 .msg-row.oneline-msg .bubble { max-width: 100%; }
 
 /* ============================================================
+   气泡文字排布（20261110 新增 · 织梦点 → 气泡 tab）
+   ------------------------------------------------------------
+   用户诉求（原话）：「现在大多是几个字就换行了，甚至有三个字占了三行。
+   保持现在这个效果的基础上，新增一种效果：句子要在同一行里显示，
+   还不能跳出气泡外；字多到一定程度还是要能自动换行；字要在气泡内部居中。」
+
+   为什么会「三个字占三行」：
+     气泡的宽度默认被 .msg-body 的 72% 撑死，而自定义美化给气泡加了左右大内边距
+     （留给兔耳之类的装饰），文字可用宽度只剩几十 px；中文又默认允许在任意
+     字符间断行（等价 break-all），于是逐字往下掉。
+   ------------------------------------------------------------
+   两档，都只在 body 上挂一个类，默认档完全不受影响（现有观感原样保留）：
+
+   .bubble-line-oneline —— 单行优先
+     · word-break:keep-all   中日韩文字只在标点/空格处断行，不再逐字折行
+     · width:fit-content     气泡宽度跟着文字走，不再被父级固定成 72%
+     · max-width:100%        但上限就是 msg-body 的宽度，绝不越出气泡/屏幕
+     · overflow-wrap:break-word  万一单个超长英文单词，仍然允许在必要处断开
+     ⇒ 字少 → 一行；字多到放不下 → 正常换行，且换行点尽量落在标点。
+
+   .bubble-line-center —— 在上面基础上让文字在气泡内部居中。
+   ============================================================ */
+body.bubble-line-oneline .msg-row .msg-body {
+  min-width: 0;
+  /* 关键：必须在整条链上用 max-content，不能用 fit-content。
+     fit-content = min(max-content, 可用宽度)，而 flex 子项的"可用宽度"
+     一开始就被算成 min-content（实测只剩 60px），于是气泡永远挤在 60px 里，
+     字还是逐字往下掉 —— 这就是第一版没修好的原因。
+     max-content = 直接按「文字不换行需要多宽」来定，再由 max-width 截住，
+     所以短句一行、长句到上限才换行，且绝不越出气泡。 */
+  width: -moz-max-content;
+  width: max-content;
+  /* 20261110 用户反馈：「88% 太长，整个聊天框都占用了，参考微信 QQ」。
+     收到 78%：比默认档（72%×72% ≈ 52% 有效宽）明显更宽、能多容纳几个字，
+     但长句仍会在句中自然折行，一眼能看出是气泡而不是整条横幅。 */
+  max-width: 78%;
+}
+body.bubble-line-oneline .msg-row .bubble {
+  width: -moz-max-content;
+  width: max-content;
+  max-width: 100%;
+  /* 20261110：换行点交给 text-wrap:pretty ——
+     · 能一行就一行（不会为了「平衡」把短句硬拆两行）
+     · 长句优先在标点处折，且避免最后一行只剩一两个字（截图里「就爱吃醋！」那种孤行） */
+  text-wrap: pretty;
+}
+/* 关键三行：中文绝不在两个汉字中间硬断（keep-all），
+   只在标点/空格处断；实在放不下才用 anywhere 作为最后手段断开。
+   ⇒ 「三个字占三行」就是被默认的任意字符断行搞出来的。 */
+body.bubble-line-oneline .msg-row .bubble,
+body.bubble-line-oneline .msg-row .bubble * {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  line-break: strict;
+}
+/* flex 列里的子项默认 stretch，会把 fit-content 拉满 —— 显式改成按内容排，并贴各自一侧 */
+body.bubble-line-oneline .msg-row.them .msg-body { align-items: flex-start; }
+body.bubble-line-oneline .msg-row.me .msg-body { align-items: flex-end; }
+
+body.bubble-line-center .msg-row .bubble { text-align: center; }
+
+/* ============================================================
+   气泡字号（20261110 新增 · 织梦点 → 气泡 tab 的滑条）
+   ------------------------------------------------------------
+   用户原话：「可以调气泡的字体大小，就是拖动滑动条。」
+   ⇒ --bubble-fz 由 applyChatTheme 写进 :root，范围 12~22px；
+   ⇒ 没动过滑条时不挂 .has-bubble-fz 类，字号继续继承 .msg-row .bubble
+     的 15px 默认值 —— 现有观感一字不动。
+   ⇒ 只调字号，行高用无单位 1.55 跟着缩放，不会把气泡挤扁。
+   ============================================================ */
+body.has-bubble-fz .msg-row .bubble { font-size: var(--bubble-fz, 15px); }
+
+/* ============================================================
    底栏红点徽标（朋友圈新动态提醒）——放在 tab-icon 旁（不能放进
    data-icon 元素内部，否则 hydrateIcons 会覆盖掉）
    ============================================================ */
@@ -8786,6 +8859,17 @@ body .bm-music-float.fbg-dark .bm-float-card {
 .bm-comment-list { display: flex; flex-direction: column; gap: 8px; }
 .bm-comment-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 8px; background: var(--bm-card, rgba(255,255,255,.03)); }
 .bm-comment-mine { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: var(--bm-accent, #a78bfa); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+/* 20261110：角色评论区块（评论面板顶部）—— 角色名做成胶囊标签，长一点也放得下 */
+.bm-comment-clist { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.bm-comment-charitem .bm-comment-mine {
+  width: auto; min-width: 22px; padding: 0 7px; border-radius: 11px; font-size: 11px;
+  background: var(--bm-accent-glow, rgba(167,139,250,.16));
+  color: var(--bm-accent, #a78bfa);
+  border: 1px solid var(--bm-accent, #a78bfa);
+}
+/* 刷新按钮转圈（20261110）：重抓播放列表时的加载指示 */
+.bm-music-headbtn.spinning svg { animation: bmSpin .9s linear infinite; }
+@keyframes bmSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .bm-comment-text { flex: 1; min-width: 0; font-size: 13px; line-height: 1.5; word-break: break-word; }
 .bm-comment-time { flex-shrink: 0; font-size: 11px; color: var(--bm-ink-dim); }
 /* 20261104：后台遥控面板（模式二） */
@@ -8809,8 +8893,12 @@ body .bm-music-float.fbg-dark .bm-float-card {
 .bm-remote-btn:hover { border-color: var(--bm-accent); color: var(--bm-accent); }
 .bm-remote-btn:active { transform: scale(.94); }
 /* 20261104：后台遥控面板完善——连接状态 + App 选择 + 完整控制键 */
-.bm-remote-conn { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--bm-ink-dim); }
-.bm-remote-dot { width: 8px; height: 8px; border-radius: 50%; background: #9a9fae; flex-shrink: 0; }
+/* 20261110 用户定案：这一行「可操控后台音乐」是状态指示，必须一眼可辨——
+   后台没有可操控的音乐 App（没打开 / 没在播）时整行红字 + 红点；
+   真检测到可操控的后台音乐时才转绿（见 .on）。此前默认是灰色，看不出「能不能用」。 */
+.bm-remote-conn { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #ff5a5f; }
+.bm-remote-conn .bm-remote-conn-txt { color: inherit; }
+.bm-remote-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff5a5f; box-shadow: 0 0 5px rgba(255,90,95,.55); flex-shrink: 0; }
 .bm-remote-conn.on .bm-remote-dot { background: #4cd964; box-shadow: 0 0 6px rgba(76,217,100,.7); }
 .bm-remote-conn.on .bm-remote-conn-txt { color: #4cd964; }
 .bm-remote-row { display: flex; align-items: center; gap: 10px; }

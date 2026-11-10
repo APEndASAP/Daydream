@@ -112,6 +112,10 @@ const ICONS = {
   list: '<path d="M8.5 6.2h12M8.5 12h12M8.5 17.8h12"/><circle cx="4.2" cy="6.2" r="1.15" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="4.2" cy="17.8" r="1.15" fill="currentColor" stroke="none"/>',
   download: '<path d="M12 3.5v11"/><path d="M7.6 10.5L12 15l4.4-4.5"/><path d="M4.5 15.5v2.7a2.3 2.3 0 0 0 2.3 2.3h10.4a2.3 2.3 0 0 0 2.3-2.3v-2.7"/>',
   timer: '<circle cx="12" cy="13" r="8"/><path d="M12 13V8.5"/><path d="M9.5 2.5h5"/><path d="M12 5.5v-1"/>',
+  /* 刷新/重抓（20261110）：单圈回旋箭头，24 视窗 · 1.8 线宽 · 圆角端点，
+     与 play/next/share 同一套线性语言，绝不用 emoji。
+     弧线终点 (17.66,6.34) 正好是右上角折线箭头的拐点，视觉上连成一支回旋箭头。 */
+  refresh: '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M17.66 2.9v3.44h-3.44"/>',
 
   /* —— 陪伴 / 四季（20261108）：陪伴一级入口 + 番茄钟/四季两个功能块 —— */
   companion: '<circle cx="9" cy="8.5" r="3.2"/><circle cx="16.5" cy="10" r="2.4"/><path d="M3.5 20c.7-3.6 2.9-5.4 5.5-5.4 1.2 0 2.3.3 3.3.9"/><path d="M14.5 13.8c1.5.7 2.5 1.8 3 3.4.3 1 .6 1.9.8 2.8"/><path d="M8 14.2c.9.3 1.8.9 2.4 1.8"/>',

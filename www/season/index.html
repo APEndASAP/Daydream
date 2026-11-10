@@ -101,7 +101,35 @@
   --bg:#d6cfbe;
   --amt:#8a6a3f;
   --shadow:#221f1a;
+  /* 20261111：显式声明「这一页是亮色界面」。
+     手机开暗色模式时，浏览器/WebView 的「强制暗色」会把整页纸色压暗、票据变灰黑 ——
+     这就是「网页端四季整个界面都是暗的、开不开暗色都该正常」的根因。
+     写明 color-scheme:light 之后，系统暗色不再改写这一页的底色与控件。 */
+  color-scheme: light;
 }
+/* ===== 暗色主题（玩家自己切，20261111）=====
+   只在 body[data-theme="dark"] 时生效：覆盖整套纸色，--accent 保留季节色。
+   特异性 (0,1,1) 高于 [data-season="x"] 的 (0,1,0)，
+   所以季节换色（spring/summer/autumn/winter）不会把暗色冲掉。 */
+body[data-theme="dark"]{
+  color-scheme: dark;
+  --ink:#eae4d6;  --ink2:#b6ae9a;
+  --paper:#26241f; --paper2:#1e1c18;
+  --line:#4b4638;  --bg:#151412;
+  --amt:#cba86c;   --shadow:#000;
+  --tk-paper:#2c2a24; --tk-frame:#23201b; --tk-dash:#4e4939;
+  --tk-sub:#aba393;   --tk-sub2:#9d9585; --tk-desc:#b7ae9c;
+  --tk-meta:#a59d8c;  --tk-foot:#8e8676;
+  --leaf-a:#2b2823; --leaf-b:#353128; --leaf-c:#241f19;
+  --leaf-shade:rgba(0,0,0,.45);
+  --cv-c0:#3b372e; --cv-c1:#343028; --cv-c2:#2c2721; --cv-c3:#231f1a;
+  --cv-mini:#3e392f; --cv-curl:#4b4436;
+  --cv-line:rgba(232,222,192,.30);
+  --veil1:rgba(38,46,38,.30); --veil2:rgba(28,34,28,.42);
+}
+/* 暗色下：原先用固定深墨（#191713）画的框线在深纸上会看不见，统一提亮 */
+body[data-theme="dark"] .tk-art-wrap,
+body[data-theme="dark"] .ticket{border-color:#6b6353}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;max-width:100%;overflow-x:hidden}
 body{
@@ -168,6 +196,41 @@ body{
 .tb-title{font-size:16px;letter-spacing:1px;line-height:1}
 .tb-sub{font-size:11px;font-family:system-ui,'Microsoft YaHei';color:var(--ink2);letter-spacing:.6px;margin-left:1px;opacity:.85}
 .tb-right{margin-left:auto;font-size:16px;color:var(--ink2);transform:scale(.66);transform-origin:right center;letter-spacing:1px}
+/* 20261111：右上角亮/暗切换（「夜」=点它变暗 / 「日」=点它变亮） */
+.tb-theme{font-size:12px;line-height:1;color:var(--ink2);margin-left:8px;padding:2px 4px;
+  border:1px solid var(--line);border-radius:2px;cursor:pointer;user-select:none;
+  -webkit-tap-highlight-color:transparent}
+.tb-theme:active{background:var(--paper2)}
+/* 20261111：识别模型下载进度条（网页端第一次要下 29.5MB，给个明确进度，
+   否则玩家只看到「识别中」干等，体感就是「识别特别久、没反应」） */
+.mdl-bar{position:absolute;left:0;right:0;bottom:0;z-index:60;display:none;
+  padding:7px 12px 8px;font-size:10.5px;letter-spacing:.6px;color:var(--ink2);
+  background:var(--paper2);border-top:1px solid var(--line);text-align:center;
+  font-family:system-ui,'Microsoft YaHei'}
+.mdl-bar.on{display:block}
+.mdl-bar i{display:block;height:2px;background:var(--accent);width:0;
+  transition:width .35s ease;margin-bottom:5px}
+/* 20261111：四季页「识别模型下载提示条」——常驻在底部导航上方。
+   玩家原话：「玩家在里面待着干什么呢？他纯等着，又发现功能不能用，
+   他就退出了呀，还以为是 bug」。所以下载期间必须看得见进度，下好自动消失。
+   ★ 放在 .phone 的 flex 流里（不是 absolute），这样手机上不会压住底部导航，
+     也不会挡住滚动内容；出现/消失只让内容区高一点点，绝不遮字。 */
+.mdl-tip{position:relative;z-index:4;flex:0 0 auto;display:none;
+  padding:7px 12px 8px;background:var(--paper2);border-top:1px solid var(--line);
+  font-family:system-ui,'Microsoft YaHei';cursor:pointer;
+  -webkit-tap-highlight-color:transparent}
+.mdl-tip.on{display:block}
+.mdl-tip .mt-bar{display:block;height:3px;background:var(--line);overflow:hidden;margin-bottom:6px;border-radius:2px}
+.mdl-tip .mt-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s ease}
+.mdl-tip .mt-row{display:flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.4px;color:var(--ink)}
+.mdl-tip .mt-dot{width:5px;height:5px;flex:0 0 auto;border-radius:50%;background:var(--accent);
+  animation:mtPulse 1.2s ease-in-out infinite}
+.mdl-tip .mt-txt{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mdl-tip .mt-pct{flex:0 0 auto;font-size:10.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.mdl-tip.err .mt-dot{background:#c0563a;animation:none}
+@keyframes mtPulse{0%,100%{opacity:1}50%{opacity:.22}}
+/* 相机页有自己的全屏进度条（.mdl-bar），两条同时出现会挤，藏掉这条 */
+.phone.cam .mdl-tip{display:none!important}
 .tb-close{
   width:34px;height:34px;flex:0 0 auto;margin-left:4px;position:relative;
   background:var(--ink);color:var(--paper);
@@ -315,13 +378,17 @@ body{
 .bk-meta i{display:inline-block;width:2px;height:6px;background:#8a8474;margin-left:2px;vertical-align:-1px}
 .dex{margin:16px 12px 24px;border:2px solid var(--shadow);background:var(--paper);
   box-shadow:4px 4px 0 rgba(34,31,26,.20)}
-.dex-head{display:flex;align-items:baseline;justify-content:space-between;padding:9px 10px 6px;
+.dex-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:9px 10px 6px;
   border-bottom:2px dashed var(--line)}
-.dex-t{font-size:16px;letter-spacing:2px;line-height:1}
-.dex-t small{font-size:16px;transform:scale(.56);transform-origin:left center;color:var(--ink2);
-  letter-spacing:1px;margin-left:7px;display:inline-block}
-.dex-p{font-size:16px;transform:scale(.58);transform-origin:right center;color:var(--ink2);
-  letter-spacing:1px;white-space:nowrap}
+.dex-t{font-size:16px;letter-spacing:2px;line-height:1;min-width:0}
+/* 20261110d 修：小字原来用 transform:scale(.56/.58) —— 只缩「看得见的字」，
+   不缩它在布局里的占位（仍是 16px 原宽）。手机窄屏上 标题+英文副题+进度 三者
+   的占位加起来超过纸宽，右侧「COLLECTED · 06 / 492」就被顶出纸框（截图那张）。
+   改成真字号（视觉大小和原来一致：16×0.56≈9px / 16×0.58≈9.3px），占位跟着变小。 */
+.dex-t small{font-size:9px;color:var(--ink2);
+  letter-spacing:.6px;margin-left:6px;display:inline-block}
+.dex-p{font-size:9.5px;color:var(--ink2);
+  letter-spacing:1px;white-space:nowrap;flex:0 0 auto}
 .dex-bar{height:7px;background:var(--paper2);border-bottom:2px solid var(--shadow);overflow:hidden}
 .dex-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .55s ease}
 .dex-badges{display:flex;gap:9px;padding:9px 10px 4px;flex-wrap:wrap}
@@ -958,6 +1025,9 @@ body{
   padding:2px 7px;color:#8b8574;cursor:pointer;margin-right:-18px;white-space:nowrap}
 .dxl.on{background:var(--ink);color:var(--paper);border-color:var(--shadow)}
 .dex-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:6px 10px 6px}
+/* 20261110d：分类筛出空集时的提示（变异 / 已收录都可能一开始是空的） */
+.dex-empty{grid-column:1 / -1;padding:26px 12px;text-align:center;color:#8b8574;
+  font-size:10px;line-height:2;letter-spacing:.6px}
 .dxc{border:2px solid var(--shadow);background:var(--paper2);padding:3px 3px 2px;
   text-align:center;cursor:pointer;min-width:0}
 .dxc.lock{background:transparent;border-style:dashed;border-color:var(--line)}
@@ -1615,6 +1685,9 @@ body{
   .nav-dot{top:13px;right:auto;left:calc(50% + 20px)}
   /* —— 内容区：铺满 + 随屏宽放宽边距 —— */
   .body{grid-column:2;grid-row:2}
+  /* 20261111：PC 上 .phone 变成两列网格，新加的下载提示条不能参与自动排布
+     （否则会挤出一行、把整页顶歪）→ 直接贴内容区底部浮着 */
+  .mdl-tip{position:absolute;left:116px;right:0;bottom:0;z-index:6}
   .view{padding:22px clamp(24px,3.2vw,64px) 44px}
   .pghead{margin:0 0 16px}
   .pgtitle{font-size:44px;letter-spacing:4px}
@@ -1797,8 +1870,12 @@ body{
     <div class="tb-title" id="tbTitle">四季</div>
     <div class="tb-sub" id="tbSub">SEASONS · 采集</div>
     <div class="tb-right" id="tbRight">秋 · 第 3 天</div>
+    <div class="tb-theme" id="tbTheme" title="切换到暗色">夜</div>
     <div class="tb-close" id="btnClose"><i></i></div>
   </div>
+
+  <!-- 识别模型下载进度（只在网页端第一次下载 29.5MB 时出现） -->
+  <div class="mdl-bar" id="mdlBar"><i id="mdlBarFill"></i><span id="mdlBarTxt">正在准备识别模型…</span></div>
 
   <div class="body" id="bodyScroll">
 
@@ -1894,6 +1971,7 @@ body{
           <span class="dxl" data-f="summer">夏</span>
           <span class="dxl" data-f="autumn">秋</span>
           <span class="dxl" data-f="winter">冬</span>
+          <span class="dxl" data-f="mut">变异</span>
           <span class="dxl" data-f="own">已收录</span>
         </div>
         <div class="dex-grid" id="dexGrid"></div>
@@ -2116,6 +2194,16 @@ body{
       <div class="hint">※ 这里的种子都是你送给 TA 的书签。TA 手里拿到种子后，会自己找时间种下；<br>你想抢先，就在上面挑一个位置替 TA 种 —— 谁先种下，种子库里就少哪一颗。</div>
     </section>
 
+  </div>
+
+  <!-- 20261111：识别模型下载提示条（首次进站后台下 29.5MB，下好自动消失 + 提示一次） -->
+  <div class="mdl-tip" id="mdlTip">
+    <span class="mt-bar"><i id="mdlTipFill"></i></span>
+    <div class="mt-row">
+      <i class="mt-dot"></i>
+      <span class="mt-txt" id="mdlTipTxt">正在后台下载四季识别模型…</span>
+      <span class="mt-pct" id="mdlTipPct"></span>
+    </div>
   </div>
 
   <nav class="tabbar">
@@ -2466,10 +2554,100 @@ function pixelize(img, opt){
    ⚠️ src.png（srcImg 示例原图）必须保留：它是相机 demo 占位图 + 无图照片的默认像素化原图，
    删除会导致相机画面空白、且所有 img=null 的照片无图可画（像素化绑定关系）。 */
 const PHOTOS = [];
+/* ============ 20261111 数据拆分（用户定案）============
+   以前一条记录同时当四样东西：照片 / 书签 / 图鉴凭证 / 种子来源，
+   于是删书签会把图鉴和种子一起带走，删照片会连书签一起没了。
+   现在拆成四本独立账，各删各的、互不影响：
+
+     PHOTOS   ：照片墙上的照片（只存照片自己的事）
+     BOOKS    ：书签（制签那一刻从照片快照出来，之后和照片各自独立）
+     DEX_SEEN ：图鉴收录（第一次制签时记一笔，从此永久 —— 删照片删书签都不掉）
+     SEEDS    ：种子（书签送给角色那一刻发一颗，永久；只有种下去才会从库里消失）
+
+   图片本体仍在 IndexedDB（键 'p'+imgId），PHOTOS 与 BOOKS 通过 imgId 共享同一张；
+   引用计数归零（哪边都不再引用）才真正 imgDel —— 见 imgGC()。
+   ★ BOOKS 的 id 与来源照片 id 同源（seedIdOf 因此保持 'sd'+id 不变，
+     老存档里植株的 fromSeed 不需要迁移）。 */
+let BOOKS = [];
+let DEX_SEEN = {};      /* { 图鉴号: {at, s} } —— s = 收录当时的季相，供「四季齐全」徽章 */
+let SEEDS = [];         /* [{ sid, name, dex, season, latin, desc, r, ownerId, imgId, crop, planetKey, taAt, fromBook }] */
+let _splitMigrated = false;   /* 本次读档是否做过「四合一 → 四本账」拆分（做完立刻回写一次新格式） */
 const SEASON_CN = { spring:'春', summer:'夏', autumn:'秋', winter:'冬' };
 let seqNo = 0;          // 已发号（清空 demo 后从 0 起，避免票据编号跳号）
 let curPhoto = null;    // 当前详情
 let imgReady = false;
+
+/* ================= 四本账的取用助手 ================= */
+/* 照片 → 它的书签（没制签就是 null）。书签 id 与照片 id 同源，所以直接按 id 找。 */
+function bookOfPhoto(p){
+  if (!p || p.id == null) return null;
+  for (let i = 0; i < BOOKS.length; i++) if (BOOKS[i].id === p.id) return BOOKS[i];
+  return null;
+}
+function bookByNo(no){ for (let i = 0; i < BOOKS.length; i++) if (BOOKS[i].no === no) return BOOKS[i]; return null; }
+/* 一张图在 IDB 里的 id：书签/照片都用 imgId，老数据没有这个字段就退回自己的 id */
+function imgIdOf(o){ return o ? (o.imgId != null ? o.imgId : o.id) : null; }
+
+/* 制签：从照片快照出一张书签。之后两边彻底独立 ——
+   删照片不动它，删它不动照片；图鉴只在这里记第一笔。 */
+function makeBookFromPhoto(photo, no){
+  if (!photo) return null;
+  const old = bookOfPhoto(photo);
+  if (old) return old;
+  const bk = {
+    id: photo.id, photoId: photo.id, no: no, made: true,
+    name: photo.name || '', latin: photo.latin || '', desc: photo.desc || '',
+    season: photo.season || 'spring', dex: photo.dex || 0, rare: photo.rare || 2,
+    crop: photo.crop ? Object.assign({}, photo.crop) : { r: .88, cx: .5, cy: .5 },
+    src: photo.src || '', date: photo.date || todayStr(), place: photo.place || '路边',
+    kind: photo.kind || '', imprintKey: photo.imprintKey || '',
+    title: photo.title || '',
+    hasImg: photo.hasImg ? 1 : 0, imgId: imgIdOf(photo), img: photo.img || null,
+    madeAt: Date.now(),
+    giftLog: [], giftMsg: '', myMsg: ''
+  };
+  BOOKS.push(bk);
+  dexMark(bk);
+  return bk;
+}
+/* 图鉴记账：只在第一次收录时写，之后谁删都不掉 */
+function dexMark(bk){
+  if (!bk || !bk.dex) return;
+  if (!DEX_SEEN[bk.dex]) DEX_SEEN[bk.dex] = { at: Date.now(), s: bk.season || '' };
+}
+/* 送书签 → 发一颗种子（同一角色同一张书签只发一次）
+   种子是独立账：之后删书签、删照片都不会把它收回去。 */
+function seedGive(bk, ch, myMsg, taAt){
+  if (!bk || !ch) return null;
+  const sid = seedIdOf(bk);
+  const ownerId = ch.id || '';
+  for (let i = 0; i < SEEDS.length; i++){
+    const s = SEEDS[i];
+    if (s && s.ownerId === ownerId && (s.sid === sid || (s.fromBook != null && s.fromBook === bk.no))) return s;
+  }
+  const isStamp = (bk.kind === 'planet' || bk.src === 'planet');
+  const rec = {
+    sid: sid, ownerId: ownerId, ownerName: ch.name || '',
+    name: bk.name || '未识别', dex: bk.dex || 0, season: bk.season || 'spring',
+    latin: bk.latin || '', desc: bk.desc || '',
+    r: rarityOfItem({ r: bk.rare, dex: bk.dex, name: bk.name }),
+    imgId: imgIdOf(bk), crop: bk.crop ? Object.assign({}, bk.crop) : null,
+    fromBook: bk.no, myMsg: myMsg || '', takenAt: Date.now(),
+    taAt: taAt || 0
+  };
+  if (isStamp) rec.planetKey = bk.imprintKey || '';
+  SEEDS.push(rec);
+  return rec;
+}
+/* 图片回收：照片和书签都不再引用这张图时才真删 */
+function imgGC(imgId){
+  if (imgId == null) return;
+  try {
+    const usedByPhoto = PHOTOS.some(function(p){ return imgIdOf(p) === imgId; });
+    const usedByBook  = BOOKS.some(function(b){ return imgIdOf(b) === imgId; });
+    if (!usedByPhoto && !usedByBook) imgDel(imgId);
+  } catch (e) {}
+}
 
 const $ = s => document.querySelector(s);
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -3206,8 +3384,11 @@ const IMPRINTS = [
 ];
 function pad2(n){ return String(n).padStart(2,'0'); }
 function pad4(n){ return String(n).padStart(4,'0'); }
-function dexOwnedPhoto(no){ return PHOTOS.find(p => p.made && p.dex === no); }
-function dexOwned(no){ return !!dexOwnedPhoto(no); }
+/* 20261111 拆分后：图鉴只看 DEX_SEEN（永久收录账），不再依赖书签是否还在。
+   dexOwnedPhoto 只用来「拿一张能代表这一格的图」—— 书签删光了就返回 null，
+   图鉴照样亮着（退回剪影/原色卡）。 */
+function dexOwnedPhoto(no){ return BOOKS.find(b => b.dex === no) || null; }
+function dexOwned(no){ return !!(DEX_SEEN && DEX_SEEN[no]); }
 /* 20261108：demo 照片已清空，删除原来的 PHOTOS[0..3].dex 初始化（空数组下会报错） */
 
 function renderWall(filter){
@@ -3220,7 +3401,9 @@ function renderWall(filter){
     add.addEventListener('click', () => showView('vCamera'));
     wallEl.appendChild(add);
   }
-  const list = PHOTOS.filter(p => !filter || filter === 'all' || p.season === filter);
+  /* 20261110：wallHidden 的照片从照片墙移除，但记录本身还留着 ——
+     它已经制签/已送出的话，书签集与种子库都靠这条记录，真删会把它们一起带走。 */
+  const list = PHOTOS.filter(p => !p.wallHidden && (!filter || filter === 'all' || p.season === filter));
   list.forEach(p => {
     const d = document.createElement('div');
     d.className = 'ph' + (selSet.has(p.id) ? ' sel' : '');
@@ -3229,16 +3412,17 @@ function renderWall(filter){
     cv.width = 48; cv.height = 48;
     d.appendChild(cv);
     const flag = document.createElement('div');
-    flag.className = 'ph-flag' + (p.made ? '' : ' newflag');
-    flag.textContent = p.made ? '已制签' : '未制签';
+    const _bk = bookOfPhoto(p);
+    flag.className = 'ph-flag' + (_bk ? '' : ' newflag');
+    flag.textContent = _bk ? '已制签' : '未制签';
     d.appendChild(flag);
     const meta = document.createElement('div');
     meta.className = 'ph-meta';
     const noEl = document.createElement('span');
     noEl.className = 'ph-no';
-    noEl.textContent = p.made ? 'No.' + pad4(p.no) : '— —';
+    noEl.textContent = _bk ? 'No.' + pad4(_bk.no) : '— —';
     const stEl = document.createElement('span');
-    stEl.className = 'ph-st ' + (p.made ? 'done' : 'todo');
+    stEl.className = 'ph-st ' + (_bk ? 'done' : 'todo');
     stEl.textContent = SEASON_CN[p.season];
     meta.appendChild(noEl); meta.appendChild(stEl);
     d.appendChild(meta);
@@ -3260,11 +3444,24 @@ function renderWall(filter){
 let dexPage = 0, dexFilter = 'all';
 const DEX_PER = 32;
 
-function dexFiltered(){
-  if (dexFilter === 'own') return DEX.filter(d => dexOwned(d.no));
-  return DEX.filter(d => dexFilter === 'all' || d.s === dexFilter);
+/* 20261110d 用户要求：「玩家已经收集到的植物优先排到前面，后面再按顺序」。
+   做法：整表先按已收录 / 未收录分成两摞，各自保持图鉴号升序（DEX 本来就是按 no
+   排的，filter 不改变相对顺序），再前后拼起来 —— 已收录区内部照样 1、2、3…，
+   未收录区也照样从小到大，不是按「谁先收集」乱插。 */
+function dexOwnFirst(list){
+  const a = [], b = [];
+  list.forEach(d => (dexOwned(d.no) ? a : b).push(d));
+  return a.concat(b);
 }
-function dexCount(){ return PHOTOS.filter(p => p.made).length; }
+function dexFiltered(){
+  let list;
+  if (dexFilter === 'mut') list = DEX.filter(d => mutDexHas(d.no));   /* 变异：这个物种出过异变株 */
+  else if (dexFilter === 'own') list = DEX.filter(d => dexOwned(d.no));
+  else list = DEX.filter(d => dexFilter === 'all' || d.s === dexFilter);
+  return dexOwnFirst(list);
+}
+/* 收录数 = 图鉴账里的物种数（不再按书签张数算，同种拍两次不会虚高） */
+function dexCount(){ return Object.keys(DEX_SEEN || {}).filter(k => DEX_SEEN[k]).length; }
 
 function renderDexCount(){
   const p = $('#dexProg'); if (!p) return;
@@ -3274,7 +3471,9 @@ function renderDexCount(){
   if (bar) bar.style.width = Math.max(1.2, Math.round(got / DEX_TOTAL * 1000) / 10) + '%';
   const bd = $('#dexBadges');
   if (!bd) return;
-  const seasonsHit = ['spring','summer','autumn','winter'].filter(sn => PHOTOS.some(p2 => p2.made && p2.season === sn)).length;
+  const seasonsHit = ['spring','summer','autumn','winter'].filter(function(sn){
+    return Object.keys(DEX_SEEN || {}).some(function(k){ return DEX_SEEN[k] && DEX_SEEN[k].s === sn; });
+  }).length;
   const badges = [
     { t:'初次采集', on: got >= 1 },
     { t:'收获三枚', on: got >= 3 },
@@ -3711,13 +3910,22 @@ function renderDex(){
   if (dexPage > pages - 1) dexPage = pages - 1;
   if (dexPage < 0) dexPage = 0;
   grid.innerHTML = '';
+  /* 20261110d：变异 / 已收录这类分类一开始可能是空的，给一句话，别让玩家对着白纸发呆 */
+  if (!all.length && dexPage === 0){
+    grid.innerHTML = '<div class="dex-empty">' + (
+      dexFilter === 'mut'
+        ? '还没有种出过变异株。<br>尝试多多爱它吧。也许会触发奇迹呢？'
+        : '这个分类下还空着。'
+    ) + '</div>';
+  }
   const from = dexPage * DEX_PER;
   const to = Math.min(from + DEX_PER, all.length);
   for (let i=from;i<to;i++){
     const d = all[i];
-    const p = dexOwnedPhoto(d.no);
+    /* 20261111：是否收录看 DEX_SEEN（永久账）；书签全删光了这一格也照样亮 */
+    const owned = dexOwned(d.no);
     const cell = document.createElement('div');
-    cell.className = 'dxc' + (p ? ' own' : ' lock');
+    cell.className = 'dxc' + (owned ? ' own' : ' lock');
     const cv = document.createElement('canvas');
     cv.width = 24; cv.height = 24;
     cell.appendChild(cv);
@@ -3737,7 +3945,7 @@ function renderDex(){
          · 未收录 → 画同形态的单色剪影（让玩家看得出轮廓，但认不出名字）
        照片像素化只出现在「照片墙 / 书签 / 书签集 / 种子卡」这些地方，
        它们代表「你拍的那一张」，不代表「这一种植物长什么样」。 */
-    if (p){
+    if (owned){
       drawSpeciesArt(cv, 48, d, { color: true });
     } else {
       drawSpeciesSilhouette(cv, 48, d);
@@ -3806,7 +4014,9 @@ function showView(id, opt){
       else { viewStack.push(id); }
     }
   }
-  if (isCam) startCam(); else stopCam();
+  /* 20261111：离开相机页时「停靠」而不是真停 —— 30 秒内再进相机直接复用这条流，
+     浏览器不会重新弹相机权限（玩家报的「没退出软件却每次都要授权」）。 */
+  if (isCam) startCam(); else stopCam({ park: true });
   /* 进书签集：先把「当前角色」定格（谁的角色星球进来的就认谁），
      再按常理重放封面。这样「当前角色」筛选永远对得上入口，不会漂移。 */
   if (id === 'vBook'){
@@ -3833,17 +4043,18 @@ function openPhoto(p){
   const out = pixelize(srcImgFor(p), { grid:88, crop:p.crop, season:p.season, colors:26, dither:26 });
   cv.width = 88; cv.height = 88;
   cv.getContext('2d').drawImage(out, 0, 0);
-  $('#bigNote').textContent = p.made ? '已制成 No.' + String(p.no).padStart(4,'0') : '原片裁切 · 全画面像素化';
+  const _bkPhoto = bookOfPhoto(p);
+  $('#bigNote').textContent = _bkPhoto ? '已制成 No.' + String(_bkPhoto.no).padStart(4,'0') : '原片裁切 · 全画面像素化';
   $('#bigGrid').textContent = '88 × 88';
   $('#rcName').textContent = p.name || (p.fresh ? '识 别 中 · · ·' : '未识别 · 可自行命名');
   $('#rcLatin').textContent = p.latin || (p.fresh ? '正在本地比对物种' : '');
   $('#rcSrc').textContent = bmPlantSrcText(p);
   $('#rcMeta').textContent = p.date + ' · ' + SEASON_CN[p.season] + ' · ' + (p.place || '路边');
   const btn = $('#btnMake');
-  if (p.made){
+  if (_bkPhoto){
     btn.textContent = '已 收 入 书 签 集';
     btn.setAttribute('disabled','');
-    $('#madeHint').textContent = '※ 这一张已经制成 No.' + String(p.no).padStart(4,'0') + '，可以在书签集里查看。';
+    $('#madeHint').textContent = '※ 这一张已经制成 No.' + String(_bkPhoto.no).padStart(4,'0') + '，可以在书签集里查看。';
   } else {
     btn.textContent = '制 成 书 签';
     btn.removeAttribute('disabled');
@@ -3980,9 +4191,8 @@ async function printTicket(p, no){
   $('#pressTip').textContent = '打印完成 · 咔哒';
   await wait(520);
 
-  // 收录（先落库，再定帧上移）
-  p.made = true;
-  p.no = no;
+  // 收录（20261111 拆分后：这里生成一张独立书签，照片本身不再带书签字段）
+  const bk = makeBookFromPhoto(p, no);
   seqNo = no;
   renderWall(currentFilter);
   bookGoToNo(no);
@@ -3996,7 +4206,7 @@ async function printTicket(p, no){
        ② 票据下方淡出四个按钮：送给角色 / 命名 / 保存图片 / 关闭。
      全程只动 .ticket 自己的 transform（打印动画已结束，--rise 不会再变），
      绝不碰 .press-body 的 transform —— 那是上一版「抽搐」的根因。 */
-  openTicketFinal(p, no);
+  openTicketFinal(bk || p, no);
 }
 
 /* ---- 票根定帧结果态：打印动画播完 → 票据上移 → 下方四按钮 ---- */
@@ -4111,30 +4321,63 @@ function snapBookScopeChar(){
   bookScopeCharName = (ch && ch.name) || (typeof PLANET !== 'undefined' && PLANET.owner) || '当前角色';
 }
 
-/* 一张书签归属的字符 id（'' = 还没归属任何人，只在「全部」里出现） */
-function bookOwnerOf(p){
-  if (!p) return '';
-  if (p.giftedToId) return p.giftedToId;          /* ① 送出去的书签 */
-  if (p.ownerId) return p.ownerId;                /* ② 谁的星球上凝出来的 */
-  /* 老数据只有名字、没有 id：反查一次角色表；查不到就退化成名字标记 */
-  const nm = p.giftedTo || p.owner || '';
-  if (!nm) return '';
-  const ch = (typeof CHARS !== 'undefined' ? CHARS : []).find(function(c){ return c.name === nm; });
-  return ch ? ch.id : ('name:' + nm);
+/* ============================================================
+   书签「送给谁」的读取层（20261110 新增 · 一张书签可以送多个角色）
+   ------------------------------------------------------------
+   用户定案：同一张书签可以送给多个角色，且 **每个角色各得一颗种子**。
+   数据上新增 giftLog:[{id,name,at,msg}]，老档只有单值 giftedTo/giftedToId，
+   这里统一读成数组，所有下游（书签集筛选 / 种子库 / 角色挑书签）都只认 giftLogOf，
+   不再各写一套「是不是送过」的判断。
+   ⚠️ giftedTo / giftedToId 仍会继续写（= 最近一次送的那个），
+      只为兼容旧版本读法与旧存档，不要在新逻辑里依赖它。
+   ============================================================ */
+function giftLogOf(p){
+  if (!p) return [];
+  if (Array.isArray(p.giftLog) && p.giftLog.length) return p.giftLog;
+  if (p.giftedTo || p.giftedToId){
+    return [{ id: p.giftedToId || '', name: p.giftedTo || '', at: p.giftedAt || '', msg: p.myMsg || '' }];
+  }
+  return [];
 }
+function giftHasChar(p, chId, chName){
+  return giftLogOf(p).some(function(g){
+    if (chId && g.id) return g.id === chId;
+    return !!chName && g.name === chName;
+  });
+}
+/* 一张书签的「归属」可能是多人 → 返回 id 数组（兼容 'name:xxx' 老数据） */
+function bookOwnersOf(p){
+  if (!p) return [];
+  const out = [];
+  const pushName = function(nm){
+    if (!nm) return;
+    const ch = (typeof CHARS !== 'undefined' ? CHARS : []).find(function(c){ return c.name === nm; });
+    out.push(ch ? ch.id : ('name:' + nm));
+  };
+  giftLogOf(p).forEach(function(g){
+    if (g.id) out.push(g.id); else pushName(g.name);
+  });
+  if (p.ownerId) out.push(p.ownerId);
+  else pushName(p.owner);
+  return out.filter(Boolean);
+}
+/* 兼容旧调用：只取第一个归属者 */
+function bookOwnerOf(p){ const l = bookOwnersOf(p); return l.length ? l[0] : ''; }
 
-/* 这张书签是不是「当前角色」的 */
+/* 这张书签是不是「当前角色」的（多归属下任意一个命中即可） */
 function bookIsOfScopeChar(p){
-  const oid = bookOwnerOf(p);
-  if (!oid) return false;
-  if (oid === bookScopeCharId) return true;
-  if (oid.indexOf('name:') === 0) return oid.slice(5) === bookScopeCharName;  /* 老数据按名字兜底 */
-  return false;
+  const ids = bookOwnersOf(p);
+  if (!ids.length) return false;
+  return ids.some(function(oid){
+    if (oid === bookScopeCharId) return true;
+    if (oid.indexOf('name:') === 0) return oid.slice(5) === bookScopeCharName;  /* 老数据按名字兜底 */
+    return false;
+  });
 }
 
 function bookList(){
-  /* 「全部」＝不做任何过滤，整本书的所有书签 */
-  let l = PHOTOS.filter(p => p.made);
+  /* 20261111 拆分后：书签集直接读书签账 BOOKS，和照片墙彻底无关 */
+  let l = BOOKS.slice();
   /* 「当前角色」＝只留 TA 名下的（送出 + TA 星球上凝出的） */
   if (bookScope === 'char') l = l.filter(bookIsOfScopeChar);
   return l.sort((a, b) => a.no - b.no);
@@ -4204,9 +4447,13 @@ function openTicket(p){
   mountTicket($('#tkHost'), p, true);
   const g = $('#tkGift');
   /* 星球票（邮票）同样可以送给角色 —— 送出去换一颗「必出」星种 */
-  if (p.giftedTo){
-    g.textContent = '已 送 给 ' + p.giftedTo;
-    g.setAttribute('disabled', '');
+  /* 20261110：一张书签可送多人，按钮不再灰掉，改成显示送过几个人、还能继续送 */
+  const _sentNames = giftLogOf(p).map(function(x){ return x.name; }).filter(Boolean);
+  if (_sentNames.length){
+    g.textContent = _sentNames.length > 1
+      ? ('已送 ' + _sentNames.length + ' 人 · 继续送')
+      : ('已 送 给 ' + _sentNames[0]);
+    g.removeAttribute('disabled');
   } else if (p.kind === 'planet' || p.src === 'planet'){
     g.textContent = '送 出 · 换 星 种';
     g.removeAttribute('disabled');
@@ -4442,7 +4689,8 @@ function renderWiki(){
   const d = wikiDex;
   if (!d) return;
   const p = dexOwnedPhoto(d.no);
-  const own = !!p;
+  /* 20261111：解锁与否只看图鉴账（删了书签也还是已收录） */
+  const own = dexOwned(d.no);
   const w = wkOf(d);
   $('#wkNo').textContent = 'No.' + pad4(d.no);
   $('#wkName').textContent = own ? d.n : '？ ？ ？';
@@ -4478,7 +4726,7 @@ function renderWiki(){
   /* 画图：条目详情也是「画出来的那一株」，不是玩家拍的那张照片。
      照片属于书签，图鉴属于物种 —— 这两件事不能混（用户 20261107 确认）。 */
   const cv = $('#wkArt');
-  if (own && p){
+  if (own){
     try { drawSpeciesArt(cv, 104, d, { color: true }); }
     catch (e) { drawSpeciesSilhouette(cv, 104, d); }
   } else {
@@ -4707,11 +4955,12 @@ function buildBookPage(host, idx){
       '<div class="bp-act ghost" id="bpBig">看 大 图</div>';
     host.appendChild(bar);
     const gb = bar.querySelector('#bpGift');
-    /* 已经送出去的票（普通书签 / 星球邮票）一律灰掉，不重复寄。
-       星球票也能送：送出去换回一颗「必出」星种，文案单独写清楚。 */
-    if (p.giftedTo){
-      gb.textContent = '已 送 给 ' + p.giftedTo;
-      gb.setAttribute('disabled', '');
+    /* 20261110：一张书签可以送给多个角色 → 送过之后按钮不再灰掉，
+       改成显示「已送 N 人 · 继续送」，方便继续给别的角色。
+       星球票同理：每送一个角色换回一颗「必出」星种。 */
+    const _sn = giftLogOf(p).map(function(x){ return x.name; }).filter(Boolean);
+    if (_sn.length){
+      gb.textContent = _sn.length > 1 ? ('已送 ' + _sn.length + ' 人 · 继续送') : ('已 送 给 ' + _sn[0]);
     } else if (p.kind === 'planet' || p.src === 'planet'){
       gb.textContent = '送 出 · 换 星 种';
     }
@@ -5228,7 +5477,7 @@ srcImg.onload = () => {
   if (q === 'pressmid' && PHOTOS[2]){ openPhoto(PHOTOS[2]); setTimeout(() => demoPressMid(PHOTOS[2], 3), 200); }
   if (q === 'dex') showView('vDex');
   if (q === 'dexl'){ showView('vDex'); setTimeout(() => openSpecies(DEX[0]), 160); }
-  if (q === 'ticket' && PHOTOS[0]){ showView('vBook'); setTimeout(() => openTicket(PHOTOS[0]), 160); }
+  if (q === 'ticket' && BOOKS[0]){ showView('vBook'); setTimeout(() => openTicket(BOOKS[0]), 160); }
   if (q === 'planet'){ showView('vPlanet'); setTimeout(maybeCharInvite, 1200); }
   if (q === 'cam') showView('vCamera');
   if (q === 'wall') showView('vWall');
@@ -5237,7 +5486,7 @@ srcImg.onload = () => {
 srcImg.src = 'src.png';
 
 $('#btnMake').addEventListener('click', async () => {
-  if (!curPhoto || curPhoto.made) return;
+  if (!curPhoto || bookOfPhoto(curPhoto)) return;
   const no = seqNo + 1;
   const p = curPhoto;
   await printTicket(p, no);
@@ -5440,12 +5689,11 @@ function updateBatchBar(){
 /* 批量制成书签：选中的照片里还没制签的，一次性发号收进书签集 */
 function batchMakeBookmarks(){
   if (!selSet.size){ toast('还没有选中'); return; }
-  const pool = PHOTOS.filter(p => selSet.has(p.id) && !p.made);
+  const pool = PHOTOS.filter(p => selSet.has(p.id) && !bookOfPhoto(p));
   if (!pool.length){ toast('选中的都已经制签了'); return; }
   pool.forEach(p => {
     seqNo += 1;
-    p.made = true;
-    p.no = seqNo;
+    makeBookFromPhoto(p, seqNo);      /* 生成独立书签 + 写图鉴账 */
   });
   renderWall(currentFilter);
   renderDexCount();
@@ -5458,7 +5706,7 @@ function batchMakeBookmarks(){
 }
 function selectAllItems(){
   const list = batchCtx === 'wall'
-    ? PHOTOS.filter(p => currentFilter === 'all' || p.season === currentFilter)
+    ? PHOTOS.filter(p => !p.wallHidden && (currentFilter === 'all' || p.season === currentFilter))
     : bookList();
   if (selSet.size >= list.length){ selSet.clear(); }
   else list.forEach(p => selSet.add(p.id));
@@ -5469,34 +5717,43 @@ function batchDelete(){
   if (!selSet.size){ toast('还没有选中'); return; }
   const ids = Array.from(selSet);
   if (batchCtx === 'wall'){
+    /* ★ 20261111 用户定案：照片墙删除 = 真删照片记录。
+       书签是独立账（BOOKS）、图鉴是独立账（DEX_SEEN）、种子是独立账（SEEDS），
+       所以删照片只影响「照片墙」这一处。图片走引用计数：还有书签用它就留着。 */
+    let removed = 0;
     ids.forEach(id => {
       const i = PHOTOS.findIndex(p => p.id === id);
       if (i < 0) return;
       const p = PHOTOS[i];
-      /* 20261109：玩家主动删掉那张示例图 → 记一笔，以后不再自动塞回来 */
+      /* 玩家主动删掉那张示例图 → 记一笔，以后不再自动塞回来 */
       if (p.demo){ try { localStorage.setItem('bmSeasonDemoGone', '1'); } catch(e){} }
-      PLANET.plants = PLANET.plants.filter(x => x.no !== p.no);
       PHOTOS.splice(i, 1);
+      removed++;
+      imgGC(imgIdOf(p));
     });
     try { seasonSave(); } catch(e){}
     selSet.clear();
     renderWall(currentFilter);
     renderDexCount();
     renderPlanetList();
-    toast('已删除 ' + ids.length + ' 张照片');
+    toast('已删除 ' + removed + ' 张照片 · 书签、图鉴、种子与星球都不受影响');
   } else {
+    /* ★ 书签删除 = 真删书签记录。照片还在墙上、图鉴照样亮着、种子照样在库里。 */
+    let n = 0;
     ids.forEach(id => {
-      const p = PHOTOS.find(x => x.id === id);
-      if (!p) return;
-      PLANET.plants = PLANET.plants.filter(x => x.no !== p.no);
-      p.made = false; p.no = 0; p.giftedTo = null;
+      const i = BOOKS.findIndex(b => b.id === id);
+      if (i < 0) return;
+      const bk = BOOKS[i];
+      BOOKS.splice(i, 1);
+      n++;
+      imgGC(imgIdOf(bk));       /* 照片还在就留着图，两边都没了才真删 */
     });
     try { seasonSave(); } catch(e){}
     selSet.clear();
     renderBookGrid();
     renderDexCount();
     renderPlanetList();
-    toast('已撤销 ' + ids.length + ' 张书签');
+    toast('已删除 ' + n + ' 张书签 · 照片、图鉴、种子与星球都还在');
   }
   updateBatchBar();
 }
@@ -5786,6 +6043,15 @@ async function camOpenStream(deviceId){
     try { camStream.getTracks().forEach(function(t){ t.stop(); }); } catch (e){}
     camStream = null;
   }
+  /* 20261111 权限复用（见 camParkDrop）：同一朝向、停靠中的流还活着 → 直接接回来。
+     这一次完全不碰 getUserMedia，浏览器也就不会再问一遍相机权限。 */
+  if (!deviceId && _camParked && _camParkedFor === camFacing &&
+      _camParked.getVideoTracks().some(function(t){ return t.readyState === 'live'; })){
+    if (_camParkTimer){ clearTimeout(_camParkTimer); _camParkTimer = null; }
+    const kept = _camParked;
+    _camParked = null; _camParkedFor = null;
+    return camAttachStream(kept, live);
+  }
   let st;
   /* ★★ 20261109 真机实测（OnePlus 13 / PJZ110，逐条实测，别再改回去）
      「怎么缩都特别大」的真正根因：
@@ -5804,8 +6070,41 @@ async function camOpenStream(deviceId){
   } else {
     const fm = camFacing === 'back' ? 'environment' : 'user';
     try { st = await navigator.mediaDevices.getUserMedia({ audio:false, video: Object.assign({ facingMode:{ exact: fm } }, ASK) }); }
-    catch (e0){ st = await navigator.mediaDevices.getUserMedia({ audio:false, video: Object.assign({ facingMode:{ ideal: fm } }, ASK) }); }
+    catch (e0){
+      try { st = await navigator.mediaDevices.getUserMedia({ audio:false, video: Object.assign({ facingMode:{ ideal: fm } }, ASK) }); }
+      catch (e1){
+        /* ★ 20261111 电脑 / 网页端修复（用户报「点拍照按钮完全没反应」）：
+           笔记本通常只有一颗前摄、甚至没有 "environment" 这颗镜头，
+           exact 报 OverconstrainedError、ideal 报 NotFoundError → 相机永远开不起来，
+           camLiveOn 一直是 false，点快门就静默走「没拿到画面」。
+           这里再退一级：不限朝向，设备给什么镜头就用什么。 */
+        st = await navigator.mediaDevices.getUserMedia({ audio:false, video: Object.assign({}, ASK) });
+        if (camFacing === 'back'){
+          try { toast('这台设备没有后置镜头 · 先用当前镜头拍'); } catch (e2){}
+        }
+      }
+    }
   }
+  return camAttachStream(st, live);
+}
+
+/* 20261111 权限复用：上次退出相机时把流「停靠」着没真停（30 秒内有效），
+   同一朝向再进相机就直接把它接回来 —— 不再调 getUserMedia，
+   浏览器自然也不会再弹一次「允许使用相机」。
+   玩家说的「从来没退出软件，可每次进相机都要重新授权」就是这里。 */
+let _camParked = null, _camParkedFor = null, _camParkTimer = null;
+const CAM_PARK_MS = 30000;
+function camParkDrop(){
+  if (_camParkTimer){ clearTimeout(_camParkTimer); _camParkTimer = null; }
+  if (_camParked){
+    try { _camParked.getTracks().forEach(function(t){ t.stop(); }); } catch (e){}
+    _camParked = null;
+  }
+  _camParkedFor = null;
+}
+/* 把一条已经开好的流挂到取景框上，并把相机状态推到「已出画」。
+   20261111 从 camOpenStream 抽出来：新开流和「停靠复用」走同一段。 */
+async function camAttachStream(st, live){
   camStream = st;
   if (live){
     live.srcObject = st;
@@ -6259,6 +6558,9 @@ function stopJitter(){ if (camTimer){ clearInterval(camTimer); camTimer = null; 
 /* 真的打开手机相机（20261109 v2：纯网页 getUserMedia，多镜头自动切广角）*/
 async function startCam(){
   const live = $('#camLive');
+  /* 20261111：进相机页就开始后台把识别模型备好 —— 玩家取景、对焦、按快门这段时间
+     正好用来下载，等下拍完就不用再干等 29.5MB（网页端「识别特别久」的主因）。 */
+  bmPlantPrefetch();
   /* 先把示例画面跑起来，等真相机就绪再切过去，避免黑屏 */
   if (!camLiveOn) startJitter();
   if (live && !camStream){
@@ -6327,7 +6629,10 @@ async function startCam(){
     tc.drawImage(srcImg, 0, 0, srcImg.width, srcImg.height, 0, 0, 40, 40);
   }
 }
-function stopCam(){
+/* opts.park = true：不真停流，而是「停靠」30 秒（见 camParkDrop）——
+   同一朝向再进相机直接复用，浏览器不会再弹一次相机权限。
+   真停（切前后摄 / 关闭四季）必须不传 park，否则摄像头一直占着。 */
+function stopCam(opts){
   stopJitter();
   /* 清对焦定时器 */
   _camFocusTimers.forEach(function(h){ clearTimeout(h); });
@@ -6338,7 +6643,16 @@ function stopCam(){
      镜头表是设备级信息，跨会话有效，留着复用。 */
   camLensIdx = 0;
   if (camStream){
-    try { camStream.getTracks().forEach(function(tr){ tr.stop(); }); } catch (e) {}
+    if (opts && opts.park && camLiveOn && !_camParked){
+      /* 停靠：track 保留，只把取景框断开（下次接回来不会重新申请权限） */
+      _camParked = camStream;
+      _camParkedFor = camFacing;
+      if (_camParkTimer) clearTimeout(_camParkTimer);
+      _camParkTimer = setTimeout(function(){ _camParkTimer = null; camParkDrop(); }, CAM_PARK_MS);
+    } else {
+      camParkDrop();     /* 真停：顺手把停靠中的也释放，别让摄像头一直亮着 */
+      try { camStream.getTracks().forEach(function(tr){ tr.stop(); }); } catch (e) {}
+    }
     camStream = null;
   }
   camLiveOn = false;
@@ -6623,6 +6937,220 @@ const BM_PLANT_MODEL = {
   failed: false
 };
 
+/* ============================================================
+   20261111 识别提速（网页端「识别特别久、一直没反应」）
+   ------------------------------------------------------------
+   根因不是推理慢，是【模型要下 29.5MB】：
+     · APK 里 quarrying_plantid_model.onnx 是本地文件，create() 直接读，秒开；
+     · 网页端它要走网络下，而旧代码是「玩家拍完照才去下」——
+       照片都已经上墙了，还一直停在「识别中」，看起来就是卡死。
+   改法：
+     ① 进相机页就开始后台预下载（只在相机页，不在图鉴/照片墙偷跑流量）；
+     ② 下载带进度条，看得见「12.3 / 29.5MB」，不用干等；
+     ③ 下完存一份进 Cache Storage，第二次进站直接命中缓存，不再走网络。
+   ============================================================ */
+const BM_MODEL_CACHE = 'bm-season-model-v1';
+async function bmFetchModelWithProgress(onProgress){
+  const url = new URL('quarrying_plantid_model.onnx', location.href).href;
+  /* ① 缓存命中（第二次进站走这里，几百毫秒） */
+  try {
+    if (window.caches){
+      const c = await caches.open(BM_MODEL_CACHE);
+      const hit = await c.match(url);
+      if (hit){
+        const buf = await hit.arrayBuffer();
+        if (buf && buf.byteLength > 1024){
+          if (onProgress) onProgress(buf.byteLength, buf.byteLength);
+          mdlProgWrite({ state: 'done', got: buf.byteLength, total: buf.byteLength });   /* 缓存命中=已就绪，让跟进方收提示条 */
+          return buf;
+        }
+      }
+    }
+  } catch (e){}
+  /* ② 网络下载，边下边报进度 */
+  const resp = await fetch(url, { cache: 'force-cache' });
+  if (!resp.ok) throw new Error('model-http-' + resp.status);
+  const total = Number(resp.headers.get('content-length') || 0);
+  let buf = null;
+  if (resp.body && resp.body.getReader){
+    const reader = resp.body.getReader();
+    const chunks = []; let got = 0;
+    for (;;){
+      const r = await reader.read();
+      if (r.done) break;
+      chunks.push(r.value); got += r.value.byteLength;
+      if (onProgress) onProgress(got, total);
+    }
+    const u8 = new Uint8Array(got); let off = 0;
+    chunks.forEach(function(c){ u8.set(c, off); off += c.byteLength; });
+    buf = u8.buffer;
+  } else {
+    buf = await resp.arrayBuffer();
+    if (onProgress) onProgress(buf.byteLength, total || buf.byteLength);
+  }
+  /* ③ 存进 Cache Storage（失败不影响这次识别） */
+  try {
+    if (window.caches){
+      const c = await caches.open(BM_MODEL_CACHE);
+      await c.put(url, new Response(buf.slice(0), { headers: { 'Content-Type': 'application/octet-stream' } }));
+    }
+  } catch (e){}
+  mdlProgWrite({ state: 'done', got: buf.byteLength, total: buf.byteLength });   /* 下完了：跟进方收提示条 */
+  return buf;
+}
+function bmModelProgress(got, total){
+  BM_PLANT_MODEL.progress = { got: got, total: total };
+  /* 20261111：同一份进度也写进 localStorage 并喂给底部提示条 ——
+     主 App 在后台下的时候，四季页靠这个「看别人下到哪了」，不重复下第二份。
+     _quiet 时（命中缓存、静默装载）不弹提示条，避免只闪一下。 */
+  mdlProgWrite({ state: 'down', got: got, total: total });
+  if (!BM_PLANT_MODEL._quiet) mdlTipRender({ state: 'down', got: got, total: total });
+  const bar = $('#mdlBar'), fill = $('#mdlBarFill'), txt = $('#mdlBarTxt');
+  if (!bar || !fill || !txt) return;
+  const mb = function(n){ return (n / 1048576).toFixed(1); };
+  bar.classList.add('on');
+  if (total > 0){
+    const pct = Math.min(100, Math.round(got * 100 / total));
+    fill.style.width = pct + '%';
+    txt.textContent = (pct >= 100) ? '识别模型已就绪' : ('正在准备识别模型 ' + mb(got) + ' / ' + mb(total) + 'MB');
+  } else {
+    fill.style.width = '35%';
+    txt.textContent = '正在准备识别模型 ' + mb(got) + 'MB';
+  }
+}
+function bmModelBarHide(){
+  const bar = $('#mdlBar');
+  if (bar) setTimeout(function(){ bar.classList.remove('on'); }, 800);
+}
+/* ============================================================
+   20261111 识别模型下载提示条（四季页底部常驻）
+   ------------------------------------------------------------
+   玩家原话：「如果是玩家在后台下载期间进入了四季这个功能的话…
+   下方有一个那种提示条，提醒对方正在下载模型中，然后模型下好了之后，
+   这个提示条就会消失…也会提示一次玩家，可以正式开始使用了。
+   要不然玩家在里面待着干什么呢？他纯等着，又发现功能不能用，
+   他就退出了呀，还以为是 bug。」
+   ⇒ 三个状态：downloading（带 MB 与百分比）/ loading（装载中）/ err（点一下重试）。
+   ⇒ 下好：提示条消失 + 只提示一次「准备好了」。
+   ⇒ 主 App 开局也会预下同一份（写同一个 Cache Storage），两边用
+     localStorage 的 bmMdlProg 互相让路，绝不重复下两份 29.5MB。
+   ============================================================ */
+const MDL_PROG_KEY = 'bmMdlProg';
+function mdlProgRead(){
+  try { const s = localStorage.getItem(MDL_PROG_KEY); return s ? JSON.parse(s) : null; } catch (e){ return null; }
+}
+function mdlProgWrite(st){
+  try { st.ts = Date.now(); localStorage.setItem(MDL_PROG_KEY, JSON.stringify(st)); } catch (e){}
+}
+function mdlTipRender(st){
+  const el = $('#mdlTip'); if (!el) return;
+  const fill = $('#mdlTipFill'), txt = $('#mdlTipTxt'), pctEl = $('#mdlTipPct');
+  st = st || {};
+  const mb = function(n){ return (n / 1048576).toFixed(1); };
+  if (st.state === 'err'){
+    el.classList.add('err');
+    el.classList.add('on');
+    if (txt) txt.textContent = '识别模型没下下来 · 点这里重试';
+    if (pctEl) pctEl.textContent = '';
+    if (fill) fill.style.width = '0%';
+    return;
+  }
+  el.classList.remove('err');
+  let p = 0;
+  if (st.total > 0) p = Math.min(100, Math.round((st.got || 0) * 100 / st.total));
+  else if (st.state === 'load') p = 100;
+  if (fill) fill.style.width = p + '%';
+  if (pctEl) pctEl.textContent = (st.total > 0 && st.got > 0) ? (p + '%') : '';
+  if (txt){
+    if (st.state === 'load') txt.textContent = '识别模型已下载，正在装载…';
+    else if (st.total > 0 && st.got > 0) txt.textContent = '正在后台下载识别模型 ' + mb(st.got) + ' / ' + mb(st.total) + 'MB';
+    else txt.textContent = '正在后台下载四季识别模型…';
+  }
+  el.classList.add('on');
+}
+function mdlTipHide(){
+  const el = $('#mdlTip');
+  if (el){ el.classList.remove('on'); el.classList.remove('err'); }
+}
+/* 下好：提示条消失 + 「只提示一次」可以正式用了 */
+function mdlTipDone(){
+  mdlTipHide();
+  let seen = false;
+  try { seen = !!localStorage.getItem('bmMdlReadyNotified'); } catch (e){}
+  if (seen) return;
+  try { localStorage.setItem('bmMdlReadyNotified', String(Date.now())); } catch (e){}
+  setTimeout(function(){
+    try { toast('识别模型准备好了', '现在拍一张，马上就能认出是什么植物'); } catch (e){}
+  }, 600);
+}
+function mdlTipFail(){
+  mdlTipRender({ state: 'err' });
+}
+/* 先探一下缓存：有缓存（第二次进站）就静默装载，不让提示条闪一下 */
+async function bmModelCacheProbe(){
+  try {
+    if (!window.caches) return false;
+    const c = await caches.open(BM_MODEL_CACHE);
+    const hit = await c.match(new URL('quarrying_plantid_model.onnx', location.href).href);
+    return !!hit;
+  } catch (e){ return false; }
+}
+/* 进站 / 进相机页调用：后台把模型备好，玩家按快门那一刻多半已经就绪 */
+let _mdlFollowTimer = null;
+/* 20261111：APK 里模型是包内本地文件（Capacitor 走 https://localhost），
+   读起来本来就快，预下反而白占 30MB 缓存 → 直接跳过，等第一次识别再懒加载。 */
+function bmIsAppShell(){
+  try {
+    if (window.Capacitor) return true;
+    if (location.hostname === 'localhost') return true;
+    return /^(file|capacitor|ionic):/.test(location.protocol);
+  } catch (e){ return false; }
+}
+async function bmPlantPrefetch(opt){
+  opt = opt || {};
+  if (bmIsAppShell() && !opt.force){ mdlTipHide(); return; }
+  if (BM_PLANT_MODEL.ready){ mdlTipHide(); return; }
+  if (BM_PLANT_MODEL.loading) return;
+  const shared = mdlProgRead();
+  const fresh = !!(shared && shared.ts && (Date.now() - shared.ts < 25000));
+  /* ① 别人（主 App 或上一次调用）正在下：只跟着显示进度，绝不重复下第二份 */
+  if (!opt.force && shared && shared.state === 'down' && fresh){
+    mdlTipRender(shared);
+    if (_mdlFollowTimer) return;
+    _mdlFollowTimer = setInterval(function(){
+      if (BM_PLANT_MODEL.ready){ clearInterval(_mdlFollowTimer); _mdlFollowTimer = null; mdlTipHide(); return; }
+      if (BM_PLANT_MODEL.loading){ clearInterval(_mdlFollowTimer); _mdlFollowTimer = null; return; }
+      const s = mdlProgRead();
+      if (!s) return;
+      if (s.state === 'down'){ mdlTipRender(s); return; }
+      clearInterval(_mdlFollowTimer); _mdlFollowTimer = null;
+      if (s.state === 'done'){
+        /* 对方下完了：直接装（命中缓存，秒级），装好把提示条收掉 */
+        BM_PLANT_MODEL._quiet = true;
+        mdlTipRender({ state: 'load', got: 0, total: 0 });
+        try { bmPlantEnsureModel().then(function(){ BM_PLANT_MODEL._quiet = false; mdlTipDone(); }).catch(function(){ BM_PLANT_MODEL._quiet = false; mdlTipFail(); }); } catch (e){ mdlTipFail(); }
+      } else {
+        mdlTipFail();
+      }
+    }, 900);
+    return;
+  }
+  /* ② 自己去下：先探缓存，有缓存就不让提示条闪 */
+  const cached = opt.force ? false : await bmModelCacheProbe();
+  if (!cached){
+    mdlProgWrite({ state: 'down', got: 0, total: 0 });
+    mdlTipRender({ state: 'down', got: 0, total: 0 });
+  }
+  BM_PLANT_MODEL._quiet = cached;
+  try {
+    await bmPlantEnsureModel();
+    BM_PLANT_MODEL._quiet = false;
+    if (!cached) mdlTipDone(); else mdlTipHide();
+  } catch (e){
+    BM_PLANT_MODEL._quiet = false;
+    if (!cached) mdlTipFail(); else mdlTipHide();
+  }
+}
 function bmPlantEnsureModel(){
   if (BM_PLANT_MODEL.failed) return Promise.reject(new Error('model-failed'));
   if (BM_PLANT_MODEL.ready) return Promise.resolve(BM_PLANT_MODEL.sess);
@@ -6636,9 +7164,26 @@ function bmPlantEnsureModel(){
          1.19.2 只有 threaded 版，在 WebView 里因拿不到 SAB 卡死（识别 5 分钟根因）。 */
       ort.env.wasm.numThreads = 1;
       try { ort.env.wasm.proxy = false; } catch(e){}
-      const sess = await ort.InferenceSession.create('quarrying_plantid_model.onnx', {
-        executionProviders: ['wasm']
-      });
+      /* 20261111：先自己带进度下到内存（并落缓存），再交给 onnxruntime 解析。
+         注意 onnxruntime 的 create() 读 URL 时没有任何进度回调，才会「静默卡住」。 */
+      const buf = await bmFetchModelWithProgress(bmModelProgress);
+      /* 20261111 加载提速（网页端「扫了 5 分钟」的关键）：
+         默认 graphOptimizationLevel:'all' 会对这张 4066 类的图做一整轮重写，
+         手机上光这一步就要几十秒到几分钟，而且闷在里面没有任何反馈。
+         这个模型导出时已经优化过，关掉在线图优化 + 顺序执行，
+         加载快一个量级，识别精度一模一样。
+         create 再套一层 120s 超时：宁可报「加载失败」也不要永远停在识别中。 */
+      const sess = await Promise.race([
+        ort.InferenceSession.create(new Uint8Array(buf), {
+          executionProviders: ['wasm'],
+          graphOptimizationLevel: 'disabled',
+          executionMode: 'sequential'
+        }),
+        new Promise(function(_, rej){
+          setTimeout(function(){ rej(new Error('model-load-timeout')); }, 120000);
+        })
+      ]);
+      bmModelBarHide();
       BM_PLANT_MODEL.sess = sess;
       const resp = await fetch('quarrying_plantid_label_map.json');
       const map = await resp.json();
@@ -6648,7 +7193,10 @@ function bmPlantEnsureModel(){
       BM_PLANT_MODEL.ready = true;
       return sess;
     } catch(e){
-      BM_PLANT_MODEL.failed = true;
+      /* 20261111：不再一次失败就永久判死（旧代码 failed=true →
+         网络抖一下就永远「未识别」）。清掉 loading，下次按快门会再试一次。 */
+      BM_PLANT_MODEL.loading = null;
+      bmModelBarHide();
       throw e;
     }
   })();
@@ -6797,11 +7345,15 @@ function bmPlantNearCorrect(latin){
 /* 统一收尾：把一张原图变成照片记录。
    skipOpen = true（连拍模式）时不跳转到照片详情，留在相机页继续拍。 */
 function addPhotoFromImage(img, label, skipOpen){
-  const id = PHOTOS.reduce((m, x) => Math.max(m, x.id), 0) + 1;
-  /* 先建一条「识别中」的占位记录，立即上墙，识别是异步的 */
+  /* 20261111：新照片的 id 必须避开「已经存在的书签 id」——
+     删了照片但书签还在时，书签仍占着那个 id，新照片若重号会和它撞成同一张。 */
+  const maxPhoto = PHOTOS.reduce((m, x) => Math.max(m, (typeof x.id === 'number' ? x.id : 0)), 0);
+  const maxBook  = BOOKS.reduce((m, b) => Math.max(m, (typeof b.id === 'number' ? b.id : 0)), 0);
+  const id = Math.max(maxPhoto, maxBook) + 1;
+  /* 先建一条「识别中」的占位记录，立即上墙，识别是异步的
+     （20261111 起照片只存照片自己的事：no / made / 赠送 / 图鉴都不在这里） */
   const p = {
     id: id,
-    no: 0,
     dex: 0,
     crop: { r: .88, cx: .5, cy: .5 },
     season: 'spring',
@@ -6809,14 +7361,26 @@ function addPhotoFromImage(img, label, skipOpen){
     latin: '',
     cnf: 0,
     src: 'none',
-    made: false,
     date: todayStr(),
     desc: '',
     place: label || '路边',
     rare: 2,
     fresh: true,
-    img: img || null
+    img: img || null,
+    imgId: id
   };
+  /* 20261110：把真实照片像素压进 IndexedDB（localStorage 装不下，旧版就是没存
+     才导致重启后全部退化成 src.png 示例图）。这里失败也不影响入库，
+     只是这张将来可能没有原图。 */
+  if (img){
+    try {
+      const du = imgToDataUrl(img);
+      if (du && du.length > 512){
+        p.hasImg = 1;
+        imgPut(p.id, du);
+      }
+    } catch (e){}
+  }
   PHOTOS.push(p);
   try { seasonSave(); } catch(e){}
   currentFilter = 'all';
@@ -6829,6 +7393,15 @@ function addPhotoFromImage(img, label, skipOpen){
     else { openPhoto(p); toast('已存入照片墙 · 未识别'); }
     return;
   }
+
+  /* 20261111：识别期间每 0.9 秒刷新一次详情页 ——
+     让「正在下载识别模型 42%」这类状态真的动起来，而不是一个静止的「识别中」。
+     识别完成（或失败）都会把 p.fresh 置 false，这个定时器自己就停了。 */
+  const _recTick = setInterval(function(){
+    if (!p.fresh){ clearInterval(_recTick); return; }
+    if (curPhoto === p){ try { refreshPhotoRecognize(p); } catch (e){} }
+  }, 900);
+  setTimeout(function(){ clearInterval(_recTick); }, 300000);
 
   /* 异步真识别：成功就回填结果，失败/低置信度保持「未识别」 */
   bmPlantRecognize(img).then(function(r){
@@ -6863,10 +7436,18 @@ function addPhotoFromImage(img, label, skipOpen){
     if (curPhoto === p) refreshPhotoRecognize(p);
     /* 照片墙缩略图刷新一次，让识别结果显示出来 */
     renderWall('all');
-  }).catch(function(){
+  }).catch(function(e){
     p.fresh = false;
     if (curPhoto === p) refreshPhotoRecognize(p);
     renderWall('all');
+    /* 20261111：模型没下下来（断网 / 超时 / 解析失败）必须说清楚 ——
+       否则玩家只会看到「未识别」，以为是「识别不出来」，其实是模型没到。 */
+    try {
+      const msg = String((e && e.message) || e);
+      if (msg.indexOf('model') >= 0 || msg.indexOf('timeout') >= 0 || msg.indexOf('fetch') >= 0){
+        toast('识别模型没准备好（网络或超时）· 再拍一次会重试');
+      }
+    } catch (_){}
   });
 
   if (skipOpen){
@@ -6894,9 +7475,23 @@ function currentSeasonGuess(){
   return 'winter';
 }
 
+/* 20261111：识别到底卡在哪一步，要说人话。
+   网页端第一次要下 29.5MB 模型，APK 里是本地文件所以拍完就有 ——
+   以前这里只写「本地识别中 · · ·」，玩家等了五分钟也不知道在下东西。 */
+function bmModelStateText(){
+  if (BM_PLANT_MODEL.ready) return '本地识别中 · · ·';
+  const pr = BM_PLANT_MODEL.progress;
+  if (pr && pr.total > 0){
+    const pct = Math.min(99, Math.round(pr.got * 100 / pr.total));
+    return '正在下载识别模型 ' + pct + '%';
+  }
+  if (pr && pr.got > 0) return '正在下载识别模型 ' + (pr.got / 1048576).toFixed(1) + 'MB';
+  if (BM_PLANT_MODEL.loading) return '正在加载识别模型 · · ·';
+  return '本地识别中 · · ·';
+}
 /* 生成「识别来源」文案（识别中/已识别/未识别 三态） */
 function bmPlantSrcText(p){
-  if (p.fresh) return '本地识别中 · · ·';
+  if (p.fresh) return bmModelStateText();
   if (p.src === 'pl' && p.cnf > 0) return 'quarrying-plant-id · 置信 ' + p.cnf + '%';
   return '未识别 · 可自行命名';
 }
@@ -6910,6 +7505,20 @@ function refreshPhotoRecognize(p){
   /* 识别完成，撤掉扫描动画 */
   const card = document.querySelector('.photo-card');
   if (card && !p.fresh) card.classList.remove('scanning');
+  /* 20261111：万一玩家在识别完成之前就先制签了，把识别结果补进那张书签
+     （只补空字段，绝不覆盖玩家自己起的名字/改过的季相） */
+  try {
+    const bk = bookOfPhoto(p);
+    if (bk && (!bk.name || !bk.dex)){
+      bk.name = bk.name || p.name || '';
+      bk.latin = bk.latin || p.latin || '';
+      bk.desc = bk.desc || p.desc || '';
+      bk.dex = bk.dex || p.dex || 0;
+      if (p.season) bk.season = p.season;
+      dexMark(bk);
+      try { seasonSave(); } catch(e){}
+    }
+  } catch(e){}
   /* 季节在识别后才确定，重新像素化一次，让配色对上正确季相 */
   if (!p.fresh && p.img){
     try {
@@ -6931,6 +7540,57 @@ function loadImageFromDataUrl(url){
     im.src = url;
   });
 }
+/* ============================================================
+   20261111 相册选图加固（用户报「换很多张照片都提示读不出来」）
+   ------------------------------------------------------------
+   手机网页 / WebView 里读一张相册图，可能踩三种坑：
+     ① blob: URL 被沙箱或隐私策略拦掉 → Image 解码失败；
+     ② 图片本体太大（手机原图 4000×3000），一次性铺满 canvas 会
+        OOM 或返回空，画出来才是黑图/失败；
+     ③ iOS 的 HEIC，Chrome 能读、某些 WebView 读不了。
+   所以这里按 ①blob → ②FileReader dataURL → ③createImageBitmap 逐级退，
+   再把长边压到 2048 以内才交给入库流程 —— 既省内存，也不影响识别
+   （识别本来就只取中心 224×224）。
+   ============================================================ */
+async function loadImageForAlbum(file){
+  let url = null;
+  try {
+    url = URL.createObjectURL(file);
+    return await loadImageFromDataUrl(url);
+  } catch (e0){
+    try {
+      const du = await new Promise(function(res, rej){
+        const fr = new FileReader();
+        fr.onload = function(){ res(String(fr.result || '')); };
+        fr.onerror = function(){ rej(new Error('file-read-fail')); };
+        fr.readAsDataURL(file);
+      });
+      return await loadImageFromDataUrl(du);
+    } catch (e1){
+      if (window.createImageBitmap){
+        try { return await createImageBitmap(file); } catch (e2){}
+      }
+      throw e1;
+    }
+  } finally {
+    if (url){ try { URL.revokeObjectURL(url); } catch (e){} }
+  }
+}
+/* 长边超过 maxSide 就先缩一张，避免手机大图把 canvas 撑爆 */
+function downscaleImage(src, maxSide){
+  const w = src.naturalWidth || src.width || 0;
+  const h = src.naturalHeight || src.height || 0;
+  const m = Math.max(w, h);
+  if (!m || m <= (maxSide || 2048)) return src;
+  const k = (maxSide || 2048) / m;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * k));
+  c.height = Math.max(1, Math.round(h * k));
+  try {
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    return c;
+  } catch (e){ return src; }
+}
 
 async function shoot(){
   if (shooting) return;
@@ -6949,7 +7609,10 @@ async function shoot(){
      直接提示重拍，避免玩家以为「拍出来是黑的」是 bug。 */
   if (!img){
     shooting = false;
-    toast('没拿到画面，再按一次');
+    /* 20261111：区分「相机压根没开」和「开了一帧没抓到」——
+       电脑上没有后摄、或权限被拒时 camLiveOn 一直是 false，
+       以前只 toast 一句「没拿到画面」，看起来就像按钮没反应。 */
+    toast(camLiveOn ? '没拿到画面，再按一次' : '相机没开 · 点左下角「相册」也能选图');
     return;
   }
   await wait(240);
@@ -6957,7 +7620,50 @@ async function shoot(){
   shooting = false;
 }
 
+/* ============================================================
+   亮/暗主题（20261111 用户要求）
+   ------------------------------------------------------------
+   ① 默认亮色：:root 里写了 color-scheme:light，系统的「强制暗色」
+      不会再改写这一页 —— 这是「网页端整页发暗、开不开暗色都该正常」的根因修复。
+   ② 玩家自己可以切：右上角「夜 / 日」，选择记在 localStorage。
+   ③ 没选过的新玩家跟随系统（prefers-color-scheme），暗色党第一次进来就是暗的。
+   ============================================================ */
+const SEASON_THEME_KEY = 'bmSeasonTheme';
+function applySeasonTheme(t){
+  const dark = (t === 'dark');
+  document.body.setAttribute('data-theme', dark ? 'dark' : 'light');
+  const b = $('#tbTheme');
+  if (b){
+    b.textContent = dark ? '日' : '夜';
+    b.title = dark ? '切换到亮色' : '切换到暗色';
+  }
+}
+function initSeasonTheme(){
+  let t = '';
+  try { t = localStorage.getItem(SEASON_THEME_KEY) || ''; } catch (e){}
+  if (t !== 'dark' && t !== 'light'){
+    try { t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
+    catch (e){ t = 'light'; }
+  }
+  applySeasonTheme(t);
+}
+initSeasonTheme();
+if ($('#tbTheme')) $('#tbTheme').addEventListener('click', function(){
+  const dark = document.body.getAttribute('data-theme') === 'dark';
+  const next = dark ? 'light' : 'dark';
+  applySeasonTheme(next);
+  try { localStorage.setItem(SEASON_THEME_KEY, next); } catch (e){}
+});
+
 $('#shutter').addEventListener('click', shoot);
+/* 20261111：提示条点一下 = 重试下载（只在失败态可点，正常进度时点了不做事） */
+if ($('#mdlTip')) $('#mdlTip').addEventListener('click', function(){
+  if (!this.classList.contains('err')) return;
+  this.classList.remove('err');
+  mdlProgWrite({ state: 'down', got: 0, total: 0 });
+  mdlTipRender({ state: 'down', got: 0, total: 0 });
+  try { bmPlantPrefetch({ force: true }); } catch (e){}
+});
 /* 20261108 修复：相机页的「←」和「×」此前直接 showView('vWall') 跳回照片墙，
    跳过 viewStack 层级 —— 从图鉴/书签/星球进来拍照时，点返回应该回到「进来前的页面」，
    而不是硬跳照片墙。统一改走 goUp() 栈式返回（和右滑手势 / 物理返回键同一条路）。 */
@@ -6985,10 +7691,24 @@ if (camAlbumEl && camFileEl){
   camFileEl.addEventListener('change', async () => {
     const f = camFileEl.files && camFileEl.files[0];
     if (!f) return;
+    let im = null;
     try {
-      const im = await loadImageFromDataUrl(URL.createObjectURL(f));
-      addPhotoFromImage(im, '相册');
-    } catch (e){ toast('这张读不出来，换一张试试'); }
+      im = await loadImageForAlbum(f);
+    } catch (e){
+      console.warn('[season] 相册图片读取失败', e);
+      toast('这张照片打不开，换一张试试（JPG / PNG 最稳）');
+      camFileEl.value = '';
+      return;
+    }
+    /* 大图先降采样：手机原图动辄 4000×3000，直接进 canvas 很容易失败 */
+    im = downscaleImage(im, 2048);
+    try {
+      await addPhotoFromImage(im, '相册');
+    } catch (e){
+      /* 图片读到了、但入库那步出错 —— 不能再笼统说「读不出来」 */
+      console.warn('[season] 照片入库失败', e);
+      toast('照片读到了，但存进照片墙时出错了，再试一次');
+    }
     camFileEl.value = '';
   });
 }
@@ -7481,7 +8201,8 @@ if(document.readyState === 'loading'){
    星球：送给角色的书签 → 一颗种子 → 按经纬度种在球面上 → 往上生长
    全部程序化像素绘制，不依赖任何图片。
    ============================================================ */
-/* loveDay  今天的爱意额度账本 {d, player, char} —— 全局，不按株
+/* loveDay  每个角色星球的「全局合计」镜像 {d, player, char} —— 20261110 起不再参与
+            额度判定；真正的账本挂在单株 pl.loveDay 上（按单株算，见 loveQuotaOf）
    careDay  今天的照料额度账本 {d, water, fert} —— 全局，不按株（见 SEASON_RULES.waterPerDay）
    skins    每个角色手里已经拿到的「星球形态」key 数组 {viewId: [key...]}
    skin     每个角色现在正在用的形态 {viewId: key}（空 = 自己那颗默认星球）
@@ -7638,6 +8359,12 @@ function applySeasonGaps(g){
     if (d.type === 'season-back'){
       try { if (typeof goUp === 'function') goUp(); } catch(e){}
     }
+    /* 20261111：宿主把四季层藏起来（关闭四季）→ 真停相机。
+       这里绝不传 park：停靠是给「在四季里从相机页退回照片墙」用的，
+       人都离开四季了还让摄像头亮 30 秒，纯属耗电。 */
+    if (d.type === 'season-hide'){
+      try { if (typeof stopCam === 'function') stopCam(); } catch(e){}
+    }
     // 20261108：主 App 主动扫描（__proactiveScan，前台 15s / 后台 60s）每次给这里发 season-tick，
     // 让「TA 自己把种子种下去」即使四季层没开、玩家不在四季页面，也能按时结算（taSeedTick）。
     // 种下后回发 season-taplant 给主项目，主项目据此弹通知提醒玩家。
@@ -7772,6 +8499,154 @@ setTimeout(function(){ try { seasonFlushPending(); } catch(e){} }, 2500);
    localStorage['bmSeasonSave']，主项目导出时直接读这个键、导入时写回并重载。
    ============================================================ */
 const SEASON_SAVE_KEY = 'bmSeasonSave';
+
+/* ============================================================
+   照片像素仓库（20261110 新增 · 修「所有照片都变成同一张示例图」）
+   ------------------------------------------------------------
+   为什么必须单独开一个库：
+     四季主存档走 localStorage（bmSeasonSave），容量只有 5~10MB；
+     一张手机照片压到长边 1000 之后仍有 200~400KB，几十张就写爆。
+     而且 localStorage 只能存字符串，Image 对象本来就没法序列化 ——
+     这就是旧问题的根因：存档时 img 一律被剔掉（_seasonCleanPhoto），
+     读档时还原成 img:null，srcImgFor() 只好回退到 srcImg（src.png
+     那张示例图），于是「所有照片都变成同一张」。
+
+   做法：
+     · 拍照 / 相册选图入库时，把图压成 dataURL 写进 IndexedDB bmSeasonImg/img
+       （key = 照片 id，即 P.id）；
+     · 主存档只留一个 hasImg:1 标记，不占 localStorage 一个字；
+     · 启动与渲染时异步把图回填成 Image 对象（imgHydrate），回填完重绘
+       照片墙 / 书签集 / 星球的像素画。
+
+   ⚠️ 老档里的照片（没有 hasImg）像素本来就丢了，回填不出来，
+      只能继续显示示例图；这是历史数据损失，不是本次修复没做到。
+   ============================================================ */
+const IMG_DB_NAME = 'bmSeasonImg';
+const IMG_DB_VER = 1;
+const IMG_STORE = 'img';
+const IMG_MAX_SIDE = 1000;      /* 长边上限：168px 书签 / 屏幕大图都够看 */
+const IMG_QUALITY = 0.82;       /* JPEG 质量：体积与观感折中 */
+let _imgDB = null;
+let _imgDBFailed = false;
+
+/* 打开（或复用）图片库 */
+function imgDBOpen(){
+  if (_imgDB) return Promise.resolve(_imgDB);
+  if (_imgDBFailed) return Promise.resolve(null);
+  return new Promise(function(res){
+    let req;
+    try { req = indexedDB.open(IMG_DB_NAME, IMG_DB_VER); }
+    catch (e){ _imgDBFailed = true; res(null); return; }
+    req.onupgradeneeded = function(){
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IMG_STORE)) db.createObjectStore(IMG_STORE);
+    };
+    req.onsuccess = function(){ _imgDB = req.result; res(_imgDB); };
+    req.onerror = function(){ _imgDBFailed = true; res(null); };
+    req.onblocked = function(){ res(null); };
+  });
+}
+/* 写一张图（失败静默：宁可这轮不存，也不许影响拍照主流程） */
+function imgPut(id, dataUrl){
+  if (id == null || !dataUrl) return Promise.resolve(false);
+  return imgDBOpen().then(function(db){
+    if (!db) return false;
+    return new Promise(function(res){
+      try {
+        const tx = db.transaction(IMG_STORE, 'readwrite');
+        tx.objectStore(IMG_STORE).put(dataUrl, 'p' + id);
+        tx.oncomplete = function(){ res(true); };
+        tx.onerror = function(){ res(false); };
+        tx.onabort = function(){ res(false); };
+      } catch (e){ res(false); }
+    });
+  }).catch(function(){ return false; });
+}
+function imgGet(id){
+  if (id == null) return Promise.resolve('');
+  return imgDBOpen().then(function(db){
+    if (!db) return '';
+    return new Promise(function(res){
+      try {
+        const tx = db.transaction(IMG_STORE, 'readonly');
+        const rq = tx.objectStore(IMG_STORE).get('p' + id);
+        rq.onsuccess = function(){ res(rq.result || ''); };
+        rq.onerror = function(){ res(''); };
+      } catch (e){ res(''); }
+    });
+  }).catch(function(){ return ''; });
+}
+function imgDel(id){
+  if (id == null) return Promise.resolve(false);
+  return imgDBOpen().then(function(db){
+    if (!db) return false;
+    return new Promise(function(res){
+      try {
+        const tx = db.transaction(IMG_STORE, 'readwrite');
+        tx.objectStore(IMG_STORE).delete('p' + id);
+        tx.oncomplete = function(){ res(true); };
+        tx.onerror = function(){ res(false); };
+      } catch (e){ res(false); }
+    });
+  }).catch(function(){ return false; });
+}
+
+/* 任意 Image / <video> / canvas → 压缩 dataURL（长边 IMG_MAX_SIDE） */
+function imgToDataUrl(src, maxSide, q){
+  try {
+    const w0 = src.naturalWidth || src.videoWidth || src.width || 0;
+    const h0 = src.naturalHeight || src.videoHeight || src.height || 0;
+    if (!w0 || !h0) return '';
+    const cap = maxSide || IMG_MAX_SIDE;
+    const k = Math.min(1, cap / Math.max(w0, h0));
+    const w = Math.max(1, Math.round(w0 * k));
+    const h = Math.max(1, Math.round(h0 * k));
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const g = cv.getContext('2d');
+    g.drawImage(src, 0, 0, w, h);
+    return cv.toDataURL('image/jpeg', q || IMG_QUALITY);
+  } catch (e){ return ''; }
+}
+
+/* 把「有像素但还没载入」的照片异步补回 Image 对象。
+   done(n) 里的 n = 这次真正补回来的张数（0 也回调，方便调用方决定要不要重绘）。 */
+let _imgHydrating = false;
+function imgHydrate(list, done){
+  const todo = (list || PHOTOS).filter(function(p){
+    return p && p.hasImg && !p.img;
+  });
+  if (!todo.length){ if (done) done(0); return; }
+  _imgHydrating = true;
+  let n = 0, left = todo.length;
+  const fin = function(){
+    left--;
+    if (left > 0) return;
+    _imgHydrating = false;
+    if (done) done(n);
+  };
+  todo.forEach(function(p){
+    imgGet(imgIdOf(p)).then(function(du){
+      if (!du){ fin(); return; }
+      const im = new Image();
+      im.onload = function(){ p.img = im; n++; fin(); };
+      im.onerror = function(){ fin(); };
+      im.src = du;
+    }).catch(function(){ fin(); });
+  });
+}
+/* 整本照片墙 + 书签集补一次（启动 / 进照片墙时用）—— 两边共用同一张图（imgId） */
+function imgHydrateAll(done){
+  imgHydrate(PHOTOS.concat(BOOKS), function(n){
+    if (n > 0){
+      try { renderWall(currentFilter); } catch (e){}
+      try { if (typeof renderBookGrid === 'function') renderBookGrid(); } catch (e){}
+      try { if (typeof drawPlanetFrame === 'function') drawPlanetFrame(); } catch (e){}
+    }
+    if (done) done(n);
+  });
+}
+
 /* ★ 20261109 用户要求「把四季的数据清空再推送」：
    交付前必须清掉开发期/测试期写进 localStorage 的各种假数据
    （角色名对不上的 TA 留言、「收到书签」回话、调试种下的植物、demo 角色 id 等）。
@@ -7831,8 +8706,12 @@ function seasonSerialize(){
     planet.bg = Object.assign({}, PLANET.bg || {});
   } catch(e){}
   return {
-    __season: true, version: '1.0', exportedAt: Date.now(),
+    __season: true, version: '1.1', exportedAt: Date.now(),
+    /* 20261111 四本账：照片 / 书签 / 图鉴收录 / 种子，各存各的 */
     photos: (typeof PHOTOS !== 'undefined' ? PHOTOS : []).map(_seasonCleanPhoto),
+    books: (typeof BOOKS !== 'undefined' ? BOOKS : []).map(_seasonCleanPhoto),
+    dexSeen: (typeof DEX_SEEN !== 'undefined' && DEX_SEEN) ? Object.assign({}, DEX_SEEN) : {},
+    seeds: (typeof SEEDS !== 'undefined' ? SEEDS : []).map(function(s){ return Object.assign({}, s); }),
     planet: planet,
     impFound: (typeof IMP_FOUND !== 'undefined' && IMP_FOUND) ? Array.from(IMP_FOUND) : [],
     mutSeen: (typeof MUT_SEEN !== 'undefined' && MUT_SEEN) ? Object.assign({}, MUT_SEEN) : {},
@@ -7858,24 +8737,119 @@ function seasonLoad(){
   let d = null;
   try { d = JSON.parse(raw); } catch(e){ return false; }
   if (!d || !d.__season) return false;
+  /* 20261111 拆库保险：第一次遇到老存档（还没有 books 字段）时，
+     把原始 JSON 原样另存一份到 bmSeasonSave_pre11（只写一次，之后不再覆盖）。
+     拆库后就回写新格式了，旧包降级读不到书签；有了这份原档，随时能捞回来。 */
+  try {
+    if (!Array.isArray(d.books) && !localStorage.getItem(SEASON_SAVE_KEY + '_pre11')){
+      localStorage.setItem(SEASON_SAVE_KEY + '_pre11', raw);
+    }
+  } catch(e){}
   try { _seasonApply(d); } catch(e){ return false; }
+  /* 老存档刚拆成四本账 → 立刻回写一次新格式（幂等；写失败也不影响这次运行） */
+  if (_splitMigrated){ _splitMigrated = false; try { seasonSave(); } catch(e){} }
   return true;
 }
-function _seasonApply(d){
-  if (Array.isArray(d.photos) && d.photos.length){
-    /* PHOTOS 现在是空数组（20261108 已清空 demo），玩家照片全部从存档恢复；
-       按 id 去重，避免重复导入。img 字段是内存对象，恢复时置 null（像素化走 srcImg 或重新拍）。 */
-    const existIds = new Set(PHOTOS.map(x => x.id));
-    d.photos.forEach(p => {
-      if (p && p.id != null && !existIds.has(p.id)){
-        PHOTOS.push(Object.assign({}, p, { img: null }));
-      }
-    });
-    /* 恢复已发号：seqNo 取存档里最大 no，避免制签编号冲突 */
-    let mx = seqNo;
-    PHOTOS.forEach(p => { if (p.no && p.no > mx) mx = p.no; });
-    seqNo = mx;
+/* ---- 20261111 老存档拆分：把「一条记录四合一」的旧数据拆进四本账 ----
+   ★ 只加不删：迁移后旧字段不再被读取，但存档里 d.photos 原样留着，
+     万一新版有问题，回退旧包还能读。 */
+function _bookFromOldPhoto(op){
+  const bk = {
+    id: op.id, photoId: (op.kind === 'planet' || op.src === 'planet') ? 0 : op.id,
+    no: op.no || 0, made: true,
+    name: op.name || '', latin: op.latin || '', desc: op.desc || '',
+    season: op.season || 'spring', dex: op.dex || 0, rare: op.rare || 2,
+    crop: op.crop ? Object.assign({}, op.crop) : { r: .88, cx: .5, cy: .5 },
+    src: op.src || '', date: op.date || '', place: op.place || '路边',
+    kind: op.kind || '', imprintKey: op.imprintKey || '',
+    title: op.title || '', ownerId: op.ownerId || '', owner: op.owner || '',
+    hasImg: op.hasImg ? 1 : 0, imgId: op.id, img: null,
+    madeAt: op.madeAt || 0,
+    giftLog: Array.isArray(op.giftLog) ? op.giftLog.slice() : [],
+    giftedTo: op.giftedTo || '', giftedToId: op.giftedToId || '', giftedAt: op.giftedAt || '',
+    myMsg: op.myMsg || '', giftMsg: op.giftMsg || '',
+    taPlanAt: op.taPlanAt || 0, taPlanted: op.taPlanted || 0,
+    taPlanBy: Object.assign({}, op.taPlanBy || {}),
+    taPlantedBy: Object.assign({}, op.taPlantedBy || {}),
+    noteText: op.noteText || '', noteById: op.noteById || ''
+  };
+  if (!bk.giftLog.length && (bk.giftedTo || bk.giftedToId)){
+    bk.giftLog = [{ id: bk.giftedToId || '', name: bk.giftedTo || '', at: bk.giftedAt || '', msg: bk.myMsg || '' }];
   }
+  return bk;
+}
+function _photoFromOldPhoto(op){
+  return {
+    id: op.id, crop: op.crop ? Object.assign({}, op.crop) : { r: .88, cx: .5, cy: .5 },
+    dex: op.dex || 0, season: op.season || 'spring', name: op.name || '',
+    latin: op.latin || '', cnf: op.cnf || 0, src: op.src || 'none',
+    date: op.date || '', desc: op.desc || '', place: op.place || '路边',
+    rare: op.rare || 2, fresh: !!op.fresh,
+    hasImg: op.hasImg ? 1 : 0, imgId: op.id, img: null,
+    demo: op.demo ? 1 : 0
+  };
+}
+function seasonSplitOld(d){
+  const oldPhotos = Array.isArray(d.photos) ? d.photos : [];
+  const photos = [], books = [], dexSeen = {}, seeds = [];
+  /* 按书签号从小到大走，图鉴「首次收录时间」才准 */
+  const sorted = oldPhotos.slice().sort(function(a, b){ return (a && a.no || 0) - (b && b.no || 0); });
+  sorted.forEach(function(op){
+    if (!op || typeof op !== 'object') return;
+    const isPlanet = (op.kind === 'planet' || op.src === 'planet');
+    if (op.made){
+      const bk = _bookFromOldPhoto(op);
+      books.push(bk);
+      if (bk.dex && !dexSeen[bk.dex]) dexSeen[bk.dex] = { at: bk.madeAt || Date.now(), s: bk.season || '' };
+      /* 送出去的每一份 → 一颗种子（多角色各一颗） */
+      bk.giftLog.forEach(function(g){
+        const oid = g.id || '';
+        if (!oid) return;
+        if (seeds.some(function(s){ return s.ownerId === oid && s.fromBook === bk.no; })) return;
+        const rec = {
+          sid: 'sd' + bk.id, ownerId: oid, ownerName: g.name || '',
+          name: bk.name, dex: bk.dex || 0, season: bk.season || 'spring',
+          latin: bk.latin || '', desc: bk.desc || '', r: bk.rare || 2,
+          imgId: bk.imgId, crop: bk.crop ? Object.assign({}, bk.crop) : null,
+          fromBook: bk.no, myMsg: g.msg || bk.myMsg || '', takenAt: bk.madeAt || Date.now(),
+          taAt: (bk.taPlanBy && bk.taPlanBy[oid]) || (bk.giftLog.length === 1 ? bk.taPlanAt : 0) || 0
+        };
+        if (isPlanet) rec.planetKey = bk.imprintKey || '';
+        seeds.push(rec);
+      });
+    }
+    /* 照片墙：星球票不是照片；老档里 wallHidden=1 的（以前软删的）这次直接不进来，
+       等于把历史垃圾真清掉了 —— 图还留着给书签用（imgId 相同）。 */
+    if (!isPlanet && !op.wallHidden) photos.push(_photoFromOldPhoto(op));
+  });
+  return { photos: photos, books: books, dexSeen: dexSeen, seeds: seeds };
+}
+function _seasonApply(d){
+  if (Array.isArray(d.books)){
+    /* ---- 新模型：四本账各读各的 ---- */
+    const existIds = new Set(PHOTOS.map(x => x.id));
+    (Array.isArray(d.photos) ? d.photos : []).forEach(function(p){
+      if (p && p.id != null && !existIds.has(p.id)) PHOTOS.push(Object.assign({}, p, { img: null }));
+    });
+    BOOKS = d.books.filter(function(b){ return b && b.id != null; }).map(function(b){ return Object.assign({}, b, { img: null }); });
+    DEX_SEEN = (d.dexSeen && typeof d.dexSeen === 'object') ? Object.assign({}, d.dexSeen) : {};
+    SEEDS = (Array.isArray(d.seeds) ? d.seeds : []).map(function(s){ return Object.assign({}, s); });
+    /* 兜底：图鉴账缺了就从书签补（老存档/半截存档都能自愈） */
+    BOOKS.forEach(function(b){ if (b.dex && !DEX_SEEN[b.dex]) DEX_SEEN[b.dex] = { at: b.madeAt || Date.now(), s: b.season || '' }; });
+  } else {
+    /* ---- 老存档：拆分迁移 ---- */
+    const sp = seasonSplitOld(d);
+    PHOTOS.length = 0;
+    sp.photos.forEach(function(p){ PHOTOS.push(p); });
+    BOOKS = sp.books;
+    DEX_SEEN = sp.dexSeen;
+    SEEDS = sp.seeds;
+    _splitMigrated = true;      /* 读档完成后 seasonLoad 会立刻回写一次新格式 */
+  }
+  /* 恢复已发号：seqNo 取所有书签里最大的 no，避免制签编号冲突 */
+  let mx = seqNo;
+  BOOKS.forEach(function(b){ if (b.no && b.no > mx) mx = b.no; });
+  seqNo = mx;
   if (d.planet && typeof d.planet === 'object'){
     const gp = d.planet;
     if (Array.isArray(gp.plants)) PLANET.plants = gp.plants
@@ -8181,7 +9155,9 @@ const BOOK_NOTE_CHANCE = 0.5;
 function bookNoteOpen(ch, p){
   if (!p || !ch) return false;
   if (p.noteById && p.noteById === ch.id) return false;      /* 已留过 → 封口 */
-  if (p.giftedToId && p.giftedToId !== ch.id) return false;   /* 送给了别人 */
+  /* 20261110：多归属后，只要「这张书签也送给了 TA」就能留言；
+     没送给 TA（送给了别人）则不能。 */
+  if (giftLogOf(p).length && !giftHasChar(p, ch.id, ch.name)) return false;
   return true;
 }
 
@@ -8231,7 +9207,7 @@ function bookNoteTry(ch, p, force){
    ★ 这就是「过几天又翻到这张书签」的实现——不新建定时器，借角色本来活动的时间点。 */
 function bookNoteTick(ch, id){
   try {
-    const pool = PHOTOS.filter(function(x){
+    const pool = BOOKS.filter(function(x){
       return x && x.giftedToId === id && !x.noteById;
     });
     if (!pool.length) return;
@@ -8635,7 +9611,8 @@ const CARE_LINES = PRESET_CARE;
      loveDays      浇一次爱意＝提前几天（爱意是最强的加速）
      waterDays     浇一次水＝提前几天
      careDays      角色照料一次＝提前几天
-     lovePerDay    爱意每个「边」每天几次，作用于整轮（不再按单株算）
+     lovePerDay    爱意每个「边」每天几次 —— **按单株算**（每株各自 8 次/边），
+                   20261110 用户定案改回按株（见 loveQuotaOf 注释）
      loveLimit     这一天之内浇过多少次之后，才开始烧苗 / 变异判定
      climateSpread 气候与季相只做 ±25% 微调 —— 不加这个上限的话，
                    寒带逆季会长成热带顺季的三倍慢，玩家等不起
@@ -8722,7 +9699,8 @@ const SEASON_RULES = {
      等于「正常照料的上限」，玩家什么都没做错就被判风险。
      新规则：**当天**浇到第 7 次起，每浇一次掷一次骰（78% 烧苗 / 22% 变异）；
      跨零点半秒过，第二天重新数 —— 语义回到「溺爱才危险」，而且能恢复。
-     额度跟着提：每边 8 次（玩家 8 + 角色 8 = 一天最多 16 次），
+     额度跟着提：**每一株**每边 8 次（玩家 8 + 角色 8 = 这一株一天最多 16 次；
+     20261110 用户定案改成按单株，不再整颗星球共用），
      否则每天只有 2 次，「超过 6 次」在物理上不可能发生，规则等于死的。
      为什么是 8 不是 6：额度 = 阈值时会卡在「第 6 次」进不去判定，
      必须多留出 2 次的超阈空间（第 7、8 次各掷一次骰）。
@@ -8976,7 +9954,10 @@ function daysSince(ts){
 }
 function booksOfChar(id){
   try {
-    return PHOTOS.filter(function(x){ return x && x.giftedToId === id; }).map(function(x){
+    return BOOKS.filter(function(x){
+      /* 多归属：giftLog 里记着这个角色就算（一张书签可送多人） */
+      return giftLogOf(x).some(function(g){ return g.id === id; });
+    }).map(function(x){
       return {
         no: x.no, name: x.name, kind: x.kind || 'plant',
         imprintKey: x.imprintKey || '', at: x.giftedAt || '',
@@ -11637,23 +12618,24 @@ function pickSpot(name){
 function addPlant(p, ch){
   if (PLANET.plants.length >= PL_MAX) return null;
   const spot = pickSpot(p.name);
-  const ph = PHOTOS.find(x => x.no === p.no);
-  const d = (ph && ph.dex) ? DEX[ph.dex - 1] : null;
+  /* 20261111 拆分后：种子/书签自己就带 dexNo，不必再去照片墙里反查 */
+  const dexNo = (p.dex != null ? p.dex : (p.dexNo || 0));
+  const d = dexNo ? DEX[dexNo - 1] : null;
   const cl = climateOf(spot.lat);
   const fit = seasonFit(p.season, bmSeasonOfDate());
   const dur = Math.round(26000 / (cl.v * fit));
   const pl = {
     id: 'pl' + Date.now() + Math.round(Math.random()*999),
-    no: p.no, name: p.name, season: p.season,
+    no: (p.no != null ? p.no : (p.fromBook || 0)), name: p.name, season: p.season,
     /* 稀有度定格（同上）：角色自己种的这几株也要带，否则平均 r 会被它们拉平 */
-    r: (d && d.r) ? d.r : rarityOfName(p.name) || 2,
+    r: (p.r != null) ? p.r : ((d && d.r) ? d.r : rarityOfName(p.name) || 2),
     /* 种下时把「气候速度」和「当季适配度」定格下来，供 totalDaysOf 用。
        不存的话，同一株的总天数会随「当前是哪一季」变，玩家隔季回来
        会看到进度倒退 —— 那是最让人愤怒的一种 bug。 */
     clV: cl.v, fit: fit,
     latin: d ? d.l : (p.latin || ''),
     desc: (d && d.d) || p.desc || '',
-    dexNo: ph && ph.dex ? ph.dex : 0,
+    dexNo: dexNo,
     form: formOf(p.name),
     lat: spot.lat, lon: spot.lon, nat: nativeLat(p.name),
     climate: cl.k, cnote: cl.note, ccolor: cl.c,
@@ -12016,21 +12998,38 @@ function stopPlanet(){
      按株记的话九株一天能浇 27 次，等于没限。
    接主项目：这张账本要跟着星球进 kv（season_planet.careDay），
    否则换壳 / 清缓存就能把次数刷回来。 */
-function careQuotaOf(){
+/* ============================================================
+   照料账本（20261110 改为「每株各一份」，用户定案）
+   ------------------------------------------------------------
+   旧规则：账本记在整颗星球上（PLANET.careDay），一株 3 次等于九株共用 3 次。
+           于是「删掉老株、重新种一株」当天就没水可浇了 —— 因为额度是星球的，
+           不是这株的。用户原话：「每株植物不都应该可以浇水3次和施肥吗？」
+   新规则：
+     · 单株面板（点某株 → 浇水/施肥）按 **这株自己** 的 pl.careDay 记，
+       每株每天 3 次浇水 / 2 次施肥，互不占用；
+     · 星球页那颗「浇一次水」是一次浇满全部活株，仍按整颗星球记
+       （否则点一下等于九株各扣一次，反而更乱），额度沿用 PLANET.careDay。
+   ⇒ 两条路各记各的，互不干扰；0 点按日期字符串自动翻页。
+   ============================================================ */
+function careQuotaOf(pl){
   const d = todayStr();
+  if (pl){
+    if (!pl.careDay || pl.careDay.d !== d) pl.careDay = { d: d, water: 0, fert: 0 };
+    return pl.careDay;
+  }
   if (!PLANET.careDay || PLANET.careDay.d !== d) PLANET.careDay = { d: d, water: 0, fert: 0 };
   return PLANET.careDay;
 }
 function careCapOf(kind){
   return (kind === '施肥') ? (SEASON_RULES.fertPerDay || 0) : (SEASON_RULES.waterPerDay || 0);
 }
-function careLeftOf(kind){
-  const q = careQuotaOf();
+function careLeftOf(kind, pl){
+  const q = careQuotaOf(pl);
   const used = (kind === '施肥') ? q.fert : q.water;
   return Math.max(0, careCapOf(kind) - used);
 }
-function careUse(kind){
-  const q = careQuotaOf();
+function careUse(kind, pl){
+  const q = careQuotaOf(pl);
   if (kind === '施肥') q.fert++; else q.water++;
 }
 /* 星球页的「浇一次水」和植株面板里的「浇水 / 施肥」共用一个额度，
@@ -12047,13 +13046,18 @@ function updateCareBtns(){
       : 'WATER · 这一轮没有能浇的株了') + '</small>';
   }
   const sw = $('#plsWater'), sf = $('#plsFeed');
+  /* 20261110：这两个按钮属于「被点开的那一株」→ 必须按这株自己的额度显示，
+     否则会出现「按钮写还能 3 次、点了却提示浇满了」（两边读的不是同一本账）。 */
+  const _sp = (typeof sheetPlant !== 'undefined') ? sheetPlant : null;
+  const swLeft = _sp ? careLeftOf('浇水', _sp) : wLeft;
+  const sfLeft = _sp ? careLeftOf('施肥', _sp) : fLeft;
   if (sw){
-    if (wLeft <= 0) sw.setAttribute('disabled', ''); else sw.removeAttribute('disabled');
-    sw.innerHTML = '浇 水<small>' + (wLeft <= 0 ? '今天浇满了' : '还能 ' + wLeft + ' 次') + '</small>';
+    if (swLeft <= 0) sw.setAttribute('disabled', ''); else sw.removeAttribute('disabled');
+    sw.innerHTML = '浇 水<small>' + (swLeft <= 0 ? '这株今天浇满了' : '还能 ' + swLeft + ' 次') + '</small>';
   }
   if (sf){
-    if (fLeft <= 0) sf.setAttribute('disabled', ''); else sf.removeAttribute('disabled');
-    sf.innerHTML = '施 肥<small>' + (fLeft <= 0 ? '今天施满了' : ('还有 ' + fLeft + ' 次 · 多施会肥伤')) + '</small>';
+    if (sfLeft <= 0) sf.setAttribute('disabled', ''); else sf.removeAttribute('disabled');
+    sf.innerHTML = '施 肥<small>' + (sfLeft <= 0 ? '这株今天施满了' : ('还有 ' + sfLeft + ' 次 · 多施会肥伤')) + '</small>';
   }
 }
 function waterPlanet(){
@@ -12129,16 +13133,18 @@ function skinKeyNow(){ return PLANET.skin[PLANET.viewId] || ''; }
 
 /* 补票：读档时把「以前已经送给角色的星球票」补进形态清单 ——
    不然这一版上线之后，老玩家手里明明有那张票，按钮还是不出现。
-   只跑一次（skinBackfilled），别每次渲染都扫一遍 PHOTOS。 */
+    只跑一次（skinBackfilled），别每次渲染都扫一遍书签。 */
 let skinBackfilled = false;
 function backfillPlanetSkins(){
   if (skinBackfilled) return;
   skinBackfilled = true;
-  (typeof PHOTOS !== 'undefined' ? PHOTOS : []).forEach(function(p){
-    if (!p || !p.made) return;
+  (typeof BOOKS !== 'undefined' ? BOOKS : []).forEach(function(p){
+    if (!p) return;
     if (!(p.kind === 'planet' || p.src === 'planet')) return;
-    if (!p.giftedToId || !p.imprintKey) return;
-    addPlanetSkin(p.giftedToId, p.imprintKey);
+    if (!p.imprintKey) return;
+    /* 多归属：把这张星球票送过的每个角色都补一遍形态 */
+    giftLogOf(p).forEach(function(g){ if (g.id) addPlanetSkin(g.id, p.imprintKey); });
+    if (p.giftedToId) addPlanetSkin(p.giftedToId, p.imprintKey);
   });
 }
 
@@ -12264,8 +13270,9 @@ function closeSkinSheet(){
 let giftTarget = null, giftPick = null;
 function openGiftSheet(p){
   if (!p || !p.made) return;
-  if (p.giftedTo){ toast('已经送过 ' + p.giftedTo + ' 了'); return; }
-  /* 20261109：没有真实角色就送不了（演示角色已删）—— 明确提示，不静默空列表 */
+  /* 20261110 用户定案：一张书签可以送给多个角色（各自得一颗种子）。
+     所以这里不再因为「已经送过」就整张拦住；已经给过的角色在列表里打标，
+     点它只会提示，不会重复产种（去重逻辑在 doGift）。 */
   if (!CHARS.length){ toast('还没有角色 · 先去新建一个角色'); return; }
   /* 送书签 = 交一颗种子，不再占星球位置（20261108 改）——
      种子先进种子库，等玩家替 TA 种、或 TA 自己种。
@@ -12275,13 +13282,15 @@ function openGiftSheet(p){
   box.innerHTML = '';
   CHARS.forEach(ch => {
     const row = document.createElement('div');
-    row.className = 'gf-i';
+    const already = giftHasChar(p, ch.id, ch.name);
+    row.className = 'gf-i' + (already ? ' sent' : '');
     const av = document.createElement('canvas');
     av.className = 'gf-av'; av.width = 22; av.height = 22;
     drawCharAvatar(av.getContext('2d'), ch);
     const t = document.createElement('div');
     t.className = 'gf-t';
-    t.innerHTML = '<div class="gf-n">' + ch.name + '</div><div class="gf-s">' + ch.tag + '</div>';
+    t.innerHTML = '<div class="gf-n">' + ch.name + '</div><div class="gf-s">' +
+      (already ? '已经给过 TA 了' : ch.tag) + '</div>';
     row.appendChild(av); row.appendChild(t);
     row.addEventListener('click', () => pickGiftChar(ch, row));
     box.appendChild(row);
@@ -12294,7 +13303,9 @@ function openGiftSheet(p){
   if (nameI) nameI.value = p.title || '';
   const send = $('#giftSend');
   if (send){ send.classList.add('off'); send.textContent = '选 一 个 人'; }
-  $('#giftSub').textContent = '把「' + p.name + '」的种子交给谁？';
+  const sentN = giftLogOf(p).length;
+  $('#giftSub').textContent = '把「' + p.name + '」的种子交给谁？' +
+    (sentN ? '（已送给 ' + sentN + ' 人，还能继续送）' : '');
   $('#giftSheet').classList.add('on');
   $('#phone').classList.add('sheeting');
 }
@@ -12321,6 +13332,13 @@ function drawCharAvatar(g, ch){
   g.fillStyle = '#0e131c'; g.fillRect(6, 12, 10, 1);
 }
 function doGift(p, ch){
+  /* 20261110：同一个角色只产一颗种子 —— 重复点它不报错、也不重复回话 */
+  if (giftHasChar(p, ch.id, ch.name)){
+    closeGiftSheet();
+    toast('已经给过 ' + ch.name + ' 了 · TA 手里那颗种子还在',
+          '同一张书签可以送给别的角色，送过的不会重复产种');
+    return;
+  }
   const ta = $('#giftTa');
   const myMsg = ta ? ta.value.trim() : '';        /* 玩家写给 TA 的那句寄语 */
   /* 命名：送角色弹窗里顺手起的名字，非空且不同于原标题就应用 */
@@ -12330,6 +13348,16 @@ function doGift(p, ch){
     p.title = newTitle;
     try { saveTitles(); } catch(e){}
   }
+  /* 20261110：多归属写入 —— giftLog 记「所有收过这张书签的角色」，
+     每个角色在自己的种子库里各得一颗（seedPool 按 giftLogOf 判定）。
+     下面 giftedTo/giftedToId 仍写最近一次，只为兼容旧读法与旧存档。 */
+  try {
+    const _log = giftLogOf(p).slice();
+    if (!_log.some(function(g){ return (g.id && g.id === ch.id) || (!g.id && g.name === ch.name); })){
+      _log.push({ id: ch.id, name: ch.name, at: todayStr(), msg: myMsg });
+    }
+    p.giftLog = _log;
+  } catch (e) {}
   p.giftedTo = ch.name;
   p.giftedToId = ch.id;
   p.giftedAt = todayStr();
@@ -12356,6 +13384,8 @@ function doGift(p, ch){
     /* TA 回赠这颗星种的同时，玩家手里就多了一种「星球形态」——
        星球页那颗「换星球形态」按钮靠这个清单才有得选（见 planetSkinsOf）。 */
     const gotSkin = addPlanetSkin(ch.id, p.imprintKey);
+    /* 20261111：星种进独立种子账（删书签也收不回去） */
+    try { seedGive(p, ch, myMsg, 0); } catch(e){}
     closeGiftSheet();
     if (curView === 'vTicket' && curTicket === p) openTicket(p);
     renderBookPage();
@@ -12381,6 +13411,19 @@ function doGift(p, ch){
   try { giftReply(ch, p, myMsg); } catch(e){}
   p.taPlanted = 0;
   p.taPlanAt = Date.now() + taSeedWaitMs(ch);
+  /* 20261110：一张书签能送多个角色，而「TA 自己动手种」是每个角色各自的事 ——
+     单值 taPlanted/taPlanAt 会让第二个角色永远轮不到（第一个种完就把标记占了）。
+     这里按角色各记一份：taPlanBy[charId] = 该角色计划种下的时间点，
+     taPlantedBy[charId] = 1 表示这个角色已经自己种过了。
+     旧的 taPlanted / taPlanAt 继续写（= 最近一次），只为兼容老存档。 */
+  try {
+    p.taPlanBy = p.taPlanBy || {};
+    p.taPlanBy[ch.id] = p.taPlanAt;
+    p.taPlantedBy = p.taPlantedBy || {};
+    delete p.taPlantedBy[ch.id];
+  } catch (e) {}
+  /* 20261111：种子落进独立账 SEEDS —— 之后删书签/删照片都不会把它收回去 */
+  try { seedGive(p, ch, myMsg, p.taPlanAt); } catch(e){}
   closeGiftSheet();
   if (curView === 'vTicket' && curTicket === p) openTicket(p);
   renderBookPage();
@@ -12421,20 +13464,23 @@ function taSeedTick(){
   const ch = CHARS.find(c => c.id === PLANET.ownerId);
   if (!ch) return;
   let changed = false;
-  for (let i = 0; i < PHOTOS.length; i++){
-    const p = PHOTOS[i];
-    if (!p || !p.made || p.taPlanted || !p.taPlanAt) continue;
-    if (p.giftedTo !== PLANET.owner) continue;
-    if (p.kind === 'planet' || p.src === 'planet') continue;   /* 星种不替玩家种，留着给玩家用 */
-    if (now < p.taPlanAt) continue;
-    if (PLANET.plants.length >= PL_MAX) return;                 /* 星球满了就排队等 */
-    const pl = addPlant(p, ch);
+  /* 20261111 拆分后：TA 要种的是「种子账里的那颗」，不再遍历照片/书签 */
+  for (let i = 0; i < SEEDS.length; i++){
+    const s = SEEDS[i];
+    if (!s || s.ownerId !== PLANET.ownerId) continue;
+    if (s.planetKey) continue;                        /* 星种不替玩家种，留着给玩家用 */
+    if (!s.taAt) continue;
+    if (now < s.taAt) continue;
+    /* 这颗种子已经在星球上了（玩家先种了 / TA 前一轮种过）→ 不重复种 */
+    if (PLANET.plants.some(pl => pl.fromSeed === s.sid)) continue;
+    if (PLANET.plants.length >= PL_MAX) return;       /* 星球满了就排队等 */
+    const pl = addPlant(s, ch);
     if (!pl) return;
-    p.taPlanted = 1;
+    s.plantedAt = Date.now();
     changed = true;
     /* 落到消息流里 —— 不是弹一个「提示」就完了，玩家应该在自己的消息里看到这件事 */
-    try { nxPush(ch.id, 'plant', nxTaPlantText(ch, p), { no: p.no }); } catch(e){}
-    toast(ch.name + ' 自己把「' + p.name + '」种下了 · 现在在 ' + (pl.climate || '星球上'));
+    try { nxPush(ch.id, 'plant', nxTaPlantText(ch, s), { no: s.fromBook || 0 }); } catch(e){}
+    toast(ch.name + ' 自己把「' + s.name + '」种下了 · 现在在 ' + (pl.climate || '星球上'));
   }
   if (changed){
     renderPlanetList();
@@ -12647,21 +13693,25 @@ PLANET.invites = [];
 /* ============================================================
    爱意 · 每日次数 / 烧苗 / 变异（核心规则，接主项目直接搬）
    ------------------------------------------------------------
-   ★ 20261107 改：额度从「每株」提到「整颗星球」，作用范围放到整轮 ★
-   为什么不用「每株各 2 次」：9 株一天 18 次点击、一年 6500 次，那是
-   流水线不是陪伴；而且每株每天 2 次会在第 3 天就撞到烧苗判定，
-   等于系统逼着最勤快的玩家把苗浇死 —— 惩罚勤奋。
-   20261108 再改：阈值改成「当天超过 6 次」（不再是「一轮累计 10 次」）。
-   旧规则 5~7 天 × 2 次 = 8~14 次，第 5 天必定踩线，等于惩罚正常照料；
-   新规则当天数、跨零点清零，浇到第 7 次才进风险区，第二天就能恢复。
+   ★ 20261110 三改（用户定案）：额度回到「按单株」，作用范围也只到这一株 ★
+   用户原话：「爱意就是要按株来做，按单株来做。」
+   ⇒ 20261107 那次「提到整颗星球」作废：每株各自 8 次/边/天，
+     一次爱意只加速点的那一株，烧苗/变异也只判这一株。
+   ⇒ 好处：删株重种不再继承旧额度；也不会「浇一株、九株全加速」。
+   ★ 20261107 旧记录（已作废）：额度曾提到「整颗星球」，作用范围放到整轮 ★
+   为什么当初不用「每株各 2 次」：9 株一天 18 次点击、一年 6500 次，那是
+   流水线不是陪伴；而且每株每天 2 次会在第 3 天就撞到烧苗判定。
+   20261108 保留有效的改动：阈值改成「当天超过 6 次」（不再是「一轮累计 10 次」）。
 
-   ① 每天限次：**全局每边 8 次**，玩家 8 份、角色 8 份，一天最多 16 次；
+   ① 每天限次：**按单株，每边 8 次**（20261110 用户定案），
+      每一株各自有玩家 8 份、角色 8 份，一天最多 16 次；
       其中前 6 次是加速，第 7、8 次只掷骰不加速。
         玩家自己点「浇灌爱意」＝玩家那份；角色来邀请、一起浇＝角色那份。
-        额度记在 PLANET.loveDay，换天按日期字符串自动重置（跨零点半秒过）。
-   ② 一次爱意作用于**整轮还在长的株**（每株各提前 loveDays 天），
-      不是只给点的那一株 —— 否则九株进度参差，凝星永远被最慢那株卡住。
-   ③ 当天累计次数记在 PLANET.loveDay.n（跨零点自动清零），超过
+        额度记在 pl.loveDay，换天按日期字符串自动重置（跨零点半秒过）。
+   ② 一次爱意**只作用于被点的那一株**（这一株提前 loveDays 天）。
+      ★ 20261110 用户改口：原先是「整轮加速，九株各 +0.5 天」，
+        用户明确要求「爱意就是要按株来做，按单株来做」。
+   ③ 当天累计次数记在 pl.loveDay.n（跨零点自动清零），超过
       SEASON_RULES.loveLimit（6）以后，每浇一次掷一次骰：
         78% 烧苗 —— 那一株停止生长、花停在苞里；可以铲掉重种，不是死局
         22% 变异 —— 换一套特殊配色 + 特殊形态，第一次还会弹贺卡
@@ -12669,13 +13719,29 @@ PLANET.invites = [];
    ④ 烧掉的株不算「开花」，会把 sea_* / four_* 这类 9/9 门槛的星球
       拖到下一轮；但 origin 与 base_* 共 73 颗只看排列组合，不看开没开。
    ============================================================ */
-function loveQuotaOf(_pl){
-  /* 额度不再挂单株：一整天里整颗星球玩家 6 次 + 角色 6 次。
-     n = 当天两个边合计浇过几次（烧苗/变异的判定依据，跨天清零）。 */
+function loveQuotaOf(pl){
+  /* ★ 20261110 用户定案：爱意改成「按单株」★
+     用户原话：「爱意就是要按株来做，按单株来做。」
+     ⇒ 每株各自一份账本：{ d, player, char, n }
+       · player / char 各 8 次/天（SEASON_RULES.lovePerDay），互不占用；
+       · n = 这一株当天两个边合计浇过几次（烧苗/变异判定依据，跨天清零）；
+       · 一次爱意**只加速点的那一株**，不再九株一起走；
+       · 删株重种 = 新的一株，额度从 0 开始（旧版挂 PLANET 上会「继承」旧额度）。
+     ⇒ 账本存在 pl.loveDay 上，跟着 plants 一起序列化，换天按日期字符串翻页。
+     ⇒ PLANET.loveDay 保留为「全局合计镜像」，只为旧存档 / 别处读取兼容，
+       不再参与额度判定。 */
   const d = todayStr();
+  if (pl){
+    if (!pl.loveDay || pl.loveDay.d !== d) pl.loveDay = { d: d, player: 0, char: 0, n: 0 };
+    if (typeof pl.loveDay.n !== 'number') pl.loveDay.n = 0;
+    if (typeof pl.loveDay.player !== 'number') pl.loveDay.player = 0;
+    if (typeof pl.loveDay.char !== 'number') pl.loveDay.char = 0;
+    PLANET.roundLove = pl.loveDay.n;        /* 旧字段同步（当前这株当天累计） */
+    return pl.loveDay;
+  }
+  /* 无参调用：退回全局镜像（旧路径兜底，不做额度判定用） */
   if (!PLANET.loveDay || PLANET.loveDay.d !== d) PLANET.loveDay = { d: d, player: 0, char: 0, n: 0 };
   if (typeof PLANET.loveDay.n !== 'number') PLANET.loveDay.n = 0;
-  PLANET.roundLove = PLANET.loveDay.n;      /* 旧字段同步，兼容别处读取 */
   return PLANET.loveDay;
 }
 
@@ -12690,18 +13756,14 @@ function applyLove(pl, side){
   q[who]++;
   q.n = (q.n || 0) + 1;
   pl.loveCount = (pl.loveCount || 0) + 1;
-  PLANET.roundLove = q.n;           /* 旧字段同步（当天累计，不是一轮累计） */
+  PLANET.roundLove = q.n;           /* 旧字段同步（这一株当天累计） */
   const by = (side === 'char') ? (pl.by || 'TA') : '你';
 
-  /* 前 N 次：整轮加速 —— 把这一轮所有还在长的株各提前 loveDays 天。
-     爱意是整轮的事，不是某一株的事：九株一起往前走，凝星才不会被
-     最慢那一株拖着。 */
+  /* 前 N 次：只给**被点的这一株**加速（20261110 用户定案：爱意按单株）。
+     旧版是 PLANET.plants.forEach 九株各 +0.5 天，等于一次爱意推整轮。 */
   if (q.n <= SEASON_RULES.loveLimit){
-    PLANET.plants.forEach(function(x){
-      if (x.burned) return;
-      x.bonusDays = (x.bonusDays || 0) + SEASON_RULES.loveDays;
-      x.grow = growOf(x);
-    });
+    pl.bonusDays = (pl.bonusDays || 0) + SEASON_RULES.loveDays;
+    pl.grow = growOf(pl);
     pl.acts.push({ t: Date.now(), k: '爱意', by: by });
     return { ok: true, type: 'grow' };
   }
@@ -12710,6 +13772,7 @@ function applyLove(pl, side){
   if (Math.random() < SEASON_RULES.mutantRate){
     const first = !pl.mutantAt;
     if (first) pl.mutantAt = Date.now();
+    mutDexMark(pl);            /* 20261110d：这一种在星球上出过异变 → 图鉴「变异」分类要能筛到它 */
     pl.acts.push({ t: Date.now(), k: '异变', by: by });
     pl.bonusDays = (pl.bonusDays || 0) + SEASON_RULES.loveDays * 0.5;
     pl.grow = growOf(pl);
@@ -12763,6 +13826,42 @@ let MUT_SEEN = {};
 try { MUT_SEEN = JSON.parse(localStorage.getItem(MUT_SEEN_KEY) || '{}') || {}; } catch(e){ MUT_SEEN = {}; }
 function mutSeenSave(){ try { localStorage.setItem(MUT_SEEN_KEY, JSON.stringify(MUT_SEEN)); } catch(e){} try { seasonSave(); } catch(e){} }
 function mutKeyOf(pl){ return 'sp' + (pl.dexNo || pl.no || 0); }
+
+/* ============================================================
+   20261110d：图鉴「变异」分类的底账
+   ------------------------------------------------------------
+   键 = 图鉴号，值 = 1。只要某个物种的植株**出现过异变**（爱意浇出异变、
+   或者异变种子种下去直接就是变异株），就把它的图鉴号记一笔，一直留着。
+   ★ 为什么另开一份、不直接用 MUT_SEEN：
+     MUT_SEEN 的语义是「首次变异贺卡弹过了没有」（openMutCard 里
+     `if (MUT_SEEN[k]) return;` 就是靠它判断该不该弹）。
+     如果为了图鉴筛选提前往 MUT_SEEN 写，贺卡就永远不弹了 —— 那是回归。
+     所以两件事两个账本：MUT_SEEN 管贺卡，MUT_DEX 管图鉴。
+   ============================================================ */
+const MUT_DEX_KEY = 'bmSeasonMutDex';
+let MUT_DEX = {};
+try { MUT_DEX = JSON.parse(localStorage.getItem(MUT_DEX_KEY) || '{}') || {}; } catch(e){ MUT_DEX = {}; }
+function mutDexSave(){ try { localStorage.setItem(MUT_DEX_KEY, JSON.stringify(MUT_DEX)); } catch(e){} }
+function mutDexMark(pl){
+  if (!pl) return;
+  const no = pl.dexNo || 0;          /* 图鉴外物种（dexNo=0）不记，图鉴里也没有它这一格 */
+  if (!no) return;
+  if (MUT_DEX[no]) return;
+  MUT_DEX[no] = 1; mutDexSave();
+}
+function mutDexHas(no){ return !!MUT_DEX[no]; }
+/* 老存档一次性迁移：读档后把「星球上已经变异的那几株」补进底账。
+   没有这一步，老玩家的变异株在图鉴「变异」分类里会是空的。幂等，重复跑无害。 */
+function mutDexMigrate(){
+  let n = 0;
+  (PLANET.plants || []).forEach(pl => {
+    if (!pl || !pl.mutantAt) return;
+    const no = pl.dexNo || 0;
+    if (no && !MUT_DEX[no]){ MUT_DEX[no] = 1; n++; }
+  });
+  if (n) mutDexSave();
+  return n;
+}
 
 function openMutCard(pl, ch){
   const k = mutKeyOf(pl);
@@ -12828,8 +13927,8 @@ function setLoveCard(ch, title, q, yes, no){
 /* ---- 玩家发起：邀请角色一起浇灌爱意 ----
    点之前就先把两种「浇不了」的情况挡掉，免得玩家点了等半天才被拒：
      ① 已经烧苗 —— 再浇也不会长了
-     ② 今天玩家这份额度用完了 —— 爱意现在是「全局每边每天 6 次」
-        （玩家 8 次 + 角色 8 次，作用于整轮），不是每株各算 */
+     ② 今天玩家这份额度用完了 —— 爱意现在是「**按单株**，每边每天 8 次」
+        （这一株：玩家 8 次 + 角色 8 次，20261110 用户定案） */
 function openLoveAsk(pl){
   if (!pl) return;
   if (pl.burned){ toast('「' + pl.name + '」已经烧苗了 · 再浇也不会长了'); return; }
@@ -13075,17 +14174,17 @@ function sheetAct(kind){
             '浇点水、几天别施肥，它自己会缓过来');
       return;
     }
-    if (careLeftOf('浇水') <= 0){
+    if (careLeftOf('浇水', pl) <= 0){
       toast('今天的水已经浇满了（' + careCapOf('浇水') + ' / ' + careCapOf('浇水') + '）· 明天 0 点恢复');
       return;
     }
-    careUse('浇水');
+    careUse('浇水', pl);
     pl.acts.push({ t: now, k: '浇水', by: '你' });
     renderPlantSheet(); drawPlanetFrame(); renderPlanetList(); updateCareBtns();
     const winD = (SEASON_RULES.burnRecoverDays || 3);
     const passed = (now - (pl.burnAt || now)) / 86400000;
     const left = Math.max(0, Math.ceil(winD - passed));
-    toast('你给它浇了一次水（今天还剩 ' + careLeftOf('浇水') + ' 次浇水）',
+    toast('你给它浇了一次水（今天还剩 ' + careLeftOf('浇水', pl) + ' 次浇水）',
           left > 0
             ? ('它被爱浇过了头，还得缓 ' + left + ' 天 —— 这几天别再施肥')
             : '它已经缓得差不多了，别再施肥就会自己回来');
@@ -13093,20 +14192,20 @@ function sheetAct(kind){
   }
 
   /* 每日额度：和星球页那颗「浇一次水」共用同一本账（careQuotaOf） */
-  if (careLeftOf(kind) <= 0){
+  if (careLeftOf(kind, pl) <= 0){
     toast(kind === '浇水'
       ? ('今天的水已经浇满了（' + careCapOf('浇水') + ' / ' + careCapOf('浇水') + '）· 明天 0 点恢复')
       : ('今天已经施满 ' + careCapOf('施肥') + ' 次了 · 明天 0 点再来'));
     return;
   }
-  careUse(kind);
+  careUse(kind, pl);
   pl.acts.push({ t: now, k: kind, by: '你' });
 
   if (kind === '浇水'){
     pl.bonusDays = (pl.bonusDays || 0) + SEASON_RULES.waterDays;
     pl.grow = growOf(pl);
     renderPlantSheet(); drawPlanetFrame(); renderPlanetList(); updateCareBtns();
-    toast('你给它浇了一次水（今天还剩 ' + careLeftOf('浇水') + ' 次浇水）');
+    toast('你给它浇了一次水（今天还剩 ' + careLeftOf('浇水', pl) + ' 次浇水）');
     return;
   }
 
@@ -13117,7 +14216,7 @@ function sheetAct(kind){
      ★ 20261108 再补：「肥伤太多、连续施肥施的很多，到了无法挽回的地步，
        这个叶子就会卷边」→ 同一株累计第 3 次肥伤就 fertCurl 定型，永不恢复。
      ⇒ 卷边株照常能施肥、照常长、照常开花，只是不再叠新的肥伤（已经卷到底了）。 */
-  const nth = careQuotaOf().fert;          /* careUse 已经 +1，所以这是「当天第几次」 */
+  const nth = careQuotaOf(pl).fert;          /* careUse 已经 +1，所以这是「当天第几次」 */
   /* ---- 已经烧伤了还接着施：吸收不了，但伤口会继续烧深 ----
      ★ 用户原话（20261108）「如果肥料伤的太多了、连续施肥施的很多，到了无法挽回
        的地步，这个叶子就会卷边」
@@ -13170,10 +14269,10 @@ function sheetAct(kind){
           (pl.fertBurnCount ? ('（这株已经烧过 ' + pl.fertBurnCount + ' / ' +
             (SEASON_RULES.fertCurlTimes || 3) + ' 次，烧满就卷边了）') : ''));
   } else if (pl.fertCurl){
-    toast('你给它施了一点肥（今天还剩 ' + careLeftOf('施肥') + ' 次施肥）',
+    toast('你给它施了一点肥（今天还剩 ' + careLeftOf('施肥', pl) + ' 次施肥）',
           '它叶子已经卷了，别再猛施 —— 卷边的形收不回来');
   } else {
-    toast('你给它施了一点肥（今天还剩 ' + careLeftOf('施肥') + ' 次施肥）');
+    toast('你给它施了一点肥（今天还剩 ' + careLeftOf('施肥', pl) + ' 次施肥）');
   }
 }
 /* 铲掉：位置空出来可以种别的；种子返还给玩家（回到种子库）
@@ -14876,6 +15975,13 @@ function impSave(){
 }
 let impPage = 0, impFilter = 'all';
 const IMP_PER = 32;
+/* 20261110d 用户要求：星球图鉴里「已经凝出来的」也优先排到前面，没凝的接在后面；
+   两摞内部都保持原来的排列顺序（不按凝星先后乱插）。 */
+function impOwnFirst(list){
+  const a = [], b = [];
+  list.forEach(d => (IMP_FOUND.has(d.k) ? a : b).push(d));
+  return a.concat(b);
+}
 function impFiltered(){
   let list;
   if (impFilter === 'own') list = IMPRINTS.filter(d => IMP_FOUND.has(d.k));
@@ -14885,12 +15991,16 @@ function impFiltered(){
   else if (impFilter === 'all')  list = IMPRINTS.slice();
   else list = IMPRINTS.filter(d => d.t !== 'sea' && d.s === impFilter);
   /* 初见星与枯亡星都永远坐在最前面两格：换季节看图鉴它们也不该消失 ——
-     一个是「一开始就在脚下」，一个是「长废了也只有这一颗」，都不属于任何季相。 */
+     一个是「一开始就在脚下」，一个是「长废了也只有这一颗」，都不属于任何季相。
+     这两三颗是「钉住」的，不参与「已点亮优先」重排，否则起始星会被挤走。 */
   if (impFilter !== 'sea' && impFilter !== 'mut'){
     const pin = IMPRINTS.filter(d => d.t === 'origin' || d.t === 'wither' || d.t === 'burn');
     list = list.filter(d => d.t !== 'origin' && d.t !== 'wither' && d.t !== 'burn');
+    list = impOwnFirst(list);                     /* ← 20261110d：已点亮在前 */
     if (impFilter === 'own') list = pin.filter(d => IMP_FOUND.has(d.k)).concat(list);
     else list = pin.concat(list);
+  } else {
+    list = impOwnFirst(list);                     /* 花海 / 异变两档也按已点亮优先 */
   }
   return list;
 }
@@ -15910,7 +17020,7 @@ function impCondText(d){
 /* 这颗星印出来的那张星球票（书签集里的），没有就返回 null */
 function impTicketOf(d){
   if (!d) return null;
-  const l = PHOTOS.filter(p => p.made && (p.kind === 'planet' || p.src === 'planet') && p.imprintKey === d.k);
+  const l = BOOKS.filter(b => (b.kind === 'planet' || b.src === 'planet') && b.imprintKey === d.k);
   return l.length ? l.sort((a,b) => (b.madeAt||0) - (a.madeAt||0))[0] : null;
 }
 
@@ -16038,10 +17148,17 @@ let seedPick = null;
      改用「植株上记 fromSeed，种子按 sid 一一对应」以后：
        种子被种下（玩家种 / TA 自己种都一样）→ 这颗种子从库里消失；
        同名的另外几颗 → 各在各的，互不影响。 */
-function seedIdOf(p){ return 'sd' + (p && p.id != null ? p.id : (p && p.no != null ? p.no : 0)); }
+function seedIdOf(o){
+  if (!o) return 'sd0';
+  if (o.sid) return o.sid;                       /* 种子记录自带 sid */
+  if (o.id != null) return 'sd' + o.id;          /* 书签：与来源照片 id 同源（老档 fromSeed 不变） */
+  if (o.no != null) return 'sd' + o.no;
+  return 'sd0';
+}
 
 /* 种子库 = 当前角色收到的书签变成的种子，扣掉已经种下的
-   （星球是「你和 TA」共有的，所以种子不跨角色互通） */
+   （星球是「你和 TA」共有的，所以种子不跨角色互通）
+   ★ 20261111 拆分后：种子是独立账 SEEDS —— 删书签、删照片都不会把种子收回去。 */
 function seedPool(){
   const usedSeed = {};       /* 已经种下去的种子（sid）—— 玩家种的和 TA 自己种的一起算 */
   const plantedName = {};    /* 旧档兼容：没有 fromSeed 的老植株，仍按名字扣 */
@@ -16052,33 +17169,28 @@ function seedPool(){
     else if (!pl.fromSeed) plantedName[pl.name] = (plantedName[pl.name] || 0) + 1;
   });
   const map = {};
-  PHOTOS.forEach(p => {
-    if (!p.made) return;
-    if (!p.giftedTo || p.giftedTo !== PLANET.owner) return;
-    /* ① 星球票（邮票）送给角色后 → 换回一颗「定向星种」
-         种下去，凝星时 100% 长成这张票上的那颗星（见 computeImprint 的 forceImp 分支）。
-         一张票换一颗，种掉就扣掉，不能靠同一张票无限刷。 */
-    if (p.kind === 'planet' || p.src === 'planet'){
-      if (!p.imprintKey) return;
-      const k = 'imp:' + p.imprintKey;
+  const myId = PLANET.ownerId || '';
+  (SEEDS || []).forEach(s => {
+    if (!s) return;
+    if ((s.ownerId || '') !== myId) return;      /* 种子不跨角色互通 */
+    /* ① 星球票（邮票）送出去换的「定向星种」：按星球 key 归并计数 */
+    if (s.planetKey){
+      const k = 'imp:' + s.planetKey;
       if (!map[k]) map[k] = {
-        name: p.name + ' · 星种', season: p.season, latin: p.latin, desc: p.desc,
-        planetKey: p.imprintKey, cnt: 0
+        name: (s.name || '') + ' · 星种', season: s.season, latin: s.latin, desc: s.desc,
+        planetKey: s.planetKey, cnt: 0
       };
       map[k].cnt++;
       return;
     }
-    /* ② 普通植物书签 → 一颗普通种子（sid 唯一，一颗一张卡） */
-    const sid = seedIdOf(p);
-    if (usedSeed[sid]) return;               /* 已经种下去了 —— 库里就没有它了 */
-    const k = p.name || '未识别';
-    if (!map[sid]) map[sid] = {
-      sid: sid, name: k, season: p.season, latin: p.latin, desc: p.desc, dex: p.dex || 0,
-      /* 稀有度跟着种子走：凝星算 lv 时要用（书签自带 rare → 图鉴号 → 名字 → 兜底 2） */
-      r: rarityOfItem({ r: p.rare, dex: p.dex, name: k }),
-      /* TA 打算自己种的时间（0 = 没排过）—— 卡片上会给玩家一句预告 */
-      taAt: p.taPlanAt || 0,
-      cnt: 1
+    /* ② 普通植物种子：一颗一张卡 */
+    if (usedSeed[s.sid]) return;                 /* 已经种下去了 —— 库里就没有它了 */
+    if (map[s.sid]) return;
+    map[s.sid] = {
+      sid: s.sid, name: s.name || '未识别', season: s.season,
+      latin: s.latin, desc: s.desc, dex: s.dex || 0,
+      r: s.r || 2, taAt: s.taAt || 0, cnt: 1,
+      imgId: s.imgId, crop: s.crop || null
     };
   });
   Object.keys(map).forEach(k => {
@@ -16156,11 +17268,12 @@ function renderSeed(){
     c.textContent = '×' + (it.cnt || 1);
     cell.appendChild(c);
     grid.appendChild(cell);
-    /* 找这张种子对应的那张照片：有 sid 就先按 sid 精确找，
-       找不到再退回「同名且已制成」—— 否则同名但不同张的书签会串图。 */
-    const ph = (it.sid
-      ? PHOTOS.find(p => p.made && seedIdOf(p) === it.sid)
-      : null) || PHOTOS.find(p => p.made && p.name === it.name);
+    /* 种子卡片上的小图：20261111 起按 imgId 找那张图（种子里就记了 imgId/crop，
+       书签删了也能从照片找到，照片删了也能从书签找到） */
+    const ph = (it.imgId != null)
+      ? (PHOTOS.find(function(x){ return imgIdOf(x) === it.imgId; }) ||
+         BOOKS.find(function(x){ return imgIdOf(x) === it.imgId; }) || null)
+      : null;
     try {
       if (it.planetKey){
         /* 定向星种：图标直接画那颗星球本身，一眼看出「种下去就是它」 */
@@ -16172,7 +17285,7 @@ function renderSeed(){
                        form: formOf(it.name), dur: 26000 };
         drawPlantForm(cv.getContext('2d'), 23, 42, 1, 0.40, fake.form, plCols(fake), 0.94, fake);
       } else {
-        const out = pixelize(srcImgFor(ph), { grid:46, crop:(ph && ph.crop) || { r:.8, cx:.5, cy:.5 }, season:it.season, colors:18, dither:28 });
+        const out = pixelize(srcImgFor(ph), { grid:46, crop:(it.crop || (ph && ph.crop) || { r:.8, cx:.5, cy:.5 }), season:it.season, colors:18, dither:28 });
         cv.getContext('2d').drawImage(out, 0, 0);
       }
     } catch (e) { drawSilhouette(cv, 46); }
@@ -16388,7 +17501,7 @@ function plantSeedAt(item, slotIdx){
   if (item.sid) pl.fromSeed = item.sid;
   /* 异变种子：种下那一刻就已经是变异株（不再掷骰）。fromMutSeed 用来扣掉这颗种子，
      同时让 seedPool 知道它已经被种下去了。 */
-  if (item.mut){ pl.mutantAt = Date.now(); pl.fromMutSeed = item.seedId || ''; }
+  if (item.mut){ pl.mutantAt = Date.now(); pl.fromMutSeed = item.seedId || ''; mutDexMark(pl); }
   PLANET.plants.push(pl);
   /* 20261109：种下一株 → 上报，让角色把「我们一起种的这株」记进记忆宫殿 */
   try {
@@ -16483,13 +17596,13 @@ function loadTitles(){
     const raw = localStorage.getItem('bmSeasonTitles');
     if (!raw) return;
     const m = JSON.parse(raw);
-    PHOTOS.forEach(p => { if (m[p.no]) p.title = m[p.no]; });
+    BOOKS.forEach(p => { if (m[p.no]) p.title = m[p.no]; });
   } catch (e) {}
 }
 function saveTitles(){
   try {
     const m = {};
-    PHOTOS.forEach(p => { if (p.no && p.title) m[p.no] = p.title; });
+    BOOKS.forEach(p => { if (p.no && p.title) m[p.no] = p.title; });
     localStorage.setItem('bmSeasonTitles', JSON.stringify(m));
   } catch (e) {}
 }
@@ -17149,8 +18262,9 @@ function doImprint(){
     return;
   }
 
-  /* 兜底：意外情况下动画没挂上，也照样把票收进书签集，不让这一轮白凝 */
-  PHOTOS.push(rec);
+  /* 兜底：意外情况下动画没挂上，也照样把票收进书签集，不让这一轮白凝
+     （20261111 拆分后：星球票是书签，进 BOOKS） */
+  BOOKS.push(rec);
   IMP_FOUND.add(imp.k); impSave();
   /* 20261109：凝出一颗星球 → 上报，让角色记住「我们一起凝出过它」 */
   try {
@@ -17223,7 +18337,8 @@ function bindV5b(){
   if ($('#wkTicket')) $('#wkTicket').addEventListener('click', () => {
     const d = wikiDex; if (!d) return;
     const p = dexOwnedPhoto(d.no);
-    if (p) openTicket(p); else toast('这一格还没解锁');
+    if (p) openTicket(p);
+    else toast(dexOwned(d.no) ? '这一种已经收录了，只是那张书签被删掉了' : '这一格还没解锁');
   });
   if ($('#wkBook')) $('#wkBook').addEventListener('click', () => {
     const d = wikiDex; if (!d) return;
@@ -18092,11 +19207,12 @@ window.addEventListener('load', () => { try { bindV5b(); } catch (e) { console.w
       if (gen !== inkGen) return;
       headEl.classList.remove('on');
       try { typeReturn(0.15); } catch(e){}
-      /* 落进书签集：跟拍到的植物做成的是同一个书架，票面也是同一套邮票花边 */
-      const _already = PHOTOS.some(function(p){ return p.id === rec.id; });
+      /* 落进书签集：跟拍到的植物做成的是同一个书架，票面也是同一套邮票花边
+         20261111 拆分后：星球票是「书签」，进 BOOKS（不进照片墙） */
+      const _already = BOOKS.some(function(b){ return b.id === rec.id; });
       if (!_already){
-        if (!rec.no) rec.no = PHOTOS.filter(function(p){ return p.made; }).length + 1;
-        PHOTOS.push(rec);
+        if (!rec.no) rec.no = BOOKS.length + 1;
+        BOOKS.push(rec);
         try { IMP_FOUND.add(rec.imprintKey); impSave(); } catch(e){}
         try { toast('已收录 · ' + rec.name); } catch(e){}
         try { if (typeof onTicketMade === 'function') onTicketMade(rec); } catch(e){}
@@ -18813,9 +19929,13 @@ function sgResetSeasonData(){
   } catch(e){}
   /* 内存里的也清一遍（reset=1 时 seasonLoad 还没跑，清掉就真从空开始） */
   try { PHOTOS.length = 0; } catch(e){}
+  try { BOOKS = []; } catch(e){}
+  try { DEX_SEEN = {}; } catch(e){}
+  try { SEEDS = []; } catch(e){}
   try { PLANET.plants.length = 0; PLANET.pool = {}; PLANET.inited = false; } catch(e){}
   try { if (typeof IMP_FOUND !== 'undefined' && IMP_FOUND.clear) IMP_FOUND.clear(); } catch(e){}
   try { if (typeof MUT_SEEN !== 'undefined') MUT_SEEN = {}; } catch(e){}
+  try { if (typeof MUT_DEX !== 'undefined') MUT_DEX = {}; } catch(e){}   /* 20261110d 图鉴变异底账一起清 */
   try { seqNo = 0; } catch(e){}
   seedPick = null;
   seedSlot = -1;
@@ -18888,6 +20008,28 @@ sgMaybeAuto();
    必须在所有数据定义（PLANET/PHOTOS/IMP_FOUND/MUT_SEEN）之后调用，故放文件末尾。 */
 try { seasonLoad(); } catch(e){}
 
+/* 20261110d：读档后把「星球上已经变异的株」补进图鉴「变异」分类的底账。
+   只补一次、幂等；老存档里已经变异的物种不会在图鉴里凭空消失。 */
+try { mutDexMigrate(); } catch(e){}
+
+/* 20261111：进站就在后台把识别模型备好（首次 29.5MB），不等玩家拍照才下。
+   下载期间底部常驻提示条，下好自动消失并「只提示一次」可以正式用了。
+   ★ 主 App 开局也会预下同一份（写同一个 Cache Storage），两边靠 bmMdlProg 让路。
+   ★ 延后 1.4s：先让开屏/照片墙画完，别和首屏抢带宽。 */
+setTimeout(function(){ try { bmPlantPrefetch(); } catch(e){} }, 1400);
+
+/* 20261110：读档后把真实照片像素从 IndexedDB 补回来（存档里只有 hasImg 标记）。
+   ★ 这就是「所有照片都变成同一张示例图」的正解：以前 img 一律是 null，
+     srcImgFor() 只能回退到 src.png。现在补回来的才是玩家当时真正拍下的那一张。
+   异步、不阻塞首屏；补完自己重绘照片墙/书签/星球像素画。 */
+setTimeout(function(){
+  try {
+    imgHydrateAll(function(n){
+      if (n > 0 && window.console) console.log('[season] 已补回 ' + n + ' 张照片原图');
+    });
+  } catch (e) {}
+}, 260);
+
 /* ============================================================
    20261109：开局留一张示例像素画（宽叶车前草）
    ------------------------------------------------------------
@@ -18906,14 +20048,14 @@ function seedDemoPhoto(){
     if (PHOTOS.some(function(p){ return p && p.demo; })) return false;
     if (PHOTOS.length) return false;
     PHOTOS.push({
-      id: 1, no: 0, dex: 1,
+      id: 1, dex: 1,
       crop: { r: .88, cx: .5, cy: .5 },
       season: 'autumn',
       name: '宽叶车前草', latin: 'Plantago asiatica', cnf: 96, src: 'demo',
-      made: false, date: todayStr(),
+      date: todayStr(),
       desc: '叶脉像车辙，路边最常见的一味草药。',
       place: '示例图', rare: 1, fresh: false,
-      demo: true, img: null
+      demo: true, img: null, imgId: 1
     });
     return true;
   } catch (e) { return false; }

@@ -125,6 +125,16 @@ let chatTheme = {
   glassUI: false,         // 玻璃拟态模式（可选，开启后系统界面切到更透明磨砂玻璃）
   fontId: '',             // 聊天字体（20260929af：织梦点-更换字体；''=系统默认）
   uiFontId: '',           // 全局 UI 字体（20260929ah：织梦点-全局字体，应用到所有界面；''=系统默认）
+  /* 20261110 新增（织梦点 → 气泡）：气泡里文字的排布方式
+       ''                —— 默认：保持原有观感，完全不动（绝不能影响现有效果）
+       'oneline'         —— 单行优先：中文不在字间断行，气泡宽度跟着文字走，
+                            超长才自动换行，绝不越出气泡
+       'oneline-center'  —— 在单行优先的基础上，文字在气泡内居中 */
+  bubbleLine: '',
+  /* 20261110 新增（织梦点 → 气泡）：气泡字号（px）。
+     0 = 没调过，沿用 .msg-row .bubble 的 15px 默认值（现有观感不动）；
+     12~22 = 玩家拖滑条自选，applyChatTheme 写进 --bubble-fz。 */
+  bubbleFontSize: 0,
 };
 
 /* 玩家资料 */
@@ -3888,10 +3898,13 @@ function msgBodyHtml(m, oneLine = false) {
     }
     case 'musiccard': {
       // 20261104：音乐卡片（歌词 + 寄语）——角色听歌时随机发：某句歌词 + 角色寄语（抽字卡自由组合）
+      // 20261110：玩家在播放页点「分享」也发这张卡（from:'me' + content.fromMe），
+      //   外观同款，只换标签文案 —— 不再走「一起听歌邀请」。
       const mcc = m.content || {};
+      const _fromMe = (m.from === 'me') || !!mcc.fromMe;
       const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">♪</span>`;
       return `<div class="msg-card msg-music-card">
-        <span class="msg-card-tag">🎶 听到这首歌，TA 想对你说</span>
+        <span class="msg-card-tag">${_fromMe ? '🎶 我把这首歌分享给你' : '🎶 听到这首歌，TA 想对你说'}</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
           ${cover}
           <div style="min-width:0;">
@@ -3927,8 +3940,10 @@ function msgBodyHtml(m, oneLine = false) {
                        : (done ? '' : '<span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">▸</span>')}
           </div>`;
       }).join('');
+      /* 20261110：遥控外部 App 模式没法「点哪首播哪首」，卡面如实标注，
+         不再写「已换成《X》」（那是直连模式才成立的说法）。 */
       const footHtml = done
-        ? `<div style="margin-top:10px;font-size:11.5px;color:var(--text-tertiary);">${sp.declined ? '你说先听这首' : (pickedName ? ('已换成《' + escapeHtml(pickedName) + '》') : '已交给 TA 挑')}</div>`
+        ? `<div style="margin-top:10px;font-size:11.5px;color:var(--text-tertiary);">${sp.declined ? '你说先听这首' : (sp.remoteFallback ? '外部播放器只能切歌 · 已切到下一首' : (pickedName ? ('已换成《' + escapeHtml(pickedName) + '》') : '已交给 TA 挑'))}</div>`
         : (sp.mode === 'pick'
             ? `<button class="btn" data-songpick-rand="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">让 ${escapeHtml(((characters.find(x => x.id === m.charId) || {}).name) || 'TA')} 帮我选</button>`
             : `<button class="btn" data-songpick-no="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">就听这首</button>`);
@@ -11702,10 +11717,27 @@ function ensureSeasonLayer() {
   return layer;
 }
 let _seasonCurrentCharId = null;
+let _seasonFrameLoaded = false;
 function openSeasonLayer(cid) {
   const layer = ensureSeasonLayer();
   const frame = document.getElementById('season-frame');
-  frame.src = 'season/index.html';
+  /* 20261111：只有第一次才真正加载 season/index.html。
+     以前每次打开都 frame.src = ... → 整个四季页重新加载，代价是：
+       ① 识别模型（29.5MB）重新下载一遍 → 网页端「识别特别久」；
+       ② 相机权限重新申请一次 → 玩家说「没退出软件却每次都要授权」；
+       ③ 四季里的滚动位置、正在看的页面、内存里的照片全丢。
+     closeSeasonLayer 只是 remove('show') 隐藏，iframe 一直活着，
+     所以再打开直接接着用；只有 iframe 真的没了/崩了才重新加载。 */
+  let frameAlive = false;
+  try {
+    frameAlive = !!(frame && frame.contentWindow && frame.contentWindow.document &&
+                    frame.contentWindow.document.body &&
+                    frame.contentWindow.document.body.children.length > 0);
+  } catch (e) { frameAlive = false; }
+  if (frame && (!_seasonFrameLoaded || !frameAlive)) {
+    frame.src = 'season/index.html';
+    _seasonFrameLoaded = true;
+  }
   layer.classList.add('show');
   _seasonCurrentCharId = cid || currentCharId || null;
   // 四季全屏层打开 = 离开聊天页观感，打字卡圆点/召唤悬浮窗立即收起
@@ -11715,9 +11747,92 @@ function closeSeasonLayer() {
   const layer = document.getElementById('season-layer');
   if (!layer) return;
   layer.classList.remove('show');
+  /* 20261111：告诉四季真停相机。四季里「从相机页退回照片墙」是停靠 30 秒
+     （为了不重复申请权限），但人都离开四季了还让摄像头亮着纯属耗电。 */
+  try {
+    const frame = document.getElementById('season-frame');
+    if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'season-hide' }, '*');
+  } catch (e) {}
   try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
   _seasonCurrentCharId = null;
 }
+/* ============================================================
+   20261111：四季识别模型「进站就后台下」
+   ------------------------------------------------------------
+   玩家原话：「初次打开白日梦这个网站的时候，就自动后台下载这些模型相关的内容」
+   「玩家在里面待着干什么呢？他纯等着，又发现功能不能用，他就退出了呀」。
+   - 29.5MB 的 quarrying_plantid_model.onnx 以前是玩家进四季拍照才下，
+     网页端等于「拍完干等 5 分钟」，看起来就是 bug。
+   - 现在主界面起来后空闲时偷偷下，存进 Cache Storage('bm-season-model-v1')；
+     四季页 bmFetchModelWithProgress 读的是同一个缓存键 → 直接命中，秒开。
+   - 和四季页用 localStorage 的 bmMdlProg 互相让路（谁先占到谁下），
+     绝不下两份 30MB；四季页在下载期间底部会显示进度提示条。
+   - APK 里模型是本地文件，不需要预下（还会白占 30MB 缓存）→ 直接跳过。
+   - 省流量模式 / 2G 网络不偷跑，等玩家自己进四季再下。
+   ============================================================ */
+(function seasonModelPrefetch(){
+  var CACHE = 'bm-season-model-v1';
+  var KEY = 'bmMdlProg';
+  var started = false;
+  function readP(){ try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }
+  function writeP(o){ try { o.ts = Date.now(); localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} }
+  function start(){
+    if (started) return; started = true;
+    if (!window.caches || !window.fetch || !window.Request || !window.Response) return;
+    /* APK：模型是包内本地文件，四季 iframe 直接读，不用预下 */
+    if (window.Capacitor || /^(file|capacitor|ionic):/.test(location.protocol)) return;
+    var conn = navigator.connection || {};
+    if (conn.saveData) return;
+    if (conn.effectiveType && /^(slow-2g|2g)$/.test(conn.effectiveType)) return;
+    var url = new URL('season/quarrying_plantid_model.onnx', location.href).href;
+    var did = false;
+    caches.open(CACHE).then(function(c){
+      return c.match(url).then(function(hit){
+        if (hit) return null;                       /* 已经有缓存 → 什么都不做 */
+        var prev = readP();
+        if (prev && prev.state === 'down' && (Date.now() - (prev.ts || 0)) < 25000) return null; /* 四季页正在下 */
+        writeP({ state: 'down', got: 0, total: 0 });
+        did = true;
+        return fetch(url, { cache: 'force-cache' }).then(function(resp){
+          if (!resp.ok) throw new Error('http-' + resp.status);
+          var total = Number(resp.headers.get('content-length') || 0);
+          if (!resp.body || !resp.body.getReader){
+            return resp.blob().then(function(b){
+              return c.put(url, new Response(b, { headers: { 'Content-Type': 'application/octet-stream' } }));
+            });
+          }
+          var reader = resp.body.getReader();
+          var chunks = [], got = 0, last = 0;
+          function pump(){
+            return reader.read().then(function(r){
+              if (r.done){
+                var blob = new Blob(chunks, { type: 'application/octet-stream' });
+                return c.put(url, new Response(blob, { headers: { 'Content-Type': 'application/octet-stream' } }));
+              }
+              chunks.push(r.value); got += r.value.byteLength;
+              var now = Date.now();
+              if (now - last > 500){ last = now; writeP({ state: 'down', got: got, total: total }); }
+              return pump();
+            });
+          }
+          return pump();
+        });
+      });
+    }).then(function(){
+      if (did) writeP({ state: 'done', got: 0, total: 0 });
+    }).catch(function(){
+      if (did) writeP({ state: 'err', got: 0, total: 0 });
+    });
+  }
+  /* 先让主界面画完，空闲再下；没有 requestIdleCallback 就固定 2.6s 后 */
+  window.addEventListener('load', function(){
+    setTimeout(function(){
+      if (window.requestIdleCallback) requestIdleCallback(start, { timeout: 6000 });
+      else start();
+    }, 2600);
+  });
+})();
+
 /* 20261109：取某个角色自己的回复字卡池（已按它的禁用词/禁用分组过滤）。
    四季字卡模式只拿这一份，A 角色的卡不会跑到 B 角色的星球上。
    ⚠️ 主项目字卡没有 scene/plant/miss 分类，统一塞 scene，四季 playerCardPool
@@ -13341,10 +13456,12 @@ function scheduleCharAutoHangup() {
           } catch (e) {} finally { ca.charHangupAiBusy = false; }
         }
       }
-      // ② 超过随机截止时间仍未挂断 → 非 AI 模式的随机兜底（AI 模式也保底，避免 AI 一直不挂）
+      // ② 超过随机截止时间 → 掷一次硬币：挂 / 不挂
+      //    20261110 用户定案：**完完全全随机**，不记历史、不设「连续 N 次」上限。
+      //    不挂就把截止时间重排到下一个随机窗口，继续陪聊。
       if (now >= (ca.charHangupDeadline || deadline)) {
-        await ca.charHangup('');
-        return;
+        if (Math.random() < 0.5) { await ca.charHangup(''); return; }
+        ca.charHangupDeadline = Date.now() + randInt(lo2, hi2) * 60 * 1000;
       }
       // ③ 未到点，继续每 8 分钟检查
       ca.charHangupTimer = setTimeout(tick, 8 * 60 * 1000);
@@ -16548,6 +16665,11 @@ async function loadCustomFonts() {
 let _dreamThemeTab = '色彩';
 
 async function showChatThemeModal() {
+  /* 20261110：气泡字号滑条的当前值 —— 没设过（0/非法）就显示默认 15px */
+  const _bfzCur = (() => {
+    const n = parseInt(chatTheme.bubbleFontSize, 10);
+    return (Number.isFinite(n) && n >= 12 && n <= 22) ? n : 15;
+  })();
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <div style="font-size:18px;font-weight:600;">织梦点</div>
@@ -16668,10 +16790,33 @@ async function showChatThemeModal() {
       </div>
     </div>
 
-    <div style="background:var(--bg-elevated-2);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
-      <div style="font-size:11px;color:var(--text-tertiary);">预览效果</div>
-      <div style="display:flex;justify-content:flex-end;"><span style="background:${chatTheme.bubbleMe};color:${chatTheme.bubbleMeText};padding:8px 12px;border-radius:16px 16px 4px 16px;font-size:13px;max-width:70%;">这样聊起来更有氛围啦</span></div>
-      <div><span style="background:${chatTheme.bubbleThem};color:${chatTheme.bubbleThemText};padding:8px 12px;border-radius:16px 16px 16px 4px;font-size:13px;max-width:70%;display:inline-block;">嗯嗯，我一直在呢</span></div>
+    <div class="field">
+      <label>气泡文字排布</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">「单行优先」让短句尽量挤在一行里、不再几个字就折成三行；字多到放不下仍会自动换行，且绝不超过气泡；「居中」让文字在气泡内部居中</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;" id="bubble-line-pick">
+        ${['', 'oneline', 'oneline-center'].map(v => {
+          const on = (chatTheme.bubbleLine || '') === v;
+          const nm = v === '' ? '默认（原样）' : (v === 'oneline' ? '单行优先' : '单行优先 · 居中');
+          return `<button class="btn bubble-line-btn" data-bl="${v}" style="padding:7px 13px;font-size:12px;${on ? 'outline:2px solid var(--purple-soft);background:var(--purple-soft);color:#fff;font-weight:600;' : ''}">${nm}</button>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="field">
+      <label>气泡字号</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">拖动滑条调整聊天气泡里的文字大小（12～22px）。不拖就是原来的 15px，拖到哪里立刻生效、自动记住。</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+        <span style="font-size:11px;color:var(--text-tertiary);flex-shrink:0;">小</span>
+        <input type="range" id="bubble-fz-range" min="12" max="22" step="1" value="${_bfzCur}" style="flex:1;min-width:0;accent-color:var(--purple);">
+        <span style="font-size:17px;color:var(--text-tertiary);flex-shrink:0;">大</span>
+        <span id="bubble-fz-val" style="font-size:12px;font-weight:600;color:var(--purple);min-width:42px;text-align:right;flex-shrink:0;">${_bfzCur}px</span>
+      </div>
+    </div>
+
+    <div style="background:var(--bg-elevated-2);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
+      <div style="font-size:11px;color:var(--text-tertiary);">预览效果（跟着上面的「排布 + 字号」实时变）</div>
+      <div class="msg-row me"><div class="msg-body"><div class="bubble message message-sent" style="background:${chatTheme.bubbleMe};color:${chatTheme.bubbleMeText};">这样聊起来更有氛围啦</div></div></div>
+      <div class="msg-row them"><div class="msg-body"><div class="bubble message message-received" style="background:${chatTheme.bubbleThem};color:${chatTheme.bubbleThemText};">你不在，我会想你。吃醋怎么了，就爱吃醋！</div></div></div>
     </div>
     </section>
 
@@ -16960,6 +17105,34 @@ async function showChatThemeModal() {
   };
   bindColors('theme-me-colors', 'bubbleMe', 'bubbleMeText', '#ffffff');
   bindColors('theme-them-colors', 'bubbleThem', 'bubbleThemText', '#f2f0f6');
+
+  // 20261110：气泡文字排布（默认 / 单行优先 / 单行优先·居中）—— 点选即用、落库、重开弹窗刷新高亮
+  $$('#bubble-line-pick .bubble-line-btn').forEach(b => {
+    b.onclick = async () => {
+      const v = b.dataset.bl || '';
+      chatTheme.bubbleLine = v;
+      try { await setSetting('chatTheme', chatTheme); } catch (e) {}
+      applyChatTheme();
+      showChatThemeModal();   // 重开：按钮高亮与预览一起刷新（会记住当前 tab）
+    };
+  });
+
+  /* 20261110：气泡字号滑条 ——
+     input（拖动中）只改内存 + :root 变量 + 数字，预览立刻跟着变；
+     change（松手）才落库，避免拖动过程里几十次写 IndexedDB。 */
+  const _fzRange = $('#bubble-fz-range');
+  if (_fzRange) {
+    _fzRange.oninput = () => {
+      const n = parseInt(_fzRange.value, 10) || 15;
+      chatTheme.bubbleFontSize = n;
+      applyBubbleFontSize(n);
+      const lab = $('#bubble-fz-val');
+      if (lab) lab.textContent = n + 'px';
+    };
+    _fzRange.onchange = async () => {
+      try { await setSetting('chatTheme', chatTheme); } catch (e) {}
+    };
+  }
 
   // 自定义 CSS：输入即时预览（不落库）+ 防抖校验（无效规则红字、选择器未命中黄字）；
   // 点「保存并应用」才写入长期保存并给成功/失败反馈
@@ -17906,6 +18079,118 @@ function showChatFontModal(scope = 'chat') {
   };
 }
 
+/* 20261110：气泡字号 —— 唯一生效入口（applyChatTheme 和滑条 input 都调它）。
+   0 / 非数字 → 清类清变量，回到 .msg-row .bubble 的默认 15px；
+   12~22 → body 挂 .has-bubble-fz + 写 --bubble-fz，样式见 style.css 的 has-bubble-fz 段。
+   单独拆出来是为了「拖滑条立刻变」，不用整轮 applyChatTheme（那要重算背景/玻璃，太重）。 */
+function applyBubbleFontSize(v) {
+  const n = parseInt(v, 10);
+  const on = Number.isFinite(n) && n >= 12 && n <= 22;
+  document.body.classList.toggle('has-bubble-fz', on);
+  if (on) document.documentElement.style.setProperty('--bubble-fz', n + 'px');
+  else document.documentElement.style.removeProperty('--bubble-fz');
+  // 字号变了 → 折行位置全变，重新按最长行收一次（仅「单行优先」档需要）
+  scheduleBubbleFit();
+}
+
+/* ============================================================
+   单行优先：气泡宽度收成「最长那一行」（20261110 用户定案）
+   ------------------------------------------------------------
+   用户原话：「尾部为什么这么多空白，要自适应文字的长度，按最长的那行算」，
+             又说「参考一下微信 QQ 的做法」。
+   ------------------------------------------------------------
+   为什么纯 CSS 做不到：
+     · width:max-content  = 「整段不换行要多宽」，被 max-width 一截就恒等于上限；
+     · width:fit-content  = min(max-content, 可用宽)，而 flex 子项的可用宽一开始
+       被算成 min-content，数学上都不会收缩到「折行后最长那行」。
+     ⇒ 唯一可靠做法：量。用 Range 拿每一行的实际矩形，取最宽那行 + 左右内边距，
+       再把宽度钉成这个值（比它大 2px，防亚像素把它又挤出一行）。
+   ⇒ 只处理「纯文字」气泡（含图片/卡片/按钮的一律放过，否则会把卡片压变形）。
+   ⇒ 分帧处理（每帧最多 8ms），长聊天记录不会一次卡住。
+   ============================================================ */
+function _fitOneBubble(b) {
+  if (!b || !b.isConnected) return;
+  if (b.classList.contains('typing')) return;
+  // 有子元素（卡片/图片/表情 img/换行按钮等）就放过，别动它们的布局
+  if (b.children.length > 0) { b.style.width = ''; return; }
+  const txt = b.textContent || '';
+  if (!txt.trim()) return;
+  b.style.width = '';                       // 先放开，量的才是「按上限折行」的真实排布
+  const cs = getComputedStyle(b);
+  const padL = parseFloat(cs.paddingLeft) || 0;
+  const padR = parseFloat(cs.paddingRight) || 0;
+  const bdL = parseFloat(cs.borderLeftWidth) || 0;
+  const bdR = parseFloat(cs.borderRightWidth) || 0;
+  let rects = [];
+  try {
+    const rg = document.createRange();
+    rg.selectNodeContents(b);
+    rects = Array.from(rg.getClientRects()).filter(r => r.width > 0.5);
+  } catch (e) { return; }
+  if (rects.length < 2) return;             // 只有一行：本来就没多余空白，交给 max-content
+  // 按 top 归行（±2px 容差），每行取 [最左, 最右]
+  const lines = new Map();
+  for (const r of rects) {
+    const k = Math.round(r.top / 2);
+    const cur = lines.get(k);
+    if (!cur) lines.set(k, { l: r.left, r: r.right });
+    else { if (r.left < cur.l) cur.l = r.left; if (r.right > cur.r) cur.r = r.right; }
+  }
+  if (lines.size < 2) return;
+  let maxLine = 0;
+  lines.forEach(v => { const w = v.r - v.l; if (w > maxLine) maxLine = w; });
+  if (maxLine <= 0) return;
+  b.style.width = Math.ceil(maxLine + padL + padR + bdL + bdR + 2) + 'px';
+}
+
+let _fitToken = 0;
+function scheduleBubbleFit() {
+  // 只在这一档生效；其它档把之前量出来的宽度清掉，回到纯 CSS
+  if (!document.body.classList.contains('bubble-line-oneline')) {
+    _fitToken++;
+    try {
+      document.querySelectorAll('#chat-scroll .msg-row .bubble').forEach(b => { b.style.width = ''; });
+    } catch (e) {}
+    return;
+  }
+  const my = ++_fitToken;
+  if (!_bubbleFitObserver) _startBubbleFitObserver();
+  requestAnimationFrame(() => {
+    if (my !== _fitToken) return;
+    let list = [];
+    try {
+      list = Array.from(document.querySelectorAll('#chat-scroll .msg-row .bubble, #modal-mask .msg-row .bubble'));
+    } catch (e) { return; }
+    let i = 0;
+    const step = () => {
+      if (my !== _fitToken) return;
+      const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+      while (i < list.length) {
+        try { _fitOneBubble(list[i]); } catch (e) {}
+        i++;
+        const now = (window.performance && performance.now) ? performance.now() : Date.now();
+        if (now - t0 > 8) break;            // 每帧 8ms 预算，长聊天记录也不卡
+      }
+      if (i < list.length) requestAnimationFrame(step);
+    };
+    step();
+  });
+}
+
+/* 聊天消息是不断 append 的 —— 用一个防抖 MutationObserver 兜住所有渲染路径
+   （renderMessages / appendMessage / 群聊 / 流式更新），不用到处插调用。 */
+let _bubbleFitObserver = null, _bubbleFitTimer = null;
+function _startBubbleFitObserver() {
+  if (_bubbleFitObserver || typeof MutationObserver === 'undefined') return;
+  const host = $('#chat-scroll');
+  if (!host) return;
+  _bubbleFitObserver = new MutationObserver(() => {
+    if (_bubbleFitTimer) clearTimeout(_bubbleFitTimer);
+    _bubbleFitTimer = setTimeout(() => { _bubbleFitTimer = null; scheduleBubbleFit(); }, 120);
+  });
+  _bubbleFitObserver.observe(host, { childList: true, subtree: true, characterData: true });
+}
+
 /* 应用聊天美化到聊天页（CSS 变量）
    背景图按当前角色独立；气泡颜色/自定义CSS用全局 */
 let _customCssStyle = null;
@@ -17924,6 +18209,19 @@ function applyChatTheme() {
   root.setProperty('--bubble-me-text', chatTheme.bubbleMeText);
   root.setProperty('--bubble-them', chatTheme.bubbleThem);
   root.setProperty('--bubble-them-text', chatTheme.bubbleThemText);
+  /* 20261110：气泡文字排布（织梦点 → 气泡 tab）——
+     默认档一个类都不挂，现有观感一字不动；选「单行优先」才挂，
+     选「单行优先 + 居中」再叠一个居中类。样式见 style.css 的 bubble-line-* 段。 */
+  const _bLine = (chatTheme.bubbleLine === 'oneline' || chatTheme.bubbleLine === 'oneline-center')
+    ? chatTheme.bubbleLine : '';
+  document.body.classList.toggle('bubble-line-oneline', !!_bLine);
+  document.body.classList.toggle('bubble-line-center', _bLine === 'oneline-center');
+  /* 20261110：气泡字号（织梦点 → 气泡 tab 的滑条）——
+     0/非数字 = 不挂类、不写变量，沿用默认 15px；12~22 = 生效。 */
+  applyBubbleFontSize(chatTheme.bubbleFontSize);
+  /* 20261110：进了「单行优先」档才需要按最长行收宽度（scheduleBubbleFit 内部
+     会自行判断当前档位，切回默认/居中以外时会清掉所有内联宽度）。 */
+  if (_bLine) scheduleBubbleFit();
   // 10：三处全局背景（聊天导航页 / 个人主页美化背景 / 朋友圈）
   root.setProperty('--nav-bg', chatTheme.navBg ? `url("${imgSrc(chatTheme.navBg)}")` : 'none');
   root.setProperty('--home-page-bg', chatTheme.homeBg ? `url("${imgSrc(chatTheme.homeBg)}")` : 'none');
@@ -18591,7 +18889,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span>🔄 角色主动问你要不要换歌</span>
         <input type="checkbox" id="cs-music-swap" ${(s.musicSwap !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动发一张卡片问你「要换一首吗」，或者挑几首让你点——<span style="color:var(--text);font-weight:600;">卡片里点哪首，就真的换哪首播放</span>。你在聊天里说「换首歌」，或在「分享 → 让 TA 换一首」，角色也有概率答应；不答应会在聊天里回你一句（小垫片，不弹窗）。随机固定间隔触发（下方可设区间）。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动发一张卡片问你「要换一首吗」，或者挑几首让你点——<span style="color:var(--text);font-weight:600;">播放模式是网易云直连 / 镜像 / 本地曲库时，卡片里点哪首，就真的换哪首播放</span>。<span style="color:var(--warn, #ff9f43);">⚠️ 「后台遥控外部 App」模式做不到：原生插件只能发「下一首」，没法指定某一首。此时点卡片，角色会如实说「尝试更换某首，但好像出了点问题，于是换了一首歌播放」，并弹一条提示条。</span>你在聊天里说「换首歌」，或在「分享 → 让 TA 换一首」，角色也有概率答应；不答应会在聊天里回你一句（小垫片，不弹窗）。随机固定间隔触发（下方可设区间）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
         <input type="number" id="cs-music-swap-min" min="1" max="1440" step="1" value="${typeof s.musicSwapMin === 'number' ? s.musicSwapMin : 90}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
@@ -20405,6 +20703,10 @@ function showDataCatModal(id) {
     body.innerHTML = `
       ${btn('btn-export', '导出全局数据（.ocdata）', '⬇')}
       ${btn('btn-import', '导入全局数据（.ocdata）', '⬆')}
+      <div style="font-size:12px;color:var(--text-tertiary);line-height:1.85;margin:2px 0 4px;padding:10px 12px;background:var(--bg-elevated-2);border-radius:10px;">
+        <b style="color:var(--text);">全局备份包含</b>：角色卡、聊天记录、玩家表情包、<b style="color:var(--text);">字卡（自定义字卡与字卡分组）</b>、记忆宫殿、书信、世界树、记事簿、朋友圈、纪念日、问卷、超频礼物柜、美化与各项设置。<br>
+        <b style="color:var(--text);">不包含</b>（需在对应分类里单独导出）：四季（.seasondata）、音乐（.musicdata）、番茄钟结算。全局导出再导入，这三块<b style="color:var(--text);">不会跟着回来</b>。
+      </div>
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">恢复：检测现有<b>自动备份</b>，选择要恢复到的那一份（无需手动找文件）</div>
       ${btn('btn-restore-auto', '恢复自动备份（选择）', '🔄')}
