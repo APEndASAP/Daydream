@@ -3503,8 +3503,10 @@ async function renderMessages(charId) {
 }
 
 /* 消息头像（5.2/22：气泡旁显示发送者头像） */
-function avatarHtml(avatar, name) {
-  return `<div class="msg-avatar">${avatar ? `<img src="${imgSrcAttr(avatar, true)}">` : escapeHtml(name ? name[0] || '?' : '?')}</div>`;
+function avatarHtml(avatar, name, who) {
+  // 20261111：who = 'me' / 'them' 时打标记，双击头像可触发戳一戳（见文件后段的事件委托）
+  const tag = who ? ` data-poke-who="${who}" title="双击戳一戳"` : '';
+  return `<div class="msg-avatar"${tag}>${avatar ? `<img src="${imgSrcAttr(avatar, true)}">` : escapeHtml(name ? name[0] || '?' : '?')}</div>`;
 }
 
 /* 引用块渲染（右键菜单 → 引用该条消息）。
@@ -4208,7 +4210,10 @@ function appendMessage(m, scroll = true, container = null) {
     const row = document.createElement('div');
     row.className = 'msg-row poke-row';
     row.dataset.msgid = m.id;
-    row.innerHTML = `<div class="poke-msg"><span class="poke-ic"><i data-icon="poke" data-size="16"></i></span><span><span class="poke-who">${escapeHtml(who)}</span> ${escapeHtml(m.content)}</span></div>`;
+    // 20261111：左边的静态小手指换成「两颗球互挤 + 冒爱心」的小动画。
+    // m.from==='me' → 玩家球（右）往左扑；'them' → 角色球（左）往右扑。
+    const fxDir = m.from === 'me' ? 'R' : 'L';
+    row.innerHTML = `<div class="poke-msg"><span class="poke-fx" data-dir="${fxDir}">${pokeFxHtml(fxDir)}</span><span><span class="poke-who">${escapeHtml(who)}</span> ${escapeHtml(m.content)}</span></div>`;
     // 长按/右键 → 删除（戳一戳不参与引用/转发/多选/撤回）
     let pokePress = null;
     const delPoke = () => showConfirm('删除这条戳一戳吗？', async () => {
@@ -4224,6 +4229,16 @@ function appendMessage(m, scroll = true, container = null) {
     row.addEventListener('touchmove', () => clearTimeout(pokePress));
     row.addEventListener('touchcancel', () => clearTimeout(pokePress)); // 20261001ci
     mount.appendChild(row);
+    // 只有「刚发生」的戳一戳才播动画；翻历史、补载窗口里的老消息保持静止的两颗球
+    if (Date.now() - (m.time || 0) < 3000) {
+      const fx = row.querySelector('.poke-fx');
+      if (fx) {
+        fx.classList.remove('play');
+        playPokeSquish(fx);
+        fx.classList.add('play');
+        setTimeout(() => fx.classList.remove('play'), 2400);
+      }
+    }
     if (scroll) scrollToBottom();
     return;
   }
@@ -4317,9 +4332,9 @@ function appendMessage(m, scroll = true, container = null) {
     // 撤回消息：无气泡、无头像，仅一行句子
     row.innerHTML = body;
   } else if (m.from === 'me') {
-    row.innerHTML = `${checkHtml}${avatarHtml(playerProfile.avatar, playerProfile.name)}<div class="msg-body">${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>`;
+    row.innerHTML = `${checkHtml}${avatarHtml(playerProfile.avatar, playerProfile.name, 'me')}<div class="msg-body">${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>`;
   } else {
-    row.innerHTML = `${avatarHtml(c && c.avatar, c && c.name)}<div class="msg-body">${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>${checkHtml}`;
+    row.innerHTML = `${avatarHtml(c && c.avatar, c && c.name, 'them')}<div class="msg-body">${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>${checkHtml}`;
   }
   mount.appendChild(row);
   fixOnelineBubble(row); // 20261001cr：颜文字单行气泡超宽时缩字号/换行兜底，杜绝截断
@@ -4977,7 +4992,7 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
   if (inThisChat) {
     const typing = document.createElement('div');
     typing.className = 'msg-row them';
-    typing.innerHTML = `${avatarHtml(c && c.avatar, c && c.name)}<div class="msg-body"><div class="bubble typing"><span></span><span></span><span></span></div></div>`;
+    typing.innerHTML = `${avatarHtml(c && c.avatar, c && c.name, 'them')}<div class="msg-body"><div class="bubble typing"><span></span><span></span><span></span></div></div>`;
     typing.id = 'typing-indicator-' + charId; // 20260929z：按角色命名——并发两条回复时互不误删（此前固定 id，第一条落地会把第二条的"正在输入"动画提前删掉）
     $('#chat-scroll').appendChild(typing);
     scrollToBottom();
@@ -5343,7 +5358,7 @@ function tcShowTyping(charId) {
     const typing = document.createElement('div');
     typing.className = 'msg-row them';
     typing.id = 'tc-typing-' + charId;
-    typing.innerHTML = `${avatarHtml(c && c.avatar, c && c.name)}<div class="msg-body"><div class="bubble typing"><span></span><span></span><span></span></div></div>`;
+    typing.innerHTML = `${avatarHtml(c && c.avatar, c && c.name, 'them')}<div class="msg-body"><div class="bubble typing"><span></span><span></span><span></span></div></div>`;
     sc.appendChild(typing);
     scrollToBottom();
     setChatHeaderStatus('', true);
@@ -10470,6 +10485,140 @@ function charPokeChance(mode) {
 }
 
 /* 玩家戳角色：从「玩家戳一戳」库抽文案，聊天页中间展示「你 + 文案」 */
+/* ================= 20261111：戳一戳小动画（两颗球挤压 + 爱心） =================
+   移植自「预览_图标星夜版」的 Q6 / Q7 定稿。
+   dir='R'：玩家球（右）往左扑，挤角色那颗大球 —— 玩家戳角色
+   dir='L'：角色球（左）往右扑，挤玩家那颗大球 —— 角色戳玩家
+   被挤的一定是大的那颗；小球顶进去压出一个凹坑，顺轮廓蹭两下再弹开。 */
+const POKE_HEART_D = 'M12 21s-7.2-4.5-7.2-9.3A4.8 4.8 0 0 1 12 8.3a4.8 4.8 0 0 1 7.2 3.4C19.2 16.5 12 21 12 21z';
+
+/* 四角星：被顶得弹一下的那颗，两段二次贝塞尔捏出尖角 */
+function pokeStarD(x, y, r) {
+  return 'M' + x + ' ' + (y - r) + 'Q' + x + ' ' + y + ' ' + (x + r) + ' ' + y +
+    'Q' + x + ' ' + y + ' ' + x + ' ' + (y + r) +
+    'Q' + x + ' ' + y + ' ' + (x - r) + ' ' + y +
+    'Q' + x + ' ' + y + ' ' + x + ' ' + (y - r) + 'Z';
+}
+
+/* 极坐标变形：朝「大球中心 → 受力点」方向压一个高斯凹坑，对侧补一块宽而缓的鼓包（体积守恒），
+   再叠整体横向压扁 / 纵向拉长。凹坑角宽恒定、只有深度变，所以从第一帧起就是同一个坑慢慢变深，
+   不会出现「坑凭空张开」的突兀感。 */
+function pokeBlobD(cx, cy, R, ang, dent, swell, ex, ey) {
+  const N = 96;
+  let d = '';
+  for (let i = 0; i <= N; i++) {
+    const t = i / N * Math.PI * 2;
+    const dd = Math.atan2(Math.sin(t - ang), Math.cos(t - ang)) / 0.85;
+    const db = Math.atan2(Math.sin(t - ang - Math.PI), Math.cos(t - ang - Math.PI)) / 0.95;
+    const rr = 1 - dent * Math.exp(-dd * dd) + swell * Math.exp(-db * db);
+    const x = cx + Math.cos(t) * R * rr * ex;
+    const y = cy + Math.sin(t) * R * rr * ey;
+    d += (i ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
+  }
+  return d + 'Z';
+}
+
+/* 一颗红色小心：外层 g 只负责定位，内层 .hrt 交给 CSS 做气泡式胀大，两者互不打架 */
+function pokeHeartSvg(x, y, dx, delay) {
+  return '<g transform="translate(' + x + ',' + y + ') scale(.42) translate(-12,-14.2)">' +
+    '<g class="hrt" style="--hx:' + dx + 'px;animation-delay:' + delay + 's">' +
+    '<path class="heart" d="' + POKE_HEART_D + '"/></g></g>';
+}
+/* 红色小粒子：跟爱心一起从同一条缝里迸出去 */
+function pokePartSvg(x, y, dx, dy, delay, r) {
+  return '<circle class="hp" cx="' + x + '" cy="' + y + '" r="' + r + '"' +
+    ' style="--px:' + dx + 'px;--py:' + dy + 'px;animation-delay:' + delay + 's"/>';
+}
+
+/* 生成一个 30px 见方的动画球组 */
+function pokeFxHtml(dir) {
+  const BX = dir === 'L' ? 16.4 : 7.6;      // 大球圆心
+  const SX = dir === 'L' ? 4.2 : 19.8;      // 小球静止位
+  const ang = dir === 'L' ? Math.PI : 0;    // 静止时凹坑朝向小球那一侧
+  const hx = (x) => (dir === 'L' ? x : 24 - x);   // 爱心坐标以 Q6 为基准，Q7 整体镜像
+  const dxm = (d) => (dir === 'L' ? d : -d);      // 飘散方向同步取反
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round">' +
+    '<path class="sq-big" d="' + pokeBlobD(BX, 12, 5.0, ang, 0, 0, 1, 1) + '"/>' +
+    '<circle class="sq-small" cx="' + SX + '" cy="12" r="2.9"/>' +
+    '<g class="chStar"><path d="' + pokeStarD(12, 3.6, 2.2) + '"/></g>' +
+    pokeHeartSvg(hx(13.4), 10.9, dxm(7), .93) +
+    pokeHeartSvg(hx(11.2), 10.1, dxm(-2), 1.12) +
+    pokeHeartSvg(hx(12.6), 8.7, dxm(-6.5), 1.31) +
+    pokePartSvg(hx(13.1), 10.4, dxm(6.6), -9.4, .90, .85) +
+    pokePartSvg(hx(11.1), 9.9, dxm(-6.2), -10.2, .96, .72) +
+    pokePartSvg(hx(12.1), 10.8, dxm(-.9), -8.6, 1.04, .6) +
+    pokePartSvg(hx(11.8), 11.3, dxm(-3.4), -6.4, 1.10, .5) +
+    '</svg>';
+}
+
+/* 逐帧驱动：冲过去 → 顶进去压出凹坑 → 顺轮廓上下蹭 → 蓄力 → 阻尼弹簧脱开（2000ms） */
+function playPokeSquish(host) {
+  const dir = host.dataset.dir === 'L' ? 'L' : 'R';
+  const svg = host.querySelector('svg');
+  if (!svg) return;
+  const big = svg.querySelector('.sq-big');
+  const small = svg.querySelector('.sq-small');
+  if (!big || !small) return;
+
+  const BX = dir === 'L' ? 16.4 : 7.6;
+  const SX0 = dir === 'L' ? 4.2 : 19.8;
+  const SX1 = dir === 'L' ? 10.6 : 13.4;
+  const BY = 12, R = 5.0;
+  const ang0 = dir === 'L' ? Math.PI : 0;
+  const rest = pokeBlobD(BX, BY, R, ang0, 0, 0, 1, 1);
+
+  if (host._raf) cancelAnimationFrame(host._raf);
+  const t0 = performance.now(), DUR = 2000;
+  const eOut = (x) => 1 - Math.pow(1 - x, 3);
+  // smootherstep：首尾一阶、二阶导都为 0，压入段用它才不会「突然凹下去」
+  const eInOut = (x) => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * x * (x * (6 * x - 15) + 10); };
+
+  function frame(now) {
+    const p = Math.min(1, (now - t0) / DUR);
+    let sx, sy, depth, k;
+    if (p < 0.14) {                       // ① 冲过去，还没碰到，不产生凹坑
+      k = eOut(p / 0.14);
+      sx = SX0 + (SX1 - SX0) * k; sy = 0; depth = 0;
+    } else if (p < 0.46) {                // ② 顶进去：占 32% 时长，首尾都缓，看着才是一点点陷进去
+      k = (p - 0.14) / 0.32;
+      sx = SX1 + 0.35 * Math.sin(k * Math.PI); sy = 0;
+      depth = eInOut(k);
+    } else if (p < 0.60) {                // ③ 贴着轮廓往上蹭
+      k = (p - 0.46) / 0.14;
+      sx = SX1; sy = -3.4 * eInOut(k);
+      depth = 0.96 + 0.04 * Math.sin(k * Math.PI);
+    } else if (p < 0.74) {                // ④ 再顺着往下蹭
+      k = (p - 0.60) / 0.14;
+      sx = SX1; sy = -3.4 + 6.8 * eInOut(k);
+      depth = 0.96 + 0.04 * Math.sin(k * Math.PI);
+    } else if (p < 0.80) {                // ⑤ 回中蓄力，凹坑压到最狠 —— 这一帧就是「准备回弹」那帧
+      k = (p - 0.74) / 0.06;
+      sy = 3.4 * (1 - k);
+      sx = SX1 - 0.55 * eInOut(k);
+      depth = 1 + 0.10 * eOut(k);
+    } else {                              // ⑥ 脱开：阻尼弹簧，先黏一下再弹开，末尾过冲回摆
+      k = (p - 0.80) / 0.20;
+      const spring = 1 - Math.exp(-5.0 * k) * Math.cos(k * 8);
+      sx = (SX1 - 0.55) + (SX0 - (SX1 - 0.55)) * spring;
+      sy = 0;
+      depth = Math.exp(-6 * k) * Math.cos(k * 13);
+    }
+
+    const ang = Math.atan2(sy, sx - BX);
+    big.setAttribute('d', pokeBlobD(BX + 0.3 * depth, BY, R, ang,
+      0.34 + 0.05 * depth, 0.15 + 0.03 * depth,
+      1 - 0.10 * depth, 1 + 0.01 * depth));
+    small.setAttribute('transform',
+      'translate(' + sx.toFixed(2) + ' ' + (BY + sy).toFixed(2) + ') scale(' +
+      (1 - 0.09 * depth).toFixed(3) + ' ' + (1 + 0.05 * depth).toFixed(3) + ')' +
+      ' translate(' + (-SX0) + ' ' + (-BY) + ')');
+
+    if (p < 1) { host._raf = requestAnimationFrame(frame); }
+    else { big.setAttribute('d', rest); small.removeAttribute('transform'); host._raf = 0; }
+  }
+  host._raf = requestAnimationFrame(frame);
+}
+
 async function sendPlayerPoke(text) {
   if (currentGroupId) { miniToast('戳一戳暂时只在单聊里玩'); return; }
   if (!currentCharId || !text) return;
@@ -10478,6 +10627,44 @@ async function sendPlayerPoke(text) {
   appendMessage(myMsg);
   renderChatList();
 }
+
+/* 20261111：双击消息旁的头像触发戳一戳 ——
+   双击「对方头像」= 你主动戳 TA（以玩家为主，文案取角色卡的玩家戳一戳库）；
+   双击「自己的头像」= TA 反过来主动戳你；
+   用 document 上的事件委托，历史消息、新消息、窗口滑动复用都自动生效，
+   不需要在每条消息上单独绑事件。700ms 内只认一次，避免连点刷屏。 */
+let _lastAvatarPoke = 0;
+document.addEventListener('dblclick', async (e) => {
+  const av = e.target && e.target.closest ? e.target.closest('.msg-avatar[data-poke-who]') : null;
+  if (!av) return;
+  const now = Date.now();
+  if (now - _lastAvatarPoke < 700) return;
+  _lastAvatarPoke = now;
+  av.classList.remove('dbl-poke');
+  void av.offsetWidth;
+  av.classList.add('dbl-poke');
+  setTimeout(() => av.classList.remove('dbl-poke'), 460);
+
+  // 双击触发的戳一戳轻微震一下（普通触发不震，避免每次聊天都震）。
+  // Android 侧需要 VIBRATE 权限，已写进 deploy/capacitor.config.json 的 android.permissions，
+  // 由构建时注入 AndroidManifest（普通权限，安装即授予，不走运行时弹窗）。
+  try { if (navigator.vibrate) navigator.vibrate(14); } catch (e) {}
+
+  if (av.dataset.pokeWho === 'them') {
+    // 双击「对方的头像」= 你主动戳 TA（以玩家为主）。
+    // 玩家没在角色卡里写过戳一戳文案时，兜底说「你 戳了戳 <角色名>」。
+    const c = characters.find(x => x.id === currentCharId);
+    const pool = (cards.customPlayerPokes || []).filter(Boolean);
+    const text = pool.length
+      ? pool[Math.floor(Math.random() * pool.length)]
+      : ('戳了戳 ' + (c ? c.name : 'TA'));
+    await sendPlayerPoke(text);
+  } else {
+    // 双击「自己的头像」= 让 TA 反过来戳你（角色主动的戳一戳）
+    const c = characters.find(x => x.id === currentCharId);
+    if (c) await sendCharPoke(c);
+  }
+});
 
 /* 角色戳玩家：AI 模式下由 AI 生成戳一戳文案（失败回退字卡库），
    字卡模式从「访客戳一戳」库抽文案；都过滤该访客禁词；展示「访客名 + 文案」 */

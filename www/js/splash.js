@@ -87,16 +87,16 @@
      不用 IndexedDB（异步，返回时动画已经画了几帧）。
      键名与 app.js 共用：bmSplashEvery（'1' 每次播） / bmSplashSeen（'1' 已播过）
      LOOP=1（独立预览宿主）永远播放，不受开关约束。 */
+  /* 20261111 回滚：主开屏恢复「每次刷新都播放」——不再因为 bmSplashSeen 已写过而跳过。
+     之前那条「只播一次」的判定撤掉（用户明确要求整体开屏每次都要播）。
+     bmSplashSeen 仍照记，供别处判断「是否见过开屏」，只是不再拦播放。 */
   if (!LOOP) {
     var _spPlay = true;
     try {
       var _spEvery = (localStorage.getItem('bmSplashEvery') === '1');
       var _spSeen = (localStorage.getItem('bmSplashSeen') === '1');
-      _spPlay = _spEvery || !_spSeen;
-      // 决定要播就立刻记账：即便玩家中途切后台/杀进程，也算「已经见过」
-      // （否则冷启动异常退出会让「只播一次」变成每次启动都重播）
       if (!_spSeen) localStorage.setItem('bmSplashSeen', '1');
-    } catch (e) { _spPlay = true; }   // 存储不可用（隐私模式等）→ 退回每次都播，不夺走玩家体验
+    } catch (e) {}
     if (!_spPlay) {
       /* 不播：不建 canvas、不建按钮、不起 RAF、不加载 BGM，一个 DOM 都不留。
          只补一个「开屏已结束」时刻——app.js 的遮罩点击穿透保护读它。 */
