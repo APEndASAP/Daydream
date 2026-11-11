@@ -112,6 +112,8 @@ let chatSettings = {
   seasonCardGapMax: 240,           // 20261108：四季——角色随机抽卡留言随机区间上限（分钟）
   seasonAiGapMin: 30,              // 20261108：四季——AI 模式兜底最小间隔随机区间下限（分钟）
   seasonAiGapMax: 120,             // 20261108：四季——AI 模式兜底最小间隔随机区间上限（分钟）
+  seasonLoveGapMin: 120,           // 20261112：四季——角色主动邀请浇灌爱意的间隔下限（分钟，单独一条线）
+  seasonLoveGapMax: 240,           // 20261112：四季——爱意邀请间隔上限（分钟）
 };
 
 /* 聊天美化（气泡颜色+自定义CSS存全局 chatTheme；背景图按角色独立存 character.chatBg；22：群聊气泡统一用总设置）
@@ -11908,6 +11910,9 @@ function _seasonGapsOf() {
     cardGapMax: cs.seasonCardGapMax ?? chatSettings.seasonCardGapMax ?? 240,
     aiGapMin: cs.seasonAiGapMin ?? chatSettings.seasonAiGapMin ?? 30,
     aiGapMax: cs.seasonAiGapMax ?? chatSettings.seasonAiGapMax ?? 120,
+    // 20261112：爱意邀请是单独一条线，间隔自己一份（用户要求「玩家可以自己调」）
+    loveGapMin: cs.seasonLoveGapMin ?? chatSettings.seasonLoveGapMin ?? 120,
+    loveGapMax: cs.seasonLoveGapMax ?? chatSettings.seasonLoveGapMax ?? 240,
   };
 }
 /* 20261109：只推「四季互动节奏」——玩家在聊天设置里改完那三组随机间隔后，
@@ -18576,6 +18581,16 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:8px;">「AI 兜底间隔」只在四季用 AI 模式时才生效（防止 AI 连发刷屏）。字卡模式只看前两个。</div>
+      <div style="margin-top:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);">
+        <span style="font-size:13px;color:var(--text-secondary);font-weight:600;">爱意邀请间隔</span>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+          <input class="input" type="number" min="15" max="720" step="1" value="${parseInt(s.seasonLoveGapMin, 10) || 120}" id="cs-season-love-gap-min" style="width:80px;" title="最小间隔（分钟）">
+          <span style="font-size:13px;color:var(--text-tertiary);">～</span>
+          <input class="input" type="number" min="15" max="720" step="1" value="${parseInt(s.seasonLoveGapMax, 10) || 240}" id="cs-season-love-gap-max" style="width:80px;" title="最大间隔（分钟）">
+          <span style="font-size:12px;color:var(--text-tertiary);">分钟</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">TA 隔这么久会想请你一起浇灌爱意 —— 到点也不一定来，可能这一轮就算了。</div>
+      </div>
     </div>
     </section>
 
@@ -20044,6 +20059,15 @@ function bindChatSettings(s, onSave, tcChar) {
       saiMinEl.value = String(lo); saiMaxEl.value = String(hi);
       s.seasonAiGapMin = lo; s.seasonAiGapMax = hi;
     }
+    // 20261112：爱意邀请间隔（单独一条线的随机区间，min>max 自动对调）
+    const slvMinEl = $('#cs-season-love-gap-min'), slvMaxEl = $('#cs-season-love-gap-max');
+    if (slvMinEl && slvMaxEl) {
+      let lo = Math.min(720, Math.max(15, parseInt(slvMinEl.value, 10) || 120));
+      let hi = Math.min(720, Math.max(15, parseInt(slvMaxEl.value, 10) || 240));
+      if (lo > hi) { const t = lo; lo = hi; hi = t; }
+      slvMinEl.value = String(lo); slvMaxEl.value = String(hi);
+      s.seasonLoveGapMin = lo; s.seasonLoveGapMax = hi;
+    }
     s.randomCall = $('#cs-random-call').checked;
     s.randomPacket = !!$('#cs-random-packet').checked;
     // az：群聊自动接龙轮次上限（仅总聊天设置渲染该输入；0~5）
@@ -20150,7 +20174,7 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicSwap','musicSwapMin','musicSwapMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','musicModeSwitch','musicModeSwitchMin','musicModeSwitchMax','musicBgAllow','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicSwap','musicSwapMin','musicSwapMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','musicModeSwitch','musicModeSwitchMin','musicModeSwitchMax','musicBgAllow','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax','seasonLoveGapMin','seasonLoveGapMax']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
