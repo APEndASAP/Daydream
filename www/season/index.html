@@ -2872,7 +2872,9 @@ function makeBookFromPhoto(photo, no){
   const bk = {
     id: photo.id, photoId: photo.id, no: no, made: true,
     name: photo.name || '', latin: photo.latin || '', desc: photo.desc || '',
-    season: photo.season || 'spring', dex: photo.dex || dexNoByName(photo.name) || 0, rare: photo.rare || 2,
+    season: photo.season || 'spring',
+    dex: photo.dex || dexRegister({ name: photo.name, latin: photo.latin, season: photo.season, r: photo.rare, desc: photo.desc }),
+    rare: photo.rare || 2,
     crop: photo.crop ? Object.assign({}, photo.crop) : { r: .88, cx: .5, cy: .5 },
     src: photo.src || '', date: photo.date || todayStr(), place: photo.place || '路边',
     kind: photo.kind || '', imprintKey: photo.imprintKey || '',
@@ -2901,15 +2903,13 @@ function dexMark(bk){
      制签时识别还没回来（dex=0），事后又把照片删了 → syncBookFromPhoto 再也
      跑不到（它要读照片），那条书签的 dex 永远是 0 → 图鉴永远不亮。
    ⇒ 所以补两条兜底：① 名字反查图鉴号；② 种下 / 读档时按植株与种子补录。 */
-function dexNoByName(name){
-  if (!name) return 0;
-  for (let i = 0; i < DEX.length; i++){ if (DEX[i].n === name) return i + 1; }
-  return 0;
-}
+/* 20261111f：「科_属_种」三段式名字先归一化再查（'蕺菜' 而不是 '三白草科_蕺菜属_蕺菜'），
+   并对库外物种返回 0（由 dexRegister 后续建档，不会在这里凭空发号）。 */
+function dexNoByName(name){ return dexFindNo(name, ''); }
 /* 植株（dexNo）/ 种子（dex）/ 书签（dex）→ 统一取图鉴号 */
 function dexNoOfAny(o){
   if (!o) return 0;
-  return o.dexNo || o.dex || dexNoByName(o.name) || 0;
+  return o.dexNo || o.dex || dexFindNo(o.name, o.latin) || 0;
 }
 /* ============================================================
    20261111：把「照片上的识别结果」同步进「已经制好的那张书签」，
@@ -2932,7 +2932,15 @@ function syncBookFromPhoto(p){
   if (!bk.name && p.name){ bk.name = p.name; changed = true; }
   if (!bk.latin && p.latin){ bk.latin = p.latin; changed = true; }
   if (!bk.desc && p.desc){ bk.desc = p.desc; changed = true; }
-  if (!bk.dex && p.dex){ bk.dex = p.dex; changed = true; }
+  if (!bk.dex){
+    /* 20261111f：照片有号就抄过来；没有号也补一次 dexRegister ——
+       库外物种在这里建野生档，别让书签一直挂着 dex=0。 */
+    const _dn = p.dex || dexRegister({
+      name: bk.name || p.name, latin: bk.latin || p.latin,
+      season: bk.season || p.season, r: bk.rare || p.rare, desc: bk.desc || p.desc
+    });
+    if (_dn){ bk.dex = _dn; changed = true; }
+  }
   /* 季相是识别之后才确定的：制签当时若还没识别完（auto=1），跟着结果更新一次 */
   if (bk.auto && p.season && p.season !== bk.season){
     bk.season = p.season; bk.auto = 0; changed = true;
@@ -3511,6 +3519,111 @@ const DEX = (function(){
   return arr;
 })();
 /* ============================================================
+   20261111f：图鉴「野生收录」—— 库外物种也能进图鉴
+   ------------------------------------------------------------
+   用户反馈：「我 6 株植物，图鉴里那几株没被铲掉的还是没出现」。
+   真机存档取证（20261111 22:54，adb 只读拉档）：
+     西瓜 469 ✅ / 菰 437 ✅（这两个恰好是内置 492 种里的短名）
+     兰科_绶草属_<某种> / 三白草科_蕺菜属_蕺菜 /
+     紫草科_粉蝶花属_粉蝶花 / 麻黄科_麻黄属_<某种>  → dexNo 全是 0
+   ⇒ 根因两层：
+     ① 识别模型给的是「科_属_种」三段式名字，和内置图鉴的短名（'蕺菜'）
+        永远不相等，dexNoByName 全部落空；
+     ② 这 4 个物种本身就不在 492 种里（Houttuynia cordata /
+        Nemophila menziesii / Spiranthes tuberosa / Ephedra aspera 全库 0 命中），
+        就算名字对上了也没有格子可指。
+   ⇒ 处理：
+     ① 名字归一化：'三白草科_蕺菜属_蕺菜' → '蕺菜'；'…_<某种>' → 取属名去掉「属」；
+     ② 匹配顺序：已有号 → 全名 → 短名 → 拉丁名（忽略大小写）；
+     ③ 都对不上 → 分配野生号接在 492 之后（493 起），存进存档 dexExtra，
+        下次启动原样还原，编号不会乱跳。
+   ============================================================ */
+let DEX_EXTRA = [];     /* [{no,n,l,f,s,r,d,wild:1}] 库外物种，号从 493 起 */
+
+/* 名字归一化：三段式「科_属_种」→ 短种名 */
+function dexPrettyName(name){
+  const s = String(name || '').trim();
+  if (!s) return '';
+  if (s.indexOf('_') < 0) return s;
+  const parts = s.split('_').map(function(x){ return String(x || '').trim(); }).filter(Boolean);
+  if (!parts.length) return '';
+  const isPh = function(x){ return !x || /^<.*>$/.test(x) || x === '某种' || x === '未知'; };
+  const last = parts[parts.length - 1];
+  if (!isPh(last)) return last.replace(/属$/, '');
+  /* 末段是「<某种>」→ 退一级用属名（'绶草属' → '绶草'） */
+  for (let i = parts.length - 2; i >= 0; i--){
+    if (!isPh(parts[i])) return parts[i].replace(/属$/, '');
+  }
+  return '';
+}
+/* 科名：三段式第一段（'三白草科_…' → '三白草科'） */
+function dexFamOf(name){
+  const s = String(name || '').trim();
+  const i = s.indexOf('_');
+  const head = i > 0 ? s.slice(0, i) : '';
+  return /科$/.test(head) ? head : '';
+}
+/* 名字 / 拉丁名 → 已有图鉴号（0 = 库里没有） */
+function dexFindNo(name, latin){
+  const raw = String(name || '').trim();
+  const pretty = dexPrettyName(raw);
+  for (let i = 0; i < DEX.length; i++){
+    const d = DEX[i];
+    if (!d || !d.n) continue;
+    if (d.n === raw || (pretty && d.n === pretty)) return d.no || (i + 1);
+  }
+  const L = String(latin || '').trim().toLowerCase();
+  if (L){
+    for (let i = 0; i < DEX.length; i++){
+      const d = DEX[i];
+      if (d && d.l && String(d.l).toLowerCase() === L) return d.no || (i + 1);
+    }
+  }
+  return 0;
+}
+/* 收录入口：给「植株 / 种子 / 书签 / 识别结果」，返回图鉴号并建档。
+   库外物种在这里现场建野生档，所以「种下即收录」对任何物种都成立。 */
+function dexRegister(o){
+  if (!o) return 0;
+  const raw = o.name || o.n || '';
+  const latin = o.latin || o.l || '';
+  const have = o.dexNo || o.dex || 0;
+  if (have && DEX[have - 1]) return have;
+  const hit = dexFindNo(raw, latin);
+  if (hit) return hit;
+  const nm = dexPrettyName(raw) || String(raw).trim();
+  if (!nm) return 0;
+  const no = DEX_TOTAL + DEX_EXTRA.length + 1;
+  const rec = {
+    no: no, n: nm, l: String(latin || '').trim(),
+    f: dexFamOf(raw), s: (o.season || 'spring'),
+    r: (o.r || o.rare || 2), d: (o.desc || o.d || ''),
+    wild: 1
+  };
+  DEX_EXTRA.push(rec);
+  /* 直接追加进 DEX：分页 / 筛选 / 详情 / 剪影全部自动带上，不用改渲染 */
+  DEX.push({ no: no, n: rec.n, l: rec.l, f: rec.f, s: rec.s, r: rec.r, d: rec.d, real: false, wild: 1 });
+  return no;
+}
+/* 读档时还原野生条目（保证编号与上次一致） */
+function dexRestoreExtra(list){
+  /* 先清掉上一次 push 进来的野生格：DEX 前 DEX_TOTAL 条是内置的，永远不动 */
+  if (DEX.length > DEX_TOTAL) DEX.length = DEX_TOTAL;
+  DEX_EXTRA = [];
+  if (!Array.isArray(list)) return 0;
+  list.forEach(function(x){
+    if (!x || !x.n) return;
+    const no = DEX_TOTAL + DEX_EXTRA.length + 1;
+    const rec = {
+      no: no, n: String(x.n), l: String(x.l || ''), f: String(x.f || ''),
+      s: (x.s || 'spring'), r: (x.r || 2), d: String(x.d || ''), wild: 1
+    };
+    DEX_EXTRA.push(rec);
+    DEX.push({ no: no, n: rec.n, l: rec.l, f: rec.f, s: rec.s, r: rec.r, d: rec.d, real: false, wild: 1 });
+  });
+  return DEX_EXTRA.length;
+}
+/* ============================================================
    稀有度取值（20261108 补）
    ------------------------------------------------------------
    稀有度 r（1~3）在 DEX_SEED / DEX 里本来就有，但**种下的时候一直没抄进
@@ -3796,15 +3909,27 @@ function dexFiltered(){
   else list = DEX.filter(d => dexFilter === 'all' || d.s === dexFilter);
   return dexOwnFirst(list);
 }
-/* 收录数 = 图鉴账里的物种数（不再按书签张数算，同种拍两次不会虚高） */
-function dexCount(){ return Object.keys(DEX_SEEN || {}).filter(k => DEX_SEEN[k]).length; }
+/* 收录数 = 图鉴账里的物种数（不再按书签张数算，同种拍两次不会虚高）。
+   20261111f：加一道「号还在图鉴里」的过滤 —— 野生档若因存档丢失没还原，
+   DEX_SEEN 里会留着一个没有格子的空号，不能算进收集数。 */
+function dexCount(){
+  let n = 0;
+  Object.keys(DEX_SEEN || {}).forEach(function(k){
+    if (!DEX_SEEN[k]) return;
+    const no = parseInt(k, 10);
+    if (no >= 1 && no <= DEX.length) n++;
+  });
+  return n;
+}
 
 function renderDexCount(){
   const p = $('#dexProg'); if (!p) return;
   const got = dexCount();
-  p.textContent = 'COLLECTED · ' + pad2(got) + ' / ' + DEX_TOTAL;
+  /* 分母用 DEX.length（492 + 野生档），否则野生收录会让「06 / 492」溢出 */
+  const total = DEX.length || DEX_TOTAL;
+  p.textContent = 'COLLECTED · ' + pad2(got) + ' / ' + total;
   const bar = $('#dexBar');
-  if (bar) bar.style.width = Math.max(1.2, Math.round(got / DEX_TOTAL * 1000) / 10) + '%';
+  if (bar) bar.style.width = Math.max(1.2, Math.round(got / total * 1000) / 10) + '%';
   const bd = $('#dexBadges');
   if (!bd) return;
   const seasonsHit = ['spring','summer','autumn','winter'].filter(function(sn){
@@ -4750,7 +4875,7 @@ function ticketMarkup(p){
     '<div class="tk-desc">' + (p.desc || '还没认出来，先给它起个名字吧。') + '</div>' +
     '<div class="tk-mid"></div>' +
     '<div class="tk-meta"><span>' + SEASON_CN[p.season] + ' · ' + p.date + '</span>' +
-    '<span>' + (p.kind === 'planet' ? '星球印记' : (p.src === 'pl' ? '已收录' : '未识别')) + '</span></div>' +
+    '<span>' + (p.kind === 'planet' ? '星球印记' : (p.src === 'pl' ? '已收录' : (p.src === 'demo' ? '示例图' : '未识别'))) + '</span></div>' +
     '<div class="tk-foot"><span>TICKET · 存根</span>' +
     '<div class="tk-stub"><i></i><i></i><i></i><i></i><i></i></div></div>';
 }
@@ -5047,14 +5172,18 @@ function renderWiki(){
   $('#wkLatin').textContent = own ? d.l : '还没遇到过这一种';
   const tg = $('#wkTags');
   tg.innerHTML = '';
-  const tags = [[d.f, ''], [w.tag, ''], [SEASON_CN[d.s] + '季', ''], [WK_RARE[w.rare] || '常见', 'rare']];
+  const tags = [[d.f || '未定科', ''], [w.tag, ''], [SEASON_CN[d.s] + '季', ''], [WK_RARE[w.rare] || '常见', 'rare']];
   tags.forEach(t => {
     const e = document.createElement('span');
     e.className = 'wk-tag' + (t[1] ? ' ' + t[1] : '');
     e.textContent = t[0];
     tg.appendChild(e);
   });
-  $('#wkDesc').textContent = own ? d.d : '这一格还空着。';
+  /* 20261111f：野生档没有百科文案（识别只给了名字/拉丁/季相），
+     给一句说明，别让详情页出现一片空白 */
+  $('#wkDesc').textContent = own
+    ? (d.d || (d.wild ? '在野外遇到的一种植物。图鉴库里原本没有它，是你把它带回来的。' : ''))
+    : '这一格还空着。';
 
   const rows = $('#wkRows');
   if (!own){
@@ -7657,13 +7786,35 @@ async function bmPlantRecognize(src){
   let sum = 0;
   const exps = new Float32Array(logits.length);
   for (let i = 0; i < logits.length; i++){ exps[i] = Math.exp(logits[i] - max); sum += exps[i]; }
-  /* top1 */
-  let topIdx = 0, topVal = -1;
-  for (let i = 0; i < exps.length; i++){ const p = exps[i] / sum; if (p > topVal){ topVal = p; topIdx = i; } }
+  /* 20261111g：取 top5 而不是只有 top1 ——
+     图鉴里的种经常被「同属近缘种」抢答（例：拍宽叶车前草，模型 top1 给「大车前
+     Plantago major」），只留 top1 就没有任何纠错余地。
+     这里用 5 个变量做小顶插入，不排序 4066 个，代价可以忽略。 */
+  const TOPN = 5;
+  const topIdx = new Int32Array(TOPN).fill(-1);
+  const topP = new Float32Array(TOPN);
+  for (let i = 0; i < exps.length; i++){
+    const p = exps[i] / sum;
+    if (!(p > topP[TOPN - 1])) continue;
+    let j = TOPN - 1;
+    while (j > 0 && p > topP[j - 1]){ topP[j] = topP[j - 1]; topIdx[j] = topIdx[j - 1]; j--; }
+    topP[j] = p; topIdx[j] = i;
+  }
+  const top = [];
+  for (let i = 0; i < TOPN; i++){
+    if (topIdx[i] < 0) break;      /* 空位 / NaN 保护 */
+    top.push({
+      latin: BM_PLANT_MODEL.latins[topIdx[i]] || '',
+      name: BM_PLANT_MODEL.names[topIdx[i]] || '',
+      p: topP[i]
+    });
+  }
+  if (!top.length) return null;
   return {
-    name: BM_PLANT_MODEL.names[topIdx] || '',
-    latin: BM_PLANT_MODEL.latins[topIdx] || '',
-    cnf: Math.round(topVal * 100)
+    name: top[0].name,
+    latin: top[0].latin,
+    cnf: Math.round(top[0].p * 100),
+    top: top          /* 新增字段，旧调用方读 name/latin/cnf 完全不受影响 */
   };
 }
 
@@ -7736,6 +7887,503 @@ const PLANT_NEAR_MAP = {
   /* 石韦（水龙骨科）→ 北美多足蕨 */
   'polypodium virginianum': 'pyrrosia lingua'
 };
+
+/* ============================================================
+   模型学名 → 图鉴号 自动映射表（20261111 生成，勿手改）
+   ------------------------------------------------------------
+   来源：quarrying-plant-id 4066 类 × 内置图鉴 492 条，由
+   .workbuddy/tools/gen_plant_dex_map.py 生成：
+     ① 学名精确 352 条  ② 同属且图鉴属内唯一 53 条  ③ 同属按种加词相似度 40 条
+   未绑定 47 条（模型连属都没有，走野生收录）。
+   key = 模型返回的学名（小写），value = 图鉴号（DEX[no-1]）。
+   手工表 PLANT_NEAR_MAP 优先级更高，仍排在它前面先查。
+   ============================================================ */
+const BM_PLANT_DEX_MAP = {
+  'abelia uniflora': 247,
+  'abutilon theophrasti': 13,
+  'acacia confusa': 212,
+  'acalypha australis': 32,
+  'acalypha hispida': 270,
+  'acer buergerianum': 146,
+  'acer negundo': 148,
+  'acer palmatum': 144,
+  'acer truncatum': 145,
+  'acorus calamus': 69,
+  'actinidia chinensis': 124,
+  'adenophora stricta': 369,
+  'adiantum capillus-veneris': 480,
+  'agrimonia pilosa': 41,
+  'ailanthus altissima': 141,
+  'albizia julibrissin': 108,
+  'alcea rosea': 389,
+  'alisma plantago-aquatica': 71,
+  'allamanda schottii&cathartica': 271,
+  'allium tuberosum': 470,
+  'alnus trabeculosa': 176,
+  'aloe vera': 307,
+  'alopecurus aequalis': 63,
+  'apocynum venetum': 93,
+  'aquilegia viridiflora': 354,
+  'arachis hypogaea': 459,
+  'artemisia argyi': 21,
+  'artemisia caruifolia': 417,
+  'artemisia selengensis': 415,
+  'arundo donax': 445,
+  'asclepias curassavica': 421,
+  'aster altaicus': 407,
+  'aster hispidus': 406,
+  'astilbe chinensis': 381,
+  'astragalus sinicus': 349,
+  'azolla pinnata subsp. asiatica': 485,
+  'bambusa ventricosa': 318,
+  'bauhinia variegata': 210,
+  'begonia grandis subsp. sinensis': 294,
+  'belamcanda chinensis': 452,
+  'bellis perennis': 289,
+  'bidens pilosa': 15,
+  'bischofia polycarpa': 161,
+  'boehmeria nivea': 36,
+  'brasenia schreberi': 126,
+  'brassica rapa var. chinensis': 461,
+  'broussonetia papyrifera': 33,
+  'calotropis gigantea': 420,
+  'calystegia hederacea': 26,
+  'camellia japonica': 244,
+  'camellia oleifera': 246,
+  'camellia sasanqua': 245,
+  'camellia sinensis': 477,
+  'campanula glomerata subsp. speciosa': 371,
+  'campsis grandiflora': 199,
+  'camptotheca acuminata': 195,
+  'canna indica': 446,
+  'capsella bursa-pastoris': 4,
+  'capsicum annuum': 464,
+  'cardamine hirsuta': 357,
+  'cardamine impatiens': 359,
+  'cardamine leucantha': 358,
+  'caryota maxima': 231,
+  'cassia fistula': 220,
+  'castanea mollissima': 169,
+  'catalpa ovata': 197,
+  'catalpa speciosa': 198,
+  'catharanthus roseus': 272,
+  'cayratia japonica': 89,
+  'celtis sinensis': 158,
+  'centella asiatica': 86,
+  'cerastium glomeratum': 54,
+  'ceratophyllum demersum': 76,
+  'cercis chinensis': 110,
+  'chaenomeles sinensis': 184,
+  'chaenomeles speciosa': 185,
+  'chelidonium majus': 323,
+  'chenopodium album': 10,
+  'chimonanthus praecox': 258,
+  'chionanthus retusus': 218,
+  'chlorophytum comosum': 306,
+  'choerospondias axillaris': 163,
+  'chrysanthemum multicaule': 403,
+  'cinnamomum camphora': 132,
+  'cirsium arvense': 330,
+  'cirsium japonicum': 16,
+  'citrullus lanatus': 469,
+  'citrus reticulata': 476,
+  'clivia miniata': 295,
+  'cnidium monnieri': 83,
+  'codiaeum variegatum': 268,
+  'codonopsis subglobosa': 370,
+  'coleus hybridu&scutellarioides': 279,
+  'commelina benghalensis': 66,
+  'commelina communis': 65,
+  'convolvulus arvensis': 27,
+  'coreopsis tinctoria': 285,
+  'cornus controversa': 191,
+  'cornus kousa subsp. chinensis': 192,
+  'cornus officinalis': 193,
+  'cortaderia selloana': 444,
+  'corydalis edulis': 321,
+  'corydalis yanhusuo': 322,
+  'cosmos bipinnatus': 284,
+  'crassula obliqua \'gollum\'': 313,
+  'crataegus pinnatifida': 127,
+  'crocus sativus': 116,
+  'cucumis sativus': 465,
+  'cucurbita moschata': 466,
+  'cycas revoluta': 230,
+  'cynanchum atratum': 424,
+  'cynanchum auriculatum': 425,
+  'cynanchum chinense': 423,
+  'cynodon dactylon': 61,
+  'cyperus involucratus': 440,
+  'cyperus rotundus': 441,
+  'dahlia pinnata': 283,
+  'datura stramonium': 12,
+  'daucus carota': 82,
+  'davidia involucrata': 194,
+  'delonix regia': 211,
+  'descurainia sophia': 49,
+  'dianthus chinensis': 56,
+  'diospyros kaki': 129,
+  'dracaena cambodiana': 308,
+  'duchesnea indica': 39,
+  'duranta erecta': 276,
+  'echinochloa crus-galli': 58,
+  'echinopsis chamaecereus': 310,
+  'eclipta prostrata': 411,
+  'eichhornia crassipes': 434,
+  'eleocharis dulcis': 438,
+  'eleusine indica': 9,
+  'eomecon chionantha': 326,
+  'epilobium hirsutum': 374,
+  'equisetum arvense': 486,
+  'erigeron annuus': 19,
+  'erigeron canadensis': 20,
+  'eriobotrya japonica': 178,
+  'erodium stephanianum': 388,
+  'erysimum amurense': 362,
+  'eucalyptus cinerea': 207,
+  'euonymus alatus': 262,
+  'euonymus fortunei': 125,
+  'euonymus japonicus': 235,
+  'euonymus japonicus \'aurea-marginatus\'': 236,
+  'eupatorium fortunei': 408,
+  'euphorbia helioscopia&esula': 31,
+  'euphorbia humifusa': 30,
+  'euphorbia pulcherrima': 269,
+  'euryale ferox': 426,
+  'farfugium japonicum': 412,
+  'fatsia japonica': 266,
+  'ficus altissima': 205,
+  'ficus carica': 131,
+  'ficus pumila': 123,
+  'ficus religiosa': 204,
+  'ficus subpisocarpa': 202,
+  'ficus virens': 203,
+  'firmiana simplex': 103,
+  'forsythia suspensa': 99,
+  'fragaria virginiana': 472,
+  'fraxinus chinensis': 105,
+  'galanthus elwesii': 117,
+  'gardenia jasminoides': 251,
+  'gentiana squarrosa': 372,
+  'geranium carolinianum': 387,
+  'geranium wilfordii': 386,
+  'ginkgo biloba': 101,
+  'gleditsia japonica': 214,
+  'glochidion puberum': 397,
+  'glycine max': 458,
+  'gypsophila paniculata': 340,
+  'hedera nepalensis var. sinensis': 265,
+  'helianthus annuus': 287,
+  'hemerocallis fulva': 300,
+  'hemisteptia lyrata': 329,
+  'hibiscus mutabilis': 188,
+  'hibiscus rosa-sinensis': 189,
+  'hibiscus syriacus': 187,
+  'hibiscus trionum': 392,
+  'hippeastrum rutilum': 296,
+  'hosta plantaginea': 301,
+  'humulus scandens': 35,
+  'hyacinthus orientalis': 118,
+  'hydrocharis dubia': 74,
+  'hydrocotyle sibthorpioides': 85,
+  'hylotelephium spectabile': 314,
+  'hypericum japonicum': 400,
+  'hypericum monogynum': 401,
+  'hypericum patulum': 402,
+  'impatiens balsamina': 378,
+  'impatiens noli-tangere': 379,
+  'imperata cylindrica': 60,
+  'ipomoea indica': 28,
+  'iris lactea': 451,
+  'iris pseudacorus': 450,
+  'iris tectorum': 449,
+  'ixeris chinensis': 328,
+  'ixora chinensis': 253,
+  'jacaranda mimosifolia': 196,
+  'jasminum mesnyi': 255,
+  'jasminum nudiflorum': 98,
+  'jasminum sambac': 254,
+  'juglans regia': 168,
+  'juncus effusus': 67,
+  'juniperus chinensis': 227,
+  'kalanchoe blossfeldiana': 312,
+  'kerria japonica': 186,
+  'koelreuteria paniculata': 140,
+  'lagerstroemia indica': 190,
+  'lagopsis supina': 23,
+  'lamprocapnos spectabilis': 325,
+  'lantana camara': 274,
+  'lavandula stoechas': 492,
+  'lemna minor': 73,
+  'leonurus japonicus': 22,
+  'lepidium apetalum': 50,
+  'leucaena leucocephala': 213,
+  'ligustrum lucidum': 96,
+  'ligustrum quihoui': 256,
+  'lindernia crustacea': 365,
+  'lindernia ruellioides': 366,
+  'liquidambar formosana': 102,
+  'liriodendron chinense': 154,
+  'lithocarpus glaber': 173,
+  'livistona chinensis': 233,
+  'lobelia chinensis': 367,
+  'lonicera maackii': 248,
+  'loropetalum chinense var. rubrum': 241,
+  'ludwigia adscendens': 377,
+  'ludwigia peploides subsp. stipulacea': 376,
+  'luffa aegyptiaca': 467,
+  'lycium chinense': 91,
+  'lycoris radiata': 299,
+  'lygodium japonicum': 482,
+  'lythrum salicaria': 80,
+  'magnolia grandiflora': 151,
+  'mahonia fortunei': 240,
+  'malus hupehensis': 128,
+  'malus pumila': 475,
+  'malva cathayensis': 390,
+  'malva verticillata var. crispa': 391,
+  'malvastrum coromandelianum': 394,
+  'matthiola incana': 363,
+  'mazus pumilus': 334,
+  'medicago lupulina': 344,
+  'medicago polymorpha': 345,
+  'medicago sativa': 346,
+  'melaleuca cajuputi subsp. cumingiana': 208,
+  'melia azedarach': 143,
+  'melilotus officinalis': 347,
+  'mentha canadensis': 24,
+  'metaplexis japonica': 29,
+  'michelia chapensis': 155,
+  'michelia figo': 257,
+  'michelia maudiae': 153,
+  'miscanthus sinensis \'gracillimus\'': 489,
+  'momordica charantia': 468,
+  'monochoria korsakowii': 435,
+  'monochoria vaginalis': 436,
+  'morus alba': 34,
+  'musa nana': 234,
+  'myosoton aquaticum': 53,
+  'myrica rubra': 177,
+  'myriophyllum verticillatum': 77,
+  'nandina domestica': 239,
+  'narcissus tazetta var. chinensis': 115,
+  'nelumbo nucifera': 79,
+  'nephrolepis cordifolia': 479,
+  'nerium oleander': 94,
+  'nuphar pumila': 427,
+  'nymphaea odorata': 78,
+  'nymphoides peltata': 428,
+  'oenanthe javanica': 81,
+  'oenothera biennis&glazioviana': 375,
+  'olea europaea': 217,
+  'ophiopogon bodinieri': 303,
+  'ophiopogon japonicus': 302,
+  'opuntia basilaris': 309,
+  'orychophragmus violaceus': 48,
+  'oryza sativa': 453,
+  'osmanthus fragrans': 97,
+  'ottelia alismoides': 432,
+  'oxalis articulata': 385,
+  'oxalis corniculata': 5,
+  'oxalis corymbosa': 384,
+  'paeonia suffruticosa': 442,
+  'papaver rhoeas': 324,
+  'parthenocissus quinquefolia': 88,
+  'parthenocissus tricuspidata': 264,
+  'paulownia tomentosa': 201,
+  'peganum harmala': 419,
+  'pelargonium hortorum': 293,
+  'pennisetum alopecuroides': 490,
+  'penthorum chinense': 383,
+  'perilla frutescens': 25,
+  'periploca sepium': 422,
+  'petasites japonicus': 414,
+  'petunia × hybrida': 292,
+  'photinia beauverdiana': 238,
+  'phragmites australis': 59,
+  'phyllanthus emblica': 399,
+  'phyllanthus urinaria': 398,
+  'phyllostachys nigra': 319,
+  'physalis philadelphica': 92,
+  'pinellia ternata': 70,
+  'pinus parviflora': 229,
+  'pinus strobus': 135,
+  'pistacia vera': 162,
+  'pistia stratiotes': 433,
+  'pittosporum tobira': 237,
+  'plantago asiatica': 1,
+  'plantago depressa': 38,
+  'platanus racemosa': 104,
+  'platycladus orientalis': 136,
+  'platycodon grandiflorus': 368,
+  'poa annua': 62,
+  'podocarpus macrophyllus': 221,
+  'pontederia cordata': 448,
+  'populus deltoides': 133,
+  'portulaca oleracea': 7,
+  'potamogeton crispus': 119,
+  'potamogeton distinctus': 75,
+  'potentilla kleiniana': 40,
+  'prunus cerasifera f. atropurpurea': 183,
+  'prunus laurocerasus': 180,
+  'prunus salicina': 179,
+  'prunus serotina': 111,
+  'prunus spinosa': 181,
+  'prunus virginiana': 113,
+  'pseudognaphalium hypoleucum': 331,
+  'pteridium aquilinum': 478,
+  'pterocarya stenoptera': 167,
+  'pulsatilla chinensis': 353,
+  'punica granatum': 130,
+  'pyrus betulifolia': 474,
+  'quercus acutissima': 170,
+  'quercus lobata': 172,
+  'quercus variabilis': 171,
+  'ranunculus asiaticus': 350,
+  'ranunculus muricatus': 351,
+  'ranunculus sceleratus': 352,
+  'rhododendron mucronatum': 243,
+  'rhododendron simsii': 242,
+  'rhus chinensis': 165,
+  'rhus typhina': 166,
+  'ricinus communis': 396,
+  'robinia pseudoacacia': 109,
+  'rorippa globosa': 361,
+  'rorippa indica': 51,
+  'rosa chinensis': 259,
+  'rosa henryi': 260,
+  'rosa multiflora': 42,
+  'rosa rugosa': 261,
+  'rubus corchorifolius': 44,
+  'rubus idaeus&hirsutus': 45,
+  'rubus parvifolius': 43,
+  'rudbeckia hirta': 286,
+  'sagittaria sagittifolia': 72,
+  'salix wallichiana': 134,
+  'salvia farinacea': 277,
+  'salvia splendens': 278,
+  'saxifraga stolonifera': 380,
+  'schefflera heptaphylla': 267,
+  'schlumbergera truncata': 311,
+  'schoenoplectus tabernaemontani': 439,
+  'sedum lineare': 315,
+  'sedum sarmentosum': 316,
+  'selaginella uncinata': 488,
+  'semiaquilegia adoxoides': 356,
+  'senecio scandens': 405,
+  'serissa japonica': 252,
+  'setaria italica var. germanica': 457,
+  'setaria viridis': 8,
+  'sida subcordata': 395,
+  'solanum lyratum': 90,
+  'solanum melongena': 463,
+  'solanum nigrum&americanum': 11,
+  'solanum pseudocapsicum': 462,
+  'solidago canadensis': 409,
+  'sonchus oleraceus': 17,
+  'sorghum bicolor': 456,
+  'stellaria media': 52,
+  'styphnolobium japonicum': 107,
+  'swertia bimaculata': 373,
+  'symphyotrichum novae-angliae': 288,
+  'symphyotrichum subulatum': 410,
+  'syringa oblata': 100,
+  'syzygium jambos': 209,
+  'tagetes erecta': 280,
+  'taraxacum mongolicum': 3,
+  'taxodium distichum': 225,
+  'terminalia arjuna': 219,
+  'thalia dealbata': 447,
+  'thalictrum aquilegiifolium var. sibiricum': 355,
+  'tiarella polyphylla': 382,
+  'tilia americana': 156,
+  'toona sinensis': 142,
+  'torenia fournieri': 364,
+  'torilis arvensis': 84,
+  'toxicodendron diversilobum': 164,
+  'trachelospermum jasminoides': 95,
+  'trachycarpus fortunei': 139,
+  'triadica sebifera': 160,
+  'tribulus terrestris': 418,
+  'trifolium repens': 2,
+  'triticum aestivum': 454,
+  'tulipa gesneriana': 443,
+  'tussilago farfara': 413,
+  'typha orientalis': 68,
+  'ulmus americana': 157,
+  'ulmus pumila': 106,
+  'urena lobata': 393,
+  'urtica dioica': 37,
+  'vaccaria hispanica': 55,
+  'verbena officinalis': 333,
+  'verbena stricta': 275,
+  'veronica arvensis': 337,
+  'veronica henryi': 336,
+  'veronica persica': 335,
+  'veronica undulata': 6,
+  'viburnum macrocephalum': 249,
+  'viburnum odoratissimum': 250,
+  'vicia cracca': 342,
+  'vicia sativa': 341,
+  'vicia villosa': 343,
+  'vinca major': 273,
+  'viola acuminata': 338,
+  'viola arcuata': 47,
+  'viola cornuta': 291,
+  'viola philippica': 46,
+  'viola tricolor': 290,
+  'vitis vinifera': 473,
+  'wisteria sinensis&villosa': 216,
+  'xanthium strumarium': 14,
+  'youngia japonica': 18,
+  'yulania denudata': 149,
+  'yulania liliiflora': 150,
+  'yulania stellata': 152,
+  'zea mays': 455,
+  'zephyranthes candida': 297,
+  'zingiber officinale': 471,
+  'zinnia elegans': 282,
+  'zizania latifolia': 437
+};
+
+/* ============================================================
+   20261111g：从 top-k 里挑最终结果（替代以前「只看 top1 学名」的硬匹配）
+   ------------------------------------------------------------
+   ★ 判定顺序是「先比候选，再比来源」，不是「先把手工表查完」：
+     按 top1→top5 逐个候选看，每个候选先查手工表、再查自动表；
+     一旦某个候选的概率低于 top1 × 34%，后面的直接不看（分数拉开就不猜了）。
+   这样：
+     · top1 精确命中图鉴 → 立刻返回，绝不被后面排着的近缘种改判；
+     · top1 是图鉴外的近亲、真身排第 2 → 用真身的分数命中（专治抢答）；
+     · 5 个候选全不在表里 → 返回 null，调用方走野生收录。
+   ★ null 这条分支必须保住：蕺菜 / 绶草 / 粉蝶花 / 麻黄 这些图鉴外物种
+     就是靠「模型说出了图鉴里没有的名字」才建上野生档的，不能剪掉。
+   BM_PLANT_POOL_RATIO 是唯一的宽严开关：调大更保守（更多落野生），
+   调小更容易认成图鉴植物。
+   ============================================================ */
+const BM_PLANT_POOL_RATIO = 0.34;
+function bmPlantPickFromTop(top){
+  if (!top || !top.length) return null;
+  const lc = function(s){ return String(s || '').trim().toLowerCase(); };
+  const p0 = top[0].p || 0;
+  for (let i = 0; i < top.length; i++){
+    const p = top[i].p || 0;
+    if (i > 0 && p < p0 * BM_PLANT_POOL_RATIO) break;   /* 分数拉开 → 不再往下猜 */
+    const k = lc(top[i].latin);
+    /* ① 手工近缘表：人工逐条确认过，同一个候选里最可信 */
+    const near = PLANT_NEAR_MAP[k];
+    if (near){
+      const d = bmPlantMatchDex(near);
+      if (d) return { entry: d, cnf: Math.round(p * 100), how: 'near' };
+    }
+    /* ② 自动映射表（学名精确 / 同属唯一 / 同属相似度）：i=0 就是常规命中 */
+    const no = BM_PLANT_DEX_MAP[k];
+    if (no && DEX[no - 1]){
+      return { entry: DEX[no - 1], cnf: Math.round(p * 100), how: i === 0 ? 'map' : 'pool' };
+    }
+  }
+  return null;
+}
 
 /* 把模型返回的学名按近缘映射表纠正成图鉴学名；没命中就原样返回 */
 function bmPlantNearCorrect(latin){
@@ -7812,9 +8460,10 @@ function addPhotoFromImage(img, label, skipOpen){
       if (curPhoto === p) refreshPhotoRecognize(p);
       return;
     }
-    /* 近缘种映射：把模型返回的学名纠正成图鉴学名，再对齐图鉴 */
-    const corrLatin = bmPlantNearCorrect(r.latin);
-    const hit = bmPlantMatchDex(corrLatin);
+    /* 20261111g：不再只看 top1 学名 —— 交给 bmPlantPickFromTop 走四层判定
+       （手工近缘表 → 自动映射表 → top2~5 候选池 → 落空走野生收录） */
+    const pick = bmPlantPickFromTop(r.top);
+    const hit = pick ? pick.entry : null;
     if (hit){
       /* 学名对齐图鉴：用图鉴的完整数据（季节/稀有度/描述都对得上） */
       p.dex = hit.no;
@@ -7824,14 +8473,19 @@ function addPhotoFromImage(img, label, skipOpen){
       p.desc = hit.d;
       p.rare = hit.r;
     } else {
-      /* 图鉴没有这株：用模型返回的中文名 + 学名，按季相兜底 */
-      p.dex = 0;
-      p.name = r.name || r.latin;
+      /* 20261111f：图鉴库里没有这株（492 种覆盖不了野外任意物种）→ 现场建野生档。
+         名字归一化成短名（'三白草科_蕺菜属_蕺菜' → '蕺菜'），季相按当前推。
+         以前这里直接 dex=0，于是这类植物拍到了、种下了也永远进不了图鉴 ——
+         用户那 4 株（蕺菜/粉蝶花/绶草/麻黄）就是这么「失踪」的。 */
+      p.name = dexPrettyName(r.name || '') || r.name || r.latin;
       p.latin = r.latin;
       p.season = currentSeasonGuess() || 'spring';
       p.rare = 2;
+      p.dex = dexRegister({ name: p.name, latin: p.latin, season: p.season, r: p.rare, desc: r.desc || '' });
     }
-    p.cnf = r.cnf;
+    /* 20261111g：近缘 / 候选池命中时，置信度用「真正命中的那一类」的概率，
+       而不是 top1 —— top1 可能是图鉴外的近亲，拿它的分数显示会虚高。 */
+    p.cnf = pick ? pick.cnf : r.cnf;
     p.src = 'pl';
     p.fresh = false;
     /* ★ 20261111 核心修复：识别是异步的（网页端要下 29.5MB 模型、APP 首次也要加载几秒），
@@ -7909,6 +8563,10 @@ function bmModelStateText(){
 function bmPlantSrcText(p){
   if (p.fresh) return bmModelStateText();
   if (p.src === 'pl' && p.cnf > 0) return 'quarrying-plant-id · 置信 ' + p.cnf + '%';
+  /* 20261111h：开局那张示例图是内置的 1 号（宽叶车前草），不经过模型识别，
+     以前 src='demo' 落到最后一行，详情页明明写着「宽叶车前草」，
+     下面却写「未识别 · 可自行命名」，自相矛盾。 */
+  if (p.src === 'demo' && p.dex) return '示例图 · 内置图鉴 No.' + pad4(p.dex);
   return '未识别 · 可自行命名';
 }
 
@@ -9212,6 +9870,8 @@ function seasonSerialize(){
     photos: (typeof PHOTOS !== 'undefined' ? PHOTOS : []).map(_seasonCleanPhoto),
     books: (typeof BOOKS !== 'undefined' ? BOOKS : []).map(_seasonCleanPhoto),
     dexSeen: (typeof DEX_SEEN !== 'undefined' && DEX_SEEN) ? Object.assign({}, DEX_SEEN) : {},
+    /* 20261111f：库外物种的野生图鉴档（号 493 起）。丢了会让已收录的野生号变成空格子 */
+    dexExtra: (typeof DEX_EXTRA !== 'undefined' && DEX_EXTRA) ? DEX_EXTRA.map(function(x){ return Object.assign({}, x); }) : [],
     seeds: (typeof SEEDS !== 'undefined' ? SEEDS : []).map(function(s){ return Object.assign({}, s); }),
     planet: planet,
     impFound: (typeof IMP_FOUND !== 'undefined' && IMP_FOUND) ? Array.from(IMP_FOUND) : [],
@@ -9351,6 +10011,9 @@ function _seasonApply(d){
   let mx = seqNo;
   BOOKS.forEach(function(b){ if (b.no && b.no > mx) mx = b.no; });
   seqNo = mx;
+  /* 20261111f：野生图鉴条目先还原，再补录 —— 保证这次补录发出来的号
+     和上次存盘时一致，不会「每启动一次编号往后挪」。 */
+  try { dexRestoreExtra(d.dexExtra); } catch(e){}
   if (d.planet && typeof d.planet === 'object'){
     const gp = d.planet;
     if (Array.isArray(gp.plants)) PLANET.plants = gp.plants
@@ -9393,7 +10056,7 @@ function _seasonApply(d){
      ⇒ 只加不删不改：已有的收录时间 / 季相原样保留，不会被覆盖。
      ⇒ 老玩家升级后第一次进游戏就自动补齐，不用重新种一遍。 */
   try {
-    let _fixed = 0;
+    let _fixed = 0, _wild = 0;
     const _feed = [];
     (PLANET.plants || []).forEach(function(pl){ _feed.push(pl); });
     Object.keys(PLANET.pool || {}).forEach(function(k){
@@ -9401,10 +10064,18 @@ function _seasonApply(d){
     });
     (SEEDS || []).forEach(function(s){ _feed.push(s); });
     _feed.forEach(function(o){
-      const n = dexNoOfAny(o);
+      /* 20261111f：用 dexRegister —— 库外物种现场建野生档（号 493 起），
+         并把号回填到植株上，图鉴详情里「我养的这一株」才对得上。 */
+      const hadExtra = DEX_EXTRA.length;
+      const n = dexRegister(o);
+      if (n && !o.dexNo && !o.dex){ try { if (o.name) o.dexNo = n; } catch(e){} }
       if (n && !DEX_SEEN[n]){ DEX_SEEN[n] = { at: Date.now(), s: (o.season || '') }; _fixed++; }
+      if (DEX_EXTRA.length > hadExtra) _wild++;
     });
-    if (_fixed){ try { console.log('[season] 图鉴补录 ' + _fixed + ' 种（来自植株 / 种子）'); } catch(e){} }
+    if (_fixed){ try { console.log('[season] 图鉴补录 ' + _fixed + ' 种（来自植株 / 种子）' + (_wild ? '，其中野生建档 ' + _wild + ' 种' : '')); } catch(e){} }
+    /* 新建了野生档就要立刻落盘，否则下次启动 dexExtra 丢、DEX_SEEN 里
+       却留着一个没有名字的号（图鉴会多出空格子）。 */
+    if (_wild){ try { seasonSave(); } catch(e){} }
   } catch(e){}
 }
 /* 主项目通过 iframe.contentWindow 调用（同源）：
@@ -13328,7 +13999,9 @@ function addPlant(p, ch){
   /* 20261111：TA 自己种的也点亮图鉴 —— 植物已经长在你的星球上了，
      不收录反而奇怪（用户定案「种上的就是解锁的」）。 */
   try {
-    const _dn = dexNoOfAny(pl);
+    /* 20261111f：dexRegister 而不是 dexNoOfAny —— 库里没有的物种现场建野生档，
+       否则「种下即收录」对库外物种永远是空操作（那 4 株就是这么丢的）。 */
+    const _dn = dexRegister(pl);
     if (_dn){ pl.dexNo = _dn; dexMark({ dex: _dn, season: pl.season }); }
   } catch(e){}
   PLANET.plants.push(pl);
@@ -18183,9 +18856,10 @@ function renderDexTab(){
   if (sub){
     sub.innerHTML = isImp
       ? 'CONSTELLATION · 全 <span id="dexTotal">' + IMPRINTS.length + '</span> 种'
-      : 'COLLECTION · 全 <span id="dexTotal">' + DEX_TOTAL + '</span> 种';
+      : 'COLLECTION · 全 <span id="dexTotal">' + DEX.length + '</span> 种';
   }
-  if ($('#dxTabN')) $('#dxTabN').textContent = DEX_TOTAL + ' 种';
+  /* 20261111f：野生档也算进总数（否则收录数会超过分母） */
+  if ($('#dxTabN')) $('#dxTabN').textContent = DEX.length + ' 种';
   if (isImp) renderImpDex(); else renderDex();
 }
 
@@ -18557,7 +19231,9 @@ function plantSeedAt(item, slotIdx){
   /* 20261111：种下即收录 —— 用户定案「已经种上的植物就该是已解锁的图鉴」。
      老种子没有 dex 字段的，按名字反查补上，别再让图鉴空着。 */
   try {
-    const _dn = dexNoOfAny(pl);
+    /* 20261111f：dexRegister 而不是 dexNoOfAny —— 库里没有的物种现场建野生档，
+       否则「种下即收录」对库外物种永远是空操作（那 4 株就是这么丢的）。 */
+    const _dn = dexRegister(pl);
     if (_dn){ pl.dexNo = _dn; dexMark({ dex: _dn, season: pl.season }); }
   } catch(e){}
   PLANET.plants.push(pl);

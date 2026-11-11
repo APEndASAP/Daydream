@@ -805,6 +805,10 @@ window.bmMusic = (function () {
     //   http→https（music.126.net 支持 https），根治直连模式播放失败。
     song.url = _normUrl(song.url);
     state.current = song;
+    // 20261111（清单第十三节）：一切播放入口都在这里统一回写播放列表 ——
+    //   角色分享卡片选歌 / 角色随机换歌 / 角色主动搜到的歌，以前有的只写 current、
+    //   有的直接把列表覆盖成一首，刷新按钮因此漏歌。这里做成幂等同步，一处覆盖所有入口。
+    try { _syncCurrentIntoPlaylist(song); } catch (e) {}
     // 20261107 修复「切回内置播放后歌词残留遥控旧歌」：内置播放用 song.lrc（fetchSongDetail 已填），
     //   这里清掉全局 M.state.lyrics 残留（它是遥控模式 _refreshExternalLyric 写的），
     //   避免 parseLrc(M.state.lyrics || cur.lrc) 优先读到遥控旧歌词。
@@ -988,6 +992,25 @@ window.bmMusic = (function () {
       saveSession();
     }
     return !exists;
+  }
+
+  /* 20261111（修复清单第十三节）：任何进入「当前播放」的歌，都必须先回写进播放列表。
+     以前「角色随机抽歌」这条路径直接 `state.playlist = [song]` 把列表覆盖成一首，
+     于是刷新按钮遍历到的列表里根本没有之前听过的歌，点刷新等于白点。
+     规则：已在列表 → 原位更新（补 url）+ 索引对齐；不在列表 → 追加到末尾。
+     幂等，重复调用无副作用。 */
+  function _syncCurrentIntoPlaylist(song) {
+    if (!song || !song.id) return;
+    const idx = state.playlist.findIndex(s => String(s.id) === String(song.id));
+    if (idx >= 0) {
+      // 已有同一首：只在旧条目缺 url 时用新对象补上，避免把用户改过的字段冲掉
+      if (!state.playlist[idx].url && song.url) state.playlist[idx] = song;
+      state.playIndex = idx;
+    } else {
+      state.playlist.push(song);
+      state.playIndex = state.playlist.length - 1;
+    }
+    saveSession();
   }
 
   /* 一首播完：单曲循环→重播；顺序播放(once)播完最后一首→停止；否则按模式推进 */
@@ -1743,8 +1766,8 @@ window.bmMusicUI = (function () {
           if (isRemote) {
             await _remoteAction({ bridge: 'next', sayText: `${nm} 随手抽了一首来听`, local: async () => {
               const lib = await M.getLocalLibrary();
-              if (!lib.length) { const kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)]; const r = await M.search(kw); if (r && r.length) { const f = await M.fetchSongDetail(r[0]); if (f && f.url) { M.state.playlist = [f]; M.state.playIndex = 0; M.play(f); } } return; }
-              const s = lib[Math.floor(Math.random() * lib.length)]; let f = s; if (!f.url) f = await M.fetchSongDetail(s); if (f && f.url) { M.state.playlist = [f]; M.state.playIndex = 0; M.play(f); }
+              if (!lib.length) { const kw = _charSearchPool[Math.floor(Math.random() * _charSearchPool.length)]; const r = await M.search(kw); if (r && r.length) { const f = await M.fetchSongDetail(r[0]); if (f && f.url) { M.play(f); } } return; }
+              const s = lib[Math.floor(Math.random() * lib.length)]; let f = s; if (!f.url) f = await M.fetchSongDetail(s); if (f && f.url) { M.play(f); }
             } }, (t) => say(t || `${nm} 随手抽了一首来听`));
           } else if (isDirect) {
             // 直连模式：随机搜一首网易云的歌盲抽（走 _netEase* 内置播放器）

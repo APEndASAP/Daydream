@@ -1899,6 +1899,30 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
 .ac-dot.m2 { background: transparent; border: 1.5px solid #f06a9a; box-sizing: border-box; } /* 潮汐将近 */
 .ac-dot.s { background: #a78bfa; }              /* 行程（紫，区别于待办橙） */
 
+/* ================= 20261111：记事簿日历 · 梦境背景层 =================
+   月亮/两朵云/九颗星点由 app.js 的 nbCalDecoHtml() 生成，图形全部吃 currentColor，
+   这里只声明 color: var(--purple) —— 于是它自动跟随「织梦点」里选的全局主题预设，
+   换任何一套预设装饰线都跟着换色，不写死任何色值。
+   层级：装饰压在最底（z-index:0），格子半透明，星空从格子底下透出来。 */
+#nb-cal-wrap { position: relative; }
+.nbc-deco {
+  position: absolute; left: -2px; right: -2px; top: 34px; bottom: 26px;
+  pointer-events: none; overflow: hidden; z-index: 0;
+  color: var(--purple);
+}
+.nbc-inner { position: relative; z-index: 1; }
+.nbc-deco svg { position: absolute; display: block; }
+.nbc-moon    { left: -8px;  top: 11%;    width: 56px; height: 56px; stroke-width: 1.25; opacity: .45; }
+.nbc-cloud-a { right: -14px; top: 0;     width: 96px; height: 57px; stroke-width: 1.25; opacity: .40; }
+.nbc-cloud-b { left: -10px; bottom: 3%;  width: 86px; height: 52px; stroke-width: 1.25; opacity: .38; }
+.nbc-stars   { left: 0; top: 0; width: 100%; height: 100%; opacity: .38; }
+
+/* 格子底色掺一点透明度，让底下的星空透上来；旧内核不支持 color-mix 时保持实底，
+   装饰仍会露在日历四周边缘，不会变成一片死白。 */
+@supports (background: color-mix(in srgb, #fff 50%, transparent)) {
+  #nb-cal-wrap .ac-day { background: color-mix(in srgb, var(--card) 74%, transparent); }
+}
+
 /* ============================================================
    通话悬浮窗（5.8：正方形→圆角长条，可拖拽，互不干扰聊天）
    ============================================================ */

@@ -28212,6 +28212,38 @@ async function renderNotebookTide() {
   };
 }
 
+/* 20261111：记事簿日历的梦境背景层（一弯月 + 两朵云 + 九颗星点）。
+   全部用 SVG 代码画，不引外部图片；颜色统一交给 CSS 的 currentColor（= --purple），
+   所以会自动跟随「织梦点」里选的全局主题预设，这里一个色值都不写死。
+   星点坐标只随机一次并缓存，翻月/点选日期时不会重新跳动。 */
+let _nbCalDecoCache = '';
+function nbCalDecoHtml() {
+  if (_nbCalDecoCache) return _nbCalDecoCache;
+  const four = (x, y, r) => `<path d="M${x} ${y - r}Q${x} ${y} ${x + r} ${y}Q${x} ${y} ${x} ${y + r}Q${x} ${y} ${x - r} ${y}Q${x} ${y} ${x} ${y - r}Z"/>`;
+  let pts = '';
+  for (let i = 0; i < 9; i++) {
+    const x = (14 + Math.random() * 332).toFixed(1);
+    const y = (20 + Math.random() * 380).toFixed(1);
+    pts += i % 3 === 0
+      ? `<g fill="currentColor" stroke="none">${four(x, y, (3.6 + Math.random() * 2.6).toFixed(1))}</g>`
+      : `<circle cx="${x}" cy="${y}" r="${(0.9 + Math.random() * 0.6).toFixed(2)}" fill="currentColor" stroke="none"/>`;
+  }
+  _nbCalDecoCache = `
+    <svg class="nbc-moon" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-linecap="round">
+      <path d="M41.5 9.5c-6.6 2-11.2 8.3-11.2 15.7 0 9.1 7.4 16.5 16.5 16.5 1.5 0 3-.2 4.4-.6-3.4 6.6-10.3 11.1-18.2 11.1-11.3 0-20.5-9.2-20.5-20.5S21.7 11.2 33 11.2c3.1 0 6 .7 8.5 1.9"/>
+      <path d="M47 8.6c.5 2.9 1.3 3.8 4.2 4.3-2.9.5-3.7 1.4-4.2 4.3-.5-2.9-1.3-3.8-4.2-4.3 2.9-.5 3.7-1.4 4.2-4.3z" fill="currentColor" stroke="none"/>
+    </svg>
+    <svg class="nbc-cloud-a" viewBox="0 0 104 62" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M24 48c-6.6 0-12-5.2-12-11.6 0-6 4.6-11 10.5-11.6C24.2 17 31.4 11.4 40 11.4c9.4 0 17.2 7.3 17.8 16.5 5.7 1 10 5.7 10 11.3C67.8 45.4 62.3 48 56 48"/>
+      <path d="M34 41c.3-4.2.4-6.4.5-9"/>
+    </svg>
+    <svg class="nbc-cloud-b" viewBox="0 0 104 62" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 50c-6 0-11-4.8-11-10.7 0-5.6 4.3-10.2 9.8-10.7C20.2 19.6 27 14 35 14c8.7 0 15.9 6.8 16.5 15.4 5.2.9 9.2 5.3 9.2 10.5C60.7 46 56 50 50.3 50"/>
+    </svg>
+    <svg class="nbc-stars" viewBox="0 0 360 430" preserveAspectRatio="xMidYMid slice" fill="none">${pts}</svg>`;
+  return _nbCalDecoCache;
+}
+
 /* ==================== 记事簿日历视图：⏰ 待办 · 🌸 经期实记 · ◌ 潮汐预测 ==================== */
 async function renderNotebookCalendar() {
   const wrap = $('#nb-cal-wrap');
@@ -28243,6 +28275,8 @@ async function renderNotebookCalendar() {
     </button>`;
   }
   wrap.innerHTML = `
+    <div class="nbc-deco" aria-hidden="true">${nbCalDecoHtml()}</div>
+    <div class="nbc-inner">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <button class="icon-btn" id="nbc-prev">‹</button>
       <div style="font-size:15px;font-weight:600;">${y} 年 ${m + 1} 月</div>
@@ -28256,6 +28290,7 @@ async function renderNotebookCalendar() {
       <span><i data-icon="flower" data-size="16"></i> 经期开始</span><span><i class="ac-dot m"></i> 经期中</span><span><i class="ac-dot m2"></i> 潮汐将近</span><span><i class="ac-dot s"></i> 行程</span><span><i class="ac-dot p"></i> 待办</span>
     </div>
     <div id="nbc-detail" style="margin-top:10px;"></div>
+    </div>
   `;
   $('#nbc-prev').onclick = () => { _nbCalM--; if (_nbCalM < 0) { _nbCalM = 11; _nbCalY--; } _nbSelDay = ''; renderNotebookCalendar(); };
   $('#nbc-next').onclick = () => { _nbCalM++; if (_nbCalM > 11) { _nbCalM = 0; _nbCalY++; } _nbSelDay = ''; renderNotebookCalendar(); };
