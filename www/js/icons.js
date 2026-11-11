@@ -120,6 +120,40 @@ const ICONS = {
   /* —— 陪伴 / 四季（20261108）：陪伴一级入口 + 番茄钟/四季两个功能块 —— */
   companion: '<circle cx="9" cy="8.5" r="3.2"/><circle cx="16.5" cy="10" r="2.4"/><path d="M3.5 20c.7-3.6 2.9-5.4 5.5-5.4 1.2 0 2.3.3 3.3.9"/><path d="M14.5 13.8c1.5.7 2.5 1.8 3 3.4.3 1 .6 1.9.8 2.8"/><path d="M8 14.2c.9.3 1.8.9 2.4 1.8"/>',
   season: '<path d="M12 4.5v3"/><path d="M12 7.5a4.5 4.5 0 0 1 4.5 4.5c0 1.6-.8 3-2 3.9.6.9.9 2 .9 3.1a4.5 4.5 0 0 1-9 0c0-1.1.3-2.2.9-3.1-1.2-.9-2-2.3-2-3.9A4.5 4.5 0 0 1 12 7.5z"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><path d="M5.5 3.5l1.2 1.2M18.5 3.5l-1.2 1.2"/>',
+
+  /* —— 全站统一收口（20261111）：此前散落在 app.js / music.js 里的彩色 emoji，
+     全部换成这一套 24 视窗 · 1.8 线宽 · currentColor 的线性图标。
+     命名与语义一一对应，不再出现「同一个按钮两套视觉」。 —— */
+  pin: '<path d="M9 3.2h6M12 3.2v5.6"/><path d="M6.4 8.8h11.2l-1.5 3.3a3 3 0 0 1-2.7 1.7h-2.8a3 3 0 0 1-2.7-1.7z"/><path d="M12 13.8V21"/>',
+  location: '<path d="M12 21.2s6.4-5.7 6.4-10.4a6.4 6.4 0 1 0-12.8 0C5.6 15.5 12 21.2 12 21.2z"/><circle cx="12" cy="10.6" r="2.3"/>',
+  group: '<circle cx="9.2" cy="8.4" r="3.3"/><path d="M3.4 20c.7-3.6 3-5.5 5.8-5.5s5.1 1.9 5.8 5.5"/><path d="M16.2 5.5a3 3 0 0 1 0 5.9"/><path d="M17.4 14.7c1.9.6 3.2 2.4 3.6 5.3"/>',
+  flower: '<circle cx="12" cy="12" r="2.2"/><circle cx="12" cy="7.2" r="2.6"/><circle cx="16.6" cy="10.5" r="2.6"/><circle cx="14.8" cy="16" r="2.6"/><circle cx="9.2" cy="16" r="2.6"/><circle cx="7.4" cy="10.5" r="2.6"/>',
+  candle: '<path d="M12 3.4c1.6 1.9 2.4 3.3 2.4 4.6a2.4 2.4 0 1 1-4.8 0c0-1.3.8-2.7 2.4-4.6z"/><rect x="8.6" y="11.2" width="6.8" height="9.2" rx="1.8"/><path d="M6 20.4h12"/>',
+  moon: '<path d="M20.2 14.4A8.4 8.4 0 0 1 9.6 3.8a8.4 8.4 0 1 0 10.6 10.6z"/>',
+  crown: '<path d="M3.6 7.6l4.2 3.2L12 4.6l4.2 6.2 4.2-3.2-1.9 10.4H5.5z"/><path d="M5.5 20.6h13"/>',
+  package: '<path d="M12 3l8.8 4.4v9.2L12 21l-8.8-4.4V7.4z"/><path d="M3.2 7.4L12 11.8l8.8-4.4"/><path d="M12 11.8V21"/>',
+  clock: '<circle cx="12" cy="12" r="8.4"/><path d="M12 7.4V12l3.2 1.9"/>',
+  alert: '<path d="M12 4.4l8.2 14.3a1 1 0 0 1-.9 1.5H4.7a1 1 0 0 1-.9-1.5z"/><path d="M12 9.8v4"/><circle cx="12" cy="16.6" r="0.95" fill="currentColor" stroke="none"/>',
+  party: '<path d="M3.6 20.4L9.2 7.4l7.4 7.4z"/><path d="M16.6 3.4l.6 2.2 2.2.6-2.2.6-.6 2.2-.6-2.2-2.2-.6 2.2-.6z"/><path d="M14.4 11.4l.5 1.6 1.6.5-1.6.5-.5 1.6-.5-1.6-1.6-.5 1.6-.5z" stroke-width="1.3"/>',
+  mic: '<rect x="9.2" y="2.8" width="5.6" height="10.4" rx="2.8"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8V21M9.2 21h5.6"/>',
+  inbox: '<path d="M3.6 12.6L6.2 5h11.6l2.6 7.6"/><path d="M3.6 12.6h4l1.2 2.4h6.4l1.2-2.4h4v5.2a2.4 2.4 0 0 1-2.4 2.4H6a2.4 2.4 0 0 1-2.4-2.4z"/>',
+  key: '<circle cx="8" cy="12" r="3.4"/><path d="M11.4 12H20.6"/><path d="M17.6 12v3M20.2 12v2.4"/>',
+  dice: '<rect x="3.6" y="3.6" width="16.8" height="16.8" rx="4"/><circle cx="8.6" cy="8.6" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.4" cy="8.6" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="8.6" cy="15.4" r="1.2" fill="currentColor" stroke="none"/><circle cx="15.4" cy="15.4" r="1.2" fill="currentColor" stroke="none"/>',
+  compass: '<circle cx="12" cy="12" r="8.6"/><path d="M15.4 8.6l-2 4.8-4.8 2 2-4.8z"/>',
+  radio: '<rect x="2.6" y="8.4" width="18.8" height="11.6" rx="2.4"/><path d="M6.4 8.4l9.4-4.2"/><circle cx="16.2" cy="14.2" r="2.6"/><path d="M6 12.4h4.4M6 16.4h4.4"/>',
+  link: '<path d="M10.6 13.4a4 4 0 0 0 5.66 0l2.3-2.3a4 4 0 0 0-5.66-5.66L11.6 6.7"/><path d="M13.4 10.6a4 4 0 0 0-5.66 0l-2.3 2.3a4 4 0 0 0 5.66 5.66l1.3-1.3"/>',
+  sliders: '<path d="M5 4v5.6M5 14.4V20M12 4v2.6M12 11v9M19 4v8.6M19 18v2"/><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="8.8" r="2.2"/><circle cx="19" cy="15.8" r="2.2"/>',
+  cloud: '<path d="M7.4 19h9.2a3.7 3.7 0 0 0 .3-7.4 5.4 5.4 0 0 0-10.3-1.2A4.3 4.3 0 0 0 7.4 19z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/>',
+  chart: '<path d="M4 3.6V20h16"/><path d="M8 16.6v-4.2M12.6 16.6V8.4M17.2 16.6v-6"/>',
+  broom: '<path d="M19.6 4.4l-6.2 6.2"/><path d="M13.4 10.6l-2.8-2.8"/><path d="M10.6 13.4L6 18l2.8 2.8 4.6-4.6z"/><path d="M6 18l-2.4 4 4-2.4"/>',
+  sprout: '<path d="M12 21v-8"/><path d="M12 13c0-3.4-2.5-6.1-5.8-6.1C6.2 10.2 8.6 13 12 13z"/><path d="M12 13c0-2.9 2.1-5.2 4.9-5.2 0 2.9-2.1 5.2-4.9 5.2z"/>',
+  megaphone: '<path d="M3.4 10.4v3.2l4 1 9 4V5.4l-9 4z"/><path d="M7.4 14.6v4a1.6 1.6 0 0 0 3.2 0v-2.6"/><path d="M19.6 9.6a3 3 0 0 1 0 5"/>',
+  scale: '<path d="M12 3.4V20.6"/><path d="M7.4 20.6h9.2"/><path d="M4.4 7h15.2"/><path d="M4.4 7L2 13h4.8z"/><path d="M19.6 7L17.2 13H22z"/>',
+  door: '<path d="M5.4 21V4.2A1.2 1.2 0 0 1 6.6 3h10.8a1.2 1.2 0 0 1 1.2 1.2V21"/><path d="M3.4 21h17.2"/><circle cx="14.8" cy="12" r="1.1" fill="currentColor" stroke="none"/>',
+  globe: '<circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2"/><path d="M12 3.4c2.2 2.4 3.4 5.4 3.4 8.6s-1.2 6.2-3.4 8.6c-2.2-2.4-3.4-5.4-3.4-8.6s1.2-6.2 3.4-8.6z"/>',
+  help: '<circle cx="12" cy="12" r="8.6"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.5v.4"/><circle cx="12" cy="17" r="0.95" fill="currentColor" stroke="none"/>',
+  bulb: '<path d="M9.4 17.4a5.6 5.6 0 1 1 5.2 0"/><path d="M9.2 20.6h5.6"/><path d="M10.4 17.4h3.2"/>',
 };
 
 /* 取图标 SVG（内联，自动继承颜色） */
@@ -130,9 +164,71 @@ function icon(name, size = 22) {
 
 /* 自动填充 HTML 中所有 [data-icon] 占位 */
 function hydrateIcons(root = document) {
-  root.querySelectorAll('[data-icon]').forEach(el => {
-    if (el.dataset.iconDone) return;
+  root.querySelectorAll('[data-icon]:not([data-icon-done])').forEach(el => {
     el.innerHTML = icon(el.dataset.icon, parseInt(el.dataset.size || '22'));
     el.dataset.iconDone = '1';
   });
 }
+
+/* ============================================================
+   20261111：图标占位符「随插随填」
+   ------------------------------------------------------------
+   为什么需要它：app.js / music.js 里大量界面是拼 HTML 字符串再 innerHTML 的，
+   而且同一个文件里既有模板字符串（可插值）也有单引号字符串（不能插值）。
+   若统一改成 ${icon(...)}，单引号那部分会静默失效、把代码原样印到界面上。
+   所以统一改用 <i data-icon="close" data-size="16"></i> 这种纯标记占位，
+   再在这里挂一个 MutationObserver 自动补 SVG —— 无论字符串用哪种引号、
+   无论插到哪个容器，只要进了 DOM 就会被填上。
+
+   性能：只观察 childList，回调里把新增节点攒到下一帧统一处理；
+   每个新增子树只查一次 [data-icon]:not([data-icon-done])，已填过的不会重复处理。
+   ============================================================ */
+(function initIconAutoHydrate() {
+  if (typeof document === 'undefined' || !document.body) return;
+  if (window.__bmIconHydrateReady) return;
+  window.__bmIconHydrateReady = true;
+
+  // 占位符的对齐与尺寸（内联注入，避免依赖外部 CSS 的加载顺序）
+  try {
+    const st = document.createElement('style');
+    st.id = 'bm-icon-placeholder-style';
+    st.textContent = '[data-icon]{display:inline-flex;align-items:center;justify-content:center;vertical-align:-0.18em;line-height:1;flex:0 0 auto}[data-icon]>svg{display:block}';
+    document.head.appendChild(st);
+  } catch (e) {}
+
+  let queue = [];
+  let scheduled = false;
+  const flush = () => {
+    scheduled = false;
+    const nodes = queue;
+    queue = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (!n.isConnected) continue;
+      try {
+        if (n.nodeType === 1 && n.matches && n.matches('[data-icon]:not([data-icon-done])')) {
+          // 新增节点本身就是占位符：直接填，不必回扫整个父级
+          n.innerHTML = icon(n.dataset.icon, parseInt(n.dataset.size || '22'));
+          n.dataset.iconDone = '1';
+        } else if (n.querySelectorAll) {
+          hydrateIcons(n);
+        }
+      } catch (e) {}
+    }
+  };
+  const mo = new MutationObserver(muts => {
+    for (let i = 0; i < muts.length; i++) {
+      const added = muts[i].addedNodes;
+      for (let j = 0; j < added.length; j++) {
+        const n = added[j];
+        if (n.nodeType === 1) queue.push(n);
+      }
+    }
+    if (!queue.length || scheduled) return;
+    scheduled = true;
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+    else setTimeout(flush, 16);
+  });
+  try { mo.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
+  hydrateIcons(document);
+})();

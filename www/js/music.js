@@ -1226,7 +1226,7 @@ window.bmMusicUI = (function () {
     const pic = M.state.current && M.state.current.pic;
     const core = pic
       ? `<div class="bm-planet-core has-pic" id="bm-planet-core" style="background-image:url('${esc(pic)}')"></div>`
-      : `<div class="bm-planet-core" id="bm-planet-core"><div class="bm-planet-ph">${window.icon ? window.icon('music', 40) : '♪'}</div></div>`;
+      : `<div class="bm-planet-core" id="bm-planet-core"><div class="bm-planet-ph">${window.icon ? window.icon('music', 40) : window.icon('music', 16)}</div></div>`;
     return `
     <div class="bm-vinyl-rig">
       <div class="bm-planet" id="bm-planet" style="width:${size}px;height:${size}px;">
@@ -1572,7 +1572,7 @@ window.bmMusicUI = (function () {
       document.body.appendChild(el);
     }
     const who = (c && c.name) ? c.name : '访客';
-    el.innerHTML = `<span class="bm-ma-ico">♪</span><span class="bm-ma-who">${who}</span><span class="bm-ma-txt">${text || ''}</span>`;
+    el.innerHTML = `<span class="bm-ma-ico"><i data-icon="music" data-size="16"></i></span><span class="bm-ma-who">${who}</span><span class="bm-ma-txt">${text || ''}</span>`;
     el.classList.remove('bm-ma-hide');
     el.classList.add('bm-ma-show');
     if (_maToastTimer) clearTimeout(_maToastTimer);
@@ -2904,7 +2904,7 @@ window.bmMusicUI = (function () {
       <div class="bm-comment-card">
         <div class="bm-comment-head">
           <span>《${esc(cur.name)}》的评论</span>
-          <button class="bm-comment-close" id="bm-comment-close">✕</button>
+          <button class="bm-comment-close" id="bm-comment-close"><i data-icon="close" data-size="17"></i></button>
         </div>
         <div class="bm-comment-clist">
           ${charComments.length
@@ -3523,7 +3523,7 @@ window.bmMusicUI = (function () {
       <div class="bm-fml-body">
         ${list.length ? list.map((s, i) => `
           <div class="bm-fml-item ${String(s.id) === String(cur && cur.id) ? 'on' : ''}" data-i="${i}">
-            <span class="bm-fml-cover">${s.pic ? coverImgHTML(s.pic) : '♪'}</span>
+            <span class="bm-fml-cover">${s.pic ? coverImgHTML(s.pic) : window.icon('music', 16)}</span>
             <div class="bm-fml-info">
               <div class="bm-fml-name">${esc(s.name)}</div>
               <div class="bm-fml-artist">${esc(s.artist || '')}</div>
@@ -4058,7 +4058,7 @@ window.bmMusicUI = (function () {
     sub.innerHTML = `
       <div class="bm-lib-submask"></div>
       <div class="bm-lib-subcard">
-        <div class="bm-lib-subhead"><span>添加到歌单</span><button class="bm-lib-close" id="bm-song-addpl-close">✕</button></div>
+        <div class="bm-lib-subhead"><span>添加到歌单</span><button class="bm-lib-close" id="bm-song-addpl-close"><i data-icon="close" data-size="17"></i></button></div>
         <div class="bm-lib-pllist">
           ${pls.length ? pls.map(p => `<div class="bm-lib-plopt" data-id="${esc(p.id)}">${esc(p.name)}<span>${(p.tracks||[]).length}首</span></div>`).join('') : '<div class="bm-music-empty">暂无歌单</div>'}
         </div>
@@ -4098,7 +4098,7 @@ window.bmMusicUI = (function () {
     sub.innerHTML = `
       <div class="bm-lib-submask"></div>
       <div class="bm-lib-subcard">
-        <div class="bm-lib-subhead"><span>新建歌单</span><button class="bm-lib-close" id="bm-song-addpl-close">✕</button></div>
+        <div class="bm-lib-subhead"><span>新建歌单</span><button class="bm-lib-close" id="bm-song-addpl-close"><i data-icon="close" data-size="17"></i></button></div>
         <div class="bm-lib-newpl" style="padding:14px 0;">
           <input class="bm-lib-newpl-input" id="bm-song-newpl-input" placeholder="输入歌单名称…" />
           <button class="bm-lib-subbtn" id="bm-song-newpl-btn">新建并加入《${esc(full.name)}》</button>
@@ -4163,7 +4163,7 @@ window.bmMusicUI = (function () {
       <div class="bm-results-body">
       ${list.map(s => `
         <div class="bm-result" data-id="${esc(s.id)}">
-          <div class="bm-result-cover">${s.pic ? coverImgHTML(s.pic) : '♪'}</div>
+          <div class="bm-result-cover">${s.pic ? coverImgHTML(s.pic) : window.icon('music', 16)}</div>
           <div class="bm-result-info">
             <div class="bm-result-name">${esc(s.name)}</div>
             <div class="bm-result-artist">${esc(s.artist)}</div>
@@ -4629,7 +4629,7 @@ window.bmMusicUI = (function () {
     sub.innerHTML = `
       <div class="bm-lib-submask"></div>
       <div class="bm-lib-subcard">
-        <div class="bm-lib-subhead"><span>导入网易云歌单</span><button class="bm-lib-close" id="bm-neimport-close">✕</button></div>
+        <div class="bm-lib-subhead"><span>导入网易云歌单</span><button class="bm-lib-close" id="bm-neimport-close"><i data-icon="close" data-size="17"></i></button></div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 6px;">
           <span style="font-size:12px;color:var(--text-secondary);">勾选要导入的歌单（会存进音乐库「歌单」，可随时播放）</span>
           <label style="font-size:12px;color:var(--purple-soft);cursor:pointer;display:flex;align-items:center;gap:4px;">
@@ -4640,7 +4640,7 @@ window.bmMusicUI = (function () {
           ${pls.map(p => `
             <label class="bm-neimport-item" style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--bm-card-line, rgba(255,255,255,.08));cursor:pointer;">
               <input type="checkbox" class="bm-neimport-cb" data-id="${p.id}" data-name="${esc(p.name)}" data-count="${p.count}" data-cover="${esc(p.cover || '')}" style="accent-color:var(--purple-soft);flex:0 0 auto;">
-              ${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" style="width:34px;height:34px;border-radius:6px;object-fit:cover;flex:0 0 auto;">` : `<span style="width:34px;height:34px;border-radius:6px;background:var(--bm-card, rgba(255,255,255,.05));display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);flex:0 0 auto;">♪</span>`}
+              ${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" style="width:34px;height:34px;border-radius:6px;object-fit:cover;flex:0 0 auto;">` : `<span style="width:34px;height:34px;border-radius:6px;background:var(--bm-card, rgba(255,255,255,.05));display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);flex:0 0 auto;"><i data-icon="music" data-size="16"></i></span>`}
               <div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div><div style="font-size:11px;color:var(--text-tertiary);">${p.count} 首</div></div>
             </label>`).join('')}
         </div>
@@ -4877,7 +4877,7 @@ window.bmMusicUI = (function () {
     resultsBox.style.display = 'block';
     resultsBox.innerHTML = `<div class="bm-netease-results-head">「${esc(kw)}」搜索结果（点一首播放 · 镜像源）</div>` + list.slice(0, 12).map(s => `
       <div class="bm-netease-result" data-id="${esc(s.id)}" data-name="${esc(s.name)}" data-artist="${esc(s.artist || '')}" data-pic="${esc(s.pic || '')}">
-        ${s.pic ? `<img src="${esc(s.pic)}" referrerpolicy="no-referrer" alt="">` : '<span class="bm-netease-result-ph">♪</span>'}
+        ${s.pic ? `<img src="${esc(s.pic)}" referrerpolicy="no-referrer" alt="">` : '<span class="bm-netease-result-ph"><i data-icon="music" data-size="16"></i></span>'}
         <div class="bm-netease-result-info"><div class="bm-netease-result-name">${esc(s.name)}</div><div class="bm-netease-result-artist">${esc(s.artist || '')}</div></div>
       </div>`).join('');
     resultsBox.querySelectorAll('.bm-netease-result').forEach(el => {
@@ -4986,9 +4986,9 @@ window.bmMusicUI = (function () {
     box.innerHTML = `
       <div class="bm-remote-box bm-remote-box-solid">
         <div class="bm-remote-headbar" id="bm-remote-headbar">
-          <span class="bm-remote-head">📻 后台遥控</span>
+          <span class="bm-remote-head"><i data-icon="radio" data-size="16"></i> 后台遥控</span>
           <div class="bm-remote-mode-switch" id="bm-remote-mode-switch">
-            <span class="bm-remote-mode-label">${isDirect ? '🔗 网易云直连' : '🎛 遥控外部App'}</span>
+            <span class="bm-remote-mode-label">${isDirect ? '<i data-icon="link" data-size="15"></i> 网易云直连' : '<i data-icon="sliders" data-size="15"></i> 遥控外部App'}</span>
             <button class="bm-remote-mode-btn ${isDirect ? 'on' : ''}" id="bm-remote-mode-btn" title="切换直连/遥控">
               <span class="bm-remote-mode-knob"></span>
             </button>
@@ -5001,10 +5001,10 @@ window.bmMusicUI = (function () {
             <div class="bm-netease-login-row">
               ${neLogged
                 ? `<span class="bm-netease-status on">● 已登录网易云</span><button class="bm-remote-btn" id="bm-netease-logout">退出登录</button>`
-                : `<span class="bm-netease-status">○ 未登录（登录后可用自己账号搜歌/读歌单/点VIP）</span><button class="bm-remote-btn bm-netease-login" id="bm-netease-login">🔑 登录网易云</button>`}
+                : `<span class="bm-netease-status">○ 未登录（登录后可用自己账号搜歌/读歌单/点VIP）</span><button class="bm-remote-btn bm-netease-login" id="bm-netease-login"><i data-icon="key" data-size="16"></i> 登录网易云</button>`}
             </div>
             <div class="bm-netease-import-row">
-              <button class="bm-remote-btn bm-netease-import-fixed" id="bm-netease-import-fixed">⬇ 导入歌单</button>
+              <button class="bm-remote-btn bm-netease-import-fixed" id="bm-netease-import-fixed"><i data-icon="download" data-size="16"></i> 导入歌单</button>
             </div>
             <div class="bm-netease-search-row">
               <input class="bm-netease-input" id="bm-netease-search-input" placeholder="搜索网易云歌曲…" />
@@ -5029,7 +5029,7 @@ window.bmMusicUI = (function () {
           </div>
           ${(!notifEnabled) ? `
           <div class="bm-remote-perm" id="bm-remote-perm">
-            <span class="bm-remote-perm-txt">⚠️ 尚未授权「通知使用权」，Android 11+ 需此权限才能稳定遥控第三方音乐 App。</span>
+            <span class="bm-remote-perm-txt"><i data-icon="alert" data-size="15"></i> 尚未授权「通知使用权」，Android 11+ 需此权限才能稳定遥控第三方音乐 App。</span>
             <button class="bm-remote-btn bm-remote-perm-btn" id="bm-remote-permbtn">去授权</button>
           </div>` : ''}
           <div class="bm-remote-row">
@@ -5038,12 +5038,12 @@ window.bmMusicUI = (function () {
           </div>
           <div class="bm-remote-status">${canControl ? '可操控后台正在播放的音乐，点下方按钮直接遥控。' : (bridge ? '请先打开音乐 App 播放一首，再回来点「盲抽一首」。' : '未在播放 · 点「盲抽一首」开始')}</div>
           <div class="bm-remote-ctrl">
-            <button class="bm-remote-btn bm-remote-blind" id="bm-remote-blind">🎲 盲抽一首</button>
-            <button class="bm-remote-btn" id="bm-remote-daily">📅 每日推荐</button>
-            <button class="bm-remote-btn" id="bm-remote-roam">🧭 漫游</button>
+            <button class="bm-remote-btn bm-remote-blind" id="bm-remote-blind"><i data-icon="dice" data-size="16"></i> 盲抽一首</button>
+            <button class="bm-remote-btn" id="bm-remote-daily"><i data-icon="daily" data-size="16"></i> 每日推荐</button>
+            <button class="bm-remote-btn" id="bm-remote-roam"><i data-icon="compass" data-size="16"></i> 漫游</button>
           </div>
           <div class="bm-remote-ctrl">
-            <button class="bm-remote-btn" id="bm-remote-readnow">🎧 播放当前这首</button>
+            <button class="bm-remote-btn" id="bm-remote-readnow"><i data-icon="headphone" data-size="16"></i> 播放当前这首</button>
           </div>
           <div class="bm-remote-tip">上一首 / 播放 / 下一首 用下方悬浮窗那排图标直接遥控，这里不再重复。后台直接给 ${target.name} 发指令，不跳转软件；仅能盲抽盲切外部 App 歌单，不能指定搜索。</div>
           <div class="bm-remote-tip bm-remote-tip-warn">${bridge ? '已走原生插件控制外部 App（MediaSession / NotificationListener）。' : '当前为 Web 演示：真实控制外部 App 需在 App 端接入原生遥控插件。'}</div>
@@ -5116,7 +5116,7 @@ window.bmMusicUI = (function () {
       resultsBox.style.display = 'block';
       resultsBox.innerHTML = `<div class="bm-netease-results-head">「${esc(kw)}」搜索结果（点一首播放）</div>` + list.slice(0, 12).map(s => `
         <div class="bm-netease-result" data-id="${s.id}" data-name="${esc(s.name)}" data-artist="${esc(s.artist)}" data-pic="${esc(s.pic)}">
-          ${s.pic ? `<img src="${esc(s.pic)}" referrerpolicy="no-referrer" alt="">` : '<span class="bm-netease-result-ph">♪</span>'}
+          ${s.pic ? `<img src="${esc(s.pic)}" referrerpolicy="no-referrer" alt="">` : '<span class="bm-netease-result-ph"><i data-icon="music" data-size="16"></i></span>'}
           <div class="bm-netease-result-info"><div class="bm-netease-result-name">${esc(s.name)}</div><div class="bm-netease-result-artist">${esc(s.artist)}</div></div>
         </div>`).join('');
       resultsBox.querySelectorAll('.bm-netease-result').forEach(el => {
@@ -5141,9 +5141,9 @@ window.bmMusicUI = (function () {
     if (plBox && neLogged) {
       _netEaseMyPlaylists().then(pls => {
         if (!pls || !pls.length) { plBox.innerHTML = '<div class="bm-netease-empty">没读到你的歌单（可能账号没建歌单）</div>'; return; }
-        plBox.innerHTML = `<div class="bm-netease-results-head">🎵 我的歌单（点一首播放 · 或导入到音乐库）<button class="bm-remote-btn bm-netease-import" id="bm-netease-import" title="勾选歌单导入到音乐库">⬇ 导入歌单</button></div>` + pls.slice(0, 50).map(p => `
+        plBox.innerHTML = `<div class="bm-netease-results-head"><i data-icon="music" data-size="16"></i> 我的歌单（点一首播放 · 或导入到音乐库）<button class="bm-remote-btn bm-netease-import" id="bm-netease-import" title="勾选歌单导入到音乐库"><i data-icon="download" data-size="16"></i> 导入歌单</button></div>` + pls.slice(0, 50).map(p => `
           <div class="bm-netease-playlist" data-id="${p.id}">
-            ${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" alt="">` : '<span class="bm-netease-result-ph">♪</span>'}
+            ${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" alt="">` : '<span class="bm-netease-result-ph"><i data-icon="music" data-size="16"></i></span>'}
             <div class="bm-netease-result-info"><div class="bm-netease-result-name">${esc(p.name)}</div><div class="bm-netease-result-artist">${p.count} 首</div></div>
           </div>`).join('');
         plBox.querySelectorAll('.bm-netease-playlist').forEach(el => {
@@ -5201,7 +5201,7 @@ window.bmMusicUI = (function () {
         coverEl.innerHTML = `<img src="${esc(st.cover)}" alt="" draggable="false">`;
         coverEl.style.background = 'none';
       } else {
-        coverEl.innerHTML = '♪';
+        coverEl.innerHTML = window.icon('music', 20);
         coverEl.style.background = '';
         // 读不到后台封面时，用白日梦音源搜同款补一张封面
         if (title) {
@@ -5354,7 +5354,7 @@ window.bmMusicUI = (function () {
     pop.innerHTML = `
       <div class="bm-lib-submask" id="bm-parse-mask"></div>
       <div class="bm-lib-subcard">
-        <div class="bm-lib-subhead"><span>解析歌单</span><button class="bm-lib-close" id="bm-parse-close">✕</button></div>
+        <div class="bm-lib-subhead"><span>解析歌单</span><button class="bm-lib-close" id="bm-parse-close"><i data-icon="close" data-size="17"></i></button></div>
         <div class="bm-lib-parse-row">
           <input class="bm-lib-parse-input" id="bm-parse-input" placeholder="粘贴歌单分享链接（网易云/QQ音乐/酷我/酷狗…）" />
           <button class="bm-lib-parse-btn" id="bm-parse-btn">解析导入</button>
@@ -5429,7 +5429,7 @@ window.bmMusicUI = (function () {
           <div class="bm-lib-headbtns">
             <button class="bm-lib-manage" id="bm-lib-manage">批量管理</button>
             <button class="bm-lib-add" id="bm-lib-add">添加歌曲</button>
-            <button class="bm-lib-close" id="bm-lib-close">✕</button>
+            <button class="bm-lib-close" id="bm-lib-close"><i data-icon="close" data-size="17"></i></button>
           </div>
         </div>
         <div class="bm-lib-tabs">
@@ -5518,10 +5518,10 @@ window.bmMusicUI = (function () {
       return `
       <div class="bm-lib-row ${checked ? 'on' : ''}" data-id="${esc(s.id)}">
         ${managing ? `<span class="bm-lib-check ${checked ? 'on' : ''}"></span>` : ''}
-        <span class="bm-lib-cover">${s.pic ? `<img src="${esc(s.pic)}" alt="">` : '♪'}</span>
+        <span class="bm-lib-cover">${s.pic ? `<img src="${esc(s.pic)}" alt="">` : window.icon('music', 16)}</span>
         <span class="bm-lib-info"><span class="bm-lib-name">${esc(s.name)}</span><span class="bm-lib-artist">${esc(s.artist || '')}</span></span>
         ${managing ? '' : `<button class="bm-lib-play" data-id="${esc(s.id)}" title="播放">${window.icon ? window.icon('play', 16) : '▶'}</button>`}
-        ${managing ? '' : `<button class="bm-lib-del" data-id="${esc(s.id)}" title="删除">✕</button>`}
+        ${managing ? '' : `<button class="bm-lib-del" data-id="${esc(s.id)}" title="删除"><i data-icon="close" data-size="17"></i></button>`}
       </div>`;
     }).join('');
     body.querySelectorAll('.bm-lib-row').forEach(el => {
@@ -5584,7 +5584,7 @@ window.bmMusicUI = (function () {
     }
     body.innerHTML = `<div class="bm-lib-visitor-hint">${esc(c.name || 'TA')} 收藏的歌（${lib.length} 首）</div>` + lib.map(s => `
       <div class="bm-lib-row" data-id="${esc(s.id)}">
-        <span class="bm-lib-cover">${s.pic ? `<img src="${esc(s.pic)}" alt="">` : '♪'}</span>
+        <span class="bm-lib-cover">${s.pic ? `<img src="${esc(s.pic)}" alt="">` : window.icon('music', 16)}</span>
         <span class="bm-lib-info"><span class="bm-lib-name">${esc(s.name)}</span><span class="bm-lib-artist">${esc(s.artist || '')}</span></span>
         <button class="bm-lib-play" data-id="${esc(s.id)}" title="播放">${window.icon ? window.icon('play', 16) : '▶'}</button>
       </div>`).join('');
@@ -5632,7 +5632,7 @@ window.bmMusicUI = (function () {
     his.sort((a, b) => (b.ts || 0) - (a.ts || 0));
     body.innerHTML = `<div class="bm-lib-visitor-hint">${esc(c.name || 'TA')} 的耳机记录（${his.length} 首）</div>` + his.map(x => `
       <div class="bm-lib-row" data-id="${esc(x.songId || x.id || '')}">
-        <span class="bm-lib-cover">${x.pic ? `<img src="${esc(x.pic)}" alt="">` : '♪'}</span>
+        <span class="bm-lib-cover">${x.pic ? `<img src="${esc(x.pic)}" alt="">` : window.icon('music', 16)}</span>
         <span class="bm-lib-info"><span class="bm-lib-name">${esc(x.name)}</span><span class="bm-lib-artist">${esc(x.artist || '')}</span></span>
         <span class="bm-ear-time">${_fmtEarTime(x.ts)}</span>
       </div>`).join('');
@@ -5662,10 +5662,10 @@ window.bmMusicUI = (function () {
     const peekHtml = _buildPeekFootprints(peeks);
     const listHtml = pls.length ? pls.map(p => `
       <div class="bm-lib-row" data-id="${esc(p.id)}">
-        <span class="bm-lib-cover bm-lib-plcover">${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" alt="">` : '♪'}</span>
+        <span class="bm-lib-cover bm-lib-plcover">${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" alt="">` : window.icon('music', 16)}</span>
         <span class="bm-lib-info"><span class="bm-lib-name">${esc(p.name)}</span><span class="bm-lib-artist">${(p.tracks || []).length} 首</span></span>
         <button class="bm-lib-play" data-id="${esc(p.id)}" title="播放该歌单">${window.icon ? window.icon('play', 16) : '▶'}</button>
-        <button class="bm-lib-del" data-id="${esc(p.id)}">✕</button>
+        <button class="bm-lib-del" data-id="${esc(p.id)}"><i data-icon="close" data-size="17"></i></button>
       </div>`).join('') : '<div class="bm-music-empty">还没有歌单</div>';
     body.innerHTML = peekHtml + listHtml + `
       <div class="bm-lib-newpl-row">
@@ -5726,7 +5726,7 @@ window.bmMusicUI = (function () {
     const lines = recent.map(p => `<div class="bm-peek-item"><span class="bm-peek-dot"></span><span class="bm-peek-text">${_peekLineText(p)}</span></div>`).join('');
     // 右上角「历史」小图标：查看前几天（非今天）的足迹记录
     const histBtn = `<button class="bm-peek-hist-btn" id="bm-peek-hist-btn" title="查看历史足迹">${window.icon ? window.icon('clock', 14) : '🕘'}</button>`;
-    return `<div class="bm-peek-box"><div class="bm-peek-head">👀 访客足迹${histBtn}</div>${lines}</div>`;
+    return `<div class="bm-peek-box"><div class="bm-peek-head"><i data-icon="eye" data-size="16"></i> 访客足迹${histBtn}</div>${lines}</div>`;
   }
   // 打开历史足迹弹窗：按天分组展示「今天之前」的足迹（今天已在主区展示，历史里也一并列出，方便回看）
   function _openPeekHistory() {
@@ -5756,8 +5756,8 @@ window.bmMusicUI = (function () {
       }
       openModal(`
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <div style="font-size:16px;font-weight:600;">👀 访客足迹 · 历史</div>
-          <button class="icon-btn" id="peekhist-close">✕</button>
+          <div style="font-size:16px;font-weight:600;"><i data-icon="eye" data-size="13"></i> 访客足迹 · 历史</div>
+          <button class="icon-btn" id="peekhist-close"><i data-icon="close" data-size="17"></i></button>
         </div>
         <div style="max-height:60vh;overflow-y:auto;padding-right:4px;">${bodyHtml}</div>
       `);
@@ -5800,10 +5800,10 @@ window.bmMusicUI = (function () {
     sub.innerHTML = `
       <div class="bm-lib-submask"></div>
       <div class="bm-lib-subcard">
-        <div class="bm-lib-subhead"><span>添加歌曲</span><button class="bm-lib-close" id="bm-lib-add-close">✕</button></div>
+        <div class="bm-lib-subhead"><span>添加歌曲</span><button class="bm-lib-close" id="bm-lib-add-close"><i data-icon="close" data-size="17"></i></button></div>
         <label class="bm-lib-subbtn" for="bm-lib-file">上传本地音乐文件</label>
         <input type="file" id="bm-lib-file" accept="audio/*" multiple style="display:none;">
-        <label class="bm-lib-scanbtn" for="bm-lib-scan-dir">🔍 扫描本机音频</label>
+        <label class="bm-lib-scanbtn" for="bm-lib-scan-dir"><i data-icon="search" data-size="15"></i> 扫描本机音频</label>
         <input type="file" id="bm-lib-scan-dir" accept="audio/*" multiple webkitdirectory directory style="display:none;">
         <label class="bm-lib-filter">
           <input type="checkbox" id="bm-lib-filter30" checked />
@@ -5936,7 +5936,7 @@ window.bmMusicUI = (function () {
     sub.innerHTML = `
       <div class="bm-lib-submask"></div>
       <div class="bm-lib-subcard">
-        <div class="bm-lib-subhead"><span>加入歌单（已选 ${selCount} 首）</span><button class="bm-lib-close" id="bm-lib-addpl-close">✕</button></div>
+        <div class="bm-lib-subhead"><span>加入歌单（已选 ${selCount} 首）</span><button class="bm-lib-close" id="bm-lib-addpl-close"><i data-icon="close" data-size="17"></i></button></div>
         <div class="bm-lib-pllist">
           ${pls.length ? pls.map(p => `<div class="bm-lib-plopt" data-id="${esc(p.id)}">${esc(p.name)}<span>${(p.tracks||[]).length}首</span></div>`).join('') : '<div class="bm-music-empty">暂无歌单</div>'}
         </div>
@@ -5987,15 +5987,15 @@ window.bmMusicUI = (function () {
     sub.innerHTML = `
       <div class="bm-lib-submask"></div>
       <div class="bm-lib-subcard">
-        <div class="bm-lib-subhead"><span>${esc(rec.name)}（${tracks.length} 首）</span><button class="bm-lib-close" id="bm-lib-pldetail-close">✕</button></div>
+        <div class="bm-lib-subhead"><span>${esc(rec.name)}（${tracks.length} 首）</span><button class="bm-lib-close" id="bm-lib-pldetail-close"><i data-icon="close" data-size="17"></i></button></div>
         <button class="bm-lib-subbtn" id="bm-lib-pldetail-playall">▶ 播放全部（${tracks.length} 首）</button>
         <div class="bm-lib-pldetail-body">
           ${tracks.length ? tracks.map((s, i) => `
             <div class="bm-lib-row" data-id="${esc(s.id)}" data-i="${i}">
               <span class="bm-lib-plidx">${i + 1}</span>
-              <span class="bm-lib-cover">${s.pic ? `<img src="${esc(s.pic)}" alt="">` : '♪'}</span>
+              <span class="bm-lib-cover">${s.pic ? `<img src="${esc(s.pic)}" alt="">` : window.icon('music', 16)}</span>
               <span class="bm-lib-info"><span class="bm-lib-name">${esc(s.name)}</span><span class="bm-lib-artist">${esc(s.artist || '')}</span></span>
-              <button class="bm-lib-del" data-id="${esc(s.id)}">✕</button>
+              <button class="bm-lib-del" data-id="${esc(s.id)}"><i data-icon="close" data-size="17"></i></button>
             </div>`).join('') : '<div class="bm-music-empty">歌单为空</div>'}
         </div>
       </div>`;
@@ -6051,7 +6051,7 @@ window.bmMusicUI = (function () {
     picker.innerHTML = `
       <div class="bm-theme-mask" id="bm-theme-mask"></div>
       <div class="bm-theme-card">
-        <div class="bm-theme-head"><span>外观</span><button class="bm-theme-close" id="bm-theme-close">✕</button></div>
+        <div class="bm-theme-head"><span>外观</span><button class="bm-theme-close" id="bm-theme-close"><i data-icon="close" data-size="17"></i></button></div>
         <div class="bm-theme-subhead">主题</div>
         <div class="bm-theme-grid">
           ${themes.map(t => `<button class="bm-theme-opt ${t.id === cur ? 'on' : ''}" data-theme="${t.id}"><span class="bm-theme-ico">${t.icon}</span><span>${t.name}</span></button>`).join('')}
@@ -6113,12 +6113,12 @@ window.bmMusicUI = (function () {
     picker.innerHTML = `
       <div class="bm-theme-mask" id="bm-source-mask"></div>
       <div class="bm-theme-card bm-source-card">
-        <div class="bm-theme-head"><span>选择音源来源</span><button class="bm-theme-close" id="bm-source-close">✕</button></div>
+        <div class="bm-theme-head"><span>选择音源来源</span><button class="bm-theme-close" id="bm-source-close"><i data-icon="close" data-size="17"></i></button></div>
         <div class="bm-source-list" id="bm-source-list">
           <div class="bm-source-group">内置来源</div>
           ${builtin.map(o => `<button class="bm-source-opt" data-key="${o.key}"><span class="bm-source-name">${o.name}</span><span class="bm-source-desc">${o.desc}</span></button>`).join('')}
           ${custom.length ? `<div class="bm-source-group">自定义来源</div>` : ''}
-          ${custom.map(c => `<div class="bm-source-opt bm-source-custom" data-key="${esc(c.id)}"><span class="bm-source-name">${esc(c.name)}</span><span class="bm-source-desc">${esc(c.baseUrl)}</span><button class="bm-source-del" data-id="${esc(c.id)}">✕</button></div>`).join('')}
+          ${custom.map(c => `<div class="bm-source-opt bm-source-custom" data-key="${esc(c.id)}"><span class="bm-source-name">${esc(c.name)}</span><span class="bm-source-desc">${esc(c.baseUrl)}</span><button class="bm-source-del" data-id="${esc(c.id)}"><i data-icon="close" data-size="17"></i></button></div>`).join('')}
         </div>
         <div class="bm-source-add">
           <div class="bm-source-addhead">添加自定义音源（粘贴 Meting 兼容 API 地址，关键词用 {kw} 占位）</div>
@@ -6203,6 +6203,7 @@ window.bmMusicUI = (function () {
     const page = document.getElementById('bm-music-page');
     if (page) page.remove();
     stopPlanetAnimation();
+    stopLyricScroll();   /* 20261111：歌词 rAF 也一起停，别在后台 60fps 空转 */
     // 20261110：页面关掉就停「待补评论」的定时检查，别在后台空转
     if (_cmtTickTimer) { clearInterval(_cmtTickTimer); _cmtTickTimer = null; }
   }
@@ -6277,26 +6278,47 @@ window.bmMusicUI = (function () {
   let _bassSmooth = 0, _lastBassT = 0;
   function startPlanetAnimation() {
     stopPlanetAnimation();
+    /* 20261111 性能：节点引用缓存 —— 原来每帧两次 querySelectorAll（星轨环 / 水波纹 span），
+       60fps 下每秒 120 次；只有在节点失效（页面重建、span 数量变化）时才重查。 */
+    let _pfPlanet = null, _pfMagic = null, _pfWave = null, _pfRings = [], _pfSpans = [];
+    let _pfFrame = 0, _pfWaveZero = false;
     const tick = () => {
-      const planet = document.getElementById('bm-planet');
-      const rings = document.querySelectorAll('.bm-planet-ring');
-      const magic = document.getElementById('bm-magic-circle');
-      const wave = document.getElementById('bm-wave-ring');
+      /* 20261111 补正：重取节点的判断原带一条「ring 数量是否变化」的 clause，
+         它在短路链最后，所以只要前两条不成立，每帧仍会执行一次 document.querySelectorAll('.bm-planet-ring')。
+         星轨环数量只在页面重建时变，而页面重建必然导致 _pfPlanet.isConnected=false，
+         因此这条 clause 完全多余 —— 去掉后稳态下每帧零查询。 */
+      if (!_pfPlanet || !_pfPlanet.isConnected
+          || (_pfWave && _pfSpans.length !== _pfWave.childElementCount)) {
+        _pfPlanet = document.getElementById('bm-planet');
+        _pfMagic = document.getElementById('bm-magic-circle');
+        _pfWave = document.getElementById('bm-wave-ring');
+        _pfRings = _pfPlanet ? Array.prototype.slice.call(document.querySelectorAll('.bm-planet-ring')) : [];
+        _pfSpans = _pfWave ? Array.prototype.slice.call(_pfWave.querySelectorAll('span')) : [];
+      }
+      const planet = _pfPlanet, rings = _pfRings, magic = _pfMagic, wave = _pfWave;
       const playing = M.state.playing;
       if (planet) planet.classList.toggle('playing', playing);
+      /* 20261111 性能：暂停（playing=false）时每 3 帧才真正画一次。
+         星轨本来就是 2.6~4.4 秒转一圈的慢动画，降到 20fps 肉眼完全看不出差别，
+         但 DOM 写入与布局开销直接砍到三分之一 —— 「没播放也卡」就是这里 60fps 空转造成的。 */
+      _pfFrame++;
+      if (!playing && (_pfFrame % 3)) { _planetRaf = requestAnimationFrame(tick); return; }
       const now = Date.now();
       // 星轨环：慢速持续旋转（r1/r3 反向），播放时加速
+      /* 20261111 性能：角度原样用 epoch 毫秒算，会得到 rotate(6.9e8deg) 这种天文数字。
+         视觉上与取模等价（整圈无差别），但浏览器每帧都要对巨型角度做三角运算并生成大矩阵，
+         精度还会随数值增大而变差。取模 360 后数值恒定在 0~360，效果一模一样、开销可忽略。 */
       rings.forEach((r, i) => {
         const dir = (i % 2 === 0) ? 1 : -1;
         const speed = playing ? 1 : 0.35;
-        const rot = (now / (2600 + i * 900)) * dir * speed;
-        r.style.transform = `rotate(${rot}deg)`;
+        const rot = ((now / (2600 + i * 900)) * dir * speed) % 360;
+        r.style.transform = `rotate(${rot.toFixed(2)}deg)`;
       });
       // 魔法阵星图：整组缓慢旋转
       if (magic) {
         const speed = playing ? 1 : 0.4;
-        const th = now / 6000 * speed;
-        magic.style.transform = `rotate(${th}deg)`;
+        const th = (now / 6000 * speed) % 360;
+        magic.style.transform = `rotate(${th.toFixed(2)}deg)`;
       }
       // 水波纹：能量环从中心持续外扩 + 消散（跟音乐节奏）。
       // 20261105 回滚：之前把频谱禁用后的律动改成了「时间驱动正弦包络」（恒定 0.55 底噪 + 大振幅脉冲），
@@ -6304,21 +6326,26 @@ window.bmMusicUI = (function () {
       //   _bassSmooth 只由 getBassLevel() 驱动（频谱禁用时恒 0），波纹是恒定温和的外扩 + 消散，
       //   不再叠加人为的鼓点脉冲。
       if (wave && playing) {
+        _pfWaveZero = false;
         const lvl = (typeof M.getBassLevel === 'function') ? M.getBassLevel() : 0;
         // 平滑 + 峰值衰减，模拟"鼓点一响波纹一冲"的节奏感（真实频谱就绪时生效）
         _bassSmooth = Math.max(lvl, _bassSmooth * 0.90);
-        const spans = wave.querySelectorAll('span');
+        const spans = _pfSpans;
         spans.forEach((s, i) => {
           const phase = (now / 900 + i * 0.33) % 1;          // 持续外扩相位
           const scale = 0.5 + phase * (0.9 + _bassSmooth * 0.9);
           const op = Math.max(0, (1 - phase)) * (0.35 + _bassSmooth * 0.65);
           s.style.transform = `scale(${scale})`;
           s.style.opacity = op.toFixed(2);
-          s.style.borderWidth = `${1.5 + _bassSmooth * 2}px`;
+          /* 20261111 性能：border-width 是布局属性，每帧改会让整页重排。
+             频谱未开时它恒为 1.5px，判等之后基本不再写入。 */
+          const bw = (1.5 + _bassSmooth * 2).toFixed(1);
+          if (s.dataset.bw !== bw) { s.dataset.bw = bw; s.style.borderWidth = bw + 'px'; }
         });
       } else if (wave) {
-        // 未播放：波纹静止收敛
-        wave.querySelectorAll('span').forEach(s => { s.style.opacity = '0'; });
+        /* 未播放：波纹静止收敛 —— 20261111 性能：只在「刚停播」那一帧写一次，
+           原来每帧都给所有 span 写 opacity=0，暂停时白白跑满 60fps。 */
+        if (!_pfWaveZero) { _pfWaveZero = true; _pfSpans.forEach(s => { s.style.opacity = '0'; }); }
       }
       // 20261104：进度条实时刷新（时间 + 进度滑块），复用 rAF 循环，不额外开定时器
       if (typeof window.__bmUpdateProgress === 'function') { try { window.__bmUpdateProgress(); } catch (e) {} }
@@ -6364,7 +6391,7 @@ window.bmMusicUI = (function () {
         core.classList.add('has-pic');   // 有封面：减轻深色遮罩，让封面清晰显示
       } else {
         core.style.backgroundImage = '';
-        core.innerHTML = `<div class="bm-planet-ph">${window.icon ? window.icon('music', 40) : '♪'}</div>`;
+        core.innerHTML = `<div class="bm-planet-ph">${window.icon ? window.icon('music', 40) : window.icon('music', 16)}</div>`;
         core.classList.remove('has-pic');
       }
     }
@@ -6487,6 +6514,7 @@ window.bmMusicUI = (function () {
         cover: (e.cover && typeof e.cover === 'string' && e.cover) ? e.cover : (cur && cur.pic) || '',
         playing: !!e.playing,
         position: (typeof e.position === 'number' && e.position >= 0) ? e.position : (M.state.audio ? Math.floor(M.state.audio.currentTime || 0) : 0),
+        positionExact: (typeof e.position === 'number' && e.position >= 0) ? e.position : (M.state.audio ? Math.round((M.state.audio.currentTime || 0) * 100) / 100 : 0),
         duration: (typeof e.duration === 'number' && e.duration > 0) ? e.duration : (M.state.audio && M.state.audio.duration ? Math.floor(M.state.audio.duration) : 0),
         isExternal: true,
       };
@@ -6498,9 +6526,20 @@ window.bmMusicUI = (function () {
       cover: (cur && cur.pic) || '',
       playing: !!M.state.playing,
       position: a ? Math.floor(a.currentTime || 0) : 0,
+      /* 20261111：新增精确位置（秒，保留两位小数）。
+         整条链路原先只下发 Math.floor(currentTime) 的整数秒，
+         原生悬浮窗再怎样补偿心跳间隔，也补不回被 floor 丢掉的 0~0.999 秒，
+         结果就是「高亮永远慢一句」。这里把真实小数位一并给出，
+         让原生/悬浮窗的歌词判定用真实播放位置。 */
+      positionExact: a ? Math.round((a.currentTime || 0) * 100) / 100 : 0,
       duration: (a && a.duration) ? Math.floor(a.duration) : 0,
       isExternal: false,
     };
+  }
+  /* 取「用于歌词判定的精确进度」：有精确值用精确值，否则退回整数秒 */
+  function _exactPos() {
+    const lb = _livePlayback();
+    return (typeof lb.positionExact === 'number' && isFinite(lb.positionExact)) ? lb.positionExact : lb.position;
   }
   // 异步刷新外部真实态缓存（遥控模式才调），成功后顺手刷新相关界面。
   async function _refreshLiveExternal(forceRefreshUI) {
@@ -6610,35 +6649,68 @@ window.bmMusicUI = (function () {
   let _lyricLastActive = -1;   // 上一次高亮句，只在「唱到新句」时才跳转滚动，玩家可自由上下滚动
   function startLyricScroll() {
     if (_lyricRaf) cancelAnimationFrame(_lyricRaf);
-    const a = M.state.audio;
+    /* 20261111 补正：这里原来在启动时把 M.state.audio 存成闭包常量 a。
+       若进入音乐页那一刻 audio 元素还没创建（先渲染歌词、后建播放器），a 就永久为 null，
+       歌词高亮与滚动从此完全不工作，且没有任何报错。改为每帧现取，代价只有一次属性读取。 */
+    const getAudio = () => M.state.audio;
+    /* 20261111 性能（音乐页卡顿主因之二）：原来每帧做全套重活 ——
+       querySelectorAll 全量歌词、每行 parseFloat、每行 classList.toggle，还读 offsetTop/clientHeight
+       强制同步布局，60fps 下每秒跑 60 遍。现在：
+       ① 行节点缓存，只在歌词重绘（行数变化）后重查；
+       ② 每 100ms 才判一次当前句（歌词切换本来不需要 60fps，人眼无感）；
+       ③ 高亮句没变就完全不碰 class —— 一次 DOM 都不写。 */
+    let _lsBox = null, _lsLines = null, _lsCount = -1, _lsLastMs = 0, _lsOnIdx = -2;
     const tick = () => {
+      const a = getAudio();
       if (a) {
-        const t = a.currentTime || 0;
-        const box = document.getElementById('bm-music-lyric');
+        const box = (_lsBox && _lsBox.isConnected) ? _lsBox : (_lsBox = document.getElementById('bm-music-lyric'));
         if (box) {
-          const lines = box.querySelectorAll('.bm-lrc-line');
-          let active = -1;
-          lines.forEach((l, i) => { if (parseFloat(l.dataset.t) <= t) active = i; });
-          // 20261107 双语歌词：同一时间戳的「原文 + 翻译」两行要同时高亮，
-          //   不能只亮最后一行（否则原文暗、只有翻译亮）。改为「时间戳等于当前句的所有行都亮」。
-          let activeT = active >= 0 ? parseFloat(lines[active].dataset.t) : -1;
-          lines.forEach((l, i) => {
-            const on = i === active || (activeT >= 0 && parseFloat(l.dataset.t) === activeT);
-            l.classList.toggle('on', on);
-          });
-          // 只在「唱到新一句」时跳转滚动（active 变化才滚），唱同一句期间玩家可自由上下滚动不被弹回。
-          if (active >= 0 && active !== _lyricLastActive) {
-            _lyricLastActive = active;
-            const target = lines[active];
-            const lineH = target.offsetHeight || 26;
-            const center = box.clientHeight / 2 - lineH / 2;
-            box.scrollTop = Math.max(0, target.offsetTop - center);
+          if (!_lsLines || _lsCount !== box.childElementCount) {
+            _lsLines = box.querySelectorAll('.bm-lrc-line');
+            _lsCount = box.childElementCount;
+            _lsOnIdx = -2;   /* 歌词重建后 class 全丢，强制重刷一次 */
+          }
+          const nowMs = (window.performance && performance.now) ? performance.now() : Date.now();
+          if (nowMs - _lsLastMs >= 100) {
+            _lsLastMs = nowMs;
+            const t = a.currentTime || 0;
+            const lines = _lsLines;
+            let active = -1;
+            for (let i = 0; i < lines.length; i++) {
+              if (parseFloat(lines[i].dataset.t) <= t) active = i; else break;   /* 时间戳有序，命中即停 */
+            }
+            if (active !== _lsOnIdx) {
+              _lsOnIdx = active;
+              // 20261107 双语歌词：同一时间戳的「原文 + 翻译」两行要同时高亮，
+              //   不能只亮最后一行（否则原文暗、只有翻译亮）。改为「时间戳等于当前句的所有行都亮」。
+              const activeT = active >= 0 ? parseFloat(lines[active].dataset.t) : -1;
+              for (let i = 0; i < lines.length; i++) {
+                const on = i === active || (activeT >= 0 && parseFloat(lines[i].dataset.t) === activeT);
+                lines[i].classList.toggle('on', on);
+              }
+              // 只在「唱到新一句」时跳转滚动（active 变化才滚），唱同一句期间玩家可自由上下滚动不被弹回。
+              if (active >= 0) {
+                _lyricLastActive = active;
+                const target = lines[active];
+                const lineH = target.offsetHeight || 26;
+                const center = box.clientHeight / 2 - lineH / 2;
+                box.scrollTop = Math.max(0, target.offsetTop - center);
+              }
+            }
           }
         }
       }
       _lyricRaf = requestAnimationFrame(tick);
     };
     tick();
+  }
+
+  /* 20261111：离开音乐页时必须停掉歌词循环。
+     原来只有「下次进入音乐页」才会 cancelAnimationFrame 旧的 —— 退出后它一直在空转，
+     每帧还去 getElementById 找已经不存在的歌词框，这正是「切到别的页面也变卡」的来源。 */
+  function stopLyricScroll() {
+    if (_lyricRaf) cancelAnimationFrame(_lyricRaf);
+    _lyricRaf = null;
   }
 
   /* ============================================================
@@ -6665,6 +6737,11 @@ window.bmMusicUI = (function () {
   //   a.duration 会暂时丢失（NaN/0），导致时长与进度滑块全归零。这里缓存最后一次有效的 duration
   //   （见 _cachedDuration，模块级变量，play/rebuildCleanAudio 里同步更新），
   //   audio 的 duration 失效时用缓存兜底，时长和进度条不再闪断归零。
+  /* 20261111 性能修复（「暂停着不动也卡」的直接原因）：
+     本函数由 rAF 每帧调用，原来不管位置变没变，都执行 4 次 textContent 赋值 + 2 次 slider.value。
+     每次 textContent 赋值都会重建文本节点并触发重排 —— 60fps × 6 次 ≈ 每秒 360 次无谓重排。
+     现在先算好「秒 / 总时长 / 百分比」，三个都没变直接 return，一次 DOM 都不写。 */
+  let _progSecCache = -1, _progDurCache = -1, _progPctCache = -1;
   window.__bmUpdateProgress = () => {
     // 20261107 修复「后台遥控下进度条显示错误/拖不动」：改用统一真实态 _livePlayback()，
     //   不再直接读内置 M.state.audio（后台遥控模式真正在播的是外部 App，内置 audio 是残留旧歌）。
@@ -6680,14 +6757,19 @@ window.bmMusicUI = (function () {
     let d = lp.duration;
     if (isFinite(d) && d > 0) { _cachedDuration = d; }
     else { d = _cachedDuration; }
+    /* 20261111：显示层面只精确到「秒」，所以按整秒判等即可；百分比另存一档给滑块用。 */
+    const posSec = Math.floor(pos);
+    const durSec = (isFinite(d) && d > 0) ? Math.floor(d) : -1;
+    const pctNow = (isFinite(d) && d > 0) ? Math.min(1000, Math.max(0, Math.round((pos / d) * 1000))) : -1;
+    if (posSec === _progSecCache && durSec === _progDurCache && pctNow === _progPctCache) return;
+    _progSecCache = posSec; _progDurCache = durSec; _progPctCache = pctNow;
     if (dur && isFinite(d) && d > 0) dur.textContent = _fmtTime(d);
     if (cur) cur.textContent = _fmtTime(pos);
     if (fdur && isFinite(d) && d > 0) fdur.textContent = _fmtTime(d);
     if (fcur) fcur.textContent = _fmtTime(pos);
     if (d && isFinite(d) && d > 0) {
-      const pct = Math.min(1000, Math.max(0, Math.round((pos / d) * 1000)));
-      if (slider) slider.value = pct;
-      if (fslider && !_floatSeeking) fslider.value = pct;
+      if (slider) slider.value = pctNow;
+      if (fslider && !_floatSeeking) fslider.value = pctNow;
     }
   };
 
@@ -6780,10 +6862,19 @@ window.bmMusicUI = (function () {
       _toNativeImg(c && c.avatar ? (typeof c.avatar === 'string' ? c.avatar : (typeof window.imgSrc === 'function' ? window.imgSrc(c.avatar) : '')) : ''),
       _toNativeImg(playerAvatar()),
     ]);
-    const pl = await Promise.all((M.state.playlist || []).map(async s => ({
-      id: String(s.id), name: s.name, artist: s.artist || '',
-      pic: await _toNativeImg(s.pic || ''),
-    })));
+    /* 20261111 歌单封面瘦身（C）：原先把整个歌单每首的封面都转成 data URL 塞进一次 update，
+       歌单一长，单次跨桥就是几 MB 的 JSON 字符串，主线程当场卡住 —— 这是「进音乐页卡」的元凶之一。
+       现在只转「列表前 12 首 + 当前播放前后 8 首」，且按列表小图规格压到 192px；
+       其余留空，原生层自动走 ♪ 占位，翻到远处才会看到占位，不影响当前附近的观感。 */
+    const _plAll = M.state.playlist || [];
+    const _plIdx = M.state.playIndex || 0;
+    const pl = await Promise.all(_plAll.map(async (s, i) => {
+      const _near = i < 12 || Math.abs(i - _plIdx) <= 8;
+      return {
+        id: String(s.id), name: s.name, artist: s.artist || '',
+        pic: _near ? await _toNativeImg(s.pic || '', 192) : '',
+      };
+    }));
     return {
       title: song.name || '',
       artist: song.artist || '',
@@ -6793,7 +6884,8 @@ window.bmMusicUI = (function () {
       // 20261106：playing/position 改用统一真实态 _livePlayback()（遥控模式读外部真实态，
       //   不再用内置 M.state.playing 瞎猜，根治原生悬浮窗图标/进度条与外部 App 脱节）。
       playing: _livePlayback().playing,
-      position: _livePlayback().position,
+      /* 20261111：改推精确秒（带小数），原生层据此判词，不再慢一句 */
+      position: _exactPos(),
       duration: _livePlayback().duration || (a && a.duration ? Math.floor(a.duration) : 0),
       mode: M.state.playMode,
       charName: c ? c.name : '',
@@ -6979,7 +7071,7 @@ window.bmMusicUI = (function () {
         // 20261106 修复「进度条来回串」：遥控模式下内置 audio.currentTime≈0（残留旧歌），
         //   推给原生层会让原生进度条归零、与外部真实进度打架。这里改用统一真实态
         //   _livePlayback().position（遥控模式读外部 getMediaState().position，其余模式读内置）。
-        const sec = _livePlayback().position;
+        const sec = _exactPos();
         if (!isFinite(sec) || sec < 0) return;
         // 20261106 修复「暂停状态下悬浮窗仍闪动」：position 没变化（暂停/缓冲）时跳过推送，
         //   原生层无需再 updateProgressUi（setText/setTranslationX 相同值仍会触发重绘闪烁）。
@@ -7002,7 +7094,7 @@ window.bmMusicUI = (function () {
             return;
           }
         } catch (e) {}
-        if (sec === _lastPushedSec) return;
+        if (Math.abs(sec - _lastPushedSec) < 0.15) return;
         _lastPushedSec = sec;
         /* 20261109 真机：原生窗口被移除后 update 会回 no_window，这里立刻重建，
            避免「双击后悬浮窗消失、之后再也不出现」。 */
@@ -7392,7 +7484,7 @@ window.bmMusicUI = (function () {
       : (cur || { name: '去点首歌吧', artist: '播放列表里的歌都能点', pic: '' });
     fw.innerHTML = `
       <div class="bm-float-dot" id="bm-float-dot">
-        ${song.pic ? coverImgHTML(song.pic) : '♪'}
+        ${song.pic ? coverImgHTML(song.pic) : window.icon('music', 16)}
       </div>
       <div class="bm-float-mini" id="bm-float-mini">
         <div class="bm-mini-avs">
@@ -7411,7 +7503,7 @@ window.bmMusicUI = (function () {
         <div class="bm-float-card-head">
           <div class="bm-float-avatars">
             <span class="bm-float-avatar mine">${avatarImgHTML(playerAvatar(), (playerName() || '我')[0]).html}</span>
-            <span class="bm-float-starline">✦</span>
+            <span class="bm-float-starline"><i data-icon="star" data-size="15"></i></span>
             <span class="bm-float-avatar ta">${avatarImgHTML(c && c.avatar, (c && c.name || 'TA')[0]).html}</span>
           </div>
           <div class="bm-float-head-btns">
@@ -7425,7 +7517,7 @@ window.bmMusicUI = (function () {
           <button class="bm-float-end" id="bm-float-end" title="结束一起听">结束</button>
         </div>
         <div class="bm-float-body">
-          <div class="bm-float-cover">${song.pic ? coverImgHTML(song.pic) : '♪'}</div>
+          <div class="bm-float-cover">${song.pic ? coverImgHTML(song.pic) : window.icon('music', 16)}</div>
           <div class="bm-float-info">
             <div class="bm-float-title">${esc(song.name)}</div>
             <div class="bm-float-artist">${esc(song.artist)}</div>
@@ -7595,6 +7687,7 @@ window.bmMusicUI = (function () {
         // 大卡歌词逐句高亮 + 滚动居中 + mini 显示当前句。
         // 20261104：玩家可自由上下滚动歌词（wheel/touch 不拦截），只有「唱到新一句」才跳转回当前句。
         let _flyLastActive = -1;
+        let _flyLastTag = null;   // 20261111：当前高亮句的时间戳标记，只在换句时才重写着色
         const upd = () => {
           // 20261105：悬浮窗进度条/时长独立刷新——此前只靠音乐页 rAF（startPlanetAnimation）驱动，
           //   音乐页关闭只挂悬浮窗时，进度条与「当前/总时长」永远停在 00:00（用户反馈「显示 0 分」）。
@@ -7612,14 +7705,26 @@ window.bmMusicUI = (function () {
           }
           // 20261107 修复「悬浮窗歌词不实时跟随」：高亮进度改用统一真实态 _livePlayback().position，
           //   不再读内置 a.currentTime（后台遥控模式下内置 audio 是残留旧歌，进度错误导致歌词不滚）。
-          const t = _livePlayback().position;
+          //   20261111：改用 _exactPos() 取真实小数秒 —— 原先整数秒会让高亮最多慢将近 1 秒。
+          const t = _exactPos();
           let activeIdx = -1;
           if (fly) {
-            fly.querySelectorAll('.bm-fly-line').forEach((l, i) => {
-              const on = parseFloat(l.dataset.t) <= t;
-              l.classList.toggle('on', on);
-              if (on) activeIdx = i;
+            /* 20261111 修「软件内三级悬浮窗歌词累积高亮」：
+               原写法 on = (该行时间 <= 当前进度)，于是唱过的每一句都永久保持高亮，
+               唱到第 5 句时前 5 句全亮；而音乐页是严格单句高亮，两处表现不一致。
+               改为先取「当前句时间戳」，只给同一时间戳的行上高亮 ——
+               同时间戳的原文 + 译文因此一起亮，与音乐页的双语行为保持一致。 */
+            const rows = fly.querySelectorAll('.bm-fly-line');
+            let curTag = null, curIdx = -1;
+            rows.forEach((l, i) => {
+              const lt = parseFloat(l.dataset.t);
+              if (!isNaN(lt) && lt <= t) { curTag = l.dataset.t; curIdx = i; }
             });
+            if (curTag !== _flyLastTag) {
+              _flyLastTag = curTag;
+              rows.forEach((l) => l.classList.toggle('on', curTag !== null && l.dataset.t === curTag));
+            }
+            if (curIdx >= 0) activeIdx = curIdx;
             // 只在「唱到新一句」时才跳转滚动（activeIdx 变化才滚），唱同一句期间玩家可自由滚动不被弹回
             if (activeIdx >= 0 && activeIdx !== _flyLastActive) {
               _flyLastActive = activeIdx;

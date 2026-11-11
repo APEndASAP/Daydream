@@ -2872,7 +2872,7 @@ function makeBookFromPhoto(photo, no){
   const bk = {
     id: photo.id, photoId: photo.id, no: no, made: true,
     name: photo.name || '', latin: photo.latin || '', desc: photo.desc || '',
-    season: photo.season || 'spring', dex: photo.dex || 0, rare: photo.rare || 2,
+    season: photo.season || 'spring', dex: photo.dex || dexNoByName(photo.name) || 0, rare: photo.rare || 2,
     crop: photo.crop ? Object.assign({}, photo.crop) : { r: .88, cx: .5, cy: .5 },
     src: photo.src || '', date: photo.date || todayStr(), place: photo.place || '路边',
     kind: photo.kind || '', imprintKey: photo.imprintKey || '',
@@ -2892,6 +2892,24 @@ function makeBookFromPhoto(photo, no){
 function dexMark(bk){
   if (!bk || !bk.dex) return;
   if (!DEX_SEEN[bk.dex]) DEX_SEEN[bk.dex] = { at: Date.now(), s: bk.season || '' };
+}
+/* ---- 20261111：名字 → 图鉴号 / 植株种子 → 图鉴号 ----
+   用户原话：「我拿到种子必须先制作书签，把书签删掉图鉴难道就没有了吗？
+              我手里有 6 株植物，说明我制作过这 6 株的书签。
+              已经种上的植物应该是我已经解锁的植物呀。」
+   ⇒ 根本问题：图鉴只在「制签那一刻 dex 已经有值」时才写。
+     制签时识别还没回来（dex=0），事后又把照片删了 → syncBookFromPhoto 再也
+     跑不到（它要读照片），那条书签的 dex 永远是 0 → 图鉴永远不亮。
+   ⇒ 所以补两条兜底：① 名字反查图鉴号；② 种下 / 读档时按植株与种子补录。 */
+function dexNoByName(name){
+  if (!name) return 0;
+  for (let i = 0; i < DEX.length; i++){ if (DEX[i].n === name) return i + 1; }
+  return 0;
+}
+/* 植株（dexNo）/ 种子（dex）/ 书签（dex）→ 统一取图鉴号 */
+function dexNoOfAny(o){
+  if (!o) return 0;
+  return o.dexNo || o.dex || dexNoByName(o.name) || 0;
 }
 /* ============================================================
    20261111：把「照片上的识别结果」同步进「已经制好的那张书签」，
@@ -9368,6 +9386,26 @@ function _seasonApply(d){
   if (d.bookTitle != null) { try { localStorage.setItem('bmSeasonBookTitle', String(d.bookTitle)); } catch(e){} }
   if (d.wallBg != null) { try { if (d.wallBg) localStorage.setItem('bmSeasonWallBg', String(d.wallBg)); else localStorage.removeItem('bmSeasonWallBg'); } catch(e){} }
   if (d.firstTill) { try { localStorage.setItem('bmSeasonFirstTill', '1'); } catch(e){} }
+
+  /* ---- 20261111：读档自愈 · 从植株和种子补录图鉴 ----
+     上面那段只从「书签」补图鉴，可书签是玩家能随手删的东西，删完就再没有凭证。
+     这里再把「星球上的植株」和「种子库」一起扫一遍，把它们的图鉴号补进 DEX_SEEN。
+     ⇒ 只加不删不改：已有的收录时间 / 季相原样保留，不会被覆盖。
+     ⇒ 老玩家升级后第一次进游戏就自动补齐，不用重新种一遍。 */
+  try {
+    let _fixed = 0;
+    const _feed = [];
+    (PLANET.plants || []).forEach(function(pl){ _feed.push(pl); });
+    Object.keys(PLANET.pool || {}).forEach(function(k){
+      (PLANET.pool[k] || []).forEach(function(pl){ _feed.push(pl); });
+    });
+    (SEEDS || []).forEach(function(s){ _feed.push(s); });
+    _feed.forEach(function(o){
+      const n = dexNoOfAny(o);
+      if (n && !DEX_SEEN[n]){ DEX_SEEN[n] = { at: Date.now(), s: (o.season || '') }; _fixed++; }
+    });
+    if (_fixed){ try { console.log('[season] 图鉴补录 ' + _fixed + ' 种（来自植株 / 种子）'); } catch(e){} }
+  } catch(e){}
 }
 /* 主项目通过 iframe.contentWindow 调用（同源）：
    bmSeasonExport() → 返回 JSON 字符串；bmSeasonImport(jsonStr) → 写回并返回是否成功 */
@@ -13287,6 +13325,12 @@ function addPlant(p, ch){
     burnCause: '', burnAt: 0, fertBurn: false, fertBurnAt: 0,
     fertBurnCount: 0, fertCurl: false, fertCurlAt: 0
   };
+  /* 20261111：TA 自己种的也点亮图鉴 —— 植物已经长在你的星球上了，
+     不收录反而奇怪（用户定案「种上的就是解锁的」）。 */
+  try {
+    const _dn = dexNoOfAny(pl);
+    if (_dn){ pl.dexNo = _dn; dexMark({ dex: _dn, season: pl.season }); }
+  } catch(e){}
   PLANET.plants.push(pl);
   try { seasonSave(); } catch(e){}
   renderPlanetList();
@@ -18510,6 +18554,12 @@ function plantSeedAt(item, slotIdx){
   /* 异变种子：种下那一刻就已经是变异株（不再掷骰）。fromMutSeed 用来扣掉这颗种子，
      同时让 seedPool 知道它已经被种下去了。 */
   if (item.mut){ pl.mutantAt = Date.now(); pl.fromMutSeed = item.seedId || ''; mutDexMark(pl); }
+  /* 20261111：种下即收录 —— 用户定案「已经种上的植物就该是已解锁的图鉴」。
+     老种子没有 dex 字段的，按名字反查补上，别再让图鉴空着。 */
+  try {
+    const _dn = dexNoOfAny(pl);
+    if (_dn){ pl.dexNo = _dn; dexMark({ dex: _dn, season: pl.season }); }
+  } catch(e){}
   PLANET.plants.push(pl);
   /* 20261109：种下一株 → 上报，让角色把「我们一起种的这株」记进记忆宫殿 */
   try {

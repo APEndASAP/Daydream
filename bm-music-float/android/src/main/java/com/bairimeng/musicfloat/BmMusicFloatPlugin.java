@@ -85,6 +85,13 @@ public class BmMusicFloatPlugin extends Plugin {
     private java.util.List<String> lyricTexts = new java.util.ArrayList<String>();      // 每句文本
     private boolean playing = false;
     private int positionSec = 0;
+    /* 20261111 修复「悬浮窗歌词固定慢一句」：
+       JS 心跳下发的 position 是整数秒（Math.floor(currentTime)），而双语歌词里
+       「英文行」和「中文翻译行」两行时间戳只差 0.4~0.9 秒。用整数比较时小数被吃掉，
+       紧邻的下一行永远判成「还没到」→ 高亮固定停在前一句，看起来就像不跟进度。
+       这里另存一份精确位置（秒，带小数），只给歌词高亮算下标用；
+       进度条、拖动、时间数字仍用上面的整数 positionSec，逻辑不变。 */
+    private double positionSecD = 0;
     private int durationSec = 0;
     // 20261106 修复「进度条来回串」：JS 心跳每 500ms 推一次真实 position，原生 tick 每 1000ms
     //   自推 positionSec，两源交替写导致来回跳。这里记录「最近一次收到 JS position 推送的
@@ -119,7 +126,19 @@ public class BmMusicFloatPlugin extends Plugin {
     private TextView cardCoverPlaceholder;
     private android.widget.ScrollView cardLyricScroll;    // 20261105：可滚动歌词区
     private TextView cardLyricLines;                       // 多行歌词（逐句高亮）
-    private int lyricActiveIdx = -1;                       // 当前高亮句下标
+    /* 20261111：初始必须是 -2 而不是 -1。
+       -1 是「还没唱到第一句」的合法高亮结果，若拿它当「尚未渲染」的哨兵，
+       renderLyricLines 首帧就会判定「同一句」直接返回，歌词永远画不出来。 */
+    private int lyricActiveIdx = -2;                       // 当前高亮句下标；-2 = 尚未渲染
+    /* 20261111：进度/封面判等缓存。心跳 500ms 一次，重复写同值会白白触发 setText/layout；
+       浮窗 View 与 Capacitor WebView 共用主线程，这部分开销会直接拖慢 App 内部界面。 */
+    /* 20261111：头像 drawable 判等缓存。每次全量推送都会重新 new 一个
+       RoundedBitmapDrawable 并上传纹理，而头像根本没变。
+       不能用 setTag —— img 的 tag 已被 findViewWithTag("bm-av-img") 占用。 */
+    private final java.util.WeakHashMap<View, Bitmap> avApplied = new java.util.WeakHashMap<>();
+    private int lastProgSec = -1;
+    private int lastProgDur = -1;
+    private float lastProgThumbX = Float.NaN;
     private IconBtn modeBtn, listBtn, ppBtn, prevBtn, nextBtn;
     private IconBtn miniPpBtn, miniCollapseBtn, cardCollapseBtn;
 
@@ -245,7 +264,20 @@ public class BmMusicFloatPlugin extends Plugin {
                     && !call.hasOption("charAvatar")
                     && !call.hasOption("myAvatar")
                     && !call.hasOption("duration");
-            Integer p = call.getInt("position");
+            /* 20261111：优先按 double 读，拿到带小数的真实位置；老版本 JS 只发整数时
+               getDouble 也会把它当 x.0 读出来，退一步再试 getInt，两条路都不抛。 */
+            Double pD = null;
+            try { pD = call.getDouble("position"); } catch (Throwable t) { pD = null; }
+            Integer p = null;
+            if (pD != null) {
+                /* 有精确值也要回填整数 p —— 下面 onlyProgress / 全量两个分支都靠 p != null 判断，
+                   p 保持 null 会让进度整段不更新（千万不能省）。floor 与 JS 的 Math.floor 语义一致。 */
+                p = Integer.valueOf((int) Math.floor(pD.doubleValue()));
+            } else {
+                try { p = call.getInt("position"); } catch (Throwable t) { p = null; }
+                if (p != null) pD = Double.valueOf(p.doubleValue());
+            }
+            if (pD != null) positionSecD = pD.doubleValue();
             if (onlyProgress && p != null) {
                 // 仅进度：改位置 + 只刷进度 UI，不重排视图
                 positionSec = p;
@@ -303,7 +335,8 @@ public class BmMusicFloatPlugin extends Plugin {
         // 20261105：完整歌词行数组 [{t,text}]，原生本地推进高亮/滚动
         if (call.hasOption("lyricLines")) {
             lyricTimes.clear(); lyricTexts.clear();
-            lyricActiveIdx = -1;   // 20261109：换歌词后重置高亮下标，否则新歌词沿用旧下标不滚动
+            lyricActiveIdx = -2;   // 20261109：换歌词后重置高亮下标，否则新歌词沿用旧下标不滚动
+                                   // 20261111：改成 -2 强制失效，-1 会被早退判成「同句」导致新歌词不重绘
             try {
                 org.json.JSONArray arr = call.getArray("lyricLines");
                 if (arr != null) {
@@ -320,9 +353,17 @@ public class BmMusicFloatPlugin extends Plugin {
             } catch (Throwable t) {}
         }
         if (call.hasOption("playing")) playing = call.getBoolean("playing", false);
-        Integer p = call.getInt("position");
+        /* 20261111：全量推送也按 double 解析，保留小数位。
+           JS 端已改为下发真实秒（含小数），原先这里 getInt 会把小数截掉，
+           全量那一次的高亮位置又退回整数，切歌/暂停恢复时仍会慢一下。 */
+        Integer p = null;
+        Double pDfull = null;
+        try { pDfull = call.getDouble("position"); } catch (Throwable t) { pDfull = null; }
+        if (pDfull != null) p = Integer.valueOf((int) Math.floor(pDfull.doubleValue()));
+        else { try { p = call.getInt("position"); } catch (Throwable t) { p = null; } }
         if (p != null) {
             positionSec = p;
+            positionSecD = (pDfull != null) ? pDfull.doubleValue() : p.doubleValue();   /* 20261111：保留小数位 */
             lastJsPushElapsed = SystemClock.elapsedRealtime();   // 记录 JS 心跳推送时刻，供 tick 判断是否自推
             // 20261109：同步重置 tick 自推基准（理由同 onlyProgress 分支），
             //   保证后台 JS 断流后原生自推从「最后一次真实位置」起算，而不是从首次 show 起算。
@@ -837,6 +878,7 @@ public class BmMusicFloatPlugin extends Plugin {
                             float dx = e.getRawX() - downX;
                             int delta = Math.round(dx / (float) w * durationSec);
                             positionSec = Math.max(0, Math.min(durationSec, startPos + delta));
+                            positionSecD = positionSec;   /* 20261111：拖动后同步精确位置，歌词立即跟上 */
                             updateProgressUi();
                             return true;
                         }
@@ -1258,12 +1300,21 @@ public class BmMusicFloatPlugin extends Plugin {
         try {
             boolean hasCover = coverBmp != null;
             if (dotCover != null) {
-                if (hasCover) { dotCover.setImageBitmap(coverBmp); dotCover.setVisibility(View.VISIBLE); }
+                if (hasCover) {
+                    /* 20261111：同一张 Bitmap 不重复 setImageBitmap —— 每次设置都会让
+                       图片重新上传 GPU 纹理，而全量推送时封面引用根本没变。
+                       用 tag 记「已应用的 Bitmap」，形态重建后 tag 为空，自然会重设一次。 */
+                    if (dotCover.getTag() != coverBmp) { dotCover.setImageBitmap(coverBmp); dotCover.setTag(coverBmp); }
+                    dotCover.setVisibility(View.VISIBLE);
+                }
                 else dotCover.setVisibility(View.GONE);
             }
             if (dotPlaceholder != null) dotPlaceholder.setVisibility(hasCover ? View.GONE : View.VISIBLE);
             if (cardCover != null) {
-                if (hasCover) { cardCover.setImageBitmap(coverBmp); cardCover.setVisibility(View.VISIBLE); }
+                if (hasCover) {
+                    if (cardCover.getTag() != coverBmp) { cardCover.setImageBitmap(coverBmp); cardCover.setTag(coverBmp); }
+                    cardCover.setVisibility(View.VISIBLE);
+                }
                 else cardCover.setVisibility(View.GONE);
             }
             if (cardCoverPlaceholder != null) cardCoverPlaceholder.setVisibility(hasCover ? View.GONE : View.VISIBLE);
@@ -1308,6 +1359,12 @@ public class BmMusicFloatPlugin extends Plugin {
             if (!hasLines || cardLyricLines == null) return;
             // 构建多行文本（当前句紫色加粗高亮）
             int active = lyricActiveIdxForPosition();
+            /* 20261111 主线程减负的关键一处：同一句就原地返回。
+               此前无论高亮句有没有变，每次心跳（500ms）都会把整段歌词重拼成
+               SpannableString、逐行 setSpan（40 行 = 80 个 Span 对象）、再 setText 触发一次 layout。
+               浮窗 View 和 Capacitor WebView 跑在同一个主线程上，所以浮窗每刷一次歌词，
+               就是从界面渲染里抢走一段主线程时间 —— 这是「开原生浮窗后 App 内部界面也变卡」的主因。 */
+            if (active == lyricActiveIdx) return;
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < lyricTexts.size(); i++) {
                 if (i > 0) sb.append('\n');
@@ -1362,12 +1419,30 @@ public class BmMusicFloatPlugin extends Plugin {
     private int lyricActiveIdxForPosition() {
         int active = -1;
         try {
+            float pos = lyricPosSec();
             for (int i = 0; i < lyricTimes.size() && i < lyricTexts.size(); i++) {
                 float t = lyricTimes.get(i)[0];
-                if (t <= positionSec) active = i; else break;
+                if (t <= pos) active = i; else break;
             }
         } catch (Throwable t) {}
         return active;
+    }
+
+    /* 20261111：歌词高亮专用位置（秒，带小数）。
+       整数位取 JS 下发的真实位置，再补「距上次推送过了多久」的亚秒余量——
+       因为 JS 的 position 是 Math.floor 的整数，补上这段 elapsed 恰好还原真实播放位置，
+       两次心跳之间高亮也能按秒走，不会再固定慢一句。
+       心跳每 500ms 一次，所以 1.5 秒内才补；JS 断流（挂后台/页面销毁）后不补，交给 tick 自推。 */
+    private float lyricPosSec() {
+        float pos = (float) positionSecD;
+        try {
+            if (playing && !seeking) {
+                long dt = SystemClock.elapsedRealtime() - lastJsPushElapsed;
+                if (dt > 0 && dt < 1500) pos += dt / 1000f;
+            }
+            if (durationSec > 0 && pos > durationSec) pos = durationSec;
+        } catch (Throwable t) {}
+        return pos;
     }
 
     private void refreshPpIcons() {
@@ -1393,16 +1468,27 @@ public class BmMusicFloatPlugin extends Plugin {
 
     private void updateProgressUi() {
         try {
-            if (progCurText != null) progCurText.setText(fmtDur(positionSec));
-            if (progDurText != null) progDurText.setText(fmtDur(durationSec));
+            /* 20261111：三项都加判等。原先位置没变也照写 setText / setTranslationX，
+               暂停时同样每秒 2 次全量重绘。 */
+            if (progCurText != null && positionSec != lastProgSec) {
+                progCurText.setText(fmtDur(positionSec));
+                lastProgSec = positionSec;
+            }
+            if (progDurText != null && durationSec != lastProgDur) {
+                progDurText.setText(fmtDur(durationSec));
+                lastProgDur = durationSec;
+            }
             if (progressThumb != null) {
                 View parent = (View) progressThumb.getParent();
                 float trackW = parent != null ? parent.getWidth() - dp(16) : 0;
+                float tx = 0f;
                 if (trackW > 0 && durationSec > 0) {
                     float ratio = Math.max(0f, Math.min(1f, (float) positionSec / durationSec));
-                    progressThumb.setTranslationX(trackW * ratio);
-                } else {
-                    progressThumb.setTranslationX(0);
+                    tx = trackW * ratio;
+                }
+                if (Float.isNaN(lastProgThumbX) || Math.abs(tx - lastProgThumbX) > 0.5f) {
+                    progressThumb.setTranslationX(tx);
+                    lastProgThumbX = tx;
                 }
             }
         } catch (Throwable t) {}
@@ -1603,6 +1689,7 @@ public class BmMusicFloatPlugin extends Plugin {
                         if (playing && !seeking && !jsAlive) {
                             positionSec = tickBaseSec + (int) ((SystemClock.elapsedRealtime() - tickStartElapsed) / 1000);
                             if (durationSec > 0 && positionSec >= durationSec) positionSec = durationSec;
+                            positionSecD = positionSec;   /* 20261111：自推是整秒，精确位置跟着走 */
                             updateProgressUi();
                             // 20261105：进度推进时同步刷新歌词高亮/滚动
                             renderLyricLines();
@@ -1678,9 +1765,13 @@ public class BmMusicFloatPlugin extends Plugin {
             ImageView img = slot.findViewWithTag("bm-av-img");
             TextView letter = slot.findViewWithTag("bm-av-letter");
             if (bmp != null && img != null) {
-                RoundedBitmapDrawable rd = RoundedBitmapDrawableFactory.create(getContext().getResources(), bmp);
-                rd.setCircular(true);
-                img.setImageDrawable(rd);
+                /* 20261111：同一张 Bitmap 不重建 drawable（原来每次全量都造 4 个新 drawable） */
+                if (avApplied.get(img) != bmp) {
+                    RoundedBitmapDrawable rd = RoundedBitmapDrawableFactory.create(getContext().getResources(), bmp);
+                    rd.setCircular(true);
+                    img.setImageDrawable(rd);
+                    avApplied.put(img, bmp);
+                }
                 img.setVisibility(View.VISIBLE);
                 if (letter != null) letter.setVisibility(View.GONE);
             } else {
@@ -1747,7 +1838,7 @@ public class BmMusicFloatPlugin extends Plugin {
         cardTitle = null; cardArtist = null; cardLyric = null;
         cardTogetherTime = null; cardEndBtn = null;
         cardCover = null; cardCoverPlaceholder = null;
-        cardLyricScroll = null; cardLyricLines = null; lyricActiveIdx = -1;
+        cardLyricScroll = null; cardLyricLines = null; lyricActiveIdx = -2;
         modeBtn = null; listBtn = null; ppBtn = null; prevBtn = null; nextBtn = null;
         miniPpBtn = null; miniCollapseBtn = null; cardCollapseBtn = null;
         progressTrack = null; progressThumb = null; progCurText = null; progDurText = null;

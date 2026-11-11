@@ -155,6 +155,16 @@ let playerProfile = {
 /* 20260930bx：开屏音乐继续播放开关状态（主页顶栏 🎵 按钮读写；splash.js 独立读 IndexedDB 同键） */
 let _splashAutoplay = false;
 
+/* 20261111：开屏动画播放策略——IndexedDB（存档/随备份迁移）→ localStorage（供 splash.js 同步读）。
+   splash.js 是页面里第一个同步执行的脚本，拿不到 IndexedDB 的异步结果，所以它只认 localStorage；
+   这里负责把存档里的偏好刷进 localStorage，保证「换设备恢复备份」后这项设置不丢。
+   取值：'0'（默认）＝只有第一次启动播一次；'1'＝每次启动都完整播放。 */
+try {
+  getSetting('splashEvery', '0').then(v => {
+    try { localStorage.setItem('bmSplashEvery', v === '1' ? '1' : '0'); } catch (e) {}
+  }).catch(() => {});
+} catch (e) {}
+
 /* ---------- 工具 ---------- */
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
@@ -389,7 +399,7 @@ function showDataSourceWarning() {
   txt.innerHTML = '⚠ 当前从 <b style="color:var(--purple-soft);white-space:nowrap;">' + escapeHtml(where) + '</b> 打开，与常用入口（127.0.0.1:8902）的数据<b>互不相通</b>——若访客 / 聊天记录"消失"，数据没有丢，请改用 8902 预览卡进入。';
   const x = document.createElement('button');
   x.className = 'icon-btn';
-  x.textContent = '✕';
+  x.innerHTML = window.icon('close', 17);
   x.style.cssText = 'flex-shrink:0;width:26px;height:26px;font-size:12px;';
   x.onclick = () => { bar.remove(); try { sessionStorage.setItem('bm_srcwarn', '1'); } catch (e) {} };
   bar.appendChild(txt);
@@ -440,7 +450,7 @@ async function showSoftwareNotice(opts = {}) {
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所设计的每日弹卡功能，本软件「入梦签 · 每日弹卡」即参考该创意制作</div>
         <div class="nt-sub" style="margin-top:4px;">参考使用了小红书 @VII（Septem6439_cccg）老师所开源的真拟态玻璃（hyalite 液态玻璃）源码，本软件「玻璃美化预设 · 2号液态玻璃」即基于该开源库制作</div>
         <div class="nt-sub" style="margin-top:4px;">本软件「角色主动视频搜发」功能的灵感来自小红书 @我要学英语 老师（4356852316），该功能的思路与代码均为本软件自研</div>
-        ${isReview ? '<button class="icon-btn" id="notice-close" style="position:absolute;top:0;right:0;color:rgba(230,222,255,0.9);">✕</button>' : ''}
+        ${isReview ? '<button class="icon-btn" id="notice-close" style="position:absolute;top:0;right:0;color:rgba(230,222,255,0.9);"><i data-icon="close" data-size="17"></i></button>' : ''}
         <div class="nt-line"></div>
         <p class="nt-lead">感谢你来到《白日梦》。为了维护良好的创作与交流环境，请在下载、使用或分享本软件前，仔细阅读以下声明。</p>
 
@@ -503,7 +513,7 @@ async function showSoftwareNotice(opts = {}) {
 
         <div class="nt-seal" aria-hidden="true">
           <div class="nt-seal-ring"></div>
-          <div class="nt-seal-star">✶</div>
+          <div class="nt-seal-star"><i data-icon="star" data-size="15"></i></div>
           <div class="nt-seal-cap">BAIRIMENG</div>
         </div>
 
@@ -988,7 +998,7 @@ function buildDailyCardHtml(d, btnId) {
 
       ${d.annivText ? `
         <div style="text-align:center;background:linear-gradient(135deg,rgba(167,139,250,0.22),rgba(244,114,182,0.16));border:1px solid var(--purple-dim);border-radius:16px;padding:12px 16px;margin-bottom:10px;">
-          <div style="font-size:12px;color:var(--purple-soft);letter-spacing:1px;">🎉 今天是纪念日</div>
+          <div style="font-size:12px;color:var(--purple-soft);letter-spacing:1px;"><i data-icon="party" data-size="12"></i> 今天是纪念日</div>
           <div style="font-size:15px;font-weight:700;margin-top:4px;">${escapeHtml(d.annivText)}</div>
         </div>
       ` : ''}
@@ -1008,11 +1018,11 @@ function buildDailyCardHtml(d, btnId) {
 
       <div style="display:flex;gap:10px;margin-bottom:10px;">
         <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:12px 14px;">
-          <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px;">☁️ ${escapeHtml(displayName)}的天气</div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px;"><i data-icon="cloud" data-size="12"></i> ${escapeHtml(displayName)}的天气</div>
           <div style="font-size:14px;line-height:1.5;">${escapeHtml(d.weather)}</div>
         </div>
         <div style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:12px 14px;">
-          <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px;">📍 ${escapeHtml(displayName)}的状态</div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px;"><i data-icon="location" data-size="12"></i> ${escapeHtml(displayName)}的状态</div>
           <div style="font-size:14px;line-height:1.5;">${escapeHtml(d.status)}</div>
         </div>
       </div>
@@ -1058,8 +1068,8 @@ function buildFestivalCardHtml(d, btnId, fx) {
           </div>
         </div>
         ${hasBadges ? `<div class="dream-fx-badges">
-          ${d.annivText ? `<div class="dream-fx-badge anniv">🎉 ${escapeHtml(d.annivText)}</div>` : ''}
-          ${d.careText ? `<div class="dream-fx-badge care">🌸 ${escapeHtml(d.careText)}</div>` : ''}
+          ${d.annivText ? `<div class="dream-fx-badge anniv"><i data-icon="party" data-size="16"></i> ${escapeHtml(d.annivText)}</div>` : ''}
+          ${d.careText ? `<div class="dream-fx-badge care"><i data-icon="flower" data-size="16"></i> ${escapeHtml(d.careText)}</div>` : ''}
         </div>` : ''}
         <div class="dream-fx-term">${escapeHtml(d.festival.name)}</div>
         <div class="dream-fx-title">${escapeHtml(d.festival.title)}</div>
@@ -1130,11 +1140,11 @@ function renderFxDebug() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div style="font-size:16px;font-weight:600;">入梦签节气/节日调试</div>
-      <button class="icon-btn" id="fx-debug-close">✕</button>
+      <button class="icon-btn" id="fx-debug-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.6;">点任意一项预览对应的入梦签动画卡片；点卡片「我收到啦」会回到这里继续选择。勾选状态会自动记住。</div>
     <div id="fx-debug-dailychar" style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:12px;padding:8px 12px;background:var(--purple-dim);border-radius:10px;color:var(--purple-soft);">
-      <span>🎑 当前入梦签访客：<b id="fx-debug-dailychar-name">读取中…</b></span>
+      <span><i data-icon="moon" data-size="16"></i> 当前入梦签访客：<b id="fx-debug-dailychar-name">读取中…</b></span>
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--bg-elevated-2);border-radius:10px;">
       <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;">
@@ -1672,7 +1682,7 @@ function renderPlayerHome() {
   const av = $('#player-avatar');
   av.innerHTML = playerProfile.avatar ? `<img src="${imgSrcAttr(playerProfile.avatar)}">` : escapeHtml((playerProfile.name || '梦')[0]);
   $('#player-name').textContent = playerProfile.name || '白日梦主人';
-  $('#player-status-chip').textContent = '🌙 ' + (playerProfile.status || '入梦中');
+  $('#player-status-chip').innerHTML = window.icon('moon', 15) + ' ' + (playerProfile.status || '入梦中');
   $('#player-sign-chip').textContent = playerProfile.sign || '做个好梦';
   $('#player-quote-chip').textContent = '「记录和 TA 们的日常」';
   $('#stat-chars').textContent = characters.length;
@@ -1757,7 +1767,7 @@ function showHomeBgModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">主页背景图</div>
-      <button class="icon-btn" id="hbg-close">✕</button>
+      <button class="icon-btn" id="hbg-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div id="hbg-preview" style="height:150px;border-radius:16px;border:1px solid var(--border);background:${hasBg ? `url(&quot;${imgSrc(playerProfile.bg)}&quot;) center/cover` : 'var(--bg-elevated-2)'};display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);font-size:13px;margin-bottom:14px;">
       ${hasBg ? '' : '暂无背景图（显示默认星空）'}
@@ -1803,7 +1813,7 @@ function showEditProfileModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">编辑资料</div>
-      <button class="icon-btn" id="editp-close">✕</button>
+      <button class="icon-btn" id="editp-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field">
       <label>头像</label>
@@ -1851,7 +1861,7 @@ function showWalletModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">我的钱包</div>
-      <button class="icon-btn" id="wallet-close">✕</button>
+      <button class="icon-btn" id="wallet-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="text-align:center;font-size:32px;font-weight:600;margin:10px 0 18px;color:var(--purple-soft);" id="wallet-show">¥${playerProfile.wallet}</div>
     <div class="field">
@@ -1916,7 +1926,7 @@ async function renderChatList() {
   if (characters.length === 0) {
     list.innerHTML = `
       <div class="empty">
-        <div class="empty-icon">🌙</div>
+        <div class="empty-icon"><i data-icon="moon" data-size="16"></i></div>
         <div>还没有访客</div>
         <div style="font-size:13px;">点击右上角 ＋ 添加你的第一个访客吧</div>
         <button class="btn primary" id="btn-empty-add">添加访客</button>
@@ -2013,7 +2023,7 @@ async function renderChatList() {
     const item = document.createElement('div');
     item.className = 'list-item chat-item';
     item.innerHTML = `
-      <div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</div>
+      <div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '<i data-icon="group" data-size="20"></i>'}</div>
       <div style="flex:1;min-width:0;">
         <div style="font-size:16px;font-weight:600;">${escapeHtml(g.name)} <span style="font-size:11px;color:var(--text-tertiary);font-weight:400;">(${g.memberIds.length})</span></div>
         <div class="chat-item-brief" style="font-size:13px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(brief)}</div>
@@ -2113,7 +2123,7 @@ async function renderChatList() {
     head.className = 'char-group-head';
     head.innerHTML = `
       <span class="cg-arrow">${g._collapsed ? '▸' : '▾'}</span>
-      <span style="flex:1;font-weight:600;font-size:13px;color:var(--text-secondary);">📁 ${escapeHtml(g.name)}（${members.length + groupChats.length}）</span>
+      <span style="flex:1;font-weight:600;font-size:13px;color:var(--text-secondary);"><i data-icon="folder" data-size="12"></i> ${escapeHtml(g.name)}（${members.length + groupChats.length}）</span>
     `;
     head.onclick = () => {
       g._collapsed = !g._collapsed;
@@ -2193,12 +2203,12 @@ function showGroupSettingsModal(g) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">群聊设置</div>
-      <button class="icon-btn" id="gset-close">✕</button>
+      <button class="icon-btn" id="gset-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field">
       <label>群头像</label>
       <div style="display:flex;align-items:center;gap:12px;">
-        <div class="avatar lg" id="gset-avatar-preview" style="display:flex;align-items:center;justify-content:center;font-size:24px;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}">` : '👥'}</div>
+        <div class="avatar lg" id="gset-avatar-preview" style="display:flex;align-items:center;justify-content:center;font-size:24px;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}">` : '<i data-icon="group" data-size="20"></i>'}</div>
         <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
           <label class="btn" for="gset-avatar-input" style="cursor:pointer;justify-content:center;padding:9px 0;">上传群头像</label>
           ${g.avatar ? `<button class="btn" style="padding:9px 0;color:var(--danger);" id="gset-avatar-del">删除群头像</button>` : ''}
@@ -2283,7 +2293,7 @@ function showGroupSettingsModal(g) {
     $('#gset-avatar-preview').innerHTML = `<img src="${imgSrcAttr(newAvatar)}">`;
   };
   const delBtn = $('#gset-avatar-del');
-  if (delBtn) delBtn.onclick = () => { newAvatar = ''; $('#gset-avatar-preview').innerHTML = '👥'; delBtn.remove(); };
+  if (delBtn) delBtn.onclick = () => { newAvatar = ''; $('#gset-avatar-preview').innerHTML = '<i data-icon="group" data-size="22"></i>'; delBtn.remove(); };
   $('#gset-cancel').onclick = closeModal;
   // 20260929ba 根因修复：openModal 写入的是 #modal-content，此前绑到 #modal-box 永远找不到元素 → 「管理」点击无效
   $$('#modal-content [data-gm]').forEach(el => {
@@ -2362,16 +2372,16 @@ function showGroupMemberActions(g, charId, opts = {}) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">管理成员 · ${escapeHtml(m.name)}</div>
-      <button class="icon-btn" id="gma-close">✕</button>
+      <button class="icon-btn" id="gma-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field">
       <label>群名片（留空 = 群内使用原名，最多 12 字）</label>
       <input class="input" id="gma-nick" maxlength="12" value="${escapeHtml(nick)}" placeholder="TA 在这个群里的昵称">
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;">
-      <button class="btn" id="gma-admin" style="justify-content:center;">${admins.has(charId) ? '👑 取消群管理员' : '👑 设为群管理员'}</button>
-      <button class="btn" id="gma-mute" style="justify-content:center;">${muted.has(charId) ? '🗣️ 解除禁言' : '🔇 禁言（不能发言，但能看消息）'}</button>
-      <button class="btn danger" id="gma-kick" style="justify-content:center;">🚪 踢出群成员</button>
+      <button class="btn" id="gma-admin" style="justify-content:center;">${admins.has(charId) ? '<i data-icon="crown" data-size="16"></i> 取消群管理员' : '<i data-icon="crown" data-size="16"></i> 设为群管理员'}</button>
+      <button class="btn" id="gma-mute" style="justify-content:center;">${muted.has(charId) ? '<i data-icon="megaphone" data-size="16"></i> 解除禁言' : '<i data-icon="mute" data-size="16"></i> 禁言（不能发言，但能看消息）'}</button>
+      <button class="btn danger" id="gma-kick" style="justify-content:center;"><i data-icon="door" data-size="16"></i> 踢出群成员</button>
     </div>
     <button class="btn primary block" style="margin-top:14px;" id="gma-done">完成</button>
   `);
@@ -2423,7 +2433,7 @@ function showGroupAddMemberModal(g, opts = {}) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">添加群成员</div>
-      <button class="icon-btn" id="gadd-close">✕</button>
+      <button class="icon-btn" id="gadd-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
       ${cands.map(c => `
@@ -2442,7 +2452,7 @@ function showGroupAddMemberModal(g, opts = {}) {
       const box = el.querySelector('.gadd-check');
       box.style.background = on ? 'var(--purple)' : '';
       box.style.borderColor = on ? 'var(--purple)' : 'var(--text-tertiary)';
-      box.textContent = on ? '✓' : '';
+      box.innerHTML = on ? window.icon('check', 13) : '';
       el.style.borderColor = on ? 'var(--purple)' : 'var(--border)';
     });
     $('#gadd-go').textContent = `添加（${sel.size}）`;
@@ -2511,7 +2521,7 @@ async function renderGroupMessages(groupId) {
   scroll.innerHTML = '';
   if (msgs.length === 0) {
     _chatWin = null;
-    scroll.innerHTML = `<div class="empty"><div class="empty-icon">👥</div><div>群聊已开启，说点什么吧</div></div>`;
+    scroll.innerHTML = `<div class="empty"><div class="empty-icon"><i data-icon="group" data-size="16"></i></div><div>群聊已开启，说点什么吧</div></div>`;
     return;
   }
   _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), end: msgs.length, mode: 'group', busy: false, suspend: false };
@@ -2561,8 +2571,8 @@ function appendGroupMessage(m, scroll = true, container = null) {
     letterCard.onclick = () => {
       openModal(`
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-          <div style="font-size:17px;font-weight:600;">✉️ 书信</div>
-          <button class="icon-btn" id="gletter-close">✕</button>
+          <div style="font-size:17px;font-weight:600;"><i data-icon="letter" data-size="14"></i> 书信</div>
+          <button class="icon-btn" id="gletter-close"><i data-icon="close" data-size="17"></i></button>
         </div>
         <div style="font-size:14px;line-height:1.8;white-space:pre-wrap;">${escapeHtml(m.content.text || '')}</div>
       `);
@@ -2957,7 +2967,7 @@ function renderBatchList() {
     else batchSelected.add(id);
     renderBatchList();
   };
-  const checkBadge = (on) => `<div style="width:24px;height:24px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;${on ? 'background:var(--purple);border-color:var(--purple);color:#141019;' : ''}">${on ? '✓' : ''}</div>`;
+  const checkBadge = (on) => `<div style="width:24px;height:24px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;${on ? 'background:var(--purple);border-color:var(--purple);color:#141019;' : ''}">${on ? window.icon('check', 13) : ''}</div>`;
   const mkRow = (id, avatarHtml, nameHtml, sub) => {
     const item = document.createElement('div');
     item.className = 'list-item';
@@ -2969,7 +2979,7 @@ function renderBatchList() {
     `<div class="avatar">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : (c.name[0] || '?')}</div>`,
     `<div style="font-size:16px;font-weight:600;">${escapeHtml(c.name)}</div>`);
   const mkGroupRow = (g) => mkRow(g.id,
-    `<div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</div>`,
+    `<div class="avatar" style="background:var(--purple-dim);font-size:20px;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '<i data-icon="group" data-size="20"></i>'}</div>`,
     `<div style="font-size:16px;font-weight:600;">${escapeHtml(g.name)} <span style="font-size:11px;color:var(--text-tertiary);font-weight:400;">(${(g.memberIds || []).length})</span></div>`,
     '群聊');
   const mkHeadRow = (label, memberIds) => {
@@ -2996,7 +3006,7 @@ function renderBatchList() {
   charGroups.forEach(g => (g.memberIds || []).forEach(id => { if (groupById.has(id)) claimedGroupIds.add(id); }));
   const looseGroups = chatGroups.filter(g => !claimedGroupIds.has(g.id));
   if (looseGroups.length) {
-    list.appendChild(mkHeadRow(`💬 群聊（${looseGroups.length}）`, looseGroups.map(g => g.id)));
+    list.appendChild(mkHeadRow(`<i data-icon="comment" data-size="14"></i> 群聊（${looseGroups.length}）`, looseGroups.map(g => g.id)));
     looseGroups.forEach(g => list.appendChild(mkGroupRow(g)));
   }
 
@@ -3009,7 +3019,7 @@ function renderBatchList() {
     members.forEach(c => groupedIds.add(c.id));
     groupChats.forEach(gc => groupedIds.add(gc.id));
     const allIds = [...groupChats.map(x => x.id), ...members.map(c => c.id)];
-    list.appendChild(mkHeadRow(`📁 ${escapeHtml(g.name)}（${allIds.length}）`, allIds));
+    list.appendChild(mkHeadRow(`<i data-icon="folder" data-size="14"></i> ${escapeHtml(g.name)}（${allIds.length}）`, allIds));
     if (!g._collapsed) {
       groupChats.forEach(gc => list.appendChild(mkGroupRow(gc)));
       members.forEach(c => list.appendChild(mkCharRow(c)));
@@ -3073,7 +3083,7 @@ function renderBatchList() {
         ${charGroups.map((g, gi) => `
           <button class="btn" style="justify-content:flex-start;" data-bm-group="${gi}">${icon('folder', 15)} ${escapeHtml(g.name)}（${(g.memberIds || []).length}）</button>
         `).join('')}
-        <button class="btn" style="justify-content:flex-start;" id="bm-new">📁 新建分组并移入…</button>
+        <button class="btn" style="justify-content:flex-start;" id="bm-new"><i data-icon="folder" data-size="16"></i> 新建分组并移入…</button>
       </div>
       <button class="btn block" id="bm-cancel">取消</button>
     `);
@@ -3115,7 +3125,7 @@ function renderBatchList() {
         : `${delChars.length} 位访客`;
       openModal(`
         <div style="text-align:center;margin-bottom:8px;">
-          <div style="font-size:40px;margin-bottom:10px;">⚠️</div>
+          <div style="font-size:40px;margin-bottom:10px;"><i data-icon="alert" data-size="37"></i></div>
           <div style="font-size:15px;font-weight:600;margin-bottom:4px;">删除「${escapeHtml(nameStr)}」${delChars.length > 1 ? `等 ${delChars.length} 位访客` : ''}</div>
           <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">此操作无法撤销，请选择要删除的范围（对全部所选访客生效）</div>
         </div>
@@ -3219,6 +3229,16 @@ async function openChat(charId) {
   closeModalPanels();
   cancelQuote();
   if (multiSelectMode) exitMultiSelect();
+  /* 20261111 修「切角色时先闪上一个角色的聊天内容」：
+     switchView 是同步切页，而 renderMessages 要先 await 读 IndexedDB 才清空重建，
+     中间隔着一到两帧 —— 这段时间 DOM 里还是上一个人的消息，切过去就会先看到一秒旧内容。
+     所以在切页之前先把消息容器清空，并且把虚拟滚动游标置空
+     （不清游标的话，清空后 scrollTop 归零会触发滚动钩子，用旧游标把上一个角色的更早消息补回来）。 */
+  {
+    const _csPre = $('#chat-scroll');
+    if (_csPre) _csPre.innerHTML = '';
+    _chatWin = null;
+  }
   switchView('chat');
   ensureModeSwitchUI(); // 20260929ae：聊天窗口内字卡/AI 模式切换胶囊
   applyChatTheme(); // 按角色应用独立聊天背景
@@ -3254,7 +3274,7 @@ function chatRenderSentinel(scroll) {
   const s = document.createElement('div');
   s.id = 'chat-loadmore';
   s.className = 'chat-loadmore';
-  s.textContent = `⬆ 上滑或下拉加载更早的消息（还有 ${_chatWin.start} 条）`;
+  s.innerHTML = `<i data-icon="upload" data-size="13"></i> 上滑或下拉加载更早的消息（还有 ${_chatWin.start} 条）`;
   s.onclick = () => chatLoadOlder();
   scroll.prepend(s);
 }
@@ -3469,7 +3489,7 @@ async function renderMessages(charId) {
   scroll.innerHTML = '';
   if (msgs.length === 0) {
     _chatWin = null;
-    scroll.innerHTML = `<div class="empty"><div class="empty-icon">💭</div><div>说点什么，开启你们的对话吧</div></div>`;
+    scroll.innerHTML = `<div class="empty"><div class="empty-icon"><i data-icon="comment" data-size="16"></i></div><div>说点什么，开启你们的对话吧</div></div>`;
     return;
   }
   _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), end: msgs.length, mode: 'single', busy: false, suspend: false };
@@ -3706,17 +3726,17 @@ function _locInfoHTML(loc, weather, doing, marker, distKm) {
   const dim = loc.dim || 0;
   // 位置被拒绝/不可用：只显示一句说明，不画地图点
   if (loc.denied) {
-    return `<div class="checkin-loc-denied">📍 ${marker || 'TA'} 未发送位置（已拒绝定位）</div>`;
+    return `<div class="checkin-loc-denied"><i data-icon="location" data-size="16"></i> ${marker || 'TA'} 未发送位置（已拒绝定位）</div>`;
   }
   const map = _worldMapSvg({ lat: loc.lat, lng: loc.lng, dim, marker });
   const weatherHtml = weather
     ? `<span style="display:inline-flex;align-items:center;gap:4px;">${escapeHtml(weather.desc)} ${weather.temp != null ? weather.temp + '°C' : ''}</span>`
     : '';
-  const doingHtml = doing ? `<span style="display:inline-flex;align-items:center;gap:4px;">🕒 ${escapeHtml(doing)}</span>` : '';
+  const doingHtml = doing ? `<span style="display:inline-flex;align-items:center;gap:4px;"><i data-icon="clock" data-size="16"></i> ${escapeHtml(doing)}</span>` : '';
   const distHtml = (distKm != null) ? `<span style="display:inline-flex;align-items:center;gap:4px;">↔ ${distKm} km</span>` : '';
   const posLine = dim > 0
-    ? `📍 第 ${dim} 维度 · 坐标不可测`
-    : (loc.city ? `📍 ${escapeHtml(loc.city)}` : `📍 ${loc.lat}, ${loc.lng}`);
+    ? `<i data-icon="location" data-size="14"></i> 第 ${dim} 维度 · 坐标不可测`
+    : (loc.city ? `<i data-icon="location" data-size="14"></i> ${escapeHtml(loc.city)}` : `<i data-icon="location" data-size="14"></i> ${loc.lat}, ${loc.lng}`);
   return `<div class="checkin-loc">
     ${map}
     <div class="checkin-loc-meta">
@@ -3740,7 +3760,7 @@ function _checkinCardHTML(m) {
   const c = m.content || {};
   const replyHtml = _checkinRepliesHTML(c.replies);
   const isReport = c.report === true;
-  const tag = isReport ? '📮 主动报备' : '📍 突击查岗';
+  const tag = isReport ? '<i data-icon="inbox" data-size="16"></i> 主动报备' : '<i data-icon="location" data-size="16"></i> 突击查岗';
   const locHtml = _locInfoHTML(c.location, c.weather, c.doing, c.marker || (m.from === 'me' ? '你' : 'TA'), c.distKm);
   const textHtml = c.text ? `<div style="margin-top:2px;">${escapeHtml(c.text)}</div>` : '';
   const replyBtn = (m.from === 'them' && !isReport && !checkinAnswered(m))
@@ -3796,16 +3816,16 @@ function msgBodyHtml(m, oneLine = false) {
     case 'emoji':
       return `${quoteHtml(m.quote)}<img class="msg-img msg-emoji" src="${imgSrcAttr(m.content)}" data-msgid="${m.id}">`;
     case 'coin':
-      return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">🪙 决策币</span><div>${escapeHtml(m.content.question)}</div><div style="margin-top:6px;font-size:20px;font-weight:700;color:var(--purple-soft);">${escapeHtml(m.content.result)}</div></div>`;
+      return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag"><i data-icon="coin" data-size="16"></i> 决策币</span><div>${escapeHtml(m.content.question)}</div><div style="margin-top:6px;font-size:20px;font-weight:700;color:var(--purple-soft);">${escapeHtml(m.content.result)}</div></div>`;
     case 'checkin': {
       return _checkinCardHTML(m);
     }
     case 'call':
       // 20260929ba：群通话卡片显示参与人数
       if (m.content.group) {
-        return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">${m.content.kind === 'video' ? '📹 群视频通话' : '🎙️ 群语音通话'}</span><div style="margin-top:4px;">${(m.content.memberIds || []).length} 人参与 · ${m.content.missed ? '无人接听' : (m.content.ended ? `通话时长 ${formatDuration(m.content.duration)}` : '通话中…')}</div></div>`;
+        return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">${m.content.kind === 'video' ? '<i data-icon="video" data-size="15"></i> 群视频通话' : '<i data-icon="mic" data-size="15"></i> 群语音通话'}</span><div style="margin-top:4px;">${(m.content.memberIds || []).length} 人参与 · ${m.content.missed ? '无人接听' : (m.content.ended ? `通话时长 ${formatDuration(m.content.duration)}` : '通话中…')}</div></div>`;
       }
-      return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">${m.content.kind === 'video' ? '📹 视频通话' : '🎙️ 语音通话'}</span><div style="margin-top:4px;">${m.content.missed ? '未接听' : (m.content.ended ? `通话时长 ${formatDuration(m.content.duration)}` : '通话中…')}</div></div>`;
+      return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">${m.content.kind === 'video' ? '<i data-icon="video" data-size="15"></i> 视频通话' : '<i data-icon="mic" data-size="15"></i> 语音通话'}</span><div style="margin-top:4px;">${m.content.missed ? '未接听' : (m.content.ended ? `通话时长 ${formatDuration(m.content.duration)}` : '通话中…')}</div></div>`;
     case 'transfer': {
       const st = m.content.status || 'claimed';
       let statusLine = '';
@@ -3836,25 +3856,25 @@ function msgBodyHtml(m, oneLine = false) {
     case 'grouppacket': // az：群红包（细则拓展 3）
       return gpacketCardHtml(m);
     case 'topic': // az：话题卡（细则拓展 2）
-      return `<div class="msg-card" style="border-color:var(--purple);"><span class="msg-card-tag">💬 话题卡</span><div style="font-weight:600;">${escapeHtml(m.content.text)}</div><div style="font-size:11.5px;color:var(--text-tertiary);margin-top:4px;">话题已抛出，大家聊聊吧</div></div>`;
+      return `<div class="msg-card" style="border-color:var(--purple);"><span class="msg-card-tag"><i data-icon="comment" data-size="16"></i> 话题卡</span><div style="font-weight:600;">${escapeHtml(m.content.text)}</div><div style="font-size:11.5px;color:var(--text-tertiary);margin-top:4px;">话题已抛出，大家聊聊吧</div></div>`;
     case 'vote': // az：群投票（细则拓展 4）
       return voteCardHtml(m);
     case 'letter': {
       const who = m.from === 'me' ? '寄给 TA 的信' : 'TA 寄来的信';
       return `<div class="letter-card" data-letter-card="${m.id}">
         <div class="lc-flap"></div>
-        <div class="lc-tag">✉️ ${who}</div>
+        <div class="lc-tag"><i data-icon="letter" data-size="16"></i> ${who}</div>
         <div class="lc-title">一封书信</div>
         <div class="lc-preview">${escapeHtml(m.content.preview || '')}</div>
         ${!m.read && m.from === 'them' ? '<div class="lc-unread"></div>' : ''}
-        <div class="lc-seal">🕯️</div>
+        <div class="lc-seal"><i data-icon="candle" data-size="16"></i></div>
       </div>`;
     }
     case 'share': {
       // 朋友圈分享卡片（玩家从朋友圈分享给角色）
       const sc = m.content || {};
       return `<div class="msg-share-card">
-        <span class="msg-card-tag">📤 朋友圈分享</span>
+        <span class="msg-card-tag"><i data-icon="forward" data-size="16"></i> 朋友圈分享</span>
         <div style="margin-top:6px;font-size:13px;font-weight:600;">${escapeHtml(sc.authorName || '朋友圈')}</div>
         ${sc.text ? `<div style="margin-top:4px;font-size:13.5px;line-height:1.55;word-break:break-word;">${escapeHtml(sc.text)}</div>` : ''}
         ${sc.sticker ? `<div style="margin-top:4px;font-size:30px;line-height:1.2;">${escapeHtml(sc.sticker)}</div>` : ''}
@@ -3867,7 +3887,7 @@ function msgBodyHtml(m, oneLine = false) {
       const wc = m.content || {};
       const preview = wc.text ? wc.text.replace(/\s+/g, ' ').slice(0, 120) : '';
       return `<div class="msg-card msg-worldshare-card" style="cursor:pointer;" data-worldshare-card="${m.id}">
-        <span class="msg-card-tag">🌳 世界树分享</span>
+        <span class="msg-card-tag"><i data-icon="tree" data-size="16"></i> 世界树分享</span>
         <div style="margin-top:4px;font-size:14px;font-weight:600;">${escapeHtml(wc.title || '世界树内容')}</div>
         ${wc.img ? `<img src="${imgSrcAttr(wc.img, true)}" style="margin-top:6px;max-width:180px;max-height:130px;object-fit:cover;border-radius:10px;border:1px solid var(--border);">` : ''}
         ${preview ? `<div style="margin-top:6px;font-size:12.5px;color:var(--text-secondary);line-height:1.55;word-break:break-word;">${escapeHtml(preview)}${wc.text && wc.text.length > 120 ? '…' : ''}</div>` : ''}
@@ -3879,7 +3899,7 @@ function msgBodyHtml(m, oneLine = false) {
       // 点一下直接进四季（完整播放开屏动画，绝不加 nosplash）。
       const sl = m.content || {};
       return `<div class="msg-card msg-season-love-card" data-season-love="${escapeHtml(m.charId || '')}" style="cursor:pointer;">
-        <span class="msg-card-tag">🌱 四季 · 一起照料</span>
+        <span class="msg-card-tag"><i data-icon="sprout" data-size="16"></i> 四季 · 一起照料</span>
         <div style="margin-top:8px;font-size:14px;font-weight:600;line-height:1.5;">${escapeHtml(sl.name || 'TA')} 想邀请你一起照料植物</div>
         <div style="margin-top:6px;font-size:12.5px;color:var(--text-secondary);line-height:1.6;word-break:break-word;">${escapeHtml(sl.text || '去星球上一起浇浇水吧')}</div>
         <div style="margin-top:8px;font-size:11.5px;color:var(--text-tertiary);">点一下，去它的星球</div>
@@ -3888,9 +3908,9 @@ function msgBodyHtml(m, oneLine = false) {
     case 'music': {
       // 一起听歌卡片（玩家邀请访客一起听歌时发到聊天页）
       const mc = m.content || {};
-      const cover = mc.pic ? `<img src="${imgSrcAttr(mc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">♪</span>`;
+      const cover = mc.pic ? `<img src="${imgSrcAttr(mc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
       return `<div class="msg-card msg-music-card" data-music-card="${m.id}" style="cursor:pointer;">
-        <span class="msg-card-tag">🎵 一起听歌</span>
+        <span class="msg-card-tag"><i data-icon="music" data-size="16"></i> 一起听歌</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
           ${cover}
           <div style="min-width:0;">
@@ -3910,9 +3930,9 @@ function msgBodyHtml(m, oneLine = false) {
       /* 20261111：歌卡可以点开就播（角色主动分享的、玩家分享的都行）。
          「一起听歌已结束」那张（ended）不是歌，不给播放。 */
       const _playable = !mcc.ended && !!mcc.name;
-      const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">♪</span>`;
+      const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
       return `<div class="msg-card msg-music-card"${_playable ? ` data-song-play="${m.id}" style="cursor:pointer;"` : ''}>
-        <span class="msg-card-tag">${_fromMe ? '🎶 我把这首歌分享给你' : '🎶 听到这首歌，TA 想对你说'}</span>
+        <span class="msg-card-tag">${_fromMe ? '<i data-icon="music" data-size="15"></i> 我把这首歌分享给你' : '<i data-icon="music" data-size="15"></i> 听到这首歌，TA 想对你说'}</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
           ${cover}
           <div style="min-width:0;">
@@ -3937,7 +3957,7 @@ function msgBodyHtml(m, oneLine = false) {
       const rowHtml = songs.map((s, i) => {
         const cover = s.pic
           ? `<img src="${escapeHtml(imgSrc(s.pic, true))}" referrerpolicy="no-referrer" style="width:36px;height:36px;border-radius:7px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);">`
-          : `<span style="width:36px;height:36px;border-radius:7px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">♪</span>`;
+          : `<span style="width:36px;height:36px;border-radius:7px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i data-icon="music" data-size="13"></i></span>`;
         const isPicked = done && sp.picked === i;
         return `<div data-songidx="${i}" style="display:flex;align-items:center;gap:9px;margin-top:8px;padding:6px;border-radius:9px;background:${isPicked ? 'var(--purple-glow)' : 'transparent'};${done ? 'opacity:.62;' : 'cursor:pointer;'}">
             ${cover}
@@ -3960,7 +3980,7 @@ function msgBodyHtml(m, oneLine = false) {
             ? `<button class="btn" data-songpick-rand="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">让 ${escapeHtml(((characters.find(x => x.id === m.charId) || {}).name) || 'TA')} 帮我选</button>`
             : `<button class="btn" data-songpick-no="${m.id}" style="width:100%;margin-top:10px;height:34px;font-size:12.5px;">${tg ? '就听这首' : '先不了'}</button>`);
       return `<div class="msg-card msg-song-card" data-songpick="${m.id}">
-        <span class="msg-card-tag">🎧 ${sp.mode === 'pick'
+        <span class="msg-card-tag"><i data-icon="headphone" data-size="16"></i> ${sp.mode === 'pick'
           ? (tg ? 'TA 想让你点一首' : 'TA 想和你一起听歌')
           : (tg ? 'TA 想换首歌' : 'TA 想约你一起听歌')}</span>
         <div style="margin-top:7px;font-size:13.5px;font-weight:600;line-height:1.5;">${escapeHtml(sp.title || '要换一首吗')}</div>
@@ -3996,12 +4016,12 @@ function msgBodyHtml(m, oneLine = false) {
           const uu = (typeof u === 'string' ? u : '').replace(/^http:\/\//i, 'https://');
           return `<img src="${escapeHtml(imgSrc(uu, true))}" referrerpolicy="no-referrer" data-bmimg="${idx}" style="flex:0 0 auto;width:${imgs.length === 1 ? '100%' : '72%'};height:150px;object-fit:cover;border-radius:8px;background:linear-gradient(135deg,${plat.color},#2a2340);">`;
         }).join('');
-        imageStripHtml = `<div class="bm-img-strip" data-imgstrip="${m.id}" style="display:flex;gap:6px;overflow-x:auto;margin-top:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;">${imgList}</div>${imgs.length > 1 ? `<div style="margin-top:4px;font-size:11px;color:var(--text-tertiary);">📷 ${imgs.length} 张图 · 左右滑动查看</div>` : ''}`;
+        imageStripHtml = `<div class="bm-img-strip" data-imgstrip="${m.id}" style="display:flex;gap:6px;overflow-x:auto;margin-top:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;">${imgList}</div>${imgs.length > 1 ? `<div style="margin-top:4px;font-size:11px;color:var(--text-tertiary);"><i data-icon="camera" data-size="12"></i> ${imgs.length} 张图 · 左右滑动查看</div>` : ''}`;
       }
-      const mottoHtml = vc.motto ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12.5px;line-height:1.6;color:var(--purple-soft);word-break:break-word;">💌 ${escapeHtml(vc.motto)}</div>` : '';
+      const mottoHtml = vc.motto ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12.5px;line-height:1.6;color:var(--purple-soft);word-break:break-word;"><i data-icon="letter" data-size="12"></i> ${escapeHtml(vc.motto)}</div>` : '';
       const tagLabel = isImagePost ? '图文分享' : '视频分享';
       return `<div class="msg-card msg-video-card" data-video-card="${m.id}" style="cursor:pointer;">
-        <span class="msg-card-tag" style="background:${plat.color};color:#fff;border:none;">📹 ${escapeHtml(plat.label)}</span>
+        <span class="msg-card-tag" style="background:${plat.color};color:#fff;border:none;"><i data-icon="video" data-size="16"></i> ${escapeHtml(plat.label)}</span>
         <span style="margin-left:6px;font-size:11.5px;color:var(--text-tertiary);">${tagLabel}</span>
         <div style="margin-top:6px;font-size:14px;font-weight:600;line-height:1.4;">${escapeHtml(vc.title || '视频')}</div>
         ${coverHtml}
@@ -4014,7 +4034,7 @@ function msgBodyHtml(m, oneLine = false) {
       // 20261104：角色回应玩家发的视频（独立卡片）
       const vr = m.content || {};
       return `<div class="msg-card">
-        <span class="msg-card-tag">💬 TA 看了你的视频</span>
+        <span class="msg-card-tag"><i data-icon="comment" data-size="16"></i> TA 看了你的视频</span>
         <div style="margin-top:6px;font-size:12px;color:var(--text-tertiary);">关于「${escapeHtml(vr.videoTitle || '视频')}」</div>
         <div style="margin-top:6px;font-size:13px;line-height:1.6;color:var(--text-secondary);word-break:break-word;">${escapeHtml(vr.reply || '这个视频，我记住了。')}</div>
       </div>`;
@@ -4048,7 +4068,7 @@ function msgBodyHtml(m, oneLine = false) {
       if (dc.state === 'rated' && dc.score != null) {
         // 角色评价卡片
         return `${quoteHtml(m.quote)}<div class="msg-card">
-          <span class="msg-card-tag">🔮 占卜评价</span>
+          <span class="msg-card-tag"><i data-icon="divination" data-size="16"></i> 占卜评价</span>
           ${dc.question ? `<div style="margin-top:6px;font-size:12px;color:var(--text-tertiary);">想问：${escapeHtml(dc.question)}</div>` : ''}
           <div style="margin-top:6px;font-size:12.5px;color:var(--text-secondary);">${cardLine}</div>
           <div style="margin-top:10px;display:flex;align-items:center;gap:6px;">
@@ -4061,7 +4081,7 @@ function msgBodyHtml(m, oneLine = false) {
       }
       // 玩家发出的「询问访客」卡片（带三张牌）
       return `${quoteHtml(m.quote)}<div class="msg-card">
-        <span class="msg-card-tag">🔮 占卜 · 询问访客</span>
+        <span class="msg-card-tag"><i data-icon="divination" data-size="16"></i> 占卜 · 询问访客</span>
         ${dc.question ? `<div style="margin-top:6px;font-size:12px;color:var(--text-tertiary);">想问：${escapeHtml(dc.question)}</div>` : ''}
         <div style="margin-top:6px;font-size:13px;line-height:1.6;">${cardLine}</div>
         <div style="margin-top:6px;font-size:11.5px;color:var(--text-tertiary);">等待 TA 评价这次解牌…</div>
@@ -4072,7 +4092,7 @@ function msgBodyHtml(m, oneLine = false) {
       const gc = m.content || {};
       const fromChar = m.from === 'them' || gc.direction === 'char_to_me';
       const isOpened = gc.opened !== false; // 旧消息无 opened 字段 → 视为已打开（兼容 ao 旧卡）
-      const imgHtml = _ocGiftImgOf(gc) ? `<img src="${imgSrcAttr(_ocGiftImgOf(gc), true)}" style="width:100%;height:110px;object-fit:cover;display:block;">` : `<div style="font-size:44px;text-align:center;padding:20px 0;">🎁</div>`;
+      const imgHtml = _ocGiftImgOf(gc) ? `<img src="${imgSrcAttr(_ocGiftImgOf(gc), true)}" style="width:100%;height:110px;object-fit:cover;display:block;">` : `<div style="font-size:44px;text-align:center;padding:20px 0;"><i data-icon="gift" data-size="40"></i></div>`;
       return `<div class="msg-card" data-gift-card="${m.id}" style="cursor:pointer;overflow:hidden;padding:0;">
         <div style="position:relative;">
           ${imgHtml}
@@ -4093,7 +4113,7 @@ function msgBodyHtml(m, oneLine = false) {
       // 超频惊喜卡片（20260929ao）：故障风大字（20260929av：卡片不放问号——问号只在裂隙跳出动画里出现）
       const sc = m.content || {};
       return `<div class="msg-card" data-surprise-card="${m.id}">
-        <span class="msg-card-tag">✨ 惊喜</span>
+        <span class="msg-card-tag"><i data-icon="sparkle" data-size="16"></i> 惊喜</span>
         <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-top:4px;">Ta（${escapeHtml(sc.act || '')}），决定跨越维度，（${escapeHtml(sc.move || '')}），</div>
         <div style="font-size:24px;font-weight:900;color:#e5615c;margin-top:6px;letter-spacing:1px;text-shadow:0 0 10px rgba(229,97,92,.5);">${escapeHtml(sc.big || '！')}</div>
       </div>`;
@@ -4188,7 +4208,7 @@ function appendMessage(m, scroll = true, container = null) {
     const row = document.createElement('div');
     row.className = 'msg-row poke-row';
     row.dataset.msgid = m.id;
-    row.innerHTML = `<div class="poke-msg"><span class="poke-ic">👆</span><span><span class="poke-who">${escapeHtml(who)}</span> ${escapeHtml(m.content)}</span></div>`;
+    row.innerHTML = `<div class="poke-msg"><span class="poke-ic"><i data-icon="poke" data-size="16"></i></span><span><span class="poke-who">${escapeHtml(who)}</span> ${escapeHtml(m.content)}</span></div>`;
     // 长按/右键 → 删除（戳一戳不参与引用/转发/多选/撤回）
     let pokePress = null;
     const delPoke = () => showConfirm('删除这条戳一戳吗？', async () => {
@@ -4248,7 +4268,7 @@ function appendMessage(m, scroll = true, container = null) {
     const row = document.createElement('div');
     row.className = 'msg-row callend-row musicaction-row';
     row.dataset.msgid = m.id;
-    row.innerHTML = `<div class="callend-msg"><span class="musicaction-ico" aria-hidden="true">♪</span><div class="callend-body"><span class="callend-who">${escapeHtml(who)}</span> ${escapeHtml(typeof m.content === 'string' ? m.content : '')}</div></div>`;
+    row.innerHTML = `<div class="callend-msg"><span class="musicaction-ico" aria-hidden="true"><i data-icon="music" data-size="16"></i></span><div class="callend-body"><span class="callend-who">${escapeHtml(who)}</span> ${escapeHtml(typeof m.content === 'string' ? m.content : '')}</div></div>`;
     let maPress = null;
     const delMa = () => showConfirm('删除这条记录吗？', async () => {
       await idbDelete('messages', m.id);
@@ -4292,7 +4312,7 @@ function appendMessage(m, scroll = true, container = null) {
   const body = msgBodyHtml(m, isOneLine);
   const checked = multiSelected.has(m.id);
   const checkHtml = (multiSelectMode && !m.recalled)
-    ? `<div class="msg-check ${checked ? 'on' : ''}">${checked ? '✓' : ''}</div>` : '';
+    ? `<div class="msg-check ${checked ? 'on' : ''}">${checked ? window.icon('check', 13) : ''}</div>` : '';
   if (m.recalled) {
     // 撤回消息：无气泡、无头像，仅一行句子
     row.innerHTML = body;
@@ -4461,7 +4481,7 @@ function appendMessage(m, scroll = true, container = null) {
       // 短暂展示开包动画后再重渲染（让金币弹出动效可见）
       setTimeout(async () => {
         await renderMessages(m.charId);
-        miniToast(`🧧 拆开红包，收到 ¥${m.content.amount}`);
+        miniToast(`<i data-icon="redpacket" data-size="14"></i> 拆开红包，收到 ¥${m.content.amount}`);
       }, 320);
     };
   }
@@ -4683,7 +4703,7 @@ function enterMultiSelect(firstId) {
     })();
     row.dataset.checked = multiSelected.has(mid) ? '1' : '0';
     check.classList.toggle('on', multiSelected.has(mid));
-    check.textContent = multiSelected.has(mid) ? '✓' : '';
+    check.innerHTML = multiSelected.has(mid) ? window.icon('check', 13) : '';
     row.onclick = (ev) => { if (ev.target.closest('.msg-img')) return; toggleMultiSelect(mid); };
   });
   showMultiBar();
@@ -4696,7 +4716,7 @@ function toggleMultiSelect(msgId) {
   if (row) {
     const on = multiSelected.has(msgId);
     const check = row.querySelector('.msg-check');
-    if (check) { check.classList.toggle('on', on); check.textContent = on ? '✓' : ''; }
+    if (check) { check.classList.toggle('on', on); check.innerHTML = on ? window.icon('check', 13) : ''; }
   }
   const countEl = $('#multi-count');
   if (countEl) countEl.textContent = multiSelected.size;
@@ -5382,7 +5402,7 @@ function showImageSourcePicker() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">发送图片</div>
-      <button class="icon-btn" id="imgpick-close">✕</button>
+      <button class="icon-btn" id="imgpick-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="display:flex;gap:12px;">
       <button class="btn" style="flex:1;flex-direction:column;gap:10px;padding:22px 0;" id="imgpick-camera">
@@ -5923,7 +5943,7 @@ async function writeSingleFileChunked(path, base64, directory, onProgress = null
       written = Math.min(off + CHUNK, total);
       if (onProgress) onProgress(written, total);
       else if (CHUNK > 3 * 1024 * 1024 && off + CHUNK < padded.length) {
-        exportProgress(true, `💾 正在写入 ${written}/${total}…`);
+        exportProgress(true, `<i data-icon="data" data-size="14"></i> 正在写入 ${written}/${total}…`);
       }
     }
   } finally {
@@ -8204,8 +8224,8 @@ function bmScheduleDupHandle(charId, at, title, charName) {
           <div style="font-size:16.5px;font-weight:600;line-height:1.55;">这条行程已经记录过了</div>
         </div>
         <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
-          <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(at)}</div>
-          <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(title)}</div>
+          <div style="font-size:14px;color:var(--text);line-height:1.6;"><i data-icon="clock" data-size="12"></i> ${bmFormatCNTime(at)}</div>
+          <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;"><i data-icon="pin" data-size="12"></i> ${escapeHtml(title)}</div>
           <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">日程和闹钟都已记录，无需重复。</div>
         </div>
         <div style="display:flex;gap:10px;margin-top:16px;">
@@ -8225,8 +8245,8 @@ function bmScheduleDupHandle(charId, at, title, charName) {
         <div style="font-size:16.5px;font-weight:600;line-height:1.55;">这条行程已经记录过${missAlarm ? '日程' : '闹钟'}</div>
       </div>
       <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
-        <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(at)}</div>
-        <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(title)}</div>
+        <div style="font-size:14px;color:var(--text);line-height:1.6;"><i data-icon="clock" data-size="12"></i> ${bmFormatCNTime(at)}</div>
+        <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;"><i data-icon="pin" data-size="12"></i> ${escapeHtml(title)}</div>
         <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">要不要再补一个「${missLabel}」？（${missHint}）</div>
       </div>
       <div style="display:flex;gap:10px;margin-top:16px;">
@@ -8255,16 +8275,16 @@ function showScheduleRecordModal(item, c) {
       <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:6px;">系统在聊天里检测到了日程与提醒请求</div>
     </div>
     <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
-      <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}${item.timeEstimated ? '<span style="font-size:11px;color:var(--warn,#fbbf24);margin-left:6px;">（系统推测，可修改）</span>' : ''}</div>
-      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
+      <div style="font-size:14px;color:var(--text);line-height:1.6;"><i data-icon="clock" data-size="12"></i> ${bmFormatCNTime(item.at)}${item.timeEstimated ? '<span style="font-size:11px;color:var(--warn,#fbbf24);margin-left:6px;">（系统推测，可修改）</span>' : ''}</div>
+      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;"><i data-icon="pin" data-size="12"></i> ${escapeHtml(item.title)}</div>
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">请选择要记录的方式（可多选）：</div>
     <label style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding:11px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
-      <span style="font-size:13.5px;">📅 记录日程<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">写入系统日历（日程本身，纯记录）</small></span>
+      <span style="font-size:13.5px;"><i data-icon="daily" data-size="12"></i> 记录日程<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">写入系统日历（日程本身，纯记录）</small></span>
       <input type="checkbox" id="bm-sched-schedule" checked style="width:18px;height:18px;accent-color:var(--purple);">
     </label>
     <label style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding:11px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
-      <span style="font-size:13.5px;">🔔 记录闹钟<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">到点以系统闹钟方式响铃提醒（需授予「闹钟和提醒」权限）</small></span>
+      <span style="font-size:13.5px;"><i data-icon="bell" data-size="12"></i> 记录闹钟<small style="display:block;color:var(--text-tertiary);font-size:11.5px;">到点以系统闹钟方式响铃提醒（需授予「闹钟和提醒」权限）</small></span>
       <input type="checkbox" id="bm-sched-alarm" checked style="width:18px;height:18px;accent-color:var(--purple);">
     </label>
     <div style="display:flex;gap:10px;margin-top:16px;">
@@ -8292,12 +8312,12 @@ function showScheduleRecordModal(item, c) {
 function bmAskScheduleRemind(item) {
   openModal(`
     <div style="text-align:center;margin-bottom:10px;">
-      <div style="font-size:40px;margin-bottom:8px;">🔔</div>
+      <div style="font-size:40px;margin-bottom:8px;"><i data-icon="bell" data-size="37"></i></div>
       <div style="font-size:16.5px;font-weight:600;line-height:1.55;">要不要给这个日程设置提醒？</div>
     </div>
     <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
-      <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}</div>
-      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
+      <div style="font-size:14px;color:var(--text);line-height:1.6;"><i data-icon="clock" data-size="12"></i> ${bmFormatCNTime(item.at)}</div>
+      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;"><i data-icon="pin" data-size="12"></i> ${escapeHtml(item.title)}</div>
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">设置后，到点会响铃提醒（锁屏可见）；不设置则只记录到日历，不响铃。</div>
     <div style="display:flex;gap:10px;margin-top:16px;">
@@ -8401,12 +8421,12 @@ async function bmCommitScheduleReminder(item) {
   try { bmSchedulePageTimers(); } catch (e) {}
   openModal(`
     <div style="text-align:center;margin-bottom:10px;">
-      <div style="font-size:40px;margin-bottom:8px;">✅</div>
+      <div style="font-size:40px;margin-bottom:8px;"><i data-icon="check" data-size="37"></i></div>
       <div style="font-size:16.5px;font-weight:600;line-height:1.55;">访客已经成功记录你的行程</div>
     </div>
     <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
-      <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(item.at)}</div>
-      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(item.title)}</div>
+      <div style="font-size:14px;color:var(--text);line-height:1.6;"><i data-icon="clock" data-size="12"></i> ${bmFormatCNTime(item.at)}</div>
+      <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;"><i data-icon="pin" data-size="12"></i> ${escapeHtml(item.title)}</div>
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);line-height:1.65;">已写入：${escapeHtml(results.join(' + ') || '行程记录')}${PLG ? '' : '（安装版还会同步写入系统日历与系统提醒通知）'}</div>
     <div style="display:flex;gap:10px;margin-top:16px;">
@@ -8471,8 +8491,8 @@ async function bmFireScheduleReminder(it) {
         <div style="font-size:16.5px;font-weight:600;line-height:1.55;">「${escapeHtml(it.charName || '访客')}」提醒你：到点啦</div>
       </div>
       <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin:10px 0;">
-        <div style="font-size:14px;color:var(--text);line-height:1.6;">🕐 ${bmFormatCNTime(it.at)}</div>
-        <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;">📌 ${escapeHtml(it.title)}</div>
+        <div style="font-size:14px;color:var(--text);line-height:1.6;"><i data-icon="clock" data-size="12"></i> ${bmFormatCNTime(it.at)}</div>
+        <div style="font-size:13.5px;color:var(--text-secondary);margin-top:4px;line-height:1.6;"><i data-icon="pin" data-size="12"></i> ${escapeHtml(it.title)}</div>
       </div>
       <div style="display:flex;gap:10px;margin-top:16px;">
         <button class="btn primary" style="flex:1;" id="bm-sched-fired-ok">知道了</button>
@@ -9217,14 +9237,14 @@ function showChatListMenu() {
   const _ok = openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">聊天</div>
-      <button class="icon-btn" id="clm-close">✕</button>
+      <button class="icon-btn" id="clm-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <button class="btn block" style="justify-content:flex-start;" id="clm-add">
         <span class="func-ic">${icon('plus', 18)}</span><span>添加访客</span>
       </button>
       <button class="btn block" style="justify-content:flex-start;" id="clm-group">
-        <span class="func-ic">👥</span><span>建立群聊</span>
+        <span class="func-ic"><i data-icon="group" data-size="16"></i></span><span>建立群聊</span>
       </button>
       <button class="btn block" style="justify-content:flex-start;" id="clm-batch">
         <span class="func-ic">${icon('checklist', 18)}</span><span>批量管理</span>
@@ -9249,7 +9269,7 @@ function showCreateGroupModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">建立群聊</div>
-      <button class="icon-btn" id="cg-create-close">✕</button>
+      <button class="icon-btn" id="cg-create-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">勾选要拉入群聊的访客（至少 2 个）</div>
     <div style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:14px;" id="cg-create-list">
@@ -9269,7 +9289,7 @@ function showCreateGroupModal() {
       const box = el.querySelector('.gs-check');
       box.style.background = on ? 'var(--purple)' : '';
       box.style.borderColor = on ? 'var(--purple)' : 'var(--text-tertiary)';
-      box.textContent = on ? '✓' : '';
+      box.innerHTML = on ? window.icon('check', 13) : '';
       el.style.borderColor = on ? 'var(--purple)' : 'var(--border)';
     });
   };
@@ -9346,7 +9366,7 @@ function showEditCharModal(c) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">编辑访客资料</div>
-      <button class="icon-btn" id="editchar-close">✕</button>
+      <button class="icon-btn" id="editchar-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field">
       <label>头像</label>
@@ -9384,7 +9404,7 @@ function showEditCharModal(c) {
     const box = $('#editchar-nicks');
     if (!box) return;
     box.innerHTML = _nickList.length
-      ? _nickList.map((n, i) => `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:4px 10px;font-size:13px;">${escapeHtml(n)}<button data-nickdel="${i}" style="border:none;background:none;color:var(--text-tertiary);cursor:pointer;font-size:13px;padding:0;">✕</button></span>`).join('')
+      ? _nickList.map((n, i) => `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:4px 10px;font-size:13px;">${escapeHtml(n)}<button data-nickdel="${i}" style="border:none;background:none;color:var(--text-tertiary);cursor:pointer;font-size:13px;padding:0;"><i data-icon="close" data-size="12"></i></button></span>`).join('')
       : '<span style="font-size:12px;color:var(--text-tertiary);">还没有昵称，TA 会用默认称呼叫你</span>';
     box.querySelectorAll('[data-nickdel]').forEach(b => {
       b.onclick = () => { _nickList.splice(parseInt(b.dataset.nickdel, 10), 1); renderNicks(); };
@@ -9444,7 +9464,7 @@ function showEmojiManagerModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">表情包管理</div>
-      <button class="icon-btn" id="emo-close">✕</button>
+      <button class="icon-btn" id="emo-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div id="emo-list" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;max-height:260px;overflow-y:auto;margin-bottom:14px;"></div>
     <label class="btn primary block" for="emo-file" style="cursor:pointer;justify-content:center;">＋ 添加表情包（上限 300 张）</label>
@@ -9454,7 +9474,7 @@ function showEmojiManagerModal() {
   const renderList = async () => {
     const emojis = await getEmojis();
     $('#emo-list').innerHTML = emojis.length
-      ? emojis.map(e => `<div class="emoji-cell"><img src="${imgSrcAttr(e.img || e.data)}"><button class="emoji-del" style="display:block;" data-del="${e.id}">✕</button></div>`).join('')
+      ? emojis.map(e => `<div class="emoji-cell"><img src="${imgSrcAttr(e.img || e.data)}"><button class="emoji-del" style="display:block;" data-del="${e.id}"><i data-icon="close" data-size="17"></i></button></div>`).join('')
       : '<div class="emoji-empty" style="grid-column:1/-1;">还没有表情包</div>';
     $('#emo-list').querySelectorAll('[data-del]').forEach(el => {
       el.onclick = async (ev) => {
@@ -9515,7 +9535,7 @@ async function showCharProfile(charId = null) {
         <div class="cp-sign">${escapeHtml(charSign || '')}</div>
         ${c.bio ? `<div class="cp-bio">${escapeHtml(c.bio)}</div>` : ''}
         <div class="cp-chips">
-          <span class="chip">💰 ¥${c.wallet ?? 100000}</span>
+          <span class="chip"><i data-icon="coin" data-size="16"></i> ¥${c.wallet ?? 100000}</span>
           <span class="chip ghost" id="cp-relation-chip" style="cursor:pointer;">关系：${escapeHtml(relation)}</span>
         </div>
         <div class="cp-funcs">
@@ -9593,7 +9613,7 @@ function showDeleteCharModal(charId) {
   if (!c) return;
   openModal(`
     <div style="text-align:center;margin-bottom:8px;">
-      <div style="font-size:40px;margin-bottom:10px;">⚠️</div>
+      <div style="font-size:40px;margin-bottom:10px;"><i data-icon="alert" data-size="37"></i></div>
       <div style="font-size:15px;font-weight:600;margin-bottom:4px;">删除「${escapeHtml(c.name)}」</div>
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">此操作无法撤销，请选择要删除的范围</div>
     </div>
@@ -9657,7 +9677,7 @@ function showCharMomentsSettingsModal(c) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <div style="font-size:18px;font-weight:600;">朋友圈设置</div>
-      <button class="icon-btn" id="mos-close">✕</button>
+      <button class="icon-btn" id="mos-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">针对「${escapeHtml(c.name)}」的朋友圈相关设置</div>
 
@@ -9710,7 +9730,7 @@ function showRelationModal(c) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">设置关系网</div>
-      <button class="icon-btn" id="relation-close">✕</button>
+      <button class="icon-btn" id="relation-close"><i data-icon="close" data-size="17"></i></button>
     </div>
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">你和「${escapeHtml(c.name)}」的关系</div>
@@ -9798,7 +9818,7 @@ function showBanWordsModal(c) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">访客禁词</div>
-      <button class="icon-btn" id="ban-close">✕</button>
+      <button class="icon-btn" id="ban-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">TA 回复、书信、入梦签等抽取字卡时，过滤禁词、禁用分组和勾选的单条字卡（入梦签同样只从 TA 可用的字卡里抽）</div>
 
@@ -9825,7 +9845,7 @@ function showBanWordsModal(c) {
   // 已设禁词列表
   function renderList() {
     const el = $('#ban-list');
-    el.innerHTML = words.map((w, i) => `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bi="${i}">${escapeHtml(w)} ✕</span>`).join('');
+    el.innerHTML = words.map((w, i) => `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bi="${i}">${escapeHtml(w)} <i data-icon="close" data-size="12"></i></span>`).join('');
     $('#ban-count').textContent = words.length;
     el.querySelectorAll('[data-bi]').forEach(b => {
       b.onclick = () => { words.splice(parseInt(b.dataset.bi), 1); renderList(); };
@@ -9889,7 +9909,7 @@ function showBanWordsModal(c) {
       const gName = (typeof g.name === 'string' && g.name.trim() && !isLineJunkText(g.name)) ? g.name : '未命名分组';
       const head = `
         <div class="ban-ghead" data-bgid="${g.id}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;">
-          <div class="ban-gcheck" style="width:20px;height:20px;border-radius:6px;border:2px solid ${on ? 'var(--purple)' : 'var(--text-tertiary)'};display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;${on ? 'background:var(--purple);color:#141019;' : ''}">${on ? '✓' : ''}</div>
+          <div class="ban-gcheck" style="width:20px;height:20px;border-radius:6px;border:2px solid ${on ? 'var(--purple)' : 'var(--text-tertiary)'};display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;${on ? 'background:var(--purple);color:#141019;' : ''}">${on ? window.icon('check', 13) : ''}</div>
           <span class="ban-garrow" style="color:var(--text-tertiary);font-size:12px;transition:transform .15s;">${collapsed ? '▸' : '▾'}</span>
           <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${g.color};margin-right:2px;flex-shrink:0;"></span>
           <div style="flex:1;font-size:13px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(gName)}</div>
@@ -9994,7 +10014,7 @@ async function showRelationsModal(selectedId = null) {
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="btn" style="padding:6px 12px;font-size:13px;" id="rel-groups">分组</button>
           <button class="btn" style="padding:6px 12px;font-size:13px;" id="rel-batch">${relBatch ? '退出批量' : '批量管理'}</button>
-          <button class="icon-btn" id="rel-all-close">✕</button>
+          <button class="icon-btn" id="rel-all-close"><i data-icon="close" data-size="17"></i></button>
         </div>
       </div>
       <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">${relBatch ? '批量模式：勾选访客可清除 TA 们的所有关系（访客保留）；点击分组标题可整组勾选' : '点击任意访客，查看并直接修改 TA 与玩家、与其他所有访客的关系'}</div>
@@ -10008,7 +10028,7 @@ async function showRelationsModal(selectedId = null) {
             <div style="display:flex;align-items:center;gap:6px;padding:10px 2px 4px;cursor:pointer;" data-cg-fold="${gi}">
               ${relBatch ? `<span class="rel-gcheck" data-gchk="${gi}" style="width:18px;height:18px;border-radius:6px;border:2px solid var(--text-tertiary);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#141019;flex-shrink:0;"></span>` : ''}
               <span style="color:var(--text-tertiary);font-size:12px;transition:transform .15s;">${g._collapsed ? '▸' : '▾'}</span>
-              <span style="font-size:13px;font-weight:600;color:var(--text-secondary);">📁 ${escapeHtml(g.name)}（${members.length}）</span>
+              <span style="font-size:13px;font-weight:600;color:var(--text-secondary);"><i data-icon="folder" data-size="12"></i> ${escapeHtml(g.name)}（${members.length}）</span>
             </div>
             ${g._collapsed ? '' : members.map(c => rowHtml(c)).join('')}`;
           }).join('')}
@@ -10028,7 +10048,7 @@ async function showRelationsModal(selectedId = null) {
           const on = sel.has(el.dataset.chk);
           el.style.background = on ? 'var(--purple)' : '';
           el.style.borderColor = on ? 'var(--purple)' : 'var(--text-tertiary)';
-          el.textContent = on ? '✓' : '';
+          el.innerHTML = on ? window.icon('check', 13) : '';
         });
         document.querySelectorAll('[data-gchk]').forEach(el => {
           const gi = parseInt(el.dataset.gchk);
@@ -10037,7 +10057,7 @@ async function showRelationsModal(selectedId = null) {
           const allOn = ids.length > 0 && ids.every(id => sel.has(id));
           el.style.background = allOn ? 'var(--purple)' : '';
           el.style.borderColor = allOn ? 'var(--purple)' : 'var(--text-tertiary)';
-          el.textContent = allOn ? '✓' : '';
+          el.innerHTML = allOn ? window.icon('check', 13) : '';
         });
       };
       document.querySelectorAll('[data-chk]').forEach(el => {
@@ -10125,7 +10145,7 @@ async function showRelationsModal(selectedId = null) {
         <button class="icon-btn" id="rel-back" style="font-size:22px;flex-shrink:0;">‹</button>
         <div style="font-size:18px;font-weight:600;">${escapeHtml(c.name)} 的关系网</div>
       </div>
-      <button class="icon-btn" id="rel-all-close">✕</button>
+      <button class="icon-btn" id="rel-all-close"><i data-icon="close" data-size="17"></i></button>
     </div>
 
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
@@ -10250,7 +10270,7 @@ async function renderEmojiGrid() {
     ? emojis.map(e => `
       <div class="emoji-cell" data-eid="${e.id}">
         <img src="${imgSrcAttr(e.img || e.data)}">
-        <button class="emoji-del" data-del="${e.id}">✕</button>
+        <button class="emoji-del" data-del="${e.id}"><i data-icon="close" data-size="17"></i></button>
       </div>`).join('')
     : `<div class="emoji-empty">还没有表情包<br><span style="font-size:12px;">点右上角「＋ 添加」上传（上限 300 张）</span></div>`;
   grid.querySelectorAll('.emoji-cell').forEach(el => {
@@ -10348,7 +10368,7 @@ function showPlayerPokeAddModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">添加戳一戳文案</div>
-      <button class="icon-btn" id="pokeadd-close">✕</button>
+      <button class="icon-btn" id="pokeadd-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field">
       <label>文案（用 TA 指代访客，每行一条，最多一次加 20 条）</label>
@@ -10526,19 +10546,19 @@ function showShareMediaEntry() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">分享</div>
-      <button class="icon-btn" id="sm-close">✕</button>
+      <button class="icon-btn" id="sm-close" aria-label="关闭">${window.icon('close', 18)}</button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;line-height:1.6;">
       ${c ? `选择要分享给 <b style="color:var(--purple)">${escapeHtml(c.name || 'TA')}</b> 的内容。` : '选择要分享的内容。'}
     </div>
     <div style="display:flex;gap:12px;">
       <button class="btn" id="sm-music" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 10px;">
-        <span style="font-size:34px;">🎵</span>
+        <span style="display:flex;color:var(--purple);">${window.icon('music', 34)}</span>
         <span style="font-size:14px;font-weight:600;">分享音乐</span>
         <span style="font-size:11px;color:var(--text-tertiary);">一起听歌 / 分享歌曲</span>
       </button>
       <button class="btn" id="sm-video" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 10px;">
-        <span style="font-size:34px;">🎬</span>
+        <span style="display:flex;color:var(--purple);">${window.icon('video', 34)}</span>
         <span style="font-size:14px;font-weight:600;">分享视频</span>
         <span style="font-size:11px;color:var(--text-tertiary);">一起看视频</span>
       </button>
@@ -10547,7 +10567,7 @@ function showShareMediaEntry() {
          真实走音乐模块：概率同意 → 从播放列表随机抽一首 / 按关键词搜一首播放；
          概率拒绝 → 在聊天框留一条小垫片式的拒绝话（不弹窗、不打断）。 -->
     <button class="btn" id="sm-swap" style="width:100%;margin-top:12px;height:48px;display:flex;align-items:center;justify-content:center;gap:8px;">
-      <span style="font-size:18px;">🎧</span>
+      <span style="display:flex;color:var(--purple);">${window.icon('headphone', 18)}</span>
       <span style="font-size:13.5px;font-weight:600;">让${c ? escapeHtml(c.name || 'TA') : '角色'}换一首</span>
     </button>
     <div style="margin-top:7px;font-size:11.5px;color:var(--text-tertiary);line-height:1.6;text-align:center;">
@@ -11226,7 +11246,7 @@ function openImageGallery(imgs, title) {
     $('#bm-imgview').innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <div style="font-size:15px;font-weight:600;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(title || '图文分享')}</div>
-        <button class="icon-btn" id="bm-imgview-close">✕</button>
+        <button class="icon-btn" id="bm-imgview-close"><i data-icon="close" data-size="17"></i></button>
       </div>
       <div style="position:relative;width:100%;overflow:hidden;border-radius:14px;background:#000;">
         <img src="${escapeHtml(imgSrc(cur, true))}" referrerpolicy="no-referrer" style="width:100%;max-height:60vh;object-fit:contain;display:block;" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22600%22 height=%22400%22%3E%3Crect width=%22600%22 height=%22400%22 fill=%22%232a2340%22/%3E%3Ctext x=%22300%22 y=%22210%22 fill=%22%23aaa%22 font-size=%2230%22 text-anchor=%22middle%22%3E图片加载失败%3C/text%3E%3C/svg%3E';">
@@ -11285,8 +11305,8 @@ function showVideoEntry() {
   const c = cid ? (characters.find(x => x.id === cid) || null) : null;
   const opened = openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:18px;font-weight:600;">🎬 分享视频</div>
-      <button class="icon-btn" id="ve-close">✕</button>
+      <div style="font-size:18px;font-weight:600;"><i data-icon="video" data-size="15"></i> 分享视频</div>
+      <button class="icon-btn" id="ve-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;line-height:1.6;">
       ${c ? `把视频分享给 <b style="color:var(--purple)">${escapeHtml(c.name || 'TA')}</b>。` : '粘贴视频链接或选择本地视频。'}
@@ -11638,7 +11658,7 @@ function openVideoPlay(vc) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:16px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${escapeHtml(title)}</div>
-      <button class="icon-btn" id="vp-close">✕</button>
+      <button class="icon-btn" id="vp-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     ${playerHtml}
     ${extLink ? `<div style="margin-top:10px;display:flex;gap:10px;justify-content:center;">
@@ -11718,7 +11738,7 @@ function showCompanionMenu() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">陪伴</div>
-      <button class="icon-btn" id="companion-close">✕</button>
+      <button class="icon-btn" id="companion-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px 10px;">
       <button class="panel-item" id="companion-pomodoro">
@@ -12683,14 +12703,14 @@ function showMusicEntry() {
   const opened = openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">音乐</div>
-      <button class="icon-btn" id="mucent-close">✕</button>
+      <button class="icon-btn" id="mucent-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;line-height:1.6;">
       ${c ? `当前正和 <b style="color:var(--purple)">${escapeHtml(c.name || 'TA')}</b> 聊天。` : '进入音乐页，或邀请角色一起听歌。'}
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <button class="btn primary" id="mucent-invite" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;">
-        ${c ? '🎧 邀请 TA 一起听歌' : '🎧 邀请角色一起听歌'}
+        ${c ? '<i data-icon="headphone" data-size="16"></i> 邀请 TA 一起听歌' : '<i data-icon="headphone" data-size="16"></i> 邀请角色一起听歌'}
       </button>
       <button class="btn" id="mucent-page" style="width:100%;">进入音乐页面</button>
     </div>
@@ -13124,13 +13144,13 @@ function showCheckinModal() {
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
       <input type="checkbox" id="checkin-my-loc" style="width:17px;height:17px;accent-color:var(--purple);">
-      <label for="checkin-my-loc" style="font-size:13px;color:var(--text-secondary);">📌 附带我的位置（需授权定位，可随时拒绝）</label>
+      <label for="checkin-my-loc" style="font-size:13px;color:var(--text-secondary);"><i data-icon="pin" data-size="12"></i> 附带我的位置（需授权定位，可随时拒绝）</label>
     </div>
     <div style="display:flex;gap:10px;">
       <button class="btn" style="flex:1;" id="checkin-cancel">取消</button>
       <button class="btn primary" style="flex:1;" id="checkin-send">发送查岗</button>
     </div>
-    <button class="btn block" style="margin-top:10px;width:100%;" id="checkin-report">📮 主动报备（发送我的位置）</button>
+    <button class="btn block" style="margin-top:10px;width:100%;" id="checkin-report"><i data-icon="letter" data-size="16"></i> 主动报备（发送我的位置）</button>
   `);
   $('#checkin-cancel').onclick = closeModal;
   $('#checkin-send').onclick = async () => {
@@ -13212,8 +13232,8 @@ function showReportModal() {
   const locOn = (getCharChatSettings(c) || {}).checkinLocation !== false;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-      <div style="font-size:18px;font-weight:600;">📮 主动报备</div>
-      <button class="icon-btn" id="report-close">✕</button>
+      <div style="font-size:18px;font-weight:600;"><i data-icon="letter" data-size="15"></i> 主动报备</div>
+      <button class="icon-btn" id="report-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px;">告诉「${escapeHtml(c ? c.name : 'TA')}」你现在在做什么，可一并附上你的位置、天气与地图。</div>
     <div class="field">
@@ -13222,7 +13242,7 @@ function showReportModal() {
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
       <input type="checkbox" id="report-loc" style="width:17px;height:17px;accent-color:var(--purple);" ${locOn ? 'checked' : ''} ${locOn ? '' : 'disabled'}>
-      <label for="report-loc" style="font-size:13px;color:var(--text-secondary);">📌 附带我的位置（需授权定位，可随时拒绝）</label>
+      <label for="report-loc" style="font-size:13px;color:var(--text-secondary);"><i data-icon="pin" data-size="12"></i> 附带我的位置（需授权定位，可随时拒绝）</label>
     </div>
     <div style="display:flex;gap:10px;">
       <button class="btn" style="flex:1;" id="report-cancel">取消</button>
@@ -13274,7 +13294,7 @@ function openCheckinReplyModal(charId, checkinMsg = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">回复查岗</div>
-      <button class="icon-btn" id="ckr-close">✕</button>
+      <button class="icon-btn" id="ckr-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">「${escapeHtml(c ? c.name : 'TA')}」正在查岗，告诉 TA 你现在在做什么吧</div>
     <div class="field">
@@ -13282,7 +13302,7 @@ function openCheckinReplyModal(charId, checkinMsg = null) {
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
       <input type="checkbox" id="ckr-loc" style="width:17px;height:17px;accent-color:var(--purple);">
-      <label for="ckr-loc" style="font-size:13px;color:var(--text-secondary);">📌 附带我的位置（需授权定位，可随时拒绝）</label>
+      <label for="ckr-loc" style="font-size:13px;color:var(--text-secondary);"><i data-icon="pin" data-size="12"></i> 附带我的位置（需授权定位，可随时拒绝）</label>
     </div>
     <div style="display:flex;gap:10px;">
       <button class="btn" style="flex:1;" id="ckr-cancel">取消</button>
@@ -13364,7 +13384,7 @@ function showCallModal() {
         <span style="font-size:30px;">🎙️</span><span>语音通话</span>
       </button>
       <button class="btn" style="flex:1;flex-direction:column;gap:10px;padding:22px 0;" id="call-video">
-        <span style="font-size:30px;">📹</span><span>视频通话</span>
+        <span style="font-size:30px;"><i data-icon="video" data-size="27"></i></span><span>视频通话</span>
       </button>
     </div>
     <button class="btn block" style="margin-top:14px;" id="call-cancel">取消</button>
@@ -13579,11 +13599,11 @@ function openCallScreen(c, kind, duration, msg, opts = {}) {
       </div>
       ${incoming && !answered
         ? `<div style="display:flex;gap:26px;">
-            <button class="icon-btn" style="width:64px;height:64px;background:var(--danger);border:none;border-radius:50%;font-size:26px;" id="call-reject" title="拒绝">📵</button>
-            <button class="icon-btn" style="width:64px;height:64px;background:var(--ok);border:none;border-radius:50%;font-size:26px;color:#0c1a12;" id="call-accept" title="接听">📞</button>
+            <button class="icon-btn" style="width:64px;height:64px;background:var(--danger);border:none;border-radius:50%;font-size:26px;" id="call-reject" title="拒绝"><i data-icon="ban" data-size="23"></i></button>
+            <button class="icon-btn" style="width:64px;height:64px;background:var(--ok);border:none;border-radius:50%;font-size:26px;color:#0c1a12;" id="call-accept" title="接听"><i data-icon="call" data-size="23"></i></button>
           </div>`
         : `<div style="display:flex;gap:26px;">
-            <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" title="静音">🔇</button>
+            <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" title="静音"><i data-icon="mute" data-size="16"></i></button>
             <button class="icon-btn" style="width:64px;height:64px;background:var(--danger);border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;" id="call-hangup" title="挂断"><span style="display:inline-flex;transform:rotate(135deg);color:#ffffff;">${icon('call', 22)}</span></button>
             <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" id="call-minimize" title="缩小悬浮窗">▣</button>
           </div>`}
@@ -13814,7 +13834,7 @@ function buildCallFloatDomOnly(c, kind, sec) {
       <div class="cf-time">${formatDurShort(sec)}</div>
     </div>
     <button class="cf-btn" id="cf-back" title="切回完整通话">⤢</button>
-    <button class="cf-btn danger" id="cf-hangup" title="挂断">📞</button>
+    <button class="cf-btn danger" id="cf-hangup" title="挂断"><i data-icon="call" data-size="16"></i></button>
   `;
 
   // 定位（先算好，但 style 在 append 前设置即可，不依赖 document 位置）
@@ -13868,7 +13888,7 @@ function buildCallFloat(c, kind, sec) {
       <div class="cf-time">${formatDurShort(sec)}</div>
     </div>
     <button class="cf-btn" id="cf-back" title="切回完整通话">⤢</button>
-    <button class="cf-btn danger" id="cf-hangup" title="挂断">📞</button>
+    <button class="cf-btn danger" id="cf-hangup" title="挂断"><i data-icon="call" data-size="16"></i></button>
   `;
   document.body.appendChild(f);
 
@@ -14003,7 +14023,7 @@ function renderFullCallBody(c, kind, sec) {
         ` : ''}
         <div style="display:flex;gap:14px;align-items:center;">
           <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;" id="call-switch" title="${kind === 'video' ? '切换为语音通话' : '切换为视频通话'}">${icon(kind === 'video' ? 'call' : 'camera', 20)}</button>
-          <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" title="静音">🔇</button>
+          <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" title="静音"><i data-icon="mute" data-size="16"></i></button>
           <button class="icon-btn" style="width:64px;height:64px;background:var(--danger);border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;" id="call-hangup" title="挂断"><span style="display:inline-flex;transform:rotate(135deg);color:#ffffff;">${icon('call', 22)}</span></button>
           <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" id="call-minimize" title="缩小悬浮窗">▣</button>
         </div>
@@ -14309,7 +14329,7 @@ function showGroupCallModal(g) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">群通话 · 勾选成员</div>
-      <button class="icon-btn" id="gcall-close">✕</button>
+      <button class="icon-btn" id="gcall-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
       ${members.map(c => `
@@ -14321,7 +14341,7 @@ function showGroupCallModal(g) {
     </div>
     <div style="display:flex;gap:12px;">
       <button class="btn" style="flex:1;flex-direction:column;gap:8px;padding:16px 0;" id="gcall-voice"><span style="font-size:26px;">🎙️</span><span>语音群聊</span></button>
-      <button class="btn" style="flex:1;flex-direction:column;gap:8px;padding:16px 0;" id="gcall-video"><span style="font-size:26px;">📹</span><span>视频群聊</span></button>
+      <button class="btn" style="flex:1;flex-direction:column;gap:8px;padding:16px 0;" id="gcall-video"><span style="font-size:26px;"><i data-icon="video" data-size="23"></i></span><span>视频群聊</span></button>
     </div>
   `);
   $('#gcall-close').onclick = closeModal;
@@ -14331,7 +14351,7 @@ function showGroupCallModal(g) {
       const box = el.querySelector('.gcall-check');
       box.style.background = on ? 'var(--purple)' : '';
       box.style.borderColor = on ? 'var(--purple)' : 'var(--text-tertiary)';
-      box.textContent = on ? '✓' : '';
+      box.innerHTML = on ? window.icon('check', 13) : '';
       el.style.borderColor = on ? 'var(--purple)' : 'var(--border)';
     });
   };
@@ -14372,7 +14392,7 @@ function openGroupCallScreen(g, members, kind, msg, initSec) {
       <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-bottom:12px;">${avatars}</div>
       ${more}
       <div style="display:flex;gap:26px;margin-top:auto;">
-        <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" title="静音">🔇</button>
+        <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" title="静音"><i data-icon="mute" data-size="16"></i></button>
         <button class="icon-btn" style="width:64px;height:64px;background:var(--danger);border:none;border-radius:50%;display:flex;align-items:center;justify-content:center;" id="call-hangup" title="挂断"><span style="display:inline-flex;transform:rotate(135deg);color:#ffffff;">${icon('call', 22)}</span></button>
         <button class="icon-btn" style="width:54px;height:54px;background:var(--bg-elevated-2);border:1px solid var(--border);" id="call-minimize" title="缩小悬浮窗">▣</button>
       </div>
@@ -14546,12 +14566,12 @@ function showRedpacketTransferEntry() {
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">给 ${escapeHtml(c ? c.name : 'TA')} 发一个红包或转账</div>
     <div style="display:flex;gap:12px;">
       <button class="btn" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 0;" id="rt-redpacket">
-        <span style="font-size:30px;">🧧</span>
+        <span style="font-size:30px;"><i data-icon="redpacket" data-size="27"></i></span>
         <span style="font-size:14px;font-weight:600;">发红包</span>
         <span style="font-size:11px;color:var(--text-tertiary);">一份心意</span>
       </button>
       <button class="btn" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 0;" id="rt-transfer">
-        <span style="font-size:30px;">💳</span>
+        <span style="font-size:30px;"><i data-icon="wallet" data-size="27"></i></span>
         <span style="font-size:14px;font-weight:600;">转账</span>
         <span style="font-size:11px;color:var(--text-tertiary);">明确金额</span>
       </button>
@@ -14696,7 +14716,7 @@ function showTransferModal() {
 function showConfirm(message, onConfirm) {
   openModal(`
     <div style="text-align:center;margin-bottom:8px;">
-      <div style="font-size:40px;margin-bottom:12px;">⚠️</div>
+      <div style="font-size:40px;margin-bottom:12px;"><i data-icon="alert" data-size="37"></i></div>
       <div style="font-size:15px;line-height:1.6;color:var(--text);">${escapeHtml(message)}</div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px;">
@@ -14716,7 +14736,7 @@ function confirmAsync(message, okText = '确定', cancelText = '取消') {
     const done = (v) => { if (settled) return; settled = true; resolve(v); };
     openModal(`
       <div style="text-align:center;margin-bottom:8px;">
-        <div style="font-size:40px;margin-bottom:12px;">🔐</div>
+        <div style="font-size:40px;margin-bottom:12px;"><i data-icon="lock" data-size="37"></i></div>
         <div style="font-size:15px;line-height:1.6;color:var(--text);white-space:pre-wrap;word-break:break-word;">${escapeHtml(message)}</div>
       </div>
       <div style="display:flex;gap:10px;margin-top:20px;">
@@ -15329,7 +15349,7 @@ function showCardsModal() {
         <div style="display:${window._ungroupCollapsed ? 'none' : 'flex'};flex-wrap:wrap;gap:6px;padding:10px 4px;max-height:180px;overflow-y:auto;" id="cards-ungrouped">
           ${cards.customReplies.map((t, i) => batch
             ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-sel-ungroup="${i}">${escapeHtml(cardBrief(t))}</span>`
-            : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-idx="${i}">${escapeHtml(cardBrief(t))} ✕</span>`
+            : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-idx="${i}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
           ).join('') || '<span style="color:var(--text-tertiary);font-size:12px;">（空）</span>'}
         </div>
       </div>
@@ -15352,7 +15372,7 @@ function showCardsModal() {
           <div style="display:${collapsed ? 'none' : 'flex'};flex-wrap:wrap;gap:6px;padding:12px;">
             ${g.items.length === 0 ? '<span style="color:var(--text-tertiary);font-size:12px;">（空分组）</span>' : g.items.map((t, ii) => batch
               ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-sel-group="${gi}" data-sel-i="${ii}">${escapeHtml(cardBrief(t))}</span>`
-              : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-g="${gi}" data-i="${ii}">${escapeHtml(cardBrief(t))} ✕</span>`
+              : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-g="${gi}" data-i="${ii}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
             ).join('')}
           </div>
         </div>`;
@@ -15384,7 +15404,7 @@ function showCardsModal() {
           <div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 4px;max-height:180px;overflow-y:auto;" id="mod-ungrouped">
             ${list.map((t, i) => batch
               ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-sel-ungroup="${i}">${escapeHtml(cardBrief(t))}</span>`
-              : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-idx="${i}">${escapeHtml(cardBrief(t))} ✕</span>`
+              : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-idx="${i}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
             ).join('') || '<span style="color:var(--text-tertiary);font-size:12px;">（空）</span>'}
           </div>
         </div>`;
@@ -15406,7 +15426,7 @@ function showCardsModal() {
             <div style="display:${collapsed ? 'none' : 'flex'};flex-wrap:wrap;gap:6px;padding:12px;">
               ${g.items.length === 0 ? '<span style="color:var(--text-tertiary);font-size:12px;">（空分组）</span>' : g.items.map((t, ii) => batch
                 ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-sel-group="${gi}" data-mod-sel-i="${ii}">${escapeHtml(cardBrief(t))}</span>`
-                : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-g="${gi}" data-mod-i="${ii}">${escapeHtml(cardBrief(t))} ✕</span>`
+                : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-g="${gi}" data-mod-i="${ii}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
               ).join('')}
             </div>
           </div>`;
@@ -15439,7 +15459,7 @@ function showCardsModal() {
         <div style="max-height:340px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">
           ${list.map((t, i) => batch
             ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-flat-sel="${i}">${escapeHtml(cardBrief(t))}</span>`
-            : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-flat-idx="${i}">${escapeHtml(cardBrief(t))} ✕</span>`
+            : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-flat-idx="${i}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
           ).join('') || '<span style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:24px 0;">还没有内容</span>'}
         </div>
         <div style="display:flex;gap:8px;">
@@ -15448,7 +15468,7 @@ function showCardsModal() {
         </div>
         ${tab === 'momentPresets' && !batch ? `
         <div style="display:flex;gap:8px;margin-top:8px;">
-          <button class="btn block" id="mod-batch-import">⬆ 批量导入（每行一条）</button>
+          <button class="btn block" id="mod-batch-import"><i data-icon="upload" data-size="16"></i> 批量导入（每行一条）</button>
         </div>` : ''}
       `;
     }
@@ -15463,7 +15483,7 @@ function showCardsModal() {
         <button class="plus-ring" id="btn-cards-plus" title="新建分组 / 添加字卡 / 过滤重复 / 禁词管理">
           <span class="plus-ring-sym">＋</span>
         </button>
-        <button class="icon-btn" id="btn-cards-close">✕</button>
+        <button class="icon-btn" id="btn-cards-close"><i data-icon="close" data-size="17"></i></button>
       </div>
     </div>
 
@@ -15487,15 +15507,15 @@ function showCardsModal() {
         <button class="btn danger block" id="btn-cards-batchdel">删除所选字卡</button>
       ` : ''}
       ${batch && tab === 'pokes' ? `
-        <button class="btn block" id="btn-mod-movetogroup">📁 移入分组</button>
+        <button class="btn block" id="btn-mod-movetogroup"><i data-icon="folder" data-size="16"></i> 移入分组</button>
         <button class="btn block" id="btn-mod-newgroup-batch">＋ 新建分组</button>
         <button class="btn danger block" id="btn-cards-batchdel-mod">删除所选内容</button>
       ` : ''}
       ${batch && tab !== 'replies' && tab !== 'pokes' ? `<button class="btn danger block" id="btn-cards-batchdel-mod">删除所选内容</button>` : ''}
       ${!batch && tab === 'replies' ? `
         <div style="display:flex;gap:10px;">
-          <button class="btn block" style="flex:1;" id="btn-cards-import">⬆ 导入字卡</button>
-          <button class="btn block" style="flex:1;" id="btn-cards-export">⬇ 导出字卡</button>
+          <button class="btn block" style="flex:1;" id="btn-cards-import"><i data-icon="upload" data-size="16"></i> 导入字卡</button>
+          <button class="btn block" style="flex:1;" id="btn-cards-export"><i data-icon="download" data-size="16"></i> 导出字卡</button>
         </div>
       ` : ''}
     </div>
@@ -15588,7 +15608,7 @@ function showCardsModal() {
             const full = all.length > 0 && selCount === all.length;
             el.style.background = full ? 'var(--purple)' : '';
             el.style.borderColor = full ? 'var(--purple)' : 'var(--text-tertiary)';
-            el.textContent = full ? '✓' : '';
+            el.innerHTML = full ? window.icon('check', 13) : '';
           });
           const unCheck = document.querySelector('[data-mod-folder-ungroup]');
           if (unCheck) {
@@ -15597,7 +15617,7 @@ function showCardsModal() {
             const full = allN > 0 && selN === allN;
             unCheck.style.background = full ? 'var(--purple)' : '';
             unCheck.style.borderColor = full ? 'var(--purple)' : 'var(--text-tertiary)';
-            unCheck.textContent = full ? '✓' : '';
+            unCheck.innerHTML = full ? window.icon('check', 13) : '';
           }
         };
         document.querySelectorAll('[data-mod-sel-ungroup]').forEach(el => {
@@ -15885,7 +15905,7 @@ function showCardsModal() {
         const full = all.length > 0 && selCount === all.length;
         el.style.background = full ? 'var(--purple)' : '';
         el.style.borderColor = full ? 'var(--purple)' : 'var(--text-tertiary)';
-        el.textContent = full ? '✓' : '';
+        el.innerHTML = full ? window.icon('check', 13) : '';
       });
       // 未分组整体勾选框状态
       const unCheck = document.querySelector('[data-folder-ungroup]');
@@ -15895,7 +15915,7 @@ function showCardsModal() {
         const full = allN > 0 && selN === allN;
         unCheck.style.background = full ? 'var(--purple)' : '';
         unCheck.style.borderColor = full ? 'var(--purple)' : 'var(--text-tertiary)';
-        unCheck.textContent = full ? '✓' : '';
+        unCheck.innerHTML = full ? window.icon('check', 13) : '';
       }
     };
     document.querySelectorAll('[data-sel-ungroup]').forEach(el => {
@@ -16029,7 +16049,7 @@ function showCardsPlusMenu() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">字卡功能</div>
-      <button class="icon-btn" id="cp-close">✕</button>
+      <button class="icon-btn" id="cp-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <button class="btn block" style="justify-content:flex-start;" id="cp-addgroup">
@@ -16039,10 +16059,10 @@ function showCardsPlusMenu() {
         <span class="func-ic">${icon('plus', 16)}</span><span>添加字卡</span>
       </button>
       <button class="btn block" style="justify-content:flex-start;" id="cp-dedupe">
-        <span class="func-ic">🧹</span><span>过滤重复字卡</span>
+        <span class="func-ic"><i data-icon="broom" data-size="16"></i></span><span>过滤重复字卡</span>
       </button>
       <button class="btn block" style="justify-content:flex-start;" id="cp-banwords">
-        <span class="func-ic">🚫</span><span>字卡禁词管理</span>
+        <span class="func-ic"><i data-icon="ban" data-size="16"></i></span><span>字卡禁词管理</span>
       </button>
     </div>
   `);
@@ -16085,7 +16105,7 @@ function showCardMoveModal(onOpen, onMove) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">移动字卡</div>
-      <button class="icon-btn" id="move-close">✕</button>
+      <button class="icon-btn" id="move-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">将选中的字卡移动到某个分组，或直接建立一个新的分组</div>
 
@@ -16138,7 +16158,7 @@ function showCardInputModal(title, initial, onSave, allowUpload) {
     </div>
     ${allowUpload ? `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-      <button class="btn" style="flex:0 0 auto;" id="card-input-upload">📄 上传 TXT / Word 文档</button>
+      <button class="btn" style="flex:0 0 auto;" id="card-input-upload"><i data-icon="doc" data-size="16"></i> 上传 TXT / Word 文档</button>
       <input type="file" id="card-input-file" accept=".txt,.docx,.doc" style="display:none;">
     </div>
     <div style="font-size:11.5px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.5;">每行一个字卡，回车换行；也可上传 TXT / Word 文档，内容会按行拆进输入框。</div>
@@ -16235,7 +16255,7 @@ function showCardMoveModalForGroups(groups, onMove) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">移入分组</div>
-      <button class="icon-btn" id="move-close">✕</button>
+      <button class="icon-btn" id="move-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">将选中的内容移动到某个分组，或直接新建一个分组</div>
 
@@ -16277,7 +16297,7 @@ function showGroupSelectModal(groups, onPick) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">选择分组</div>
-      <button class="icon-btn" id="gsel-close">✕</button>
+      <button class="icon-btn" id="gsel-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">选择要存入的分组，不选则默认存到「未分组」</div>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px;max-height:260px;overflow-y:auto;">
@@ -16309,7 +16329,7 @@ function showGlobalBanWordsModal() {
       <div style="font-size:18px;font-weight:600;">字卡禁词</div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button class="btn" style="padding:6px 12px;font-size:13px;" id="ban-batch">${batch ? '退出批量' : '批量管理'}</button>
-        <button class="icon-btn" id="ban-close">✕</button>
+        <button class="icon-btn" id="ban-close"><i data-icon="close" data-size="17"></i></button>
       </div>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
@@ -16321,7 +16341,7 @@ function showGlobalBanWordsModal() {
       <div style="display:flex;flex-wrap:wrap;gap:6px;min-height:20px;" id="banb-ungrouped">
         ${cards.customBanWords.map((w, i) => batch
           ? `<span class="badge" style="cursor:pointer;" data-bsel="${i}">${escapeHtml(w)}</span>`
-          : `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bdel="${i}">${escapeHtml(w)} ✕</span>`
+          : `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bdel="${i}">${escapeHtml(w)} <i data-icon="close" data-size="12"></i></span>`
         ).join('')}
       </div>
     </div>
@@ -16335,7 +16355,7 @@ function showGlobalBanWordsModal() {
         <div style="display:flex;flex-wrap:wrap;gap:6px;">
           ${(g.items || []).map((w, ii) => batch
             ? `<span class="badge" style="cursor:pointer;" data-bgsel="${gi}" data-bgseli="${ii}">${escapeHtml(w)}</span>`
-            : `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bg="${gi}" data-bi="${ii}">${escapeHtml(w)} ✕</span>`
+            : `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bg="${gi}" data-bi="${ii}">${escapeHtml(w)} <i data-icon="close" data-size="12"></i></span>`
           ).join('')}
         </div>
       </div>
@@ -16349,7 +16369,7 @@ function showGlobalBanWordsModal() {
           <input class="input" id="ban-input" placeholder="输入禁词" style="flex:1;">
           <button class="btn primary" id="ban-add">添加</button>
         </div>
-        <button class="btn block" id="ban-addgroup">📁 新建禁词分组</button>
+        <button class="btn block" id="ban-addgroup"><i data-icon="folder" data-size="16"></i> 新建禁词分组</button>
       `}
     </div>
   `);
@@ -16727,7 +16747,7 @@ async function showChatThemeModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <div style="font-size:18px;font-weight:600;">织梦点</div>
-      <button class="icon-btn" id="theme-close">✕</button>
+      <button class="icon-btn" id="theme-close"><i data-icon="close" data-size="17"></i></button>
     </div>
 
     <div class="cs-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
@@ -17198,11 +17218,11 @@ async function showChatThemeModal() {
     if (vd) {
       if (vd.total === 0) html = '';
       else if (vd.bad.length) {
-        html = `<span style="color:var(--danger,#f87171);">✕ ${vd.bad.length}/${vd.total} 条规则无法解析，已被浏览器忽略：${vd.bad.map(b => `第${b.n}条「${escapeHtml(b.head)}…」`).join('、')}（常见原因：选择器拼错、括号不配对、混入了「css：」这类非 CSS 文字）</span>`;
+        html = `<span style="color:var(--danger,#f87171);"><i data-icon="close" data-size="17"></i> ${vd.bad.length}/${vd.total} 条规则无法解析，已被浏览器忽略：${vd.bad.map(b => `第${b.n}条「${escapeHtml(b.head)}…」`).join('、')}（常见原因：选择器拼错、括号不配对、混入了「css：」这类非 CSS 文字）</span>`;
       } else if (vd.unhit.length) {
-        html = `<span style="color:var(--warn,#fbbf24);">⚠ 语法全部有效，但有 ${vd.unhit.length} 个选择器在当前页面没有匹配元素（不是错误，可正常保存）：${escapeHtml([...new Set(vd.unhit)].slice(0, 2).join('、'))}${vd.unhit.length > 2 ? ' 等' : ''}。若这些样式作用于其他页面/动态弹窗，直接忽略即可</span>`;
+        html = `<span style="color:var(--warn,#fbbf24);"><i data-icon="alert" data-size="15"></i> 语法全部有效，但有 ${vd.unhit.length} 个选择器在当前页面没有匹配元素（不是错误，可正常保存）：${escapeHtml([...new Set(vd.unhit)].slice(0, 2).join('、'))}${vd.unhit.length > 2 ? ' 等' : ''}。若这些样式作用于其他页面/动态弹窗，直接忽略即可</span>`;
       } else {
-        html = `<span style="color:var(--ok);">✓ ${vd.total} 条规则全部有效</span>`;
+        html = `<span style="color:var(--ok);"><i data-icon="check" data-size="13"></i> ${vd.total} 条规则全部有效</span>`;
       }
     }
     if (savedMsg) html += (html ? ' ' : '') + `<span style="color:var(--ok);font-weight:600;">${escapeHtml(savedMsg)}</span>`;
@@ -17415,7 +17435,7 @@ async function showCharDiaryModal(c) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">我们的日记</div>
-      <button class="icon-btn" id="diary-close">✕</button>
+      <button class="icon-btn" id="diary-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
       <div class="avatar lg">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
@@ -17426,22 +17446,22 @@ async function showCharDiaryModal(c) {
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <div class="diary-stat">
-        <span class="diary-ic">📞</span>
+        <span class="diary-ic"><i data-icon="call" data-size="16"></i></span>
         <span class="diary-label">累计通话时长</span>
         <span class="diary-val">${callText}${callCount > 0 ? `（${callCount} 次）` : ''}</span>
       </div>
       <div class="diary-stat">
-        <span class="diary-ic">🎧</span>
+        <span class="diary-ic"><i data-icon="headphone" data-size="16"></i></span>
         <span class="diary-label">一起听歌时长</span>
         <span class="diary-val">${togetherText}</span>
       </div>
       <div class="diary-stat">
-        <span class="diary-ic">🗓️</span>
+        <span class="diary-ic"><i data-icon="daily" data-size="16"></i></span>
         <span class="diary-label">已经认识</span>
         <span class="diary-val">${days} 天</span>
       </div>
       <div class="diary-stat">
-        <span class="diary-ic">💬</span>
+        <span class="diary-ic"><i data-icon="comment" data-size="16"></i></span>
         <span class="diary-label">发了</span>
         <span class="diary-val">${msgCount} 条消息</span>
       </div>
@@ -17485,7 +17505,7 @@ function showAnniversaryModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">纪念日</div>
-      <button class="icon-btn" id="anniv-close">✕</button>
+      <button class="icon-btn" id="anniv-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">先选择一个访客，再为 TA 设置纪念日</div>
     ${characters.length === 0
@@ -17573,7 +17593,7 @@ function showCharAnniversaryModal(charId) {
         <button class="icon-btn" id="anniv-back" style="font-size:22px;flex-shrink:0;">‹</button>
         <div style="font-size:18px;font-weight:600;">${escapeHtml(c.name)} 的纪念日</div>
       </div>
-      <button class="icon-btn" id="anniv-list-close">✕</button>
+      <button class="icon-btn" id="anniv-list-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div id="anniv-body"></div>
   `);
@@ -17594,11 +17614,11 @@ function renderAnnivList(charId) {
         : list.map(a => {
             const info = annivDayText(a.date);
             const dayLine = info.isToday
-              ? `<div style="font-size:12px;color:var(--purple-soft);font-weight:600;">🎊 就是今天</div>`
+              ? `<div style="font-size:12px;color:var(--purple-soft);font-weight:600;"><i data-icon="party" data-size="12"></i> 就是今天</div>`
               : `<div style="font-size:12px;color:var(--ok);">还有 ${info.left} 天</div><div style="font-size:12px;color:var(--text-secondary);">已过 ${info.passed} 天</div>`;
             return `
           <div style="display:flex;align-items:center;gap:12px;padding:13px 14px;background:var(--card);border:1px solid var(--border);border-radius:14px;">
-            <div style="font-size:22px;">🎉</div>
+            <div style="font-size:22px;"><i data-icon="party" data-size="19"></i></div>
             <div style="flex:1;min-width:0;">
               <div style="font-size:14px;font-weight:600;">${escapeHtml(a.reason || '纪念日')}</div>
               <div style="font-size:12px;color:var(--text-tertiary);">${escapeHtml(a.date)}</div>
@@ -17696,7 +17716,7 @@ async function showAnnivCardSettingModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">入梦签纪念日</div>
-      <button class="icon-btn" id="annivcard-close">✕</button>
+      <button class="icon-btn" id="annivcard-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">选择一个访客，当 TA 的纪念日到来时，入梦签会标明「今天是什么纪念日」</div>
     ${characters.length === 0
@@ -17706,7 +17726,7 @@ async function showAnnivCardSettingModal() {
           <div class="avatar sm">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(c.name[0] || '?')}</div>
           <div style="flex:1;min-width:0;font-size:15px;font-weight:600;">${escapeHtml(c.name)}</div>
           <span class="badge">${anniversaries.filter(a => a.charId === c.id).length} 个纪念日</span>
-          ${cur === c.id ? '<span style="color:var(--purple-soft);">✓</span>' : '<span style="color:var(--text-tertiary);">›</span>'}
+          ${cur === c.id ? '<span style="color:var(--purple-soft);"><i data-icon="check" data-size="13"></i></span>' : '<span style="color:var(--text-tertiary);">›</span>'}
         </div>`).join('')}
     <div style="display:flex;gap:10px;margin-top:14px;">
       ${cur ? `<button class="btn" style="flex:1;" id="annivcard-clear">取消入梦签纪念日</button>` : ''}
@@ -17747,7 +17767,7 @@ function pickMembersModal({ title, tip, exclude = [], initial = [], onDone, onCl
     <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-pm="${id}">
       <div class="avatar sm">${av}</div>
       <div style="flex:1;font-size:14px;font-weight:600;">${escapeHtml(name)}${isGroup ? ' <span style="font-size:11px;color:var(--text-tertiary);font-weight:400;">（群聊）</span>' : ''}</div>
-      <div class="pm-check" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:13px;color:#141019;flex-shrink:0;${sel.has(id) ? 'background:var(--purple);border-color:var(--purple);' : ''}">${sel.has(id) ? '✓' : ''}</div>
+      <div class="pm-check" style="width:20px;height:20px;border-radius:50%;border:2px solid var(--text-tertiary);display:flex;align-items:center;justify-content:center;font-size:13px;color:#141019;flex-shrink:0;${sel.has(id) ? 'background:var(--purple);border-color:var(--purple);' : ''}">${sel.has(id) ? window.icon('check', 13) : ''}</div>
     </div>`;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -17770,7 +17790,7 @@ function pickMembersModal({ title, tip, exclude = [], initial = [], onDone, onCl
       const chk = row.querySelector('.pm-check');
       chk.style.background = sel.has(id) ? 'var(--purple)' : 'transparent';
       chk.style.borderColor = sel.has(id) ? 'var(--purple)' : 'var(--text-tertiary)';
-      chk.textContent = sel.has(id) ? '✓' : '';
+      chk.innerHTML = sel.has(id) ? window.icon('check', 13) : '';
       sync();
     };
   });
@@ -17799,9 +17819,9 @@ function showCharGroupsModal() {
         <div style="padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;">
           ${(g.memberIds || []).map(id => {
             const gc = chatGroups.find(x => x.id === id);
-            if (gc) return `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-cg-rm="${gi}" data-cid="${gc.id}">${icon('chat', 12)} ${escapeHtml(gc.name)} ✕</span>`;
+            if (gc) return `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-cg-rm="${gi}" data-cid="${gc.id}">${icon('chat', 12)} ${escapeHtml(gc.name)} <i data-icon="close" data-size="12"></i></span>`;
             const c = characters.find(x => x.id === id);
-            return c ? `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-cg-rm="${gi}" data-cid="${c.id}">${escapeHtml(c.name)} ✕</span>` : '';
+            return c ? `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-cg-rm="${gi}" data-cid="${c.id}">${escapeHtml(c.name)} <i data-icon="close" data-size="12"></i></span>` : '';
           }).join('') || '<span style="color:var(--text-tertiary);font-size:12px;">（空分组）</span>'}
         </div>
       </div>
@@ -17923,8 +17943,8 @@ function showCharEmojiModal(c) {
         <div class="emoji-cell" data-eid="${e.id}" style="${isSel ? 'box-shadow:inset 0 0 0 2px var(--purple-soft);border-radius:10px;' : ''}">
           <img src="${imgSrcAttr(e.img || e.data)}">
           ${batchMode
-            ? `<button class="emoji-del" style="display:${isSel ? 'block' : 'none'};background:var(--purple-soft);border:none;color:#fff;">✓</button>`
-            : `<button class="emoji-del" data-del="${e.id}">✕</button>`}
+            ? `<button class="emoji-del" style="display:${isSel ? 'block' : 'none'};background:var(--purple-soft);border:none;color:#fff;"><i data-icon="check" data-size="13"></i></button>`
+            : `<button class="emoji-del" data-del="${e.id}"><i data-icon="close" data-size="17"></i></button>`}
         </div>`;
         }).join('')
       : `<div class="emoji-empty">还没有专属表情包<br><span style="font-size:12px;">点「＋ 添加」上传（上限 300 张）</span></div>`;
@@ -17958,7 +17978,7 @@ function showCharEmojiModal(c) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">「${escapeHtml(c.name)}」的表情包库</div>
-      <button class="icon-btn" id="cemoji-close">✕</button>
+      <button class="icon-btn" id="cemoji-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;" id="cemoji-hint"></div>
     <div style="display:flex;gap:10px;margin-bottom:12px;">
@@ -18024,7 +18044,7 @@ function showCharThemeModal(c) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">聊天背景图</div>
-      <button class="icon-btn" id="ctheme-close">✕</button>
+      <button class="icon-btn" id="ctheme-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">设置与「${escapeHtml(c.name)}」聊天时的专属背景图，与其他访客互不影响</div>
 
@@ -18076,7 +18096,7 @@ function showChatFontModal(scope = 'chat') {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">${isGlobal ? '更换全局字体' : '更换聊天字体'}</div>
-      <button class="icon-btn" id="font-close">✕</button>
+      <button class="icon-btn" id="font-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;">${isGlobal ? '应用到全部界面（聊天页不受影响，仍用聊天字体）' : '应用到聊天页（气泡/输入框/顶栏）'}；点选即用、立即生效；✕ 返回织梦点</div>
     <div style="display:flex;flex-direction:column;gap:8px;" id="font-list">
@@ -18089,9 +18109,9 @@ function showChatFontModal(scope = 'chat') {
     </div>
     <div class="field" style="margin-top:14px;">
       <label>上传字体</label>
-      <label class="btn" for="font-upload-input" style="width:100%;display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 14px;cursor:pointer;">⬆ 上传字体文件</label>
+      <label class="btn" for="font-upload-input" style="width:100%;display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 14px;cursor:pointer;"><i data-icon="upload" data-size="16"></i> 上传字体文件</label>
       <input type="file" id="font-upload-input" accept=".ttf,.otf,.woff,.woff2" style="display:none;">
-      <div style="font-size:12px;color:#e5615c;margin-top:6px;font-weight:600;">⚠ 支持 TTF / OTF / WOFF / WOFF2 字体文件，不支持压缩包（zip/rar 需先解压出字体文件再上传）</div>
+      <div style="font-size:12px;color:#e5615c;margin-top:6px;font-weight:600;"><i data-icon="alert" data-size="12"></i> 支持 TTF / OTF / WOFF / WOFF2 字体文件，不支持压缩包（zip/rar 需先解压出字体文件再上传）</div>
       <div style="font-size:11px;color:var(--text-tertiary);margin-top:4px;">上传后保存在本机软件里，最多 8 个、单个不超过 20MB；上传即代表你已确认该字体可自由使用</div>
     </div>
   `);
@@ -18369,7 +18389,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
       <div style="font-size:18px;font-weight:600;">${title}</div>
-      <button class="icon-btn" id="cs-close">✕</button>
+      <button class="icon-btn" id="cs-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     ${subtitle ? `<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;">${subtitle}</div>` : ''}
 
@@ -18824,7 +18844,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，你在聊天里对访客说出日程并带提醒语气（如「明天早上8点叫我起床」），系统会自动识别并弹窗确认，把行程写入系统日历/闹钟提醒。字卡模式与 AI 模式通用，关闭后不再自动检测。</div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">📌 角色每天写入行程条数</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="pin" data-size="12"></i> 角色每天写入行程条数</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色每天在记事蒲日历里随机写入几条自己的行程（如「上班」「学习」）。这里设置最低和最高条数，当天在该区间内随机取一个条数写入。默认 2~3 条；最低为 0 表示当天可能写也可能不写（随机触发）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">最低</span>
@@ -18837,7 +18857,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">最低为 0 时表示当天可能写也可能不写（随机触发）；最低大于最高时自动对调。此设置对所有访客生效。</div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">💬 行程留言/备注抽卡张数</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="comment" data-size="12"></i> 行程留言/备注抽卡张数</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色给玩家行程写留言、给自己行程写备注时，从「回复字卡 + 状态 + Emoji」里随机抽取并组合。这里设置每次抽取的张数区间（最低~最高）。默认 0~2 张，0 表示这次可能不写。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">最低</span>
@@ -18851,7 +18871,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     ${isPerChar ? `
     <div class="field">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">📌 TA 的日常行程标签</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="pin" data-size="12"></i> TA 的日常行程标签</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">TA 每天会按这些标签随机记录一条自己的重要行程（如「上班」「学习」「回家」），沉淀进记事簿日历，你随时可回看。字卡模式直接随机抽标签；AI 模式会参考这些标签生成。可增删。</div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;" id="cs-sched-tags">${(s.scheduleTags || []).map(t => `<span class="badge" style="display:inline-flex;align-items:center;gap:5px;padding:6px 11px;font-size:12.5px;">${escapeHtml(t)}<button class="cs-tag-del" data-tag="${escapeHtml(t)}" style="border:none;background:none;color:var(--danger);cursor:pointer;padding:0;font-size:13px;line-height:1;">×</button></span>`).join('')}</div>
       <div style="display:flex;gap:8px;">
@@ -18865,7 +18885,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     <section class="cs-panel" data-cs-panel="音乐">
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🎧 一起听歌悬浮窗</span>
+        <span><i data-icon="headphone" data-size="16"></i> 一起听歌悬浮窗</span>
         <input type="checkbox" id="cs-music-float" ${(chatSettings.musicFloatOn !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，邀请角色一起听歌、或播放歌曲时会自动弹出一起听悬浮窗（右下角小圆点，点开可看封面/歌词/一起听时长）。关闭后不再自动弹，可随时在音乐页手动开关。</div>
@@ -18883,7 +18903,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </select>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">📍 悬浮方式</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="location" data-size="12"></i> 悬浮方式</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">一起听歌悬浮窗显示在哪里：「软件内」只在 App 内浮动；「其他应用」悬浮到系统桌面 / 其他 App 上（需要悬浮窗权限，未授权会自动跳转申请）。与音乐页右上角的「悬浮方式」按钮是同一份设置，两边同步。</div>
       <select class="input" id="cs-music-floatscope" style="width:100%;">
         <option value="inApp" ${((typeof s.musicFloatScope === 'string' ? s.musicFloatScope : 'inApp') === 'inApp') ? 'selected' : ''}>软件内悬浮</option>
@@ -18892,7 +18912,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🎶 角色主动搜歌/切歌</span>
+        <span><i data-icon="music" data-size="16"></i> 角色主动搜歌/切歌</span>
         <input type="checkbox" id="cs-music-auto" ${(s.musicAuto === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启这个总开关后，角色在<span style="color:var(--text);font-weight:600;">一起听歌期间</span>会自动做音乐操作：播放、暂停、切上一首/下一首、往列表加歌、收藏、随机选歌、主动去网上搜歌。觉得好听的会收藏（存进「访客收藏」），不好听会切歌，并提示你。结束一起听后自动暂停（开关保持开启，下次一起听自动恢复）。随机固定间隔触发（下方可设区间），不会刷屏。</div>
@@ -18926,7 +18946,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">默认开启。开启时，App 退到后台（锁屏 / 切到别的应用 / 挂着系统悬浮窗）角色仍会按上面的节奏自己播放、暂停、切歌、切模式、发邀请；<span style="color:var(--text);font-weight:600;">关掉后，只有你打开着 App 时角色才会做这些音乐互动</span>，在后台只保留「歌继续放着」，不再替你操作。回到前台立刻恢复。</div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">💬 角色音乐操作提示方式</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="comment" data-size="12"></i> 角色音乐操作提示方式</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色主动播放/暂停/切歌/收藏/搜歌时，怎么告诉你：发一条「小垫片」进聊天框（会沉淀进聊天记录），还是弹一条短暂提示条（几秒后自动消散、不留记录），或者干脆不提示。</div>
       <select class="input" id="cs-music-action-style" style="width:100%;">
         <option value="chat" ${((typeof s.musicActionStyle === 'string' ? s.musicActionStyle : 'chat') === 'chat') ? 'selected' : ''}>发到聊天框（小垫片）</option>
@@ -18936,7 +18956,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>💌 角色主动邀请一起听歌</span>
+        <span><i data-icon="letter" data-size="16"></i> 角色主动邀请一起听歌</span>
         <input type="checkbox" id="cs-music-invite" ${(s.musicInvite === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动弹邀请函邀请你一起听歌，你可同意（进入一起听并自动播放）或拒绝。随机固定间隔触发（下方可设区间，默认比主动操作更稀疏）。</div>
@@ -18950,10 +18970,10 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🔄 角色主动问你要不要换歌</span>
+        <span><i data-icon="refresh" data-size="16"></i> 角色主动问你要不要换歌</span>
         <input type="checkbox" id="cs-music-swap" ${(s.musicSwap !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动发一张卡片问你「要换一首吗」，或者挑几首让你点——<span style="color:var(--text);font-weight:600;">播放模式是网易云直连 / 镜像 / 本地曲库时，卡片里点哪首，就真的换哪首播放</span>。<span style="color:var(--warn, #ff9f43);">⚠️ 「后台遥控外部 App」模式做不到：原生插件只能发「下一首」，没法指定某一首。此时点卡片，角色会如实说「尝试更换某首，但好像出了点问题，于是换了一首歌播放」，并弹一条提示条。</span>你在聊天里说「换首歌」，或在「分享 → 让 TA 换一首」，角色也有概率答应；不答应会在聊天里回你一句（小垫片，不弹窗）。随机固定间隔触发（下方可设区间）。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动发一张卡片问你「要换一首吗」，或者挑几首让你点——<span style="color:var(--text);font-weight:600;">播放模式是网易云直连 / 镜像 / 本地曲库时，卡片里点哪首，就真的换哪首播放</span>。<span style="color:var(--warn, #ff9f43);"><i data-icon="alert" data-size="15"></i> 「后台遥控外部 App」模式做不到：原生插件只能发「下一首」，没法指定某一首。此时点卡片，角色会如实说「尝试更换某首，但好像出了点问题，于是换了一首歌播放」，并弹一条提示条。</span>你在聊天里说「换首歌」，或在「分享 → 让 TA 换一首」，角色也有概率答应；不答应会在聊天里回你一句（小垫片，不弹窗）。随机固定间隔触发（下方可设区间）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
         <input type="number" id="cs-music-swap-min" min="1" max="1440" step="1" value="${typeof s.musicSwapMin === 'number' ? s.musicSwapMin : 90}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
@@ -18964,7 +18984,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🎶 角色主动分享一首歌给你</span>
+        <span><i data-icon="music" data-size="16"></i> 角色主动分享一首歌给你</span>
         <input type="checkbox" id="cs-music-share" ${(s.musicShare !== false) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会随机挑一首（或现搜一首）歌，配一句歌词和一句话，做成歌卡发到聊天里——<span style="color:var(--text);font-weight:600;">不需要你们正在一起听</span>，<span style="color:var(--text);font-weight:600;">点开卡片就直接播</span>。跟「一起听时发的那张」不同：那张分享的是当前正在播的歌，这张是 TA 专门找给你的。</div>
@@ -18978,7 +18998,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>👀 角色偷偷查看你的歌单</span>
+        <span><i data-icon="eye" data-size="16"></i> 角色偷偷查看你的歌单</span>
         <input type="checkbox" id="cs-music-peek" ${(s.musicPeek === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会随机「偷看」你的歌单，并在你的歌单里留一条足迹提醒，在聊天里发小横条告诉你。${s.developerMode ? '随机固定间隔触发（下方可设区间）。' : '随机固定间隔触发。'}</div>
@@ -18993,7 +19013,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     ${s.developerMode ? `
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🎧 角色戴耳机（幽灵听歌记录）</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="headphone" data-size="12"></i> 角色戴耳机（幽灵听歌记录）</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">角色的「Ta的耳机」幽灵听歌记录，从这里生成：每隔一段时间，角色会「戴上耳机」安静听一首歌——要么从你的歌单里偷偷听一首，要么自己搜一首新歌来听（AI 模式会按角色卡决定搜什么）。听过的歌会沉淀进「Ta的耳机」，按随机固定间隔触发（下方可设区间，默认拉得比较久，尽可能随机不刷屏）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
@@ -19004,7 +19024,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">⭐ 一起听歌时角色随机收藏</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="star" data-size="12"></i> 一起听歌时角色随机收藏</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">和角色一起听歌时，角色会每隔一段时间，从当前正在播放/播放列表里「觉得好听」随机收藏一首进 TA 自己的歌单（访客收藏）。随机固定间隔触发（下方可设区间），只在正在一起听时生效。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
@@ -19019,7 +19039,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     <section class="cs-panel" data-cs-panel="视频">
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🎬 角色主动搜发视频</span>
+        <span><i data-icon="video" data-size="16"></i> 角色主动搜发视频</span>
         <input type="checkbox" id="cs-video-auto" ${(s.videoAuto === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启后，角色会主动到网上搜视频（bilibili / 抖音 / 其他直链）发给你，发来一张视频卡片，点击可直接播放。随机固定间隔触发（下方可设区间），不会刷屏。</div>
@@ -19032,12 +19052,12 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🖼️ 视频/图文封面获取方式</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="image" data-size="12"></i> 视频/图文封面获取方式</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">决定分享到聊天里的视频、小红书图文/视频、抖音卡片，封面怎么显示。B站用公开接口可直接拿到真封面；小红书/抖音因平台风控，默认拿不到真封面图。两种方式，点选其一。</div>
       <div id="cs-cover-mode" style="display:flex;flex-direction:column;gap:8px;">
         <div class="cs-cover-opt" data-mode="local" style="border:1px solid var(--border);border-radius:12px;padding:10px 12px;cursor:pointer;transition:border-color .15s, background .15s;">
           <div style="display:flex;align-items:flex-start;gap:8px;">
-            <span style="font-size:16px;line-height:1.3;flex-shrink:0;">🛡️</span>
+            <span style="font-size:16px;line-height:1.3;flex-shrink:0;"><i data-icon="shield" data-size="13"></i></span>
             <div style="flex:1;min-width:0;">
               <div style="font-size:13px;font-weight:600;color:var(--text);">纯本地 · 真封面 + 文字占位（推荐）</div>
               <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:3px;line-height:1.5;">B站显示真实封面；小红书/抖音拿不到真图时，显示平台色 + 标题文字的封面占位（不再是空黑框）。完全本地处理，链接不外传，无隐私风险。</div>
@@ -19046,13 +19066,13 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         </div>
         <div class="cs-cover-opt" data-mode="thirdParty" style="border:1px solid var(--border);border-radius:12px;padding:10px 12px;cursor:pointer;transition:border-color .15s, background .15s;">
           <div style="display:flex;align-items:flex-start;gap:8px;">
-            <span style="font-size:16px;line-height:1.3;flex-shrink:0;">🌐</span>
+            <span style="font-size:16px;line-height:1.3;flex-shrink:0;"><i data-icon="globe" data-size="13"></i></span>
             <div style="flex:1;min-width:0;">
               <div style="font-size:13px;font-weight:600;color:var(--text);">第三方解析服务 · 拿真实封面</div>
               <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:3px;line-height:1.5;">通过公开的第三方链接解析服务，尝试抓取小红书/抖音的真实封面图。效果更好，但会把链接发送到第三方服务器解析。</div>
-              <div style="font-size:11px;color:var(--warning, #e8a33d);margin-top:5px;line-height:1.5;">⚠️ 隐私提醒：选择此方式后，你分享/角色发送的视频链接会发送给第三方解析服务处理，请知悉。</div>
+              <div style="font-size:11px;color:var(--warning, #e8a33d);margin-top:5px;line-height:1.5;"><i data-icon="alert" data-size="12"></i> 隐私提醒：选择此方式后，你分享/角色发送的视频链接会发送给第三方解析服务处理，请知悉。</div>
               <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);" onclick="event.stopPropagation();">
-                <div style="font-size:12px;font-weight:600;margin-bottom:6px;">🔗 自定义解析服务地址</div>
+                <div style="font-size:12px;font-weight:600;margin-bottom:6px;"><i data-icon="link" data-size="12"></i> 自定义解析服务地址</div>
                 <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:8px;line-height:1.5;">留空则用内置默认服务（接口盒子 apihz，已支持小红书图文+视频、抖音视频+图集）。支持 <b>{url}</b>/<b>{link}</b>（链接）、<b>{id}</b>/<b>{key}</b>（鉴权）宏；接口需返回含 title 和 cover/thumbnail/images 的 JSON。</div>
                 <div style="display:flex;gap:8px;margin-bottom:8px;">
                   <input class="input" id="cs-parse-api" placeholder="例如：https://api.example.com/parse?url={url}" value="${escapeHtml(typeof s.videoParseApi === 'string' ? s.videoParseApi : '')}" style="flex:1;min-width:0;">
@@ -19073,7 +19093,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </section>
     <section class="cs-panel" data-cs-panel="番茄钟">
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">🍅 番茄钟默认设置</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="timer" data-size="12"></i> 番茄钟默认设置</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.6;">进入番茄钟（专注陪伴）时的默认值，进去后仍可随时在界面里调整。</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;">
         <span style="font-size:13px;color:var(--text);">默认专注时长（分钟）</span>
@@ -19086,21 +19106,21 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🔊 默认播放白噪音</span>
+        <span><i data-icon="volume" data-size="16"></i> 默认播放白噪音</span>
         <input type="checkbox" id="cs-pomodoro-noise" ${(s.pomodoroNoiseOn === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">进入专注后自动开始播放白噪音（海浪/雨夜/林间等，可在专注界面切换或关闭）。</div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🔒 默认开启锁机</span>
+        <span><i data-icon="lock" data-size="16"></i> 默认开启锁机</span>
         <input type="checkbox" id="cs-pomodoro-lock" ${(s.pomodoroLockOn === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">进入专注后自动开启锁机（锁住屏幕专注，退出专注自动解除）。需要系统「使用情况访问」权限才能锁住屏幕。</div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:8px;line-height:1.7;">使用情况访问（锁机权限）：<span id="cs-usage-status" style="color:var(--purple-soft);">检测中…</span> <button class="btn" id="cs-usage-ask" style="padding:4px 12px;font-size:12px;margin-left:6px;">申请锁机权限</button></div>
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
-      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;">💬 前台互动（陪伴动作 / 陪伴回复）</label>
+      <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="comment" data-size="12"></i> 前台互动（陪伴动作 / 陪伴回复）</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">专注过程中，角色会随机「找你说句话」或「做一个陪伴小动作」，内容从字卡库的「陪伴动作」「陪伴回复」里抽。这里设触发间隔（随机固定区间）。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
@@ -20190,24 +20210,35 @@ async function showCharChatSettingsModal(c) {
 /* ---------- 总设置（18.1：清缓存/清所有聊天记录/重置） ---------- */
 async function showSettingsModal() {
   _settingsActive = true; // 20260929bl：总设置上下文——子功能关闭后自动回到这里
+  /* 20261111：开屏动画「每次进入都播放」当前值。
+     以 IndexedDB 为准（存档、随备份走），localStorage 只是给 splash.js 同步读的缓存。 */
+  let _splashEveryTime = false;
+  try { _splashEveryTime = (await getSetting('splashEvery', '0')) === '1'; } catch (e) {}
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">总设置</div>
-      <button class="icon-btn" id="gs-close">✕</button>
+      <button class="icon-btn" id="gs-close"><i data-icon="close" data-size="17"></i></button>
     </div>
 
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">清理与重置（数据迁移请前往「数据管理」）</div>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-splash-audio-guide">
-      开屏音乐播放设置引导（浏览器白名单） <span>🎵</span>
+      开屏音乐播放设置引导（浏览器白名单） <span><i data-icon="music" data-size="16"></i></span>
     </button>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-splash-music-setting">
-      更换开屏动画音乐 <span>🎹</span>
+      更换开屏动画音乐 <span><i data-icon="music" data-size="16"></i></span>
     </button>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-app-sound-setting">
-      更换软件内提示音 <span>🔔</span>
+      更换软件内提示音 <span><i data-icon="bell" data-size="16"></i></span>
     </button>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
-      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">🎵 音乐音量</label>
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span><i data-icon="sparkle" data-size="16"></i> 每次进入都播放开屏动画</span>
+        <input type="checkbox" id="gs-splash-always" ${_splashEveryTime ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">默认关闭——开屏动画只在<b>第一次</b>打开软件时播放一次，之后启动直接进主页，网络慢的时候也不用干等开屏资源加载。开启后每次启动软件都会完整播放一遍开屏动画。</div>
+    </div>
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;"><i data-icon="music" data-size="16"></i> 音乐音量</label>
       <div style="margin-top:10px;">
         <label style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-secondary);margin-bottom:4px;"><span>开屏动画音乐</span><span id="gs-splash-vol-val"></span></label>
         <input type="range" id="gs-splash-vol" min="0" max="200" step="5" style="width:100%;accent-color:var(--purple);">
@@ -20227,33 +20258,33 @@ async function showSettingsModal() {
     </div>
     ${chatSettings.developerMode ? `
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-dream-fx-debug">
-      入梦签节气/节日调试 <span>🎑</span>
+      入梦签节气/节日调试 <span><i data-icon="moon" data-size="16"></i></span>
     </button>` : ''}
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-player-fx-view">
-      入梦签效果查看（玩家） <span>🎑</span>
+      入梦签效果查看（玩家） <span><i data-icon="moon" data-size="16"></i></span>
     </button>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
       <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>✨ 导入时重复触发超频/惊喜动画</span>
+        <span><i data-icon="sparkle" data-size="16"></i> 导入时重复触发超频/惊喜动画</span>
         <input type="checkbox" id="gs-import-replay-oc" ${chatSettings.importReplayOcAnim ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">默认关闭——从备份导入数据时，若备份里已记录「超频/惊喜的首次动画触发过」，则不再重复触发。开启后，导入带触发标记的数据也会重新播放超频/惊喜首次动画。</div>
     </div>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-anniv-card-setting">
-      入梦签纪念日设置 <span>🎉</span>
+      入梦签纪念日设置 <span><i data-icon="party" data-size="16"></i></span>
     </button>
 
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-replay-guide">
-      播放新手引导 <span>✨</span>
+      播放新手引导 <span><i data-icon="sparkle" data-size="16"></i></span>
     </button>
 
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-software-notice">
-      软件声明与使用须知 <span>📜</span>
+      软件声明与使用须知 <span><i data-icon="doc" data-size="16"></i></span>
     </button>
 
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;margin-bottom:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
-        <span>🩺 诊断日志（通知/后台排查）</span>
+        <span><i data-icon="heart" data-size="16"></i> 诊断日志（通知/后台排查）</span>
         <span id="gs-diag-badge" style="font-size:11px;color:var(--text-tertiary);"></span>
       </div>
       <div id="gs-diag-err" style="display:none;font-size:12px;color:#e55;margin-top:6px;line-height:1.6;"></div>
@@ -20272,11 +20303,11 @@ async function showSettingsModal() {
     </div>
 
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-keepalive-guide">
-      后台保活设置引导 <span>🛡️</span>
+      后台保活设置引导 <span><i data-icon="shield" data-size="16"></i></span>
     </button>
 
     <button class="btn block" style="margin-bottom:6px;justify-content:space-between;" id="btn-clear-cache">
-      清除多余缓存与数据 <span>🧹</span>
+      清除多余缓存与数据 <span><i data-icon="broom" data-size="16"></i></span>
     </button>
     <div style="font-size:11.5px;color:var(--text-tertiary);margin:-2px 0 12px;line-height:1.65;">
       与「数据管理 → 数据迁移 → 清除冗余缓存（旧版遗留）」是<b>同一个功能</b>（两个入口，清的东西完全一样）：
@@ -20284,7 +20315,7 @@ async function showSettingsModal() {
       <b>不动</b>访客、群聊、聊天记录、书信、字卡、记忆宫殿等正式数据；清除后会弹窗建议刷新页面。
     </div>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-clear-all-chat">
-      清除所有聊天记录 <span>💬</span>
+      清除所有聊天记录 <span><i data-icon="comment" data-size="16"></i></span>
     </button>
     <button class="btn danger block" style="justify-content:space-between;" id="btn-reset">
       重置（恢复出厂设置）
@@ -20305,6 +20336,18 @@ async function showSettingsModal() {
   }
   $('#btn-splash-audio-guide').onclick = () => showSplashAudioGuideModal(); // 20260930bx：浏览器自动播放白名单引导
   $('#btn-splash-music-setting').onclick = () => showSplashMusicModal();    // 20260930bx：更换开屏动画音乐
+  /* 20261111：开屏动画「每次进入都播放」开关。
+     双写：IndexedDB（进存档、随备份迁移）+ localStorage（splash.js 同步读）。
+     改完下一次启动即生效（本次启动的开屏早就放完了）。 */
+  {
+    const spEvery = $('#gs-splash-always');
+    if (spEvery) spEvery.onchange = async () => {
+      const on = !!spEvery.checked;
+      try { await setSetting('splashEvery', on ? '1' : '0'); } catch (e) {}
+      try { localStorage.setItem('bmSplashEvery', on ? '1' : '0'); } catch (e) {}
+      miniToast(on ? '以后每次启动都会播放开屏动画' : '开屏动画只在第一次打开时播放');
+    };
+  }
   $('#btn-app-sound-setting').onclick = () => showAppSoundModal();          // 20260930bx：更换软件内提示音
   // 20260930cb：两条独立音乐音量条——kv 存百分数字符串（splash.js 每次进入独立读库），
   // 拖动时实时调 window.__bmSplashVol（正在播放就平滑过渡），下次开屏按存档生效
@@ -20364,7 +20407,7 @@ async function showSettingsModal() {
               btn.className = 'btn block';
               btn.id = 'btn-dream-fx-debug';
               btn.style.cssText = 'margin-bottom:10px;justify-content:space-between;';
-              btn.innerHTML = '入梦签节气/节日调试 <span>🎑</span>';
+              btn.innerHTML = '入梦签节气/节日调试 <span><i data-icon="moon" data-size="16"></i></span>';
               btn.onclick = () => showDreamFxDebugModal();
               devField.insertAdjacentElement('afterend', btn);
             }
@@ -20462,14 +20505,14 @@ async function showSettingsModal() {
     if (badge) badge.textContent = `${all.length} 条 · 报错 ${errs.length}`;
     if (errBox && errs.length) {
       errBox.style.display = 'block';
-      errBox.innerHTML = `⚠️ 检测到 ${errs.length} 条报错（最近：${errs.length ? bmDiagIsErr(errs[errs.length - 1]) ? (errs[errs.length - 1].tag || '') : '' : ''}）。点「复制报错日志」发给开发者。`;
+      errBox.innerHTML = `<i data-icon="alert" data-size="14"></i> 检测到 ${errs.length} 条报错（最近：${errs.length ? bmDiagIsErr(errs[errs.length - 1]) ? (errs[errs.length - 1].tag || '') : '' : ''}）。点「复制报错日志」发给开发者。`;
     }
     const showLogModal = (onlyErr, title) => {
       const txt = bmDiagFormat(all, onlyErr);
       openModal(`
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
           <div style="font-size:16px;font-weight:600;">${title}</div>
-          <button class="icon-btn" id="diag-view-close">✕</button>
+          <button class="icon-btn" id="diag-view-close"><i data-icon="close" data-size="17"></i></button>
         </div>
         <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:8px;">共 ${onlyErr ? errs.length : all.length} 条（最新在前，最多 500 条）</div>
         <pre id="diag-view-text" style="max-height:52vh;overflow:auto;background:var(--bg-base);border-radius:10px;padding:10px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;margin:0;">${(txt || '').replace(/</g, '&lt;')}</pre>
@@ -20484,8 +20527,8 @@ async function showSettingsModal() {
         miniToast(ok ? '已复制到剪贴板' : '复制失败，请长按文本框手动复制');
       };
     };
-    $('#btn-diag-view-err').onclick = () => showLogModal(true, '🩺 报错日志');
-    $('#btn-diag-view-all').onclick = () => showLogModal(false, '🩺 全部诊断日志');
+    $('#btn-diag-view-err').onclick = () => showLogModal(true, '<i data-icon="help" data-size="15"></i> 报错日志');
+    $('#btn-diag-view-all').onclick = () => showLogModal(false, '<i data-icon="help" data-size="15"></i> 全部诊断日志');
     $('#btn-diag-copy-err').onclick = async () => {
       const ok = await bmDiagCopy(bmDiagFormat(all, true));
       miniToast(ok ? '报错日志已复制' : '复制失败');
@@ -20532,7 +20575,7 @@ function showSplashAudioGuideModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">开屏音乐播放设置引导</div>
-      <button class="icon-btn" id="sag-close">✕</button>
+      <button class="icon-btn" id="sag-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);line-height:1.7;margin-bottom:14px;">
       浏览器默认禁止网页在「零操作」下自动播放声音（安全策略，所有网页都一样，软件无法绕过）。
@@ -20561,7 +20604,7 @@ function showSplashMusicModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">更换开屏动画音乐</div>
-      <button class="icon-btn" id="sm-close">✕</button>
+      <button class="icon-btn" id="sm-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);line-height:1.7;margin-bottom:12px;">
       上传你喜欢的音频文件（mp3/wav 等），下次进入开屏动画时将播放你上传的音乐。软件会从音频开头约 0.3 秒处开始播放并自动衔接循环播放设置。
@@ -20616,7 +20659,7 @@ function showAppSoundModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">更换软件内提示音</div>
-      <button class="icon-btn" id="as-close">✕</button>
+      <button class="icon-btn" id="as-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);line-height:1.7;margin-bottom:12px;">
       上传你自己的音频文件（mp3/wav 等）作为访客新消息提示音，上传后替代内置音色。与「聊天设置 → DIY 自定义提示音」是同一份设置，两边都会同步。
@@ -20740,7 +20783,7 @@ function showKeepAliveModal() {
         <div style="font-size:18px;font-weight:600;">后台保活设置引导</div>
         <div style="font-size:11px;letter-spacing:2px;color:var(--purple-soft);margin-top:3px;">KEEP ALIVE GUIDE</div>
       </div>
-      <button class="icon-btn" id="ka-close">✕</button>
+      <button class="icon-btn" id="ka-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;line-height:1.8;color:var(--text-tertiary);margin-bottom:12px;">
       国产手机系统默认会清理后台。完成下面设置后，《白日梦》的消息通知就能像 QQ / 微信一样在后台稳定弹出（打包 APP 效果最佳；<b>网页版请对你使用的浏览器做同样设置</b>）。
@@ -20776,7 +20819,7 @@ async function showDataModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">数据管理</div>
-      <button class="icon-btn" id="data-close">✕</button>
+      <button class="icon-btn" id="data-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:12px;">点分类进入对应的导入 / 导出功能</div>
     <div style="display:flex;flex-direction:column;gap:8px;">
@@ -20819,7 +20862,7 @@ function showDataCatModal(id) {
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
       <button class="icon-btn" id="dc-back">‹</button>
       <div style="flex:1;font-size:17px;font-weight:600;">${t[0]}</div>
-      <button class="icon-btn" id="dc-close">✕</button>
+      <button class="icon-btn" id="dc-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">${t[1]}</div>
     <div id="dc-body"></div>
@@ -20829,8 +20872,8 @@ function showDataCatModal(id) {
   const body = $('#dc-body');
   if (id === 'migrate') {
     body.innerHTML = `
-      ${btn('btn-export', '导出全局数据（.ocdata）', '⬇')}
-      ${btn('btn-import', '导入全局数据（.ocdata）', '⬆')}
+      ${btn('btn-export', '导出全局数据（.ocdata）', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import', '导入全局数据（.ocdata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);line-height:1.85;margin:2px 0 4px;padding:10px 12px;background:var(--bg-elevated-2);border-radius:10px;">
         <b style="color:var(--text);">全局备份包含</b>：角色卡、聊天记录、玩家表情包、<b style="color:var(--text);">字卡（自定义字卡与字卡分组）</b>、记忆宫殿、书信、世界树、记事簿、朋友圈、纪念日、问卷、超频礼物柜、美化与各项设置。<br>
         <b style="color:var(--text);">不包含</b>（需在对应分类里单独导出）：四季（.seasondata）、音乐（.musicdata）、番茄钟结算。全局导出再导入，这三块<b style="color:var(--text);">不会跟着回来</b>。
@@ -20849,42 +20892,42 @@ function showDataCatModal(id) {
     if (isProgressActive()) setProgressPanelMode(true);
   } else if (id === 'chars') {
     body.innerHTML = `
-      ${btn('btn-export-chars', '导出角色卡（.chardata）', '⬇')}
-      ${btn('btn-import-chars', '导入角色卡（.chardata）', '⬆')}
+      ${btn('btn-export-chars', '导出角色卡（.chardata）', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import-chars', '导入角色卡（.chardata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">角色卡包含：角色（名字/头像/人设）、TA 的专属表情包、角色设定（关系/昵称/称呼/禁词等）。<b>不包含</b>字卡、聊天记录、玩家表情库。</div>`;
     $('#btn-export-chars').onclick = exportCharCards;
     $('#btn-import-chars').onclick = () => showImportCharModal(showDataModal);
   } else if (id === 'chat') {
     body.innerHTML = `
-      ${btn('btn-export-chat', '导出聊天记录', '⬇')}
-      ${btn('btn-import-chat', '导入聊天记录', '⬆')}
+      ${btn('btn-export-chat', '导出聊天记录', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import-chat', '导入聊天记录', '<i data-icon="upload" data-size="15"></i>')}
       ${btn('btn-data-clear-chat', '清除聊天记录', '💬')}`;
     $('#btn-export-chat').onclick = exportChatRecords;
     $('#btn-import-chat').onclick = () => showImportChatModal(showDataModal);
     $('#btn-data-clear-chat').onclick = clearAllChatRecords;
   } else if (id === 'letters') {
     body.innerHTML = `
-      ${btn('btn-export-letters', '导出书信数据', '⬇')}
-      ${btn('btn-import-letters', '导入书信数据', '⬆')}`;
+      ${btn('btn-export-letters', '导出书信数据', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import-letters', '导入书信数据', '<i data-icon="upload" data-size="15"></i>')}`;
     $('#btn-export-letters').onclick = () => showExportLettersModal(showDataModal); // 先弹选择（全部/按角色）
     $('#btn-import-letters').onclick = () => showImportLettersModal(showDataModal);
   } else if (id === 'world') {
     body.innerHTML = `
-      ${btn('btn-export-world', '导出世界树数据', '⬇')}
-      ${btn('btn-import-world', '导入世界树数据', '⬆')}`;
+      ${btn('btn-export-world', '导出世界树数据', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import-world', '导入世界树数据', '<i data-icon="upload" data-size="15"></i>')}`;
     $('#btn-export-world').onclick = exportWorldBook;
     $('#btn-import-world').onclick = () => showImportWorldModal(showDataModal);
   } else if (id === 'palace') {
     body.innerHTML = `
-      ${btn('btn-export-palace', '导出记忆宫殿数据', '⬇')}
-      ${btn('btn-import-palace', '导入记忆宫殿数据', '⬆')}
+      ${btn('btn-export-palace', '导出记忆宫殿数据', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import-palace', '导入记忆宫殿数据', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">导入时会自动分辨每条记忆的归属：访客记忆归入同名访客的文件夹，玩家记忆归入玩家的记忆，认不出的默认放进玩家根部且 AI 不可读</div>`;
     $('#btn-export-palace').onclick = () => showExportPalaceModal(showDataModal);
     $('#btn-import-palace').onclick = () => showImportPalaceModal(showDataModal);
   } else if (id === 'music') {
     body.innerHTML = `
-      ${btn('btn-export-music', '导出音乐数据（.musicdata）', '⬇')}
-      ${btn('btn-import-music', '导入音乐数据（.musicdata）', '⬆')}
+      ${btn('btn-export-music', '导出音乐数据（.musicdata）', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import-music', '导入音乐数据（.musicdata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
         音乐数据<b>独立于全局备份</b>：全局导出/导入不包含音乐，需在此单独备份。<br>
         导出内容：音乐库歌曲、歌单、访客收藏、音源路径设置。<br>
@@ -20894,8 +20937,8 @@ function showDataCatModal(id) {
     $('#btn-import-music').onclick = () => showImportMusicModal(showDataModal);
   } else if (id === 'focus') {
     body.innerHTML = `
-      ${btn('btn-export-focus', '导出番茄钟结算（.focusdata）', '⬇')}
-      ${btn('btn-import-focus', '导入番茄钟结算（.focusdata）', '⬆')}
+      ${btn('btn-export-focus', '导出番茄钟结算（.focusdata）', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import-focus', '导入番茄钟结算（.focusdata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
         番茄钟陪伴的专注结算记录。<br>
         导出时可选<b>按角色分角色导出</b>（单选或多选），也可一键全部导出。<br>
@@ -20905,8 +20948,8 @@ function showDataCatModal(id) {
     $('#btn-import-focus').onclick = () => showImportFocusModal(showDataModal);
   } else if (id === 'season') {
     body.innerHTML = `
-      ${btn('btn-export-season', '导出四季数据（.seasondata）', '⬇')}
-      ${btn('btn-import-season', '导入四季数据（.seasondata）', '⬆')}
+      ${btn('btn-export-season', '导出四季数据（.seasondata）', '<i data-icon="download" data-size="15"></i>')}
+      ${btn('btn-import-season', '导入四季数据（.seasondata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
         四季数据<b>独立于全局备份</b>：全局导出/导入不包含四季，需在此单独备份。<br>
         导出内容：星球（植物/皮肤/爱意/凝星）、书签集（书签与寄语）、照片墙图鉴、收集进度。<br>
@@ -20928,9 +20971,9 @@ async function showExportFocusModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">导出番茄钟结算</div>
-      <button class="icon-btn" id="fex-close">✕</button>
+      <button class="icon-btn" id="fex-close"><i data-icon="close" data-size="17"></i></button>
     </div>
-    <button class="btn primary block" id="fex-all" style="margin-bottom:16px;">📦 全部导出（共 ${sessions.length} 条结算）</button>
+    <button class="btn primary block" id="fex-all" style="margin-bottom:16px;"><i data-icon="package" data-size="16"></i> 全部导出（共 ${sessions.length} 条结算）</button>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:8px;">单独导出：点选要导出的访客（可多选）</div>
     ${withFocus.length ? `
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
@@ -20939,7 +20982,7 @@ async function showExportFocusModal(back = null) {
         `).join('')}
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;" id="fex-count">已选 0 个访客</div>
-      <button class="btn block" id="fex-go" disabled style="opacity:.5;">⬇ 导出所选访客的结算</button>
+      <button class="btn block" id="fex-go" disabled style="opacity:.5;"><i data-icon="download" data-size="16"></i> 导出所选访客的结算</button>
     ` : '<div style="color:var(--text-tertiary);font-size:12.5px;margin-bottom:10px;">（还没有任何访客的番茄钟结算）</div>'}
   `);
   $('#fex-close').onclick = backFn;
@@ -20995,7 +21038,7 @@ function showImportFocusModal(back = null) {
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
       <button class="icon-btn" id="ifm-back">‹</button>
       <div style="flex:1;font-size:17px;font-weight:600;">导入番茄钟结算</div>
-      <button class="icon-btn" id="ifm-close">✕</button>
+      <button class="icon-btn" id="ifm-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">
       选择之前导出的「白日梦番茄钟结算备份.focusdata」文件，合并导入（按记录 ID 去重覆盖）。<br>
@@ -21075,7 +21118,7 @@ function showImportMusicModal(back = null) {
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
       <button class="icon-btn" id="imm-back">‹</button>
       <div style="flex:1;font-size:17px;font-weight:600;">导入音乐数据</div>
-      <button class="icon-btn" id="imm-close">✕</button>
+      <button class="icon-btn" id="imm-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">
       选择之前导出的「白日梦音乐数据备份.musicdata」文件，合并导入（按歌曲/歌单 ID 去重覆盖）。<br>
@@ -21164,7 +21207,7 @@ function showImportSeasonModal(back = null) {
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
       <button class="icon-btn" id="ism-back">‹</button>
       <div style="flex:1;font-size:17px;font-weight:600;">导入四季数据</div>
-      <button class="icon-btn" id="ism-close">✕</button>
+      <button class="icon-btn" id="ism-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">
       选择之前导出的「白日梦四季数据备份.seasondata」文件，覆盖导入当前四季进度。<br>
@@ -21219,9 +21262,9 @@ async function showExportLettersModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">导出书信数据</div>
-      <button class="icon-btn" id="lex-close">✕</button>
+      <button class="icon-btn" id="lex-close"><i data-icon="close" data-size="17"></i></button>
     </div>
-    <button class="btn primary block" id="lex-all" style="margin-bottom:16px;">📦 全部导出（共 ${letters.length} 封书信）</button>
+    <button class="btn primary block" id="lex-all" style="margin-bottom:16px;"><i data-icon="package" data-size="16"></i> 全部导出（共 ${letters.length} 封书信）</button>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:8px;">单独导出：点选要导出的访客（可多选）</div>
     ${withLetters.length ? `
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
@@ -21230,7 +21273,7 @@ async function showExportLettersModal(back = null) {
         `).join('')}
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;" id="lex-count">已选 0 个访客</div>
-      <button class="btn block" id="lex-go" disabled style="opacity:.5;">⬇ 导出所选访客的书信</button>
+      <button class="btn block" id="lex-go" disabled style="opacity:.5;"><i data-icon="download" data-size="16"></i> 导出所选访客的书信</button>
     ` : '<div style="color:var(--text-tertiary);font-size:12.5px;margin-bottom:10px;">（还没有和任何访客的书信往来）</div>'}
     <div style="font-size:12px;color:var(--text-tertiary);margin-top:10px;">信箱文件夹结构会一并导出</div>
   `);
@@ -21308,7 +21351,7 @@ async function exportChatRecords() {
       await writeContainerFile('白日梦备份/白日梦聊天记录备份.chatdata', headData, images, 'DOCUMENTS',
         (written, total) => {
           if (written % (8 * 1024 * 1024) < (4 * 1024 * 1024)) {
-            exportProgress(true, `💾 正在导出聊天记录 ${Math.round(written / total * 100)}%（${(written / 1024 / 1024).toFixed(0)}MB / ${(total / 1024 / 1024).toFixed(0)}MB）`);
+            exportProgress(true, `<i data-icon="data" data-size="14"></i> 正在导出聊天记录 ${Math.round(written / total * 100)}%（${(written / 1024 / 1024).toFixed(0)}MB / ${(total / 1024 / 1024).toFixed(0)}MB）`);
           }
         });
       exportProgress(false);
@@ -21356,7 +21399,7 @@ function showImportChatModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">导入聊天记录</div>
-      <button class="icon-btn" id="ich-close">✕</button>
+      <button class="icon-btn" id="ich-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">选择之前导出的「白日梦聊天记录备份.chatdata」文件，合并导入（按消息 ID 去重覆盖）</div>
     <div class="field">
@@ -21437,7 +21480,7 @@ function showImportWorldModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">导入世界树数据</div>
-      <button class="icon-btn" id="wiw-close">✕</button>
+      <button class="icon-btn" id="wiw-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">选择之前导出的「白日梦世界树备份.worlddata」文件。<b>导入会覆盖</b>当前世界树的全部文件夹、条目与草稿箱；访客、聊天记录等其他数据不受影响。</div>
     <div class="field">
@@ -21476,7 +21519,7 @@ function showImportLettersModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">导入书信数据</div>
-      <button class="icon-btn" id="wil-close">✕</button>
+      <button class="icon-btn" id="wil-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">选择之前导出的「白日梦书信备份.letterdata」文件。书信按 ID 合并去重（已有书信不重复），信箱文件夹结构一并并入，不影响现有数据。</div>
     <div class="field">
@@ -21610,7 +21653,7 @@ async function clearStaleCache() {
   if (cleaned.length) {
     openModal(`
       <div style="text-align:center;margin-bottom:8px;">
-        <div style="font-size:40px;margin-bottom:12px;">🧹</div>
+        <div style="font-size:40px;margin-bottom:12px;"><i data-icon="broom" data-size="37"></i></div>
         <div style="font-size:15px;line-height:1.7;color:var(--text);">已清理 ${cleaned.length} 项冗余缓存：<br><span style="font-size:13px;color:var(--text-secondary);">${escapeHtml(cleaned.slice(0, 8).join('；'))}${cleaned.length > 8 ? ' 等' : ''}</span></div>
       </div>
       <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:10px;">建议立即刷新页面，确保加载的是最新版代码（访客与聊天记录不受影响）。</div>
@@ -21631,11 +21674,11 @@ function showImportModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">导入全局数据</div>
-      <button class="icon-btn" id="import-close">✕</button>
+      <button class="icon-btn" id="import-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
       选择之前导出的「白日梦数据备份.ocdata」文件。<br>
-      <span style="color:var(--danger);">⚠️ 覆盖导入会清空当前所有数据，此操作无法撤销。</span>
+      <span style="color:var(--danger);"><i data-icon="alert" data-size="15"></i> 覆盖导入会清空当前所有数据，此操作无法撤销。</span>
     </div>
     <div class="field">
       <label>备份文件</label>
@@ -21805,7 +21848,7 @@ async function deepImagesFromExport(node, onProgress = null) {
       const conv = await imgDescFromExport(it.n);
       if (it.parent) it.parent[it.key] = conv;
       done++;
-      if (total > 8 && (done % 8 === 0 || done === total)) exportProgress(true, `⬇️ 正在还原图片 ${done}/${total}…`);
+      if (total > 8 && (done % 8 === 0 || done === total)) exportProgress(true, `<i data-icon="download" data-size="14"></i> 正在还原图片 ${done}/${total}…`);
       if (onProgress && (done % 8 === 0 || done === total)) { try { onProgress(done, total); } catch (e) {} }
     }
   };
@@ -22023,11 +22066,11 @@ function showRestoreAutoModal(list) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">恢复自动备份</div>
-      <button class="icon-btn" id="bm-restore-close">✕</button>
+      <button class="icon-btn" id="bm-restore-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">检测到 ${list.length} 份自动备份，选择要恢复到的那一份。</div>
     <div style="max-height:46vh;overflow-y:auto;">${rows}</div>
-    <div style="color:var(--danger);font-size:12px;margin:12px 0 4px;line-height:1.5;">⚠️ 覆盖恢复会先清空当前所有数据（角色/聊天/表情包/记忆宫殿等），再写入所选备份。</div>
+    <div style="color:var(--danger);font-size:12px;margin:12px 0 4px;line-height:1.5;"><i data-icon="alert" data-size="12"></i> 覆盖恢复会先清空当前所有数据（角色/聊天/表情包/记忆宫殿等），再写入所选备份。</div>
     <div style="display:flex;gap:10px;margin-top:12px;">
       <button class="btn" style="flex:1;" id="bm-restore-cancel">取消</button>
       <button class="btn primary" style="flex:1;" id="bm-restore-go">恢复所选备份</button>
@@ -22121,14 +22164,14 @@ function showExportCharSelectModal(chars) {
     return `<div class="bm-charsel-item" data-id="${escapeHtml(c.id)}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;border:1px solid var(--border);border-radius:12px;cursor:pointer;background:var(--bg-card,var(--bg));transition:border-color .12s,background .12s;">
       <div style="width:52px;height:52px;border-radius:50%;overflow:hidden;background:var(--purple-dim);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--text-secondary);">${av}</div>
       <div style="font-size:12px;color:var(--text-secondary);max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.name || '未命名')}</div>
-      <div class="bm-charsel-check" style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;border:2px solid var(--border);background:var(--bg);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;">✓</div>
+      <div class="bm-charsel-check" style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;border:2px solid var(--border);background:var(--bg);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;"><i data-icon="check" data-size="12"></i></div>
     </div>`;
   }).join('');
 
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">导出角色卡</div>
-      <button class="icon-btn" id="excs-close">✕</button>
+      <button class="icon-btn" id="excs-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">选择要导出的角色（可单选、多选或全选）。</div>
     <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;margin-bottom:12px;">
@@ -22249,11 +22292,11 @@ function showImportCharModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">导入角色卡</div>
-      <button class="icon-btn" id="imc-close">✕</button>
+      <button class="icon-btn" id="imc-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
       选择之前导出的「角色卡备份.chardata」文件。<br>
-      <span style="color:var(--danger);">⚠️ 覆盖导入会替换当前所有角色（不影响聊天记录、字卡等其它数据）。</span>
+      <span style="color:var(--danger);"><i data-icon="alert" data-size="15"></i> 覆盖导入会替换当前所有角色（不影响聊天记录、字卡等其它数据）。</span>
     </div>
     <div class="field">
       <label>角色卡文件</label>
@@ -22795,7 +22838,7 @@ async function restoreImagesV4(node, readImage, onProgress = null) {
     } catch (e) { blobByJob.set(i, null); }
     if (total > 8 && (i % 8 === 0 || i === total - 1)) {
       if (onProgress) { try { onProgress(i + 1, total); } catch (e) {} }
-      exportProgress(true, `⬇️ 正在还原图片 ${i + 1}/${total}…`);
+      exportProgress(true, `<i data-icon="download" data-size="14"></i> 正在还原图片 ${i + 1}/${total}…`);
     }
   }
   // 写回：把每个 {__img:4} 引用的主图+缩略图组合写回（APP 端写文件转 {__img:5}，网页端存 Blob）
@@ -23049,7 +23092,7 @@ async function deepImagesToExport(node, label = '正在打包图片', onProgress
       if (it.parent) it.parent[it.key] = conv; else topConv = conv;
       done++;
       if (onProgress) onProgress(done, total);
-      else if (total > 8 && (done % 8 === 0 || done === total)) exportProgress(true, `⬇️ ${label} ${done}/${total}…`);
+      else if (total > 8 && (done % 8 === 0 || done === total)) exportProgress(true, `<i data-icon="download" data-size="14"></i> ${label} ${done}/${total}…`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
@@ -23104,7 +23147,7 @@ async function collectImagesV3(node) {
       it.parent[it.key] = out;
       done++;
       // 20261009：打包阶段实时进度（旧版零反馈，图一多就像"点了没反应"）
-      if (total > 6 && (done % 6 === 0 || done === total)) exportProgress(true, `📦 正在打包图片 ${done}/${total}…`);
+      if (total > 6 && (done % 6 === 0 || done === total)) exportProgress(true, `<i data-icon="package" data-size="14"></i> 正在打包图片 ${done}/${total}…`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
@@ -23602,8 +23645,8 @@ function visLabel(post) {
   if (post.authorType !== 'player') return '';
   const v = post.visibility || { type: 'all' };
   if (v.type === 'self') return '🔒 仅自己可见';
-  if (v.type === 'part') return `👥 部分可见(${(v.ids || []).length})`;
-  if (v.type === 'except') return `🚫 不给谁看(${(v.ids || []).length})`;
+  if (v.type === 'part') return `<i data-icon="group" data-size="14"></i> 部分可见(${(v.ids || []).length})`;
+  if (v.type === 'except') return `<i data-icon="ban" data-size="14"></i> 不给谁看(${(v.ids || []).length})`;
   return '';
 }
 
@@ -23975,11 +24018,11 @@ function showMomentsFilterModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <div style="font-size:18px;font-weight:600;">只看某个角色的朋友圈</div>
-      <button class="icon-btn" id="mf-close">✕</button>
+      <button class="icon-btn" id="mf-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:12px;">选中后只显示该角色的动态；切回「全部」查看所有人</div>
     <div style="display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto;">
-      <button class="btn ${cur === null ? 'primary' : ''}" id="mf-all" style="justify-content:flex-start;text-align:left;">👥 全部动态</button>
+      <button class="btn ${cur === null ? 'primary' : ''}" id="mf-all" style="justify-content:flex-start;text-align:left;"><i data-icon="group" data-size="16"></i> 全部动态</button>
       ${list.length ? list.map(c => `<button class="btn ${cur === c.id ? 'primary' : ''}" data-mf-char="${c.id}" style="justify-content:flex-start;text-align:left;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar)}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;margin-right:8px;vertical-align:middle;">` : '<span style="display:inline-block;width:22px;height:22px;border-radius:50%;background:var(--purple-glow);color:var(--purple-soft);text-align:center;line-height:22px;font-size:12px;margin-right:8px;">' + escapeHtml((c.name || '?')[0]) + '</span>'}${escapeHtml(c.name || 'TA')}</button>`).join('') : '<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0;">还没有访客</div>'}
     </div>
   `);
@@ -24229,23 +24272,23 @@ async function showMomentCommentModal(postId, replyTo = null) {
     }
     box.style.display = '';
     box.innerHTML = `
-      ${cmtImgs.map((im, i) => `<div style="position:relative;display:inline-block;margin:2px 6px 2px 0;"><img src="${imgSrcAttr(im, true)}" style="max-width:120px;max-height:120px;border-radius:10px;border:1px solid var(--border);object-fit:cover;"><button data-cimgrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;">✕</button></div>`).join('')}
-      ${cmtStickers.map((s, i) => `<div style="position:relative;display:inline-block;font-size:42px;line-height:1;margin:2px 6px 2px 0;">${escapeHtml(s)}<button data-cstkrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;">✕</button></div>`).join('')}`;
+      ${cmtImgs.map((im, i) => `<div style="position:relative;display:inline-block;margin:2px 6px 2px 0;"><img src="${imgSrcAttr(im, true)}" style="max-width:120px;max-height:120px;border-radius:10px;border:1px solid var(--border);object-fit:cover;"><button data-cimgrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;"><i data-icon="close" data-size="12"></i></button></div>`).join('')}
+      ${cmtStickers.map((s, i) => `<div style="position:relative;display:inline-block;font-size:42px;line-height:1;margin:2px 6px 2px 0;">${escapeHtml(s)}<button data-cstkrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;"><i data-icon="close" data-size="12"></i></button></div>`).join('')}`;
     box.querySelectorAll('[data-cimgrm]').forEach(b => { b.onclick = () => { cmtImgs.splice(parseInt(b.dataset.cimgrm, 10), 1); renderAttach(); }; });
     box.querySelectorAll('[data-cstkrm]').forEach(b => { b.onclick = () => { cmtStickers.splice(parseInt(b.dataset.cstkrm, 10), 1); renderAttach(); }; });
   };
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">评论</div>
-      <button class="icon-btn" id="mo-cmt-close">✕</button>
+      <button class="icon-btn" id="mo-cmt-close" aria-label="关闭">${window.icon('close', 18)}</button>
     </div>
     ${replyInfo}
     <div class="field">
       <textarea class="textarea" id="mo-cmt-text" placeholder="${escapeHtml(placeholder)}…" style="min-height:80px;"></textarea>
       <div id="mo-cmt-attach" style="margin-top:8px;"></div>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn" id="mo-cmt-img" style="padding:7px 14px;font-size:12.5px;">🖼 图片</button>
-        <button class="btn" id="mo-cmt-emoji" style="padding:7px 14px;font-size:12.5px;">😊 表情包</button>
+        <button class="btn" id="mo-cmt-img" style="padding:7px 14px;font-size:12.5px;">${window.icon('image', 15)} 图片</button>
+        <button class="btn" id="mo-cmt-emoji" style="padding:7px 14px;font-size:12.5px;">${window.icon('emoji', 15)} 表情包</button>
       </div>
       <div id="mo-cmt-emoji-panel" style="display:none;margin-top:10px;border:1px solid var(--border);border-radius:14px;padding:12px;background:var(--bg-elevated-2);"></div>
       <input type="file" id="mo-cmt-img-file" accept="image/*" style="display:none;">
@@ -24351,8 +24394,8 @@ async function mountStickerPicker(box, onPick) {
     ? `<button class="btn stk-tab" data-stab="${key}" style="flex:1;padding:9px 0;font-size:13.5px;justify-content:center;border-radius:12px;">${label}</button>` : '';
   box.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:10px;">
-      ${tabBtn('pic', '🖼 图片表情包', hasPics)}
-      ${tabBtn('emoji', '😃 Emoji 库', hasEmoji)}
+      ${tabBtn('pic', window.icon('image', 14) + ' 图片表情包', hasPics)}
+      ${tabBtn('emoji', window.icon('emoji', 14) + ' Emoji 库', hasEmoji)}
     </div>
     <div id="stk-body"></div>
   `;
@@ -24408,7 +24451,7 @@ function showPublishMomentModal() {
     if (!box) return;
     if (_moStickers.length) {
       box.style.display = '';
-      box.innerHTML = _moStickers.map((s, i) => `<div style="position:relative;display:inline-block;font-size:42px;line-height:1;margin:2px 8px 2px 0;">${escapeHtml(s)}<button data-mopubstkrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;">✕</button></div>`).join('');
+      box.innerHTML = _moStickers.map((s, i) => `<div style="position:relative;display:inline-block;font-size:42px;line-height:1;margin:2px 8px 2px 0;">${escapeHtml(s)}<button data-mopubstkrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;font-size:11px;line-height:18px;cursor:pointer;"><i data-icon="close" data-size="12"></i></button></div>`).join('');
       box.querySelectorAll('[data-mopubstkrm]').forEach(b => {
         b.onclick = () => { _moStickers.splice(parseInt(b.dataset.mopubstkrm, 10), 1); renderPubAttach(); };
       });
@@ -24420,7 +24463,7 @@ function showPublishMomentModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">发动态</div>
-      <button class="icon-btn" id="mo-pub-close">✕</button>
+      <button class="icon-btn" id="mo-pub-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field">
       <textarea class="textarea" id="mo-pub-text" placeholder="这一刻的想法…" style="min-height:110px;"></textarea>
@@ -24430,7 +24473,7 @@ function showPublishMomentModal() {
       <div id="mo-pub-imgs" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
       <div style="display:flex;gap:8px;margin-top:8px;">
         <label class="btn" for="mo-pub-file" id="mo-pub-add" style="padding:8px 14px;font-size:12.5px;cursor:pointer;">＋ 添加图片</label>
-        <button class="btn" id="mo-pub-emoji" style="padding:8px 14px;font-size:12.5px;">😊 表情包</button>
+        <button class="btn" id="mo-pub-emoji" style="padding:8px 14px;font-size:12.5px;"><i data-icon="emoji" data-size="12"></i> 表情包</button>
       </div>
       <div id="mo-pub-attach" style="margin-top:8px;display:none;"></div>
       <div id="mo-pub-emoji-panel" style="display:none;margin-top:10px;border:1px solid var(--border);border-radius:14px;padding:12px;background:var(--bg-elevated-2);"></div>
@@ -24440,9 +24483,9 @@ function showPublishMomentModal() {
       <label>谁可以看</label>
       <div style="display:flex;flex-wrap:wrap;gap:8px;" id="mo-vis-group">
         <button class="btn mo-vis-opt" data-v="all" style="padding:7px 14px;font-size:13px;background:var(--purple);color:#141019;">公开</button>
-        <button class="btn mo-vis-opt" data-v="self" style="padding:7px 14px;font-size:13px;">🔒 仅自己</button>
-        <button class="btn mo-vis-opt" data-v="part" style="padding:7px 14px;font-size:13px;">👥 部分可见</button>
-        <button class="btn mo-vis-opt" data-v="except" style="padding:7px 14px;font-size:13px;">🚫 不给谁看</button>
+        <button class="btn mo-vis-opt" data-v="self" style="padding:7px 14px;font-size:13px;"><i data-icon="lock" data-size="12"></i> 仅自己</button>
+        <button class="btn mo-vis-opt" data-v="part" style="padding:7px 14px;font-size:13px;"><i data-icon="group" data-size="12"></i> 部分可见</button>
+        <button class="btn mo-vis-opt" data-v="except" style="padding:7px 14px;font-size:13px;"><i data-icon="ban" data-size="12"></i> 不给谁看</button>
       </div>
       <div id="mo-vis-pick" style="display:none;margin-top:10px;"></div>
     </div>
@@ -24485,7 +24528,7 @@ function showPublishMomentModal() {
     box.innerHTML = _moImages.map((im, i) => `
       <div style="position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid var(--border);">
         <img src="${imgSrcAttr(im, true)}" style="width:100%;height:100%;object-fit:cover;">
-        <button data-rm="${i}" style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:var(--danger);border:none;font-size:11px;line-height:18px;cursor:pointer;">✕</button>
+        <button data-rm="${i}" style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:var(--danger);border:none;font-size:11px;line-height:18px;cursor:pointer;"><i data-icon="close" data-size="12"></i></button>
       </div>`).join('');
     box.querySelectorAll('[data-rm]').forEach(b => { b.onclick = () => { _moImages.splice(parseInt(b.dataset.rm), 1); renderImgs(); }; });
     $('#mo-pub-add').style.display = _moImages.length >= 9 ? 'none' : '';
@@ -24548,7 +24591,7 @@ function showMomentsCoverModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">朋友圈封面</div>
-      <button class="icon-btn" id="mocv-close">✕</button>
+      <button class="icon-btn" id="mocv-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div id="mocv-preview" style="height:150px;border-radius:16px;border:1px solid var(--border);background-size:cover;background-position:center;background-image:var(--cv);display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);font-size:13px;margin-bottom:14px;">
     </div>
@@ -24598,14 +24641,14 @@ async function showMomentShareModal(postId) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">分享这条动态</div>
-      <button class="icon-btn" id="mo-sh-close">✕</button>
+      <button class="icon-btn" id="mo-sh-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:14px;">
       <div style="font-size:12.5px;font-weight:600;color:var(--purple-soft);">${escapeHtml(author.name)} 的动态</div>
       ${snippet ? `<div style="font-size:13px;color:var(--text-secondary);margin-top:4px;line-height:1.5;">${escapeHtml(snippet)}${(post.content || '').length > 60 ? '…' : ''}</div>` : ''}
       ${(post.images || []).length ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">📎 附 ${post.images.length} 张图片</div>` : ''}
     </div>
-    <button class="btn primary block" id="mo-share-all" style="margin-bottom:12px;">📤 发送给所有访客</button>
+    <button class="btn primary block" id="mo-share-all" style="margin-bottom:12px;"><i data-icon="forward" data-size="16"></i> 发送给所有访客</button>
     ${characters.length ? `
       <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:8px;">或发送给单个访客</div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
@@ -24620,11 +24663,11 @@ async function showMomentShareModal(postId) {
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
         ${chatGroups.map(g => `
           <button class="btn mo-share-group" data-gid="${g.id}" style="display:flex;align-items:center;gap:6px;padding:6px 12px 6px 6px;font-size:13px;">
-            <span class="avatar" style="width:24px;height:24px;font-size:12px;background:var(--purple-dim);display:flex;align-items:center;justify-content:center;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '👥'}</span>
+            <span class="avatar" style="width:24px;height:24px;font-size:12px;background:var(--purple-dim);display:flex;align-items:center;justify-content:center;overflow:hidden;">${g.avatar ? `<img src="${imgSrcAttr(g.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : '<i data-icon="group" data-size="20"></i>'}</span>
             ${escapeHtml(g.name)}
           </button>`).join('')}
       </div>` : '<div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">还没有群聊可以分享</div>'}
-    <button class="btn block" id="mo-share-palace">🏛️ 存入记忆宫殿</button>
+    <button class="btn block" id="mo-share-palace"><i data-icon="memory" data-size="16"></i> 存入记忆宫殿</button>
   `);
   $('#mo-sh-close').onclick = closeModal;
   $('#mo-share-all').onclick = async () => {
@@ -25247,7 +25290,7 @@ async function showGrayHallModal(opts = {}) {
           <div class="pal-title">${escapeHtml(gh.name || 'TA')}的旧日余晖</div>
           <div class="pal-sub">${sub}</div>
         </div>
-        <div data-gh-chk="${gh.charId}" style="width:20px;height:20px;border-radius:50%;border:2px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:13px;color:#17141d;flex-shrink:0;${on ? 'background:var(--purple);border-color:var(--purple);' : ''}">${on ? '✓' : ''}</div>
+        <div data-gh-chk="${gh.charId}" style="width:20px;height:20px;border-radius:50%;border:2px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:13px;color:#17141d;flex-shrink:0;${on ? 'background:var(--purple);border-color:var(--purple);' : ''}">${on ? window.icon('check', 13) : ''}</div>
       </div>`;
     }
     return `
@@ -25258,7 +25301,7 @@ async function showGrayHallModal(opts = {}) {
           <div class="pal-sub">${sub}</div>
         </div>
         <button class="wb-act" data-gh-del="${gh.charId}" title="彻底删除（不可撤销）" style="flex-shrink:0;">🗑 彻删</button>
-        <button class="wb-act" data-gh-rev="${gh.charId}" title="复活该访客" style="flex-shrink:0;">🕯️ 复活</button>
+        <button class="wb-act" data-gh-rev="${gh.charId}" title="复活该访客" style="flex-shrink:0;"><i data-icon="candle" data-size="16"></i> 复活</button>
         <span style="color:var(--text-tertiary);">›</span>
       </div>`;
   }));
@@ -25285,7 +25328,7 @@ async function showGrayHallModal(opts = {}) {
       : `<div style="display:flex;gap:10px;margin-top:12px;">
            <button class="btn block" id="gh-batch-enter">批量管理</button>
          </div>
-         <div style="font-size:11px;color:var(--text-tertiary);margin-top:8px;line-height:1.5;">🕯️ 复活 = 把该访客连同 TA 的残留数据完整还原；🗑 彻删 = 抹除全部残留数据（不可撤销）。点击访客文件夹可进入回顾旧日余晖。</div>`}
+         <div style="font-size:11px;color:var(--text-tertiary);margin-top:8px;line-height:1.5;"><i data-icon="candle" data-size="12"></i> 复活 = 把该访客连同 TA 的残留数据完整还原；🗑 彻删 = 抹除全部残留数据（不可撤销）。点击访客文件夹可进入回顾旧日余晖。</div>`}
   `, { galaxy: true, gray: true });
   $('#gh-close').onclick = closeModal;
   const bindRows = () => {
@@ -25351,7 +25394,7 @@ function grayPurgeConfirm(gh, after) {
     } catch (e) {
       openModal(`
         <div style="text-align:center;margin-bottom:10px;">
-          <div style="font-size:38px;margin-bottom:8px;">⚠️</div>
+          <div style="font-size:38px;margin-bottom:8px;"><i data-icon="alert" data-size="35"></i></div>
           <div style="font-size:16px;font-weight:600;">删除失败</div>
           <div style="font-size:13px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">${escapeHtml(String((e && e.message) || e || '未知错误'))}</div>
         </div>
@@ -25368,7 +25411,7 @@ function grayPurgeConfirm(gh, after) {
 async function grayRevive(gh, after) {
   openModal(`
     <div style="text-align:center;padding:22px 0;">
-      <div style="font-size:40px;margin-bottom:12px;">🕯️</div>
+      <div style="font-size:40px;margin-bottom:12px;"><i data-icon="candle" data-size="37"></i></div>
       <div style="font-size:16px;font-weight:600;">正在施法将该访客复活…</div>
       <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:8px;">旧日余晖正在聚拢</div>
     </div>`, { gray: true });
@@ -25391,7 +25434,7 @@ async function grayRevive(gh, after) {
     renderChatList();
     openModal(`
       <div style="text-align:center;padding:22px 0;">
-        <div style="font-size:40px;margin-bottom:12px;">✨</div>
+        <div style="font-size:40px;margin-bottom:12px;"><i data-icon="sparkle" data-size="37"></i></div>
         <div style="font-size:16.5px;font-weight:600;">访客已复活</div>
         <div style="font-size:13px;color:var(--text-secondary);margin-top:8px;">「${escapeHtml(c.name || 'TA')}」已回到你的访客列表，TA 的书信、记忆、朋友圈等旧日数据也已一并归还</div>
       </div>
@@ -25402,7 +25445,7 @@ async function grayRevive(gh, after) {
   } catch (e) {
     openModal(`
       <div style="text-align:center;margin-bottom:10px;">
-        <div style="font-size:38px;margin-bottom:8px;">⚠️</div>
+        <div style="font-size:38px;margin-bottom:8px;"><i data-icon="alert" data-size="35"></i></div>
         <div style="font-size:16px;font-weight:600;">复活失败</div>
         <div style="font-size:13px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">施法被某种力量打断了：${escapeHtml(String((e && e.message) || e || '未知错误'))}</div>
       </div>
@@ -25488,7 +25531,7 @@ async function showGrayHallArchive(gh) {
       ${secRow('survey', icon('checklist', 17), '旧日问卷', cnt.survey)}
     </div>
     <div style="display:flex;gap:10px;margin-top:14px;">
-      <button class="btn" style="flex:1;" id="gh-arch-rev">🕯️ 复活该访客</button>
+      <button class="btn" style="flex:1;" id="gh-arch-rev"><i data-icon="candle" data-size="16"></i> 复活该访客</button>
       <button class="btn danger" style="flex:1;" id="gh-arch-purge">🗑 彻底删除</button>
     </div>
     <div style="font-size:11px;color:var(--text-tertiary);margin-top:8px;line-height:1.5;">复活会把「${escapeHtml(gh.name || 'TA')}」连同 TA 的残留数据完整还原；彻底删除会抹去全部残留数据，不可撤销。</div>
@@ -25541,7 +25584,7 @@ async function grayViewSection(gh, sec) {
           <div class="pal-ic" style="width:44px;height:44px;border-radius:50%;overflow:hidden;font-size:18px;display:flex;align-items:center;justify-content:center;">${c.avatar ? `<img src="${imgSrcAttr(c.avatar, true)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml((c.name || '梦')[0])}</div>
           <div>
             <div style="font-size:15px;font-weight:600;">${escapeHtml(c.name || 'TA')}</div>
-            <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;">💰 钱包 ¥${c.wallet ?? 100000} · 与我：${escapeHtml(String(relTxt))}</div>
+            <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;"><i data-icon="coin" data-size="12"></i> 钱包 ¥${c.wallet ?? 100000} · 与我：${escapeHtml(String(relTxt))}</div>
           </div>
         </div>
         ${c.bio ? `<div style="font-size:13px;line-height:1.7;margin-top:10px;color:var(--text-secondary);">${escapeHtml(String(c.bio))}</div>` : '<div style="font-size:12px;color:var(--text-tertiary);margin-top:10px;">没有留下生平介绍</div>'}
@@ -25551,7 +25594,7 @@ async function grayViewSection(gh, sec) {
         const o = characters.find(x => x.id === oid);
         const nm = o ? o.name : `已离开的访客（${String(oid).slice(-4)}）`;
         return `<div class="pal-row" style="cursor:default;">
-          <div class="pal-ic">🔗</div>
+          <div class="pal-ic"><i data-icon="link" data-size="16"></i></div>
           <div class="pal-main"><div class="pal-title">${escapeHtml(nm)}</div><div class="pal-sub">${escapeHtml(String(v || '无'))}</div></div>
         </div>`;
       }).join('') : '<div class="empty" style="padding:12px 0;">没有关系快照</div>'}`;
@@ -25585,7 +25628,7 @@ async function grayViewSection(gh, sec) {
     const gfsRes = (await idbGetAll('gifts')).filter(g => g.charId === id);
     const all = gfsRes.concat(gh.gifts || []);
     listHtml = all.map((g, i) => `<div class="pal-row" data-idx="${i}" style="cursor:pointer;">
-      <div class="pal-ic">🎁</div>
+      <div class="pal-ic"><i data-icon="gift" data-size="16"></i></div>
       <div class="pal-main">
         <div class="pal-title">${escapeHtml(g.name || g.giftName || '礼物')}</div>
         <div class="pal-sub">${g.time ? new Date(g.time).getMonth() + 1 + '.' + new Date(g.time).getDate() : ''}</div>
@@ -25611,8 +25654,8 @@ async function grayViewSection(gh, sec) {
   try { cntN = (await graySectionCounts(gh))[sec] || 0; } catch (e) {}
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-      <div style="font-size:17px;font-weight:600;">☰ ${escapeHtml(gh.name || 'TA')}的${secName}</div>
-      <button class="icon-btn" id="gh-sec-close">✕</button>
+      <div style="font-size:17px;font-weight:600;"><i data-icon="list" data-size="14"></i> ${escapeHtml(gh.name || 'TA')}的${secName}</div>
+      <button class="icon-btn" id="gh-sec-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     ${sec !== 'bio' ? `<div style="font-size:11.5px;color:var(--text-tertiary);margin:0 2px 10px;">共 ${cntN} 条残留 · 点条目可查看完整内容</div>` : ''}
     <div style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;">${listHtml}</div>
@@ -25692,8 +25735,8 @@ async function graySectionDetail(gh, sec, idx) {
         return `
           <div style="font-size:14px;font-weight:600;margin-bottom:10px;line-height:1.5;">${escapeHtml(palWithPlayerName(vd.title || it.title || '视频分享'))}</div>
           ${coverHtml}
-          ${vd.motto ? `<div style="font-size:12.5px;line-height:1.6;color:var(--purple-soft);margin-bottom:8px;">💌 ${escapeHtml(palWithPlayerName(vd.motto))}</div>` : ''}
-          ${vd.reply ? `<div style="margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.05);"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">💬 ${escapeHtml(palWithPlayerName(vd.replyName || 'TA'))} 看了这个视频说</div><div style="font-size:13px;line-height:1.7;word-break:break-word;">${escapeHtml(palWithPlayerName(vd.reply))}</div></div>` : ''}`;
+          ${vd.motto ? `<div style="font-size:12.5px;line-height:1.6;color:var(--purple-soft);margin-bottom:8px;"><i data-icon="letter" data-size="12"></i> ${escapeHtml(palWithPlayerName(vd.motto))}</div>` : ''}
+          ${vd.reply ? `<div style="margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.05);"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;"><i data-icon="comment" data-size="12"></i> ${escapeHtml(palWithPlayerName(vd.replyName || 'TA'))} 看了这个视频说</div><div style="font-size:13px;line-height:1.7;word-break:break-word;">${escapeHtml(palWithPlayerName(vd.reply))}</div></div>` : ''}`;
       }
       return `
         <div style="font-size:15px;font-weight:600;margin-bottom:10px;line-height:1.5;">${escapeHtml(palWithPlayerName(it.title || '（无题）'))}</div>
@@ -25705,10 +25748,10 @@ async function graySectionDetail(gh, sec, idx) {
     }
     if (sec === 'overclock') {
       return `
-        <div style="text-align:center;font-size:40px;margin-bottom:10px;">${it.giftImg ? `<img src="${imgSrcAttr(it.giftImg, true)}" style="width:120px;height:120px;object-fit:cover;border-radius:14px;">` : '🎁'}</div>
+        <div style="text-align:center;font-size:40px;margin-bottom:10px;">${it.giftImg ? `<img src="${imgSrcAttr(it.giftImg, true)}" style="width:120px;height:120px;object-fit:cover;border-radius:14px;">` : '<i data-icon="gift" data-size="26"></i>'}</div>
         <div style="text-align:center;font-size:16px;font-weight:600;margin-bottom:8px;">${escapeHtml(it.name || it.giftName || '礼物')}</div>
         ${(it.giftDesc || it.desc) ? `<div style="font-size:13.5px;line-height:1.8;text-align:center;color:var(--text-secondary);">${escapeHtml(it.giftDesc || it.desc)}</div>` : ''}
-        ${it.note ? `<div style="font-size:12.5px;line-height:1.7;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.05);">📝 ${escapeHtml(it.note)}</div>` : ''}`;
+        ${it.note ? `<div style="font-size:12.5px;line-height:1.7;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.05);"><i data-icon="note" data-size="12"></i> ${escapeHtml(it.note)}</div>` : ''}`;
     }
     if (sec === 'survey') {
       const answered = (it.questions || []).filter(q => q.answer).length;
@@ -25721,7 +25764,7 @@ async function graySectionDetail(gh, sec, idx) {
             ${q.type === 'choice' && q.options && q.options.length ? `<div style="font-size:11.5px;color:var(--text-tertiary);margin-bottom:5px;">选项：${q.options.map(o => escapeHtml(o)).join(' / ')}</div>` : ''}
             ${q.answer && String(q.answer).trim() ? `<div style="font-size:13px;line-height:1.6;padding:8px 10px;background:rgba(0,0,0,.18);border-radius:8px;">${q.type === 'choice' ? '<span style="color:var(--purple-soft);font-weight:600;">已选：</span>' : ''}${escapeHtml(q.answer)}</div>` : `<div style="font-size:11.5px;color:var(--text-tertiary);font-style:italic;">（未回答）</div>`}
           </div>`).join('')}
-        ${it.readBack ? `<div style="background:rgba(255,255,255,.05);border-radius:12px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:4px;">💬 ${cname} 的读后感</div><div style="font-size:13px;line-height:1.6;">${escapeHtml(it.readBack)}</div></div>` : ''}`;
+        ${it.readBack ? `<div style="background:rgba(255,255,255,.05);border-radius:12px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:4px;"><i data-icon="comment" data-size="12"></i> ${cname} 的读后感</div><div style="font-size:13px;line-height:1.6;">${escapeHtml(it.readBack)}</div></div>` : ''}`;
     }
     return '';
   }
@@ -25731,8 +25774,8 @@ async function graySectionDetail(gh, sec, idx) {
     const title = sec === 'memory' ? palWithPlayerName(it.title || '（无题）') : (sec === 'letters' ? String((it.content && it.content.text) || '').slice(0, 20) || '书信' : (sec === 'overclock' ? (it.name || it.giftName || '礼物') : (it.title || '问卷')));
     openModal(`
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div style="font-size:17px;font-weight:600;">☰ ${escapeHtml(gh.name || 'TA')}的${secName}</div>
-        <button class="icon-btn" id="gsd-close">✕</button>
+        <div style="font-size:17px;font-weight:600;"><i data-icon="list" data-size="14"></i> ${escapeHtml(gh.name || 'TA')}的${secName}</div>
+        <button class="icon-btn" id="gsd-close"><i data-icon="close" data-size="17"></i></button>
       </div>
       <div id="gsd-card" style="border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:16px;background:rgba(255,255,255,.045);max-height:52vh;overflow-y:auto;${slideDir ? `transform:translateX(${slideDir * 36}px);opacity:.35;transition:none;` : ''}">
         ${bodyOf(it)}
@@ -25799,8 +25842,8 @@ function grayMomentDetail(gh, posts, idx) {
     const p = posts[i];
     openModal(`
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div style="font-size:17px;font-weight:600;">☰ ${escapeHtml(gh.name || 'TA')}的旧日朋友圈</div>
-        <button class="icon-btn" id="ghm-close">✕</button>
+        <div style="font-size:17px;font-weight:600;"><i data-icon="list" data-size="14"></i> ${escapeHtml(gh.name || 'TA')}的旧日朋友圈</div>
+        <button class="icon-btn" id="ghm-close"><i data-icon="close" data-size="17"></i></button>
       </div>
       <div id="ghm-card" style="border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:16px;background:rgba(255,255,255,.045);${slideDir ? `transform:translateX(${slideDir * 36}px);opacity:.35;transition:none;` : ''}">
         ${postBody(p)}
@@ -26452,8 +26495,8 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
       return `
         ${coverHtml}
         <div style="font-size:14px;font-weight:600;line-height:1.5;margin-bottom:6px;">${escapeHtml(palWithPlayerName(vd.title || '视频分享'))}</div>
-        ${vd.motto ? `<div style="font-size:12.5px;line-height:1.65;color:var(--purple-soft);margin-bottom:8px;">💌 ${escapeHtml(palWithPlayerName(vd.motto))}</div>` : ''}
-        ${vd.reply ? `<div style="margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px dashed rgba(196,181,253,.24);"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">💬 ${escapeHtml(palWithPlayerName(vd.replyName || 'TA'))} 看了这个视频说</div><div style="font-size:13px;line-height:1.7;color:rgba(238,232,255,.94);word-break:break-word;">${escapeHtml(palWithPlayerName(vd.reply))}</div></div>` : ''}`;
+        ${vd.motto ? `<div style="font-size:12.5px;line-height:1.65;color:var(--purple-soft);margin-bottom:8px;"><i data-icon="letter" data-size="12"></i> ${escapeHtml(palWithPlayerName(vd.motto))}</div>` : ''}
+        ${vd.reply ? `<div style="margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px dashed rgba(196,181,253,.24);"><div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;"><i data-icon="comment" data-size="12"></i> ${escapeHtml(palWithPlayerName(vd.replyName || 'TA'))} 看了这个视频说</div><div style="font-size:13px;line-height:1.7;color:rgba(238,232,255,.94);word-break:break-word;">${escapeHtml(palWithPlayerName(vd.reply))}</div></div>` : ''}`;
     }
     if (e.kind === 'letter' || e.kind === 'manual') {
       return `
@@ -26840,7 +26883,7 @@ function palMoveModal(ids, backFid) {
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
         <button class="icon-btn" id="pmv-back">‹</button>
         <div style="flex:1;font-size:16px;font-weight:600;">移动 ${ids.length} 段记忆到…</div>
-        <button class="icon-btn" id="pmv-close">✕</button>
+        <button class="icon-btn" id="pmv-close"><i data-icon="close" data-size="17"></i></button>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;" id="pmv-list">
         ${row(palPlayerFolderName(), '根部 · AI 默认不可读', null, icon('user', 18))}
@@ -26932,8 +26975,8 @@ async function openPalPerm(kind, id, back) {
   };
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-      <div style="font-size:17px;font-weight:600;">🛡️ AI 读取权限</div>
-      <button class="icon-btn" id="pp-close">✕</button>
+      <div style="font-size:17px;font-weight:600;"><i data-icon="shield" data-size="14"></i> AI 读取权限</div>
+      <button class="icon-btn" id="pp-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;word-break:break-all;">${isEntry ? '这条记忆' : '这个文件夹'}：${escapeHtml(name)}</div>
     ${hiddenEntry ? `<div style="font-size:11.5px;color:var(--purple-soft);margin:-4px 0 12px;">该记忆在隐藏夹（默认绝密）。单条显式授权后，仅这一条会对 AI 放行；隐藏夹整体仍然不可读。</div>` : ''}
@@ -27010,9 +27053,9 @@ async function showExportPalaceModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:18px;font-weight:600;">导出记忆宫殿</div>
-      <button class="icon-btn" id="pex-close">✕</button>
+      <button class="icon-btn" id="pex-close"><i data-icon="close" data-size="17"></i></button>
     </div>
-    <button class="btn primary block" id="pex-all" style="margin-bottom:14px;">📦 全部导出（共 ${entries.length} 段记忆）</button>
+    <button class="btn primary block" id="pex-all" style="margin-bottom:14px;"><i data-icon="package" data-size="16"></i> 全部导出（共 ${entries.length} 段记忆）</button>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:8px;">或点选要导出的文件夹（可多选）：</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;" id="pex-chips">
       ${chip(PAL_P, '👤 ' + palPlayerFolderName() + '（根部）')}
@@ -27021,7 +27064,7 @@ async function showExportPalaceModal(back = null) {
       ${chip(PAL_H, '🔒 隐藏夹')}
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;" id="pex-count">已选 0 个文件夹</div>
-    <button class="btn block" id="pex-go" disabled style="opacity:.5;">⬇ 导出所选文件夹的记忆</button>
+    <button class="btn block" id="pex-go" disabled style="opacity:.5;"><i data-icon="download" data-size="16"></i> 导出所选文件夹的记忆</button>
     <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:10px;">文件夹结构一并导出；图片打包成 base64 内嵌，网页端 / App 端格式通用</div>
   `);
   $('#pex-close').onclick = backFn;
@@ -27113,7 +27156,7 @@ function showImportPalaceModal(back = null) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
       <div style="font-size:18px;font-weight:600;">导入记忆宫殿</div>
-      <button class="icon-btn" id="pim-close">✕</button>
+      <button class="icon-btn" id="pim-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">选择之前导出的「白日梦记忆宫殿备份.palacedata」文件。按 ID 合并去重（已有记忆不重复），系统会自动分辨每条记忆的归属并放入对应文件夹，不影响现有数据。</div>
     <div class="field">
@@ -27301,7 +27344,7 @@ async function showDivinationModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <div style="font-size:18px;font-weight:600;">占卜 · 三张牌时间流</div>
-      <button class="icon-btn" id="divi-close">✕</button>
+      <button class="icon-btn" id="divi-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px;">韦特塔罗 78 张 · 正逆位 · 静下心来，想着要问的事，依次翻开三张牌</div>
     <div class="field" style="margin-bottom:10px;">
@@ -27377,9 +27420,9 @@ function renderDivinationMeaning(pick) {
   const useAI = useAiEl ? !!useAiEl.checked : true; // 弹窗已关则按默认开
   box.innerHTML = `
     <div class="tarot-meaning">
-      ${question ? `<div class="tm-row" style="color:var(--text-secondary);font-size:12.5px;">❓ 想问：${escapeHtml(question)}</div>` : ''}
+      ${question ? `<div class="tm-row" style="color:var(--text-secondary);font-size:12.5px;"><i data-icon="help" data-size="12"></i> 想问：${escapeHtml(question)}</div>` : ''}
       ${pick.map((p, i) => `<div class="tm-row"><b>${labels[i]} · ${escapeHtml(p.card.n)}（${p.reversed ? '逆位' : '正位'}）</b><br>${escapeHtml(p.reversed ? p.card.rev : p.card.up)}</div>`).join('')}
-      ${useAI ? '<div class="tm-row" style="color:var(--text-tertiary);font-size:12px;">💡 想要 AI 结合问题解牌？开启「AI 解牌」并在「AI 解牌设置」里填入占卜 API 链接即可（可与聊天 API 相同）</div>' : '<div class="tm-row" style="color:var(--text-tertiary);font-size:12px;">AI 解牌已关闭，显示本地牌意</div>'}
+      ${useAI ? '<div class="tm-row" style="color:var(--text-tertiary);font-size:12px;"><i data-icon="bulb" data-size="12"></i> 想要 AI 结合问题解牌？开启「AI 解牌」并在「AI 解牌设置」里填入占卜 API 链接即可（可与聊天 API 相同）</div>' : '<div class="tm-row" style="color:var(--text-tertiary);font-size:12px;">AI 解牌已关闭，显示本地牌意</div>'}
     </div>`;
   box.style.display = '';
   // 20260929ah：AI 解牌开关开启 且 配置了占卜/聊天 API 时，自动追加 AI 解牌（失败回退本地牌意）
@@ -27390,11 +27433,11 @@ function renderDivinationMeaning(pick) {
     const aiRow = document.createElement('div');
     aiRow.className = 'tm-row';
     aiRow.style.cssText = 'margin-top:8px;border-top:1px dashed var(--border);padding-top:10px;';
-    aiRow.innerHTML = '<b>🔮 AI 解牌</b><br><span style="color:var(--text-secondary);">正在解读…</span>';
+    aiRow.innerHTML = '<b><i data-icon="divination" data-size="16"></i> AI 解牌</b><br><span style="color:var(--text-secondary);">正在解读…</span>';
     box.querySelector('.tarot-meaning').appendChild(aiRow);
     divinationAIInterpret(question, pick).then(txt => {
       if (txt) {
-        aiRow.innerHTML = `<b>🔮 AI 解牌</b><br>${escapeHtml(txt)}`;
+        aiRow.innerHTML = `<b><i data-icon="divination" data-size="16"></i> AI 解牌</b><br>${escapeHtml(txt)}`;
       } else {
         aiRow.remove();
       }
@@ -27505,9 +27548,9 @@ function _diviStarsHTML(score) {
     const off = 'rgba(160,160,170,0.28)';
     if (half) {
       // 半星：左半亮右半暗，用线性渐变 + background-clip 实现，兼容性最好
-      html += `<span style="font-size:20px;line-height:1;background:linear-gradient(90deg,var(--purple) 50%,${off} 50%);-webkit-background-clip:text;background-clip:text;color:transparent;">★</span>`;
+      html += `<span style="font-size:20px;line-height:1;background:linear-gradient(90deg,var(--purple) 50%,${off} 50%);-webkit-background-clip:text;background-clip:text;color:transparent;"><i data-icon="star" data-size="17"></i></span>`;
     } else {
-      html += `<span style="font-size:20px;line-height:1;color:${full ? 'var(--purple)' : off};">★</span>`;
+      html += `<span style="font-size:20px;line-height:1;color:${full ? 'var(--purple)' : off};"><i data-icon="star" data-size="17"></i></span>`;
     }
   }
   html += '</span>';
@@ -27662,7 +27705,7 @@ async function showDivinationApiModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">占卜设置</div>
-      <button class="icon-btn" id="diviapi-close">✕</button>
+      <button class="icon-btn" id="diviapi-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">填入占卜用的 API 链接（可以和聊天 API 是同一个，也可以不同）。留空则使用本地牌意解读。</div>
     <div class="field"><input class="input" id="diviapi-url" placeholder="https://…" value="${escapeHtml(cur)}"></div>
@@ -27688,7 +27731,7 @@ async function showNotebookModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <div style="font-size:18px;font-weight:600;">记事簿</div>
-      <button class="icon-btn" id="note-close">✕</button>
+      <button class="icon-btn" id="note-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
       <button class="btn" data-nb-view="list" style="flex:1;padding:8px 0;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('listview', 15)} 列表</button>
@@ -27741,7 +27784,7 @@ async function renderNotebookList() {
       ${items.length === 0 ? '<div style="color:var(--text-tertiary);text-align:center;padding:20px;">还没有记录，先添加一条吧</div>'
         : items.map(it => `
           <div class="note-item${it.done ? ' done' : ''}">
-            <div class="nt-check${it.done ? ' on' : ''}" data-note-check="${it.id}">${it.done ? '✓' : ''}</div>
+            <div class="nt-check${it.done ? ' on' : ''}" data-note-check="${it.id}">${it.done ? window.icon('check', 13) : ''}</div>
             <div style="flex:1;min-width:0;">
               <div class="nt-text">${escapeHtml(it.text)}</div>
               ${it.remindAt ? `<div class="nt-when ${(!it.done && it.remindAt > Date.now()) ? 'nt-due' : ''}">⏰ ${fmtWhen(it.remindAt)}${(!it.done && it.remindAt <= Date.now()) ? ' 已提醒' : ''}</div>` : ''}
@@ -27886,7 +27929,7 @@ async function periodCareText(char) {
           ? ['多喝温水，别让肚子着凉。', '今天早点休息，我陪着你。', '记得保暖，疼就说一声。', '抱抱你，今天要好好照顾自己。'][Math.floor(Math.random() * 4)]
           : ['这几天早点睡，照顾好自己。', '快到那几天了，记得别贪凉。', '提前抱一个，有我在呢。'][Math.floor(Math.random() * 3)]);
   }
-  const text = st.inPeriod ? `🌸 经期第 ${st.periodDay} 天 · ${line}` : `🌸 潮汐将近（约 ${st.daysToNext} 天）· ${line}`;
+  const text = st.inPeriod ? `<i data-icon="flower" data-size="14"></i> 经期第 ${st.periodDay} 天 · ${line}` : `<i data-icon="flower" data-size="14"></i> 潮汐将近（约 ${st.daysToNext} 天）· ${line}`;
   await setSetting(cacheKey, { sig, text });
   return text;
 }
@@ -28023,7 +28066,7 @@ async function renderNotebookCalendar() {
     </div>
     <div class="ac-grid">${cells}</div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text-tertiary);margin:8px 2px 0;">
-      <span>🌸 经期开始</span><span><i class="ac-dot m"></i> 经期中</span><span><i class="ac-dot m2"></i> 潮汐将近</span><span><i class="ac-dot s"></i> 行程</span><span><i class="ac-dot p"></i> 待办</span>
+      <span><i data-icon="flower" data-size="16"></i> 经期开始</span><span><i class="ac-dot m"></i> 经期中</span><span><i class="ac-dot m2"></i> 潮汐将近</span><span><i class="ac-dot s"></i> 行程</span><span><i class="ac-dot p"></i> 待办</span>
     </div>
     <div id="nbc-detail" style="margin-top:10px;"></div>
   `;
@@ -28038,9 +28081,9 @@ async function renderNotebookCalendar() {
     const st = periodStateFor(pinfo, _nbSelDay);
     const box = $('#nbc-detail');
     const bits = [];
-    if (st && st.inPeriod) bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">🌸 经期第 ${st.periodDay} 天（预测）</div>`);
-    if (pinfo && Array.isArray(pinfo.log) && pinfo.log.some(l => l.start === _nbSelDay)) bits.push('<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">🌸 你记录的经期开始日</div>');
-    if (st && st.pre5) bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">🌊 潮汐将近（约 ${st.daysToNext} 天后到）</div>`);
+    if (st && st.inPeriod) bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;"><i data-icon="flower" data-size="12"></i> 经期第 ${st.periodDay} 天（预测）</div>`);
+    if (pinfo && Array.isArray(pinfo.log) && pinfo.log.some(l => l.start === _nbSelDay)) bits.push('<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;"><i data-icon="flower" data-size="12"></i> 你记录的经期开始日</div>');
+    if (st && st.pre5) bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;"><i data-icon="tide" data-size="12"></i> 潮汐将近（约 ${st.daysToNext} 天后到）</div>`);
     dayScheds.forEach(it => {
       const isChar = it.source === 'char';
       const who = isChar ? (it.charName ? `${it.charName} 记的` : 'TA 记的') : '你记的';
@@ -28052,22 +28095,22 @@ async function renderNotebookCalendar() {
       let extra = '';
       if (!isChar && it.comment) {
         if (!it.commentCharId || it.commentCharId === curCid) {
-          extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--purple-soft);border-radius:6px;font-size:12px;color:var(--text-secondary);">💬 ${escapeHtml(it.commentCharName || 'TA')} 给你留言：${escapeHtml(it.comment)}</div>`;
+          extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--purple-soft);border-radius:6px;font-size:12px;color:var(--text-secondary);"><i data-icon="comment" data-size="12"></i> ${escapeHtml(it.commentCharName || 'TA')} 给你留言：${escapeHtml(it.comment)}</div>`;
         }
       } else if (isChar && it.note) {
-        extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--text-tertiary);border-radius:6px;font-size:12px;color:var(--text-tertiary);">📌 ${escapeHtml(it.charName || 'TA')} 的备注：${escapeHtml(it.note)}</div>`;
+        extra = `<div style="margin-top:5px;padding:6px 9px;background:var(--bg-soft);border-left:3px solid var(--text-tertiary);border-radius:6px;font-size:12px;color:var(--text-tertiary);"><i data-icon="pin" data-size="12"></i> ${escapeHtml(it.charName || 'TA')} 的备注：${escapeHtml(it.note)}</div>`;
       }
       bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><div style="min-width:0;">${isChar ? '🕐' : '📌'} ${escapeHtml(it.title || '行程')} <span style="color:var(--text-tertiary);font-size:11.5px;">${escapeHtml(bmFormatCNTime(it.at))} · ${escapeHtml(who)}</span></div>${delBtn}</div>${extra}</div>`);
     });
-    dayNotes.forEach(it => bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;">📝 ${escapeHtml(it.text)}${it.done ? '（已完成）' : ''}</div>`));
+    dayNotes.forEach(it => bits.push(`<div style="font-size:13px;padding:8px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px;"><i data-icon="note" data-size="12"></i> ${escapeHtml(it.text)}${it.done ? '（已完成）' : ''}</div>`));
     box.innerHTML = `
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">📅 ${_nbSelDay}${_nbSelDay === todayDk ? '（今天）' : ''}</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;"><i data-icon="daily" data-size="12"></i> ${_nbSelDay}${_nbSelDay === todayDk ? '（今天）' : ''}</div>
       ${bits.length ? bits.join('') : '<div style="font-size:12.5px;color:var(--text-tertiary);padding:6px 2px;">这一天没有记录</div>'}
       <div style="display:flex;gap:10px;margin-top:12px;">
         <button class="btn" style="flex:1;" id="nbc-add-sched">⏰ 添加行程</button>
-        <button class="btn primary" style="flex:1;" id="nbc-add-note">📝 添加记事</button>
+        <button class="btn primary" style="flex:1;" id="nbc-add-note"><i data-icon="note" data-size="16"></i> 添加记事</button>
       </div>
-      <button class="btn" style="width:100%;margin-top:8px;" id="nbc-manage-sched">🗂 管理我的行程</button>
+      <button class="btn" style="width:100%;margin-top:8px;" id="nbc-manage-sched"><i data-icon="folder" data-size="16"></i> 管理我的行程</button>
     `;
     $('#nbc-add-note').onclick = () => showNotebookAddNoteModal(_nbSelDay);
     $('#nbc-add-sched').onclick = () => showNotebookAddSchedModal(_nbSelDay);
@@ -28102,7 +28145,7 @@ async function showNotebookManageSchedModal() {
   const mine = (await nbLoadSchedules()).filter(it => it && it.source === 'player');
   const fmt = (ts) => { const d = new Date(ts); return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
   openModal(`
-    <div style="font-size:18px;font-weight:600;margin-bottom:6px;">🗂 管理我的行程</div>
+    <div style="font-size:18px;font-weight:600;margin-bottom:6px;"><i data-icon="folder" data-size="15"></i> 管理我的行程</div>
     <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;">这里只显示「你」自己记的行程（角色记的不在此列）</div>
     <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;" id="nbm-list">
       ${mine.length === 0 ? '<div style="color:var(--text-tertiary);text-align:center;padding:20px;">你还没有记过行程</div>'
@@ -28141,7 +28184,7 @@ async function showNotebookManageSchedModal() {
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       openModal(`
-        <div style="font-size:18px;font-weight:600;margin-bottom:14px;">✏️ 编辑行程</div>
+        <div style="font-size:18px;font-weight:600;margin-bottom:14px;"><i data-icon="edit" data-size="15"></i> 编辑行程</div>
         <div class="field"><input class="input" id="nbe-date" type="date" value="${dateStr}"></div>
         <div class="field"><label>行程内容</label><input class="input" id="nbe-text" value="${escapeHtml(it.title)}"></div>
         <div class="field"><label>时间</label><input class="input" id="nbe-time" type="time" value="${timeStr}"></div>
@@ -28172,7 +28215,7 @@ async function showNotebookManageSchedModal() {
 /* 日历日期 → 添加记事（写入 notebookItems，默认提醒日 = 选中日） */
 function showNotebookAddNoteModal(dayKey) {
   openModal(`
-    <div style="font-size:18px;font-weight:600;margin-bottom:14px;">📝 添加记事</div>
+    <div style="font-size:18px;font-weight:600;margin-bottom:14px;"><i data-icon="note" data-size="15"></i> 添加记事</div>
     <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">日期：<b>${escapeHtml(dayKey)}</b>（可改）</div>
     <div class="field">
       <input class="input" id="nbadd-date" type="date" value="${escapeHtml(dayKey)}">
@@ -28561,7 +28604,7 @@ async function showLetterComposeModal(charId = null, opts = {}) {
       <div style="font-size:18px;font-weight:600;">${opts.reply ? '给' + escapeHtml(c.name) + '回信' : '给' + escapeHtml(c.name) + '写信'}</div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button class="btn" style="padding:6px 12px;font-size:13px;" id="letter-records">信箱</button>
-        <button class="icon-btn" id="letterw-close">✕</button>
+        <button class="icon-btn" id="letterw-close"><i data-icon="close" data-size="17"></i></button>
       </div>
     </div>
     <div class="letter-paper-pick" id="letter-paper-pick"></div>
@@ -28569,7 +28612,7 @@ async function showLetterComposeModal(charId = null, opts = {}) {
       <textarea id="letter-text" maxlength="2000" placeholder="提笔，把想说的话写给 TA…（纯文字，最多 2000 字）"></textarea>
       <div class="lc-count"><span id="letter-count">0</span> / 2000</div>
     </div>
-    <button class="btn primary block" style="margin-top:14px;" id="letter-send">🕯️ 封缄寄出</button>
+    <button class="btn primary block" style="margin-top:14px;" id="letter-send"><i data-icon="candle" data-size="16"></i> 封缄寄出</button>
   `);
   $('#letterw-close').onclick = closeModal;
   $('#letter-records').onclick = () => showLetterRecordsModal(c.id); // 信箱：只看与当前角色的往来
@@ -28671,7 +28714,7 @@ async function showLetterRecordsModal(charId = null) {
       <div style="display:flex;align-items:center;gap:6px;">
         <button class="icon-btn" id="lr-view" title="切换列表/信封外观"></button>
         <button class="icon-btn" id="lr-batch" title="批量管理"></button>
-        <button class="icon-btn" id="lr-close">✕</button>
+        <button class="icon-btn" id="lr-close"><i data-icon="close" data-size="17"></i></button>
       </div>
     </div>
     ${scopeChar ? `<div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:8px;">只显示与「${escapeHtml(scopeChar.name)}」的往来书信</div>` : ''}
@@ -28687,7 +28730,7 @@ async function showLetterRecordsModal(charId = null) {
       <button class="btn" id="lr-selall">全选</button>
       <button class="btn danger" id="lr-del">删除</button>
       <select class="input" id="lr-move" style="flex:1.2;"></select>
-      <button class="btn" id="lr-palace2" title="把勾选的信件存入记忆宫殿">🏛️ 存宫殿</button>
+      <button class="btn" id="lr-palace2" title="把勾选的信件存入记忆宫殿"><i data-icon="memory" data-size="16"></i> 存宫殿</button>
       <button class="btn" id="lr-done">完成</button>
     </div>
   `);
@@ -28786,7 +28829,7 @@ async function showLetterRecordsModal(charId = null) {
       `<div class="lr-fchip${curFolder === '__none__' ? ' on' : ''}" data-f="__none__">未分组</div>`,
     ];
     for (const f of folders) {
-      chips.push(`<div class="lr-fchip${curFolder === f.id ? ' on' : ''}" data-f="${f.id}">${escapeHtml(f.name)}<span class="fx" data-fx="${f.id}" title="删除文件夹（信件移回未分组）">✕</span></div>`);
+      chips.push(`<div class="lr-fchip${curFolder === f.id ? ' on' : ''}" data-f="${f.id}">${escapeHtml(f.name)}<span class="fx" data-fx="${f.id}" title="删除文件夹（信件移回未分组）"><i data-icon="close" data-size="17"></i></span></div>`);
     }
     chips.push(`<div class="lr-fchip" data-f="__new__" style="border-style:dashed;">＋ 新建</div>`);
     el.innerHTML = chips.join('');
@@ -28806,7 +28849,7 @@ async function showLetterRecordsModal(charId = null) {
         const fid = x.dataset.fx;
         if (!x.dataset.confirm) { // 两段确认，避免误删
           x.dataset.confirm = '1'; x.textContent = '确认删?';
-          setTimeout(() => { if (x.isConnected) { x.dataset.confirm = ''; x.textContent = '✕'; } }, 2500);
+          setTimeout(() => { if (x.isConnected) { x.dataset.confirm = ''; x.innerHTML = window.icon('close', 17); } }, 2500);
           return;
         }
         folders = folders.filter(y => y.id !== fid);
@@ -28831,7 +28874,7 @@ async function showLetterRecordsModal(charId = null) {
     if (shown.length === 0) {
       list.innerHTML = `
         <div class="empty" style="padding:30px 0;">
-          <div class="empty-icon">🕯️</div>
+          <div class="empty-icon"><i data-icon="candle" data-size="16"></i></div>
           <div>${curFolder === 'all' ? '还没有往来书信' : '这个文件夹还没有信件'}</div>
           <div style="font-size:12.5px;margin-top:4px;">在聊天页「＋ → 书信」提笔写第一封，或等梦角随机来信</div>
         </div>`;
@@ -28854,7 +28897,7 @@ async function showLetterRecordsModal(charId = null) {
         const checked = selected.has(tidOf(t));
         return `
           <div class="letter-env-cell" data-tid="${tidOf(t)}" style="${batchMode ? 'cursor:pointer;' : ''}">
-            ${batchMode ? `<div class="lr-env-check${checked ? ' on' : ''}">✓</div>` : ''}
+            ${batchMode ? `<div class="lr-env-check${checked ? ' on' : ''}"><i data-icon="check" data-size="13"></i></div>` : ''}
             <div class="lec-env">
               <div class="lec-body"></div>
               <div class="lec-slip">
@@ -28863,7 +28906,7 @@ async function showLetterRecordsModal(charId = null) {
               </div>
               <div class="lec-pocket"></div>
               <div class="lec-stamp">${avHtml}</div>
-              ${unread ? '<div class="lec-seal">✦</div>' : ''}
+              ${unread ? '<div class="lec-seal"><i data-icon="star" data-size="15"></i></div>' : ''}
             </div>
             <div class="lec-meta">
               ${scopeChar ? '' : `<span class="lec-name">${escapeHtml(name)}</span>`}
@@ -28911,14 +28954,14 @@ async function showLetterRecordsModal(charId = null) {
       if (!batchMode && root) {
         if (rep) act = `<button class="btn lr-act" data-lr-view="${root.id}" title="查看回信">查看回信</button>`;
         else if (root.from === 'me') act = `<button class="btn lr-act" data-lr-view="${root.id}" title="查看访客的回信">查看回信</button>`;
-        else act = `<button class="btn lr-act" data-lr-reply="${root.id}" title="给这封来信回信">✍️ 回信</button>`;
+        else act = `<button class="btn lr-act" data-lr-reply="${root.id}" title="给这封来信回信"><i data-icon="note" data-size="16"></i> 回信</button>`;
       }
       // 预览显示根信（主条目）内容，不再显示回信内容
       const preview = (root && root.content && root.content.text) ? [...root.content.text].slice(0, 30).join('') : '';
       const checked = selected.has(tidOf(t));
       return `
         <div class="letter-rec" data-tid="${tidOf(t)}" style="${batchMode ? 'cursor:pointer;' : ''}">
-          ${batchMode ? `<div class="lr-check${checked ? ' on' : ''}">✓</div>` : ''}
+          ${batchMode ? `<div class="lr-check${checked ? ' on' : ''}"><i data-icon="check" data-size="13"></i></div>` : ''}
           <div class="avatar sm">${c && c.avatar ? `<img src="${imgSrcAttr(c.avatar)}">` : escapeHtml(name[0] || '?')}</div>
           <div style="flex:1;min-width:0;">
             <div style="display:flex;align-items:center;gap:6px;min-width:0;">
@@ -28978,7 +29021,7 @@ async function showLetterRecordsModal(charId = null) {
           } catch (e) {}
           openModal(`
             <div style="text-align:center;padding:10px 0 4px;">
-              <div style="font-size:34px;">🕯️</div>
+              <div style="font-size:34px;"><i data-icon="candle" data-size="31"></i></div>
               <div style="font-size:16px;font-weight:600;margin-top:10px;">访客正在回信中</div>
               <div style="font-size:13px;color:var(--text-tertiary);margin-top:6px;">${escapeHtml(remainTxt)}</div>
               <button class="btn primary block" style="margin-top:16px;" id="lr-wait-ok">知道了</button>
@@ -29093,8 +29136,8 @@ async function showLetterPalaceModal(pickedThreads, onDone) {
   }
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-      <div style="font-size:17px;font-weight:600;">🏛️ 存入记忆宫殿</div>
-      <button class="icon-btn" id="lp-close">✕</button>
+      <div style="font-size:17px;font-weight:600;"><i data-icon="memory" data-size="14"></i> 存入记忆宫殿</div>
+      <button class="icon-btn" id="lp-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px;">把选中的 ${pickedThreads.length} 封往来信件存入哪个文件夹？（主信与回信成对留底，AI 按文件夹权限读取）</div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow-y:auto;" id="lp-list">
@@ -29355,10 +29398,10 @@ async function openLetterOverlay(msg, c, opts = {}) {
       <div class="env-body"></div>
       <div class="env-paper"></div>
       <div class="env-flap"></div>
-      <div class="env-seal">🕯️</div>
+      <div class="env-seal"><i data-icon="candle" data-size="16"></i></div>
     </div>
     <div class="letter-hint">${msg.read ? '点击空白处收起信纸' : (ch ? escapeHtml(ch.name) : '梦角') + ' 寄来一封火漆封信 · 点击拆开'}</div>
-    <button class="letter-reply" id="letter-reply-btn" style="display:none;">✍️ 给 ${escapeHtml(ch ? ch.name : 'TA')} 回信</button>
+    <button class="letter-reply" id="letter-reply-btn" style="display:none;"><i data-icon="note" data-size="16"></i> 给 ${escapeHtml(ch ? ch.name : 'TA')} 回信</button>
   `;
   document.body.appendChild(overlay);
   const paper = overlay.querySelector('.env-paper');
@@ -29797,7 +29840,7 @@ async function showWorldBookModal(startView) {
     const checked = selected.has(e.id);
     return `
       <div class="wb-item" data-wid="${e.id}" style="${batchMode ? 'cursor:pointer;' : ''}">
-        ${batchMode ? `<div class="lr-check${checked ? ' on' : ''}">✓</div>` : ''}
+        ${batchMode ? `<div class="lr-check${checked ? ' on' : ''}"><i data-icon="check" data-size="13"></i></div>` : ''}
         <div class="wb-ic">${e.type === 'image' ? icon('image', 20) : icon('doc', 20)}</div>
         <div style="flex:1;min-width:0;">
           <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(entryTitle(e))}</div>
@@ -30082,7 +30125,7 @@ function showWorldEntryView(e) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">${e.type === 'image' ? '图片' : '世界树内容'}</div>
-      <button class="icon-btn" id="wv-close">✕</button>
+      <button class="icon-btn" id="wv-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     ${e.draft ? '<div style="font-size:12px;color:var(--danger);margin-bottom:10px;">这是草稿，AI 模式下不会读取</div>' : ''}
     ${body}
@@ -30129,7 +30172,7 @@ async function showWorldEntryShareModal(e) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <div style="font-size:18px;font-weight:600;">分享给角色</div>
-      <button class="icon-btn" id="ws-close">✕</button>
+      <button class="icon-btn" id="ws-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:12px;">分享「${escapeHtml(title)}」给某个角色，TA 会读到并回复。仅列出能读取此内容的角色。</div>
     <div style="display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto;">
@@ -30183,7 +30226,7 @@ async function showWorldEntryAccessModal(target) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">AI 读取权限</div>
-      <button class="icon-btn" id="wa-close">✕</button>
+      <button class="icon-btn" id="wa-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
       ${targetIsFolder ? `文件夹「${escapeHtml(target.name)}」` : '这条内容'}当前：<b>${isFollow ? '跟随文件夹' : (allowAll ? '允许所有访客 AI 读取' : '仅允许勾选的访客')}</b>
@@ -30265,7 +30308,7 @@ function showWorldCreateModal(folderId = '', editEntry = null, prefillText = '')
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">${isEdit ? '编辑内容' : '新建文本'}</div>
-      <button class="icon-btn" id="wc-close">✕</button>
+      <button class="icon-btn" id="wc-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="wb-compose">
       <textarea id="wc-text" maxlength="5000" placeholder="写下世界观设定、访客背景…（最多 5000 字）">${escapeHtml(initText)}</textarea>
@@ -30359,7 +30402,7 @@ function showWorldUploadModal(folderId = '') {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">上传文件</div>
-      <button class="icon-btn" id="wu-close">✕</button>
+      <button class="icon-btn" id="wu-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">支持 Word(.docx) 与图片；单文件上限 20MB，图片会压缩到 2MB 以内</div>
     <label class="btn primary block" for="wu-input" style="height:44px;cursor:pointer;">选择文件</label>
@@ -30431,7 +30474,7 @@ async function processWorldUpload(file, folderId, progEl) {
     });
   }
   await saveWorldBook(wb);
-  if (progEl) progEl.innerHTML = `<div style="font-size:13px;color:var(--ok);">✓ 已解析并存入世界树</div>`;
+  if (progEl) progEl.innerHTML = `<div style="font-size:13px;color:var(--ok);"><i data-icon="check" data-size="12"></i> 已解析并存入世界树</div>`;
   worldQueueAIRefine(); // 后台 AI 精炼（>200字且 AI 模式时）
 }
 
@@ -30624,7 +30667,7 @@ async function showWorldDraftsModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">草稿箱</div>
-      <button class="icon-btn" id="wd-close">✕</button>
+      <button class="icon-btn" id="wd-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">存入草稿箱的内容视为未编辑完，AI 模式下绝对不读取</div>
     ${drafts.length === 0 ? '<div style="color:var(--text-tertiary);text-align:center;padding:24px;">草稿箱是空的</div>'
@@ -31607,7 +31650,7 @@ async function showAIConfigModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <div style="font-size:18px;font-weight:600;">🤖 API 接入</div>
-      <button class="icon-btn" id="aicfg-close">✕</button>
+      <button class="icon-btn" id="aicfg-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px;">接入 AI 后，聊天、朋友圈、占卜、入梦签等可由 AI 生成。填写链接 + Key + 模型名，可直接输入或粘贴。</div>
 
@@ -32178,7 +32221,7 @@ function pickGroupMember(g, title = '选择群成员') {
     openModal(`
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
         <div style="font-size:17px;font-weight:600;">${escapeHtml(title)}</div>
-        <button class="icon-btn" id="gpick-close">✕</button>
+        <button class="icon-btn" id="gpick-close"><i data-icon="close" data-size="17"></i></button>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;">
         ${members.map(m => `
@@ -32242,7 +32285,7 @@ function gpacketCardHtml(m) {
   const listHtml = grabs.length
     ? grabs.map(x => `<div>${escapeHtml(groupMemberName(g, x.charId))} 抢到 ¥${x.share}</div>`).join('')
     : (pc.mode === 'avg' ? `每人 ¥${Math.floor((pc.amount || 0) / Math.max(1, pc.count || 1))}，等待领取…` : '等待领取…');
-  return `<div class="msg-card" data-gpacket-card="${m.id}"><span class="msg-card-tag">🧧 群红包 · ${modeTag} · ${grabs.length}/${(pc.count || grabs.length)} 份</span><div style="font-size:18px;font-weight:700;color:var(--purple-soft);">¥${pc.amount}</div>${pc.note ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:3px;">${escapeHtml(pc.note)}</div>` : ''}<div style="font-size:12px;color:var(--text-secondary);margin-top:6px;line-height:1.6;">${listHtml}</div><div style="font-size:11px;color:var(--text-tertiary);margin-top:4px;">已领 ${claimed} / ${pc.amount} 元 · ${grabs.length}/${(pc.count || grabs.length)} 份</div></div>`;
+  return `<div class="msg-card" data-gpacket-card="${m.id}"><span class="msg-card-tag"><i data-icon="redpacket" data-size="16"></i> 群红包 · ${modeTag} · ${grabs.length}/${(pc.count || grabs.length)} 份</span><div style="font-size:18px;font-weight:700;color:var(--purple-soft);">¥${pc.amount}</div>${pc.note ? `<div style="font-size:12px;color:var(--text-tertiary);margin-top:3px;">${escapeHtml(pc.note)}</div>` : ''}<div style="font-size:12px;color:var(--text-secondary);margin-top:6px;line-height:1.6;">${listHtml}</div><div style="font-size:11px;color:var(--text-tertiary);margin-top:4px;">已领 ${claimed} / ${pc.amount} 元 · ${grabs.length}/${(pc.count || grabs.length)} 份</div></div>`;
 }
 function refreshGroupPacketCard(m) {
   const el = document.querySelector(`[data-gpacket-card="${m.id}"]`);
@@ -32319,19 +32362,19 @@ function showGroupPacketModal(g, opts = {}) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">发群红包</div>
-      <button class="icon-btn" id="gpacket-close">✕</button>
+      <button class="icon-btn" id="gpacket-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field"><label>总金额（¥，从玩家钱包扣除）</label><input class="input" type="number" id="gpacket-amount" min="1" placeholder="输入金额"></div>
     <div class="field"><label>红包个数（1～${members.length}，按群里人数发）</label><input class="input" type="number" id="gpacket-count" min="1" max="${Math.max(1, members.length)}" value="1"></div>
     <div class="field"><label>分配方式</label>
       <div style="display:flex;gap:8px;">
-        <button class="btn" data-gmode="lucky" style="flex:1;justify-content:center;">🧧 拼手气（手气随机）</button>
-        <button class="btn" data-gmode="avg" style="flex:1;justify-content:center;">⚖️ 平分（每份一样）</button>
+        <button class="btn" data-gmode="lucky" style="flex:1;justify-content:center;"><i data-icon="redpacket" data-size="16"></i> 拼手气（手气随机）</button>
+        <button class="btn" data-gmode="avg" style="flex:1;justify-content:center;"><i data-icon="scale" data-size="16"></i> 平分（每份一样）</button>
       </div>
     </div>
     <div class="field"><label>附言（可选）</label><input class="input" id="gpacket-note" maxlength="30" placeholder="恭喜发财"></div>
     <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;">发出后群里的成员会随机来抢，抢到的会自动到账并道谢</div>
-    <button class="btn primary block" id="gpacket-go">塞进群里 🧧</button>
+    <button class="btn primary block" id="gpacket-go">塞进群里 <i data-icon="redpacket" data-size="16"></i></button>
   `);
   let mode = 'lucky';
   const paintMode = () => {
@@ -32361,8 +32404,8 @@ const TOPIC_PRESETS = ['今天最开心的事', '最近在追的剧', '最想吃
 function showTopicModal(g) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:17px;font-weight:600;">发话题卡 💬</div>
-      <button class="icon-btn" id="topic-close">✕</button>
+      <div style="font-size:17px;font-weight:600;">发话题卡 <i data-icon="comment" data-size="16"></i></div>
+      <button class="icon-btn" id="topic-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
       ${TOPIC_PRESETS.map(t => `<button class="btn" data-topic-preset="${escapeHtml(t)}" style="padding:7px 12px;font-size:13px;">${escapeHtml(t)}</button>`).join('')}
@@ -32398,7 +32441,7 @@ function voteCardHtml(m) {
     const op = (vc.options || [])[v.pick] || '';
     return `${escapeHtml(who)}：投了「${escapeHtml(op)}」${v.reason ? ` —— ${escapeHtml(v.reason)}` : ''}`;
   }).join('<br>');
-  return `<div class="msg-card" data-vote-card="${m.id}"><span class="msg-card-tag">📊 群投票</span><div style="font-weight:600;">${escapeHtml(vc.question)}</div><div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">${(vc.options || []).map((op, i) => {
+  return `<div class="msg-card" data-vote-card="${m.id}"><span class="msg-card-tag"><i data-icon="chart" data-size="16"></i> 群投票</span><div style="font-weight:600;">${escapeHtml(vc.question)}</div><div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">${(vc.options || []).map((op, i) => {
     const cnt = Object.values(votes).filter(v => v.pick === i).length;
     return `<button class="btn" data-vote-opt="${i}" style="justify-content:space-between;padding:8px 12px;font-size:13px;"><span>${escapeHtml(op)}</span><span style="color:var(--text-tertiary);font-size:12px;">${cnt} 票</span></button>`;
   }).join('')}</div><div style="font-size:11.5px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">${reasonLines || '点选项即可投票'}</div></div>`;
@@ -32426,8 +32469,8 @@ function bindVoteCard(m, scope) {
 function showGroupVoteModal(g) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:17px;font-weight:600;">发起群投票 📊</div>
-      <button class="icon-btn" id="gvote-close">✕</button>
+      <div style="font-size:17px;font-weight:600;">发起群投票 <i data-icon="chart" data-size="16"></i></div>
+      <button class="icon-btn" id="gvote-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field"><label>投票问题</label><input class="input" id="gvote-q" maxlength="40" placeholder="比如：周末去哪玩？"></div>
     <div class="field"><label>选项（2～4 个，至少填 2 个）</label>
@@ -32469,10 +32512,10 @@ function showGroupCoinModal(g, member) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">决策币 · ${escapeHtml(member.name)} 主持</div>
-      <button class="icon-btn" id="gc-close">✕</button>
+      <button class="icon-btn" id="gc-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field"><label>要决定什么？</label><input class="input" id="gc-q" maxlength="40" placeholder="比如：中午吃什么？"></div>
-    <button class="btn primary block" id="gc-go">掷币 🪙</button>
+    <button class="btn primary block" id="gc-go">掷币 <i data-icon="coin" data-size="16"></i></button>
   `);
   $('#gc-close').onclick = closeModal;
   $('#gc-go').onclick = async () => {
@@ -32492,7 +32535,7 @@ function showGroupLetterModal(g, member) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:17px;font-weight:600;">给 ${escapeHtml(member.name)} 写信 ✉️</div>
-      <button class="icon-btn" id="gl-close">✕</button>
+      <button class="icon-btn" id="gl-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field"><label>信的内容</label><textarea class="textarea" id="gl-text" rows="4" maxlength="600" placeholder="写下想对 TA 说的话…"></textarea></div>
     <button class="btn primary block" id="gl-go">寄出信件</button>
@@ -32530,7 +32573,7 @@ async function renderGroupNotice(g) {
   const bar = document.createElement('div');
   bar.id = 'group-notice-bar';
   bar.className = 'group-notice-bar';
-  bar.innerHTML = `<span class="gn-tag">📢 公告</span><span class="gn-text">${escapeHtml(g.announcement.text)}</span><button class="gn-close">✕</button>`;
+  bar.innerHTML = `<span class="gn-tag"><i data-icon="megaphone" data-size="16"></i> 公告</span><span class="gn-text">${escapeHtml(g.announcement.text)}</span><button class="gn-close"><i data-icon="close" data-size="17"></i></button>`;
   scroll.insertAdjacentElement('beforebegin', bar);
   bar.querySelector('.gn-close').onclick = async (e) => {
     e.stopPropagation();
@@ -32540,8 +32583,8 @@ async function renderGroupNotice(g) {
   bar.onclick = () => {
     openModal(`
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div style="font-size:17px;font-weight:600;">📢 群公告</div>
-        <button class="icon-btn" id="gnv-close">✕</button>
+        <div style="font-size:17px;font-weight:600;"><i data-icon="megaphone" data-size="14"></i> 群公告</div>
+        <button class="icon-btn" id="gnv-close"><i data-icon="close" data-size="17"></i></button>
       </div>
       <div style="font-size:14px;line-height:1.7;white-space:pre-wrap;">${escapeHtml(g.announcement.text)}</div>
       <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:10px;">发布于 ${escapeHtml(new Date(g.announcement.time).toLocaleString())}</div>
@@ -32882,7 +32925,7 @@ async function aiSoftReply(c, instruction, cardFallback) {
 function warnAIApiBurn(onOk) {
   openModal(`
     <div style="text-align:center;padding:8px 0 2px;">
-      <div style="font-size:38px;">⚠️</div>
+      <div style="font-size:38px;"><i data-icon="alert" data-size="35"></i></div>
       <div style="font-size:17px;font-weight:600;margin-top:10px;">AI 模式 + 固定间隔发消息</div>
       <div style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-top:10px;text-align:left;">
         当前有访客开启了<b>「按固定间隔发消息」</b>。AI 模式下，每一条主动消息、查岗、回信都会实时调用
@@ -32942,10 +32985,10 @@ async function showAIModeCharManager() {
     const modalHtml = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
         <div style="font-size:18px;font-weight:600;">AI 模式角色名单</div>
-        <button class="icon-btn" id="aim-close">✕</button>
+        <button class="icon-btn" id="aim-close"><i data-icon="close" data-size="17"></i></button>
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">开关为「开」= 该角色处于 AI 模式（单独设置优先于全局）。点开关可直接切换该角色的模式。</div>
-      ${!hasAPI ? `<div style="font-size:12px;color:var(--danger);margin-bottom:10px;">⚠️ 尚未配置 API，开启 AI 也不会真正生效，请先在「主页 → API 接入」配置链接</div>` : ''}
+      ${!hasAPI ? `<div style="font-size:12px;color:var(--danger);margin-bottom:10px;"><i data-icon="alert" data-size="12"></i> 尚未配置 API，开启 AI 也不会真正生效，请先在「主页 → API 接入」配置链接</div>` : ''}
       <div id="aim-list" style="max-height:50vh;overflow-y:auto;margin-bottom:8px;">${listHtml}</div>
     `;
     openModal(modalHtml);
@@ -33526,7 +33569,7 @@ async function openSurveyDetail(surveyId, opts = {}) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('checklist', 20)} 问卷详情</div>
-      <button class="icon-btn" id="svd-close">✕</button>
+      <button class="icon-btn" id="svd-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:12px;">${isCharAsk ? (c ? c.name : 'TA') + ' 向你提问' : '你向 ' + (c ? c.name : 'TA') + ' 提问'} · 共 ${sv.questions.length} 题 · ${done ? '已全部回答' : (_surveyEtaText(sv) || (answered > 0 ? '回答中' : '待回答'))}</div>
     <div style="display:flex;flex-direction:column;gap:10px;max-height:46vh;overflow:auto;" id="svd-list">
@@ -33548,12 +33591,12 @@ async function openSurveyDetail(surveyId, opts = {}) {
             return `<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:12px;border:1.5px solid ${sel ? 'var(--purple)' : 'var(--border)'};background:${sel ? 'var(--purple-dim)' : 'var(--bg)'};color:var(--text-primary);font-size:13px;line-height:1.45;">
               <span style="flex-shrink:0;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:${sel ? 'var(--purple)' : 'var(--bg-elevated-2)'};color:${sel ? '#141019' : 'var(--text-secondary)'};">${String.fromCharCode(65 + oi)}</span>
               <span style="flex:1;min-width:0;">${escapeHtml(o)}</span>
-              ${sel ? '<span style="color:var(--purple-soft);font-weight:700;flex-shrink:0;">✓</span>' : ''}
+              ${sel ? '<span style="color:var(--purple-soft);font-weight:700;flex-shrink:0;"><i data-icon="check" data-size="13"></i></span>' : ''}
             </div>`;
           }).join('')}</div>${q.answer && q.answer.trim() ? `<div style="font-size:13px;line-height:1.55;padding:8px 10px;background:var(--bg);border-radius:8px;margin-top:8px;"><span style="color:var(--text-tertiary);font-size:11px;">${c ? c.name : 'TA'} 的作答：</span>${escapeHtml(q.answer)}</div>` : ''}` : (q.answer && q.answer.trim() ? `<div style="font-size:13px;line-height:1.55;padding:8px 10px;background:var(--bg);border-radius:8px;">${escapeHtml(q.answer)}</div>` : `<div style="font-size:12px;color:var(--text-tertiary);font-style:italic;">（未回答）</div>`)}
         </div>`;
       }).join('')}
-      ${sv.readBack ? `<div style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;"><div style="font-size:13px;font-weight:600;margin-bottom:4px;">💬 ${c ? c.name : 'TA'} 的读后感</div><div style="font-size:13px;line-height:1.55;">${escapeHtml(sv.readBack)}</div></div>` : ''}
+      ${sv.readBack ? `<div style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;"><div style="font-size:13px;font-weight:600;margin-bottom:4px;"><i data-icon="comment" data-size="12"></i> ${c ? c.name : 'TA'} 的读后感</div><div style="font-size:13px;line-height:1.55;">${escapeHtml(sv.readBack)}</div></div>` : ''}
     </div>
     ${isCharAsk && !done ? `
       <div class="field" style="margin-top:14px;">
@@ -33650,7 +33693,7 @@ function showSurveyHub() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('checklist', 20)} 问卷</div>
-      <button class="icon-btn" id="svh-close">✕</button>
+      <button class="icon-btn" id="svh-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">${c ? '当前聊天对象：' + escapeHtml(c.name) : '请先在单聊里打开问卷'}</div>
     <div style="display:flex;flex-direction:column;gap:10px;">
@@ -33729,7 +33772,7 @@ async function showSurveyLibrary() {
       `<div class="lr-fchip${curFolder === 'all' ? ' on' : ''}" data-f="all">全部</div>`,
       `<div class="lr-fchip${curFolder === '__none__' ? ' on' : ''}" data-f="__none__">未分组</div>`,
     ];
-    for (const f of folders) chips.push(`<div class="lr-fchip${curFolder === f.id ? ' on' : ''}" data-f="${f.id}">${escapeHtml(f.name)}<span class="fx" data-fx="${f.id}" title="删除分组（问卷移回未分组）">✕</span></div>`);
+    for (const f of folders) chips.push(`<div class="lr-fchip${curFolder === f.id ? ' on' : ''}" data-f="${f.id}">${escapeHtml(f.name)}<span class="fx" data-fx="${f.id}" title="删除分组（问卷移回未分组）"><i data-icon="close" data-size="17"></i></span></div>`);
     chips.push(`<div class="lr-fchip" data-f="__new__" style="border-style:dashed;">＋ 新建分组</div>`);
     fc.innerHTML = chips.join('');
     fc.querySelectorAll('.lr-fchip').forEach(chip => {
@@ -33740,7 +33783,7 @@ async function showSurveyLibrary() {
           openModal(`
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
               <div style="font-size:16px;font-weight:600;">新建分组</div>
-              <button class="icon-btn" id="svlff-close">✕</button>
+              <button class="icon-btn" id="svlff-close"><i data-icon="close" data-size="17"></i></button>
             </div>
             <input class="input" id="svlff-name" placeholder="分组名称（2~8字）" style="width:100%;box-sizing:border-box;margin-bottom:12px;">
             <button class="btn primary block" id="svlff-ok" style="padding:12px;">确定</button>
@@ -33794,7 +33837,7 @@ async function showSurveyLibrary() {
             <div style="font-size:12px;color:var(--text-tertiary);margin-top:3px;">${(it.questions || []).length} 题${it.folderId ? ' · ' + escapeHtml((folders.find(f => f.id === it.folderId) || {}).name || '') : ''}</div>
           </div>
           <div style="flex-shrink:0;display:flex;gap:8px;align-items:center;">
-            ${batchMode ? (sel ? `<span style="font-size:18px;color:var(--purple-soft);">✓</span>` : `<span style="font-size:11px;color:var(--text-tertiary);">${timeAgoStr(it.createdAt)}</span>`) : `<button class="btn" data-svlib-send="${it.id}" style="padding:6px 12px;font-size:12px;">发出</button>`}
+            ${batchMode ? (sel ? `<span style="font-size:18px;color:var(--purple-soft);"><i data-icon="check" data-size="15"></i></span>` : `<span style="font-size:11px;color:var(--text-tertiary);">${timeAgoStr(it.createdAt)}</span>`) : `<button class="btn" data-svlib-send="${it.id}" style="padding:6px 12px;font-size:12px;">发出</button>`}
           </div>
         </div>`;
       }).join('');
@@ -33838,7 +33881,7 @@ async function showSurveyLibrary() {
       <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('book', 20)} 问卷库</div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button class="btn" id="svlib-batch" style="padding:6px 12px;font-size:12px;">批量管理</button>
-        <button class="icon-btn" id="svlib-close">✕</button>
+        <button class="icon-btn" id="svlib-close"><i data-icon="close" data-size="17"></i></button>
       </div>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">预存问卷：角色向玩家提问时从「角色问卷库」抽取；玩家库全局共享、可随时「发出」给任意角色</div>
@@ -33879,7 +33922,7 @@ async function openSurveyLibraryDetail(id) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:17px;font-weight:600;">问卷详情</div>
-      <button class="icon-btn" id="svld-close">✕</button>
+      <button class="icon-btn" id="svld-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="max-height:50vh;overflow:auto;display:flex;flex-direction:column;gap:8px;">
       ${(item.questions || []).map((q, i) => `
@@ -33899,7 +33942,7 @@ function showSurveyLibraryCompose(owner, charId) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:17px;font-weight:600;">添加问卷到问卷库</div>
-      <button class="icon-btn" id="svlc-close">✕</button>
+      <button class="icon-btn" id="svlc-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">${escapeHtml(whoLabel)} · 手动输入题目，或导入 Word 文档（选择题自动解析）</div>
     <div style="margin-bottom:10px;">
@@ -33908,7 +33951,7 @@ function showSurveyLibraryCompose(owner, charId) {
     <div style="display:flex;flex-direction:column;gap:8px;max-height:38vh;overflow:auto;margin-bottom:10px;" id="svlc-list"></div>
     <button class="btn block" id="svlc-addq" style="padding:10px;">＋ 添加一道题</button>
     <button class="btn block" id="svlc-addchoice" style="padding:10px;margin-top:8px;">⊕ 添加选择题（最多 10 个选项）</button>
-    <label class="btn block" for="svlc-docx" style="padding:10px;cursor:pointer;margin-top:8px;">📄 导入 Word 文档（.docx）</label>
+    <label class="btn block" for="svlc-docx" style="padding:10px;cursor:pointer;margin-top:8px;"><i data-icon="doc" data-size="16"></i> 导入 Word 文档（.docx）</label>
     <input type="file" id="svlc-docx" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
     <div style="display:flex;gap:10px;margin-top:14px;">
       <button class="btn" style="flex:1;" id="svlc-cancel">返回</button>
@@ -33923,7 +33966,7 @@ function showSurveyLibraryCompose(owner, charId) {
         <div style="display:flex;align-items:center;gap:8px;">
           <span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">${i + 1}.</span>
           <input class="input" data-qidx="${i}" data-qf="text" value="${escapeHtml(q.text)}" placeholder="${q.type === 'choice' ? '问题内容' : '题目内容'}" style="flex:1;">
-          <button class="icon-btn" data-qdel="${i}">✕</button>
+          <button class="icon-btn" data-qdel="${i}"><i data-icon="close" data-size="17"></i></button>
         </div>
         ${q.type === 'choice' ? `
           <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
@@ -33931,7 +33974,7 @@ function showSurveyLibraryCompose(owner, charId) {
               <div style="display:flex;align-items:center;gap:6px;">
                 <span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;width:16px;text-align:center;">${String.fromCharCode(65 + oi)}</span>
                 <input class="input" data-qidx="${i}" data-oidx="${oi}" data-of="opt" value="${escapeHtml(opt)}" placeholder="选项 ${String.fromCharCode(65 + oi)}" style="flex:1;">
-                <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项">✕</button>
+                <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项"><i data-icon="close" data-size="17"></i></button>
               </div>`).join('')}
             <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
               ${(q.options || []).length < 10 ? `<button class="btn" data-oadd="${i}" style="padding:5px 10px;font-size:12px;flex-shrink:0;">＋ 添加选项（${(q.options || []).length}/10）</button>` : `<span style="font-size:11px;color:var(--text-tertiary);flex-shrink:0;">选项最多 10 个</span>`}
@@ -34041,7 +34084,7 @@ function showGroupSurveyModal(g) {
       const chk = row.querySelector('.gsv-check');
       chk.style.background = sel.has(id) ? 'var(--purple)' : 'transparent';
       chk.style.borderColor = sel.has(id) ? 'var(--purple)' : 'var(--text-tertiary)';
-      chk.textContent = sel.has(id) ? '✓' : '';
+      chk.innerHTML = sel.has(id) ? window.icon('check', 13) : '';
       syncNext();
     };
   });
@@ -34066,15 +34109,15 @@ function showSurveyCompose(charIds, opts = {}) {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;">添加问卷</div>
-      <button class="icon-btn" id="svc-close">✕</button>
+      <button class="icon-btn" id="svc-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:12px;">${whoLabel} · 手动输入题目，或导入 Word 文档（选择题会直接解析成选择题）</div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow:auto;margin-bottom:12px;" id="svc-list"></div>
     <button class="btn block" id="svc-addq" style="padding:10px;">＋ 添加一道题</button>
     <button class="btn block" id="svc-addchoice" style="padding:10px;margin-top:8px;">⊕ 添加选择题（最多 10 个选项）</button>
-    <label class="btn block" for="svc-docx" style="padding:10px;cursor:pointer;margin-top:8px;">📄 导入 Word 文档（.docx）</label>
+    <label class="btn block" for="svc-docx" style="padding:10px;cursor:pointer;margin-top:8px;"><i data-icon="doc" data-size="16"></i> 导入 Word 文档（.docx）</label>
     <input type="file" id="svc-docx" accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none;">
-    <div style="font-size:11px;color:#e5615c;margin-top:6px;font-weight:600;">⚠ 选择题会自动在问卷末尾增加一道「读后感」输入，由访客作答</div>
+    <div style="font-size:11px;color:#e5615c;margin-top:6px;font-weight:600;"><i data-icon="alert" data-size="12"></i> 选择题会自动在问卷末尾增加一道「读后感」输入，由访客作答</div>
     <div style="display:flex;gap:10px;margin-top:14px;">
       <button class="btn" style="flex:1;" id="svc-cancel">返回</button>
       <button class="btn primary" style="flex:1;" id="svc-send">发送</button>
@@ -34087,7 +34130,7 @@ function showSurveyCompose(charIds, opts = {}) {
         <div style="display:flex;align-items:center;gap:8px;">
           <span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">${i + 1}.</span>
           <input class="input" data-qidx="${i}" data-qf="text" value="${escapeHtml(q.text)}" placeholder="${q.type === 'choice' ? '问题内容' : '题目内容'}" style="flex:1;">
-          <button class="icon-btn" data-qdel="${i}">✕</button>
+          <button class="icon-btn" data-qdel="${i}"><i data-icon="close" data-size="17"></i></button>
         </div>
         ${q.type === 'choice' ? `
           <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
@@ -34095,7 +34138,7 @@ function showSurveyCompose(charIds, opts = {}) {
               <div style="display:flex;align-items:center;gap:6px;">
                 <span style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;width:16px;text-align:center;">${String.fromCharCode(65 + oi)}</span>
                 <input class="input" data-qidx="${i}" data-oidx="${oi}" data-of="opt" value="${escapeHtml(opt)}" placeholder="选项 ${String.fromCharCode(65 + oi)}" style="flex:1;">
-                <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项">✕</button>
+                <button class="icon-btn" data-odel="${i}:${oi}" title="删除该选项"><i data-icon="close" data-size="17"></i></button>
               </div>`).join('')}
             <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
               ${(q.options || []).length < 10
@@ -34256,7 +34299,7 @@ async function showSurveyList() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
       <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('listview', 20)} 查看问卷</div>
-      <button class="icon-btn" id="svl-close">✕</button>
+      <button class="icon-btn" id="svl-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="svl-fromtabs" id="svl-fromtabs" style="display:flex;gap:6px;margin-bottom:10px;"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
@@ -34277,7 +34320,7 @@ async function showSurveyList() {
             <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(sv.title || '问卷')}</div>
             <div style="font-size:12px;color:var(--text-tertiary);margin-top:3px;">${sv.from === 'them' ? (c ? c.name : 'TA') + ' 问你' : '你问 ' + (c ? c.name : 'TA')} · ${sv.questions.length} 题 · ${statusTxt}</div>
           </div>
-          <div data-selmark style="flex-shrink:0;">${sel ? `<span style="font-size:18px;color:var(--purple-soft);">✓</span>` : `<span style="font-size:11px;color:var(--text-tertiary);">${timeAgoStr(sv.createdAt)}</span>`}</div>
+          <div data-selmark style="flex-shrink:0;">${sel ? `<span style="font-size:18px;color:var(--purple-soft);"><i data-icon="check" data-size="15"></i></span>` : `<span style="font-size:11px;color:var(--text-tertiary);">${timeAgoStr(sv.createdAt)}</span>`}</div>
         </div>`;
       }).join('') || `<div style="text-align:center;color:var(--text-tertiary);font-size:13px;padding:24px;">还没有问卷</div>`}
     </div>
@@ -34311,7 +34354,7 @@ async function showSurveyList() {
         if (mark) {
           const sv = (_svlAll || []).find(x => x.id === id);
           mark.innerHTML = sel
-            ? `<span style="font-size:18px;color:var(--purple-soft);">✓</span>`
+            ? `<span style="font-size:18px;color:var(--purple-soft);"><i data-icon="check" data-size="15"></i></span>`
             : `<span style="font-size:11px;color:var(--text-tertiary);">${sv ? timeAgoStr(sv.createdAt) : ''}</span>`;
         }
         const cnt = $('#svl-count');
@@ -34518,7 +34561,7 @@ async function maybeTriggerOverclockIntro(force = false) {
     // 故障结束 → 弹窗说明（20260929bc：故障风非圆角）
     openModal(`
       <div style="text-align:center;padding:8px 4px;">
-        <div class="glitch-title" style="font-size:13px;margin-bottom:12px;">⚠ SYSTEM ERROR</div>
+        <div class="glitch-title" style="font-size:13px;margin-bottom:12px;"><i data-icon="alert" data-size="12"></i> SYSTEM ERROR</div>
         <div class="glitch-body" style="font-size:15px;font-weight:600;line-height:1.6;">Ops！系统好像发生了一些异常，前方出现了一个维度裂隙，请问你要前往查看吗？</div>
         <button class="btn primary block" id="oc-go" style="margin-top:18px;">前往查看</button>
       </div>`, { glitch: true });
@@ -34546,7 +34589,7 @@ async function maybeTriggerOverclockIntro(force = false) {
             clearInterval(iv);
             openModal(`
               <div style="text-align:center;padding:8px 4px;">
-                <div class="glitch-title" style="font-size:13px;margin-bottom:12px;">⚠ SIGNAL DETECTED</div>
+                <div class="glitch-title" style="font-size:13px;margin-bottom:12px;"><i data-icon="alert" data-size="12"></i> SIGNAL DETECTED</div>
                 <div class="glitch-body" style="font-size:15px;font-weight:600;line-height:1.6;">聊天页面好像发生了什么变化</div>
                 <button class="btn primary block" id="oc-ack" style="margin-top:18px;">去看看</button>
               </div>`, { glitch: true });
@@ -34709,7 +34752,7 @@ function _ocShowGlitch(done) {
     <div class="oc-glitch-slice"></div>
     <div class="oc-glitch-noise"></div>
     <div class="oc-scanline"></div>
-    <div class="oc-warning"><div class="oc-warn-tri">⚠</div><div class="oc-warn-txt">WARNING</div><div class="oc-warn-sub">SYSTEM ERROR · DIMENSION BREACH</div></div>`;
+    <div class="oc-warning"><div class="oc-warn-tri"><i data-icon="alert" data-size="15"></i></div><div class="oc-warn-txt">WARNING</div><div class="oc-warn-sub">SYSTEM ERROR · DIMENSION BREACH</div></div>`;
   document.body.appendChild(layer);
   // 满屏乱码（双层交替 + 随机刷新，双色错位营造 RGB 撕裂）
   const codeEl = layer.querySelector('.oc-glitch-code');
@@ -34935,7 +34978,7 @@ function _ocShowGiftDrop(kind, imgUrl) {
           const giftSrc = imgUrl || '';
           const giftHtml = giftSrc
             ? `<img class="oc-drop-gift" src="${giftSrc}" alt="礼物">`
-            : `<div class="oc-drop-gift oc-drop-gift-fallback">✦</div>`;
+            : `<div class="oc-drop-gift oc-drop-gift-fallback"><i data-icon="star" data-size="15"></i></div>`;
           return `<div class="oc-drop-box">
             <div class="oc-drop-box-shadow"></div>
             <div class="oc-drop-giftclip">${giftHtml}</div>
@@ -35118,7 +35161,7 @@ async function showOverclockHub(preferTab) { // 20260929bm：preferTab 可指定
     <style>${inlineStyles}</style>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('overclock',22)} 超频</div>
-      <button class="icon-btn" id="oc-close">✕</button>
+      <button class="icon-btn" id="oc-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:14px;">
       <button class="btn oc-tab" data-oc-tab="gift" style="flex:1;${true ? 'background:var(--purple);color:#141019;' : ''}">${icon('gift',16)} 礼物</button>
@@ -35170,7 +35213,7 @@ async function _ocGiftPanelHtml() {
   // 标题只留「礼物库」并允许收缩省略，说明下沉为独立小字行，任何宽度都不再换行错版
   return `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
-        <div style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🎁 礼物库</div>
+        <div style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><i data-icon="gift" data-size="12"></i> 礼物库</div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="oc-side-action" id="oc-gift-batch" title="批量管理">${icon('trash',19)}</button>
           <button class="oc-side-action" id="oc-gift-cabinet" title="礼物柜">${icon('archive',19)}</button>
@@ -35193,7 +35236,7 @@ async function _ocGiftPanelHtml() {
 async function _ocSurprisePanelHtml() {
   return `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
-        <div style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">✨ 惊喜</div>
+        <div style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><i data-icon="sparkle" data-size="12"></i> 惊喜</div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="oc-side-action" id="oc-surprise-batch" title="批量管理">${icon('trash',19)}</button>
           <button class="oc-side-action" id="oc-add-menu-surprise" title="添加">${icon('plus',19)}</button>
@@ -35232,7 +35275,7 @@ async function _ocGiftCabinetHtml() {
   return `
     <div style="display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;margin-bottom:12px;">
       <button class="icon-btn" id="gc-back">←</button>
-      <div style="text-align:center;font-size:18px;font-weight:600;">🎁 礼物柜</div>
+      <div style="text-align:center;font-size:18px;font-weight:600;"><i data-icon="gift" data-size="15"></i> 礼物柜</div>
       <button class="icon-btn" id="gc-tap-toggle" title="轻点卡片查看详情（开/关）" style="width:34px;height:34px;font-size:16px;margin-right:4px;${_gcTapDetail ? 'color:var(--purple-soft);background:var(--purple-dim);' : 'color:var(--text-tertiary);'}">${icon('eye', 16)}</button>
       <button class="btn" id="gc-view-toggle" style="padding:7px 12px;${isDeck ? '' : 'background:var(--purple);color:#141019;'}">${icon(isDeck ? 'listview' : 'cards', 15)}　${isDeck ? '列表' : '卡片'}</button>
     </div>
@@ -35255,7 +35298,7 @@ async function _ocGiftCabinetHtml() {
       <div id="gc-list" style="display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow:auto;">
         ${mine.map((g, i) => `
           <div class="gc-item" data-gid="${g.id}" data-gidx="${i}" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;cursor:pointer;display:flex;align-items:center;gap:12px;">
-            <div style="width:44px;height:44px;border-radius:10px;overflow:hidden;flex:none;display:flex;align-items:center;justify-content:center;background:var(--bg);">${_ocGiftImgOf(g) ? `<img src="${imgSrcAttr(_ocGiftImgOf(g))}" style="width:44px;height:44px;object-fit:cover;">` : '🎁'}</div>
+            <div style="width:44px;height:44px;border-radius:10px;overflow:hidden;flex:none;display:flex;align-items:center;justify-content:center;background:var(--bg);">${_ocGiftImgOf(g) ? `<img src="${imgSrcAttr(_ocGiftImgOf(g))}" style="width:44px;height:44px;object-fit:cover;">` : '<i data-icon="gift" data-size="26"></i>'}</div>
             <div style="flex:1;min-width:0;">
               <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.giftName)}</div>
               <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px;">${isIn
@@ -35372,7 +35415,7 @@ function _gcBindDeck(startIdx = 0) {
           <span class="gc-dc-who">${escapeHtml(who)}</span>
           <span class="gc-dc-tag">${fromIn ? '收到的礼物' : '送出的礼物'}</span>
         </div>
-        <div class="gc-dc-img">${img ? `<img src="${imgSrcAttr(img)}" alt="">` : '🎁'}</div>
+        <div class="gc-dc-img">${img ? `<img src="${imgSrcAttr(img)}" alt="">` : '<i data-icon="gift" data-size="26"></i>'}</div>
         <div class="gc-dc-name">${escapeHtml(g.giftName || '礼物')}</div>
         <div class="gc-dc-body">${g.giftDesc ? escapeHtml(g.giftDesc) : ''}</div>
         <div class="gc-dc-foot">
@@ -35557,7 +35600,7 @@ async function _ocBatchManageGiftLib() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:18px;font-weight:600;">批量管理礼物库</div>
-      <button class="icon-btn" id="glb-close">✕</button>
+      <button class="icon-btn" id="glb-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">自定义礼物 ${customs.length} 个 · 点选要删除的（预设礼物为内置，不提供删除）</div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;" id="glb-list">
@@ -35608,7 +35651,7 @@ function showOcGiftInfo(g, price) {
     await ocRestoreHubScroll();
   };
   const img = _ocGiftImgOf(g);
-  const imgHtml = img ? `<img src="${imgSrcAttr(img, true)}" style="width:132px;height:132px;object-fit:cover;border-radius:18px;display:block;margin:0 auto;box-shadow:0 0 32px rgba(167,139,250,0.45),0 0 0 1px rgba(255,255,255,0.15) inset;">` : `<div style="font-size:60px;text-align:center;">🎁</div>`;
+  const imgHtml = img ? `<img src="${imgSrcAttr(img, true)}" style="width:132px;height:132px;object-fit:cover;border-radius:18px;display:block;margin:0 auto;box-shadow:0 0 32px rgba(167,139,250,0.45),0 0 0 1px rgba(255,255,255,0.15) inset;">` : `<div style="font-size:60px;text-align:center;"><i data-icon="gift" data-size="40"></i></div>`;
   openModal(`
     <div class="oc-star-modal">
       <div class="oc-star-field"></div>
@@ -35617,7 +35660,7 @@ function showOcGiftInfo(g, price) {
       <div style="position:relative;z-index:2;">
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <div style="font-size:14px;color:rgba(230,222,255,0.82);">礼物 · ${g.custom ? '自定义' : '预设'}</div>
-          <button class="icon-btn" id="ocgi-close" style="color:rgba(230,222,255,0.9);">✕</button>
+          <button class="icon-btn" id="ocgi-close" style="color:rgba(230,222,255,0.9);"><i data-icon="close" data-size="17"></i></button>
         </div>
         <div style="text-align:center;padding:14px 0 0;">${imgHtml}</div>
         <div style="text-align:center;font-size:20px;font-weight:750;color:#f4efff;margin-top:14px;">${escapeHtml(g.name)}</div>
@@ -35642,12 +35685,12 @@ async function _ocBatchDeleteGifts() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:18px;font-weight:600;">批量管理礼物</div>
-      <button class="icon-btn" id="gbd-close">✕</button>
+      <button class="icon-btn" id="gbd-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">点选要删除的礼物（当前：${isIn ? '收到的' : '送出的'}）</div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;" id="gbd-list">
       ${mine.map(g => `<div class="gbd-item" data-gid="${g.id}" style="background:var(--bg-elevated-2);border-radius:10px;padding:11px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;">
-        <span style="font-size:17px;">${_ocGiftImgOf(g) ? `<img src="${imgSrcAttr(_ocGiftImgOf(g))}" style="width:26px;height:26px;object-fit:cover;border-radius:7px;">` : '🎁'}</span>
+        <span style="font-size:17px;">${_ocGiftImgOf(g) ? `<img src="${imgSrcAttr(_ocGiftImgOf(g))}" style="width:26px;height:26px;object-fit:cover;border-radius:7px;">` : '<i data-icon="gift" data-size="26"></i>'}</span>
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(g.giftName)}</span>
       </div>`).join('') || '<div style="text-align:center;color:var(--text-tertiary);padding:20px;">没有可删除的礼物</div>'}
     </div>
@@ -35676,7 +35719,7 @@ async function showOcAddMenu() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:17px;font-weight:650;">添加超频内容</div>
-      <button class="icon-btn" id="ocam-close">✕</button>
+      <button class="icon-btn" id="ocam-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <button class="btn block" id="ocam-gift" style="margin-bottom:9px;">${icon('gift',17)}　自定义添加礼物</button>
     ${surpriseUnlocked ? `<button class="btn block" id="ocam-surprise">${icon('sparkle',17)}　自定义添加惊喜</button>` : ''}
@@ -35693,14 +35736,14 @@ function showOcAddGift() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:18px;font-weight:600;">自定义礼物</div>
-      <button class="icon-btn" id="ocag-close">✕</button>
+      <button class="icon-btn" id="ocag-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div class="field">
       <label>礼物图片</label>
       <div style="display:flex;align-items:center;gap:10px;">
         <label class="btn" for="ocag-img" style="cursor:pointer;">上传图片</label>
         <input type="file" id="ocag-img" accept="image/*" style="display:none;">
-        <span id="ocag-img-prev" style="font-size:22px;">🎁</span>
+        <span id="ocag-img-prev" style="font-size:22px;"><i data-icon="gift" data-size="19"></i></span>
       </div>
     </div>
     <div class="field"><label>礼物名称</label><input class="input" id="ocag-name" maxlength="20" placeholder="礼物名称"></div>
@@ -35777,7 +35820,7 @@ async function _ocBatchManageSurprises() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:18px;font-weight:600;">批量管理惊喜</div>
-      <button class="icon-btn" id="srb-close">✕</button>
+      <button class="icon-btn" id="srb-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">自定义惊喜 ${customs.length} 条 · 点选要删除的（预设惊喜为内置，不提供删除）</div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;" id="srb-list">
@@ -35813,7 +35856,7 @@ function showOcAddSurprise() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:18px;font-weight:600;">自定义惊喜</div>
-      <button class="icon-btn" id="ocas-close">✕</button>
+      <button class="icon-btn" id="ocas-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;">格式：Ta（这里填动作），决定跨越维度，（这里填描述），（这里填大字）！</div>
     <div class="field">
@@ -35856,11 +35899,11 @@ function showOcSendGift(g, price) {
   if (playerProfile.wallet < price) { miniToast('钱包金额不足了'); return; }
   if (_ocSending) return;
   const img = _ocGiftImgOf(g);
-  const imgHtml = img ? `<img src="${imgSrcAttr(img, true)}" style="width:120px;height:120px;object-fit:cover;border-radius:16px;display:block;margin:0 auto;box-shadow:0 0 30px rgba(167,139,250,0.45);">` : `<div style="font-size:56px;text-align:center;">🎁</div>`;
+  const imgHtml = img ? `<img src="${imgSrcAttr(img, true)}" style="width:120px;height:120px;object-fit:cover;border-radius:16px;display:block;margin:0 auto;box-shadow:0 0 30px rgba(167,139,250,0.45);">` : `<div style="font-size:56px;text-align:center;"><i data-icon="gift" data-size="40"></i></div>`;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:16.5px;font-weight:600;max-width:82%;">把「${escapeHtml(g.name)}」塞进维度裂隙</div>
-      <button class="icon-btn" id="ocsg-close">✕</button>
+      <button class="icon-btn" id="ocsg-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="text-align:center;padding:6px 0 2px;">${imgHtml}</div>
     <div style="font-size:12px;color:var(--text-tertiary);text-align:center;margin-top:8px;">花费 ¥${price} · 我的钱包 ¥${playerProfile.wallet}</div>
@@ -36102,7 +36145,7 @@ async function _ocShowFirstSurpriseFlow(c, s) {
       <i class="oc-glt-side oc-glt-l1"></i><i class="oc-glt-side oc-glt-l2"></i>
       <i class="oc-glt-side oc-glt-r1"></i><i class="oc-glt-side oc-glt-r2"></i>
       <div class="oc-first-card">
-        <div class="oc-first-glitch">⚠ SIGNAL DETECTED</div>
+        <div class="oc-first-glitch"><i data-icon="alert" data-size="15"></i> SIGNAL DETECTED</div>
         <div class="oc-first-title">好像掉出了什么奇怪的东西</div>
         <button class="btn primary block" id="oc-first-detect" style="margin-top:16px;">交由系统检测</button>
       </div>`;
@@ -36366,7 +36409,7 @@ function _ocShowSurpriseBigText(s, opts = {}) {
   el.innerHTML = `
     <div class="ocsb-card">
       ${opts.head ? `<div class="ocsb-head">${escapeHtml(opts.head)}</div>` : ''}
-      <div class="ocsb-tag">✨ 惊喜</div>
+      <div class="ocsb-tag"><i data-icon="sparkle" data-size="16"></i> 惊喜</div>
       <div class="ocsb-main"><span class="ocsb-type"></span><span class="ocsb-caret">|</span></div>
       <div class="ocsb-sub">${escapeHtml(sub)}</div>
       <div class="ocsb-hint">点按任意处继续</div>
@@ -36493,7 +36536,7 @@ function _ocShowGiftModal(gc, meta, onClose) {
   const imgHtml = img
     ? `<img src="${imgSrcAttr(img)}" style="width:172px;height:172px;object-fit:cover;border-radius:22px;box-shadow:0 0 46px rgba(167,139,250,0.5),0 0 0 1px rgba(255,255,255,0.16) inset;">
        <div style="margin:12px auto 0;width:150px;height:1px;background:linear-gradient(90deg,transparent,rgba(196,168,255,0.7),transparent);"></div>`
-    : '<div style="font-size:72px;">🎁</div>';
+    : '<div style="font-size:72px;"><i data-icon="gift" data-size="40"></i></div>';
   openModal(`
     <div class="oc-star-modal">
       <div class="oc-star-field"></div>
@@ -36502,7 +36545,7 @@ function _ocShowGiftModal(gc, meta, onClose) {
       <div style="position:relative;z-index:2;">
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <div style="font-size:16px;font-weight:600;color:rgba(241,234,255,0.96);">${escapeHtml((meta && meta.head) || '礼物详情')}</div>
-          <button class="icon-btn" id="ocgm-close" style="color:rgba(230,222,255,0.9);">✕</button>
+          <button class="icon-btn" id="ocgm-close" style="color:rgba(230,222,255,0.9);"><i data-icon="close" data-size="17"></i></button>
         </div>
         <div style="text-align:center;padding:14px 0 0;">${imgHtml}</div>
         <div style="text-align:center;font-size:21px;font-weight:750;color:#f4efff;margin-top:16px;letter-spacing:0.5px;">${escapeHtml(gc.giftName || '礼物')}</div>

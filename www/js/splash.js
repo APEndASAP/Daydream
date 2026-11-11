@@ -76,6 +76,35 @@
     : document.body;
   var LOOP = false;
   try { LOOP = !!(host && host.getAttribute && host.getAttribute('data-loop') === '1'); } catch (e) {}
+
+  /* ==== 20261111：开屏播放策略（玩家可在总设置里选） ====
+     · 默认：只在「这台设备第一次启动」播一次，之后启动直接进主页
+       （网络慢时不用干等开屏资源加载）
+     · 总设置「每次进入都播放开屏动画」打开后：每次启动都完整播放
+     判断必须在这里同步做完——本文件是 <script> 同步执行、下面马上就创建
+     全屏 canvas（z-index 极高、底色深灰），一旦先建后拆，玩家会看到
+     「闪一下黑屏再消失」，比不播更难看。所以用 localStorage（同步），
+     不用 IndexedDB（异步，返回时动画已经画了几帧）。
+     键名与 app.js 共用：bmSplashEvery（'1' 每次播） / bmSplashSeen（'1' 已播过）
+     LOOP=1（独立预览宿主）永远播放，不受开关约束。 */
+  if (!LOOP) {
+    var _spPlay = true;
+    try {
+      var _spEvery = (localStorage.getItem('bmSplashEvery') === '1');
+      var _spSeen = (localStorage.getItem('bmSplashSeen') === '1');
+      _spPlay = _spEvery || !_spSeen;
+      // 决定要播就立刻记账：即便玩家中途切后台/杀进程，也算「已经见过」
+      // （否则冷启动异常退出会让「只播一次」变成每次启动都重播）
+      if (!_spSeen) localStorage.setItem('bmSplashSeen', '1');
+    } catch (e) { _spPlay = true; }   // 存储不可用（隐私模式等）→ 退回每次都播，不夺走玩家体验
+    if (!_spPlay) {
+      /* 不播：不建 canvas、不建按钮、不起 RAF、不加载 BGM，一个 DOM 都不留。
+         只补一个「开屏已结束」时刻——app.js 的遮罩点击穿透保护读它。 */
+      try { window.__bmSplashEndAt = Date.now(); } catch (e) {}
+      return;
+    }
+  }
+
   // 20261002cf：移除「prefers-reduced-motion 则跳过开屏」——这是误判。
   //   开屏动画是前台必播内容，与「挂后台省电」无关；用户手机只要在软件内，动画一个都不能少。
   //   省电跳过只应由后台状态（bmSetBgState / document.hidden）触发，不在此处。
