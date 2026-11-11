@@ -10539,7 +10539,7 @@ function pokeFxHtml(dir) {
   const dxm = (d) => (dir === 'L' ? d : -d);      // 飘散方向同步取反
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round">' +
     '<path class="sq-big" d="' + pokeBlobD(BX, 12, 5.0, ang, 0, 0, 1, 1) + '"/>' +
-    '<circle class="sq-small" cx="' + SX + '" cy="12" r="2.9"/>' +
+    '<circle class="sq-small" cx="' + SX + '" cy="12" r="3.15"/>' +
     '<g class="chStar"><path d="' + pokeStarD(12, 3.6, 2.2) + '"/></g>' +
     pokeHeartSvg(hx(13.4), 10.9, dxm(7), .93) +
     pokeHeartSvg(hx(11.2), 10.1, dxm(-2), 1.12) +
@@ -10562,7 +10562,7 @@ function playPokeSquish(host) {
 
   const BX = dir === 'L' ? 16.4 : 7.6;
   const SX0 = dir === 'L' ? 4.2 : 19.8;
-  const SX1 = dir === 'L' ? 10.6 : 13.4;
+  const SX1 = dir === 'L' ? 10.2 : 13.8;
   const BY = 12, R = 5.0;
   const ang0 = dir === 'L' ? Math.PI : 0;
   const rest = pokeBlobD(BX, BY, R, ang0, 0, 0, 1, 1);
@@ -10605,9 +10605,9 @@ function playPokeSquish(host) {
     }
 
     const ang = Math.atan2(sy, sx - BX);
-    big.setAttribute('d', pokeBlobD(BX + 0.3 * depth, BY, R, ang,
-      0.34 + 0.05 * depth, 0.15 + 0.03 * depth,
-      1 - 0.10 * depth, 1 + 0.01 * depth));
+    big.setAttribute('d', pokeBlobD(BX + 0.45 * depth, BY, R, ang,
+      0.40 + 0.08 * depth, 0.16 + 0.04 * depth,
+      1 - 0.16 * depth, 1 + 0.06 * depth));
     small.setAttribute('transform',
       'translate(' + sx.toFixed(2) + ' ' + (BY + sy).toFixed(2) + ') scale(' +
       (1 - 0.09 * depth).toFixed(3) + ' ' + (1 + 0.05 * depth).toFixed(3) + ')' +
