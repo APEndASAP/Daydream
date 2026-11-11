@@ -8,6 +8,7 @@
   "android": {
     "allowMixedContent": false,
     "permissions": [
+      "android.permission.VIBRATE",
       "android.permission.MANAGE_EXTERNAL_STORAGE",
       "android.permission.ACCESS_FINE_LOCATION",
       "android.permission.ACCESS_COARSE_LOCATION",
