@@ -2296,8 +2296,11 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
 .poke-fx {
   position: relative;
   display: block;
-  width: 44px;
-  height: 44px;
+  width: 30px;
+  height: 30px;
+  /* 20261111：负边距抵消高度差 —— 30px 的球塞进胶囊原有的 6px 内边距里，
+     垫片高度保持「纯文字」时的原样（约 32px），不让动画去撑大气泡。 */
+  margin: -6px 0;
   flex-shrink: 0;
   color: currentColor;      /* 跟着 .poke-msg 的紫色走，换主题自动变 */
 }
