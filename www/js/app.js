@@ -10630,7 +10630,9 @@ async function sendPlayerPoke(text) {
 
 /* 20261111：双击消息旁的头像触发戳一戳 ——
    双击「对方头像」= 你主动戳 TA（以玩家为主，文案取角色卡的玩家戳一戳库）；
-   双击「自己的头像」= TA 反过来主动戳你；
+   双击「自己的头像」= 你戳你自己（不是角色戳你）；
+   角色也会偶尔自己戳自己一下，但那是独立的一条线（见 maybeCharSelfPoke），
+   不跟这里的双击混在一起。
    用 document 上的事件委托，历史消息、新消息、窗口滑动复用都自动生效，
    不需要在每条消息上单独绑事件。700ms 内只认一次，避免连点刷屏。 */
 let _lastAvatarPoke = 0;
@@ -10660,11 +10662,86 @@ document.addEventListener('dblclick', async (e) => {
       : ('戳了戳 ' + (c ? c.name : 'TA'));
     await sendPlayerPoke(text);
   } else {
-    // 双击「自己的头像」= 让 TA 反过来戳你（角色主动的戳一戳）
-    const c = characters.find(x => x.id === currentCharId);
-    if (c) await sendCharPoke(c);
+    // 20261111 修正：双击「自己的头像」是「你戳你自己」，
+    // 不再让角色反过来戳你（玩家点的自己，主体就该是玩家）。
+    // 自戳走独立的节流，不与上面那条常规戳一戳共用计时。
+    await sendSelfPoke('me');
   }
 });
+
+/* ============================================================
+   20261111：戳自己（自戳）—— 单独的一条线
+   ------------------------------------------------------------
+   规则：
+     1. 玩家双击自己的头像 → 玩家戳自己；
+     2. 角色也会偶尔自己戳自己一下（由 maybeCharSelfPoke 自主触发）；
+     3. 这两件事都不走常规戳一戳那套节流/概率，间隔单独算，
+        而且定得比常规戳一戳长很多（默认 30~90 分钟随机一次）。
+   ============================================================ */
+const SELF_POKE_TAP_GAP = 1200;              // 玩家双击自戳的防连点（比常规 700ms 更宽）
+const SELF_POKE_GAP_MIN = 30 * 60 * 1000;    // 角色自戳最短间隔：30 分钟
+const SELF_POKE_GAP_MAX = 90 * 60 * 1000;    // 角色自戳最长间隔：90 分钟
+let _lastSelfPokeTap = 0;
+
+/* 每个角色单独抽一个间隔（30~90 分钟随机），抽完存起来复用，
+   直到这次自戳发生后再重新抽 —— 这样间隔是「随机但固定」的，
+   不会每条消息都重新掷一次导致忽长忽短。 */
+function selfPokeGapOf(charId) {
+  const key = 'bmSelfPokeGap_' + charId;
+  let v = 0;
+  try { v = Number(localStorage.getItem(key) || 0); } catch (e) {}
+  if (!v || !isFinite(v)) {
+    v = SELF_POKE_GAP_MIN + Math.random() * (SELF_POKE_GAP_MAX - SELF_POKE_GAP_MIN);
+    try { localStorage.setItem(key, String(v)); } catch (e) {}
+  }
+  return v;
+}
+
+function canCharSelfPoke(charId) {
+  let last = 0;
+  try { last = Number(localStorage.getItem('bmSelfPokeAt_' + charId) || 0); } catch (e) {}
+  return Date.now() - last >= selfPokeGapOf(charId);
+}
+
+function markCharSelfPoke(charId) {
+  try {
+    localStorage.setItem('bmSelfPokeAt_' + charId, String(Date.now()));
+    localStorage.removeItem('bmSelfPokeGap_' + charId); // 下一次重新抽间隔
+  } catch (e) {}
+}
+
+/* 发一条「自戳」消息。from='me' → 你 戳了戳自己；from='them' → 角色名 戳了戳自己
+   charId 可选：角色自戳是延迟执行的，期间玩家可能切到别的角色，
+   必须把当时的角色 id 带过来，否则会记到切换后那个角色头上。 */
+async function sendSelfPoke(from, charId) {
+  if (currentGroupId) { miniToast('戳一戳暂时只在单聊里玩'); return; }
+  const cid = charId || currentCharId;
+  if (!cid) return;
+  const now = Date.now();
+  if (from === 'me') {
+    if (now - _lastSelfPokeTap < SELF_POKE_TAP_GAP) return;
+    _lastSelfPokeTap = now;
+  }
+  const m = { id: uid('msg'), charId: cid, from: from, type: 'poke', content: '戳了戳自己', time: now };
+  await idbPut('messages', m);
+  if (currentCharId === cid && document.body.dataset.view === 'chat') {
+    appendMessage(m);
+  } else {
+    renderChatList();
+  }
+}
+
+/* 角色自己戳自己：只在冷却到期后才有机会触发，且概率压得低，
+   与常规戳一戳（角色戳玩家）的判定完全分开，互不占用。 */
+async function maybeCharSelfPoke(c) {
+  if (!c) return false;
+  if (!canCharSelfPoke(c.id)) return false;
+  if (Math.random() >= 0.15) return false;   // 15% 概率，配合 30~90 分钟冷却
+  markCharSelfPoke(c.id);
+  const cid = c.id;
+  setTimeout(() => { sendSelfPoke('them', cid); }, 1200 + Math.random() * 2200);
+  return true;
+}
 
 /* 角色戳玩家：AI 模式下由 AI 生成戳一戳文案（失败回退字卡库），
    字卡模式从「访客戳一戳」库抽文案；都过滤该访客禁词；展示「访客名 + 文案」 */
@@ -10714,9 +10791,12 @@ async function sendCharPoke(c) {
 }
 
 /* 角色发消息后随机附带一次戳一戳（延迟 0.8~2.5 秒，像顺手戳了一下）
-   20260929ah：AI 模式不再停用——两种模式都按概率触发，AI 模式文案由 AI 生成 */
+   20260929ah：AI 模式不再停用——两种模式都按概率触发，AI 模式文案由 AI 生成
+   20261111：先看「角色自己戳自己」——它是独立的一条线，冷却没到就直接跳过，
+             冷却到了也只有 15% 机会，掷中就不再走下面的常规戳玩家。 */
 async function maybeCharPoke(c) {
   const cs = getCharChatSettings(c);
+  if (await maybeCharSelfPoke(c)) return;
   const chance = charPokeChance(cs.charPoke ?? chatSettings.charPoke ?? 'mid');
   if (chance > 0 && Math.random() < chance) {
     setTimeout(() => sendCharPoke(c), 800 + Math.random() * 1700);
