@@ -12070,6 +12070,14 @@ function openSeasonLayer(cid) {
   }
   layer.classList.add('show');
   _seasonCurrentCharId = cid || currentCharId || null;
+  /* 20261112 修「从 2 号进来还显示 1 号」：
+     iframe 只加载一次、season-init 只在首帧下发过一次，所以每次打开都要
+     补一条只带 id 的 season-focus，让四季就地切角色（不重载 → 识别模型、
+     相机权限、滚动位置都保住）。刚加载的那次靠 season-init 里的
+     currentCharId 就够了（此时 _seasonCurrentCharId 已赋值）。 */
+  if (frame && frameAlive && _seasonCurrentCharId){
+    try { frame.contentWindow.postMessage({ type: 'season-focus', charId: _seasonCurrentCharId }, '*'); } catch (e) {}
+  }
   // 四季全屏层打开 = 离开聊天页观感，打字卡圆点/召唤悬浮窗立即收起
   try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
 }
@@ -12253,6 +12261,9 @@ async function _seasonPushInit() {
     const d = ev.data;
     if (!d || typeof d !== 'object') return;
     if (d.type === 'season-ready') {
+      _seasonPushInit();
+    } else if (d.type === 'season-need-init') {
+      /* 四季里没有这个角色（角色是 init 之后才新建的）→ 重发一次完整角色表 */
       _seasonPushInit();
     } else if (d.type === 'season-close') {
       // 四季栈见底（根页面）才关闭：还原视图到进入时的聊天页（若仍在聊天视图）
@@ -12509,9 +12520,19 @@ async function _seasonBgTick() {
        （TA 每天每株最多 3 次水 + 2 次肥，和四季页的账本是同一本），
        最后按「浇水 / 施肥 / 静静看着」各留一条（带明细），不再糊成一条大摘要。 */
     const careGap = _SEASON_BG.careGapMs;
-    let nextCare = planet.careNextAt || 0;
+    /* ★ 20261112：每颗星球一条自己的时间线（planet.careNextAtBy[cid]）。
+       以前所有角色共用一根 planet.careNextAt —— 第一个角色补完就把它推到未来，
+       后面的角色看到「还没到点」直接跳过，等于只有一个人在被照料。 */
+    const nextBy = planet.careNextAtBy || (planet.careNextAtBy = {});
+    const isViewing = (cid === (planet.viewId || planet.ownerId));
+    let nextCare = (typeof nextBy[cid] === 'number' && nextBy[cid]) || 0;
+    /* 老档兼容：那时只有一根全局基准，它只属于「当时在看的那个角色」 */
+    if (!nextCare && !Object.keys(nextBy).length && isViewing) {
+      nextCare = planet.careNextAt || 0;
+    }
     if (!nextCare) {
-      planet.careNextAt = now + careGap;
+      nextBy[cid] = now + careGap;
+      if (isViewing) planet.careNextAt = nextBy[cid];
       dirty = true;
     } else if (nextCare <= now && driest) {
       const CAP = 3 * 86400000;                    /* 最多补 3 天 */
@@ -12564,7 +12585,8 @@ async function _seasonBgTick() {
         }
         t += careGap;
       }
-      planet.careNextAt = t;
+      nextBy[cid] = t;
+      if (isViewing) planet.careNextAt = t;
       st.lastCareAt = now;
       dirty = true;
       if (didW || didF || looked) {

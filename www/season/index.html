@@ -2050,6 +2050,8 @@ body{
   #vPlanet > .btn{display:block;max-width:min(340px,100%);margin:0 auto 10px}
   /* —— TA 留言：宽屏放宽可视高度，别只能看两条 —— */
   #vPlanet > .pn-card .pn-list{max-height:260px}
+  /* 展开明细时同样要放高：这条选择器比 .pn-list.open 更具体，不一并写就会被压回 260px */
+  #vPlanet > .pn-card .pn-list.open{max-height:430px}
   /* —— 书本 / 书签集：单页刊物在宽屏上居中，两侧留白比拉宽好看 —— */
   .bookwrap{max-width:min(1020px,100%);margin:0 auto}
   /* —— 弹层：宽屏下不要被拉成整屏宽 —— */
@@ -9462,7 +9464,12 @@ const PLANET = { owner:'', ownerId:'', viewId:'', plants:[], pool:{}, inited:fal
                  /* 20261109：按角色记「这个角色已经收到过哪些品类的书签」。
                     键 = charId，值 = { 'plant:栀子':true, 'planet:海':true }。
                     用途：某个角色第一次收到该品类时一定回一句（见 giftReply）。 */
-                 seenKinds:{} };
+                 seenKinds:{},
+                 /* 20261112：每个角色一颗星球、各自照料 ——
+                    键 = charId，值 = 「这颗星球下一次该到点照料」的时间戳。
+                    以前只有一根全局 careNextAt，谁先进来就只照料谁；
+                    玩家大部分时间在聊天，别的角色的星球等于停摆。 */
+                 careNextAtBy:{} };
 const PL_W = 160, PL_CX = 80, PL_CY = 88, PL_R = 54;
 const PL_MAX = 9;                 /* 一颗星球最多 9 株：3×3 密度刚好，再多就糊成一片 */
 let plBase = null, plTimer = null, plantHit = null, plWarm = false;
@@ -9543,11 +9550,66 @@ function applySeasonGaps(g){
   if (typeof g.aiGap === 'number') INTERACT.aiMinGapMs = g.aiGap * 60000;
   return true;
 }
+/* 20261112：把四季就地切到「玩家这次进入的那个角色」
+   ------------------------------------------------------------
+   用户实测的串号：iframe 只在第一次打开时加载，season-init 也只在那一帧下发一次。
+   从 1 号角色退出去、再从 2 号角色进来时，这里 PLANET.viewId 还停在 1 号 →
+   星球的留言/互动、书签集的「专属」页全显示 1 号的东西；
+   刷新一次（iframe 重载）才变对，再从 1 号进来又变成 2 号。
+   所以宿主每次 openSeasonLayer 都补一条 season-focus，这里把视角、主人、
+   书签集定格一起切过去并就地重绘（不整页刷新，识别模型和相机都不用重来）。 */
+function seasonFocusChar(id){
+  if (!id) return;
+  id = String(id);
+  const c = (typeof CHARS !== 'undefined' && CHARS.length)
+    ? CHARS.find(x => String(x.id) === id) : null;
+  if (!c){
+    /* 角色是四季初始化之后才新建的（CHARS 里没有）→ 让宿主重发一次完整 init */
+    try { window.parent.postMessage({ type: 'season-need-init' }, '*'); } catch(e){}
+    return;
+  }
+  const changed = (PLANET.viewId !== c.id);
+  if (changed){
+    /* ① 先把老档里「所有人的株挤在一个数组」按 byId 归池，
+          否则切过去看到的是上一个人的株（这一步必须在换池之前做） */
+    try { migratePlanetPools(PLANET.viewId ? null : c.id); } catch(e){}
+    /* ② 走真正的「换星球」：把旧角色的池存回去、换成新角色的池，
+          底图/角色形态/植株列表/留言/画布一起重画 */
+    try { switchPlanetChar(c.id); } catch(e){}
+  } else {
+    PLANET.owner = c.name;
+    PLANET.ownerId = c.id;
+  }
+  /* ③ 书签集「当前角色」的定格跟着换（换人只有一条路：退出四季、从别人的聊天框进来） */
+  bookScopeCharId = c.id;
+  bookScopeCharName = c.name;
+  _HOST_CHAR_ID = c.id;
+  try { applyScopeUI(); } catch(e){}
+  if (typeof curView !== 'undefined' && curView === 'vBook'){ try { renderBookPage(); } catch(e){} }
+  /* 就地重绘 */
+  try { renderNotes(); } catch(e){}
+  try { renderPlanetList(); } catch(e){}
+  try { drawPlanetFrame(); } catch(e){}
+  /* 20261112：这颗星球如果还没排过照料，现在就给它排上 ——
+     否则要等下一次心跳（最长 90 分钟）才会发现「这颗也有人住」；
+     顺手把心跳重排一次，让新星球的时间线立刻生效。 */
+  try { if (carePoolOf(c.id).length) careEnsureNextAt(c.id); } catch(e){}
+  try { if (careTimer) { clearTimeout(careTimer); careTimer = null; } } catch(e){}
+  try { startCare(); } catch(e){}
+  try { seasonSave(); } catch(e){}
+}
+
 /* 20261108：接入主项目——监听父页面 season-init 消息，替换角色列表 + 字卡池 */
 (function seasonHostBridge(){
   window.addEventListener('message', function(ev){
     const d = ev.data;
     if (!d || typeof d !== 'object') return;
+    /* 20261112 修串号：宿主每次打开四季层都会补发这条（只带角色 id）。
+       season-init 一辈子只发一次，靠它切角色必然串到上一次进去的那个人。 */
+    if (d.type === 'season-focus'){
+      try { seasonFocusChar(d.charId); } catch(e){}
+      return;
+    }
     if (d.type === 'season-init'){
       try {
         if (Array.isArray(d.chars)){
@@ -9578,18 +9640,11 @@ function applySeasonGaps(g){
         //   CHARS 被主项目替换后 'xm' 已失效 → 书签集「当前角色」/ 星球都绑错成 CHARS[0]。
         //   这里把 viewId、ownerId、bookScopeCharId 一起切到玩家真正进入的角色，并确保
         //   pool[该角色] 就绪，这样「从谁的聊天框进来就是谁」。
+        /* 20261112：统一走 seasonFocusChar —— 它会把老档的株按 byId 归池，
+           再走 switchPlanetChar 真正换到「这个角色的星球」（以前只改 viewId，
+           于是星球上画的、列的还是上一个人的株）。 */
         if (d.currentCharId){
-          try {
-            const c = CHARS.find(x => x.id === d.currentCharId);
-            if (c && typeof PLANET !== 'undefined'){
-              PLANET.viewId = c.id;
-              PLANET.ownerId = c.id;
-              PLANET.owner = c.name;
-              if (!PLANET.pool[c.id]) PLANET.pool[c.id] = PLANET.plants;
-              if (typeof bookScopeCharId !== 'undefined'){ bookScopeCharId = c.id; bookScopeCharName = c.name; }
-              _HOST_CHAR_ID = c.id;
-            }
-          } catch(e){}
+          try { seasonFocusChar(d.currentCharId); } catch(e){}
         }
       } catch(e){}
     }
@@ -9983,6 +10038,8 @@ function seasonSerialize(){
     /* 20261112：照料「下一次该到点」的时间戳。
        有了它，App 被关掉 / 被系统杀掉之后重新打开，才知道漏了多久、要补几次。 */
     planet.careNextAt = PLANET.careNextAt || 0;
+    /* 20261112：每个角色各自的下一次照料时间（含不在看的那些星球） */
+    planet.careNextAtBy = Object.assign({}, PLANET.careNextAtBy || {});
   } catch(e){}
   return {
     __season: true, version: '1.1', exportedAt: Date.now(),
@@ -10027,6 +10084,9 @@ function seasonLoad(){
     }
   } catch(e){}
   try { _seasonApply(d); } catch(e){ return false; }
+  /* 20261112：老档的株按 byId 归池不在这里做 —— 读档时还不知道「这次是谁进来」
+     （PLANET.viewId 要等 season-init 才有值），归错就会把别人的株算到这个人头上。
+     统一等 seasonFocusChar 第一次跑时再归池。 */
   /* 老存档刚拆成四本账 → 立刻回写一次新格式（幂等；写失败也不影响这次运行） */
   if (_splitMigrated){ _splitMigrated = false; try { seasonSave(); } catch(e){} }
   return true;
@@ -10157,6 +10217,12 @@ function _seasonApply(d){
     if (gp.pending && typeof gp.pending === 'object') PLANET.pending = Object.assign({}, gp.pending);
     if (gp.bg && typeof gp.bg === 'object') PLANET.bg = Object.assign({}, gp.bg);
     if (gp.careNextAt) PLANET.careNextAt = gp.careNextAt;   /* 20261112：补算基准 */
+    /* 20261112：每个角色各自的下一次照料时间。老档没有这张表 —— 那时只有一根全局
+       基准，所以先留空，等 seasonFocusChar 知道「这次是谁进来」再补给他，
+       不至于把上一个人的节奏算到别人头上。 */
+    if (gp.careNextAtBy && typeof gp.careNextAtBy === 'object'){
+      PLANET.careNextAtBy = Object.assign({}, gp.careNextAtBy);
+    }
   }
   if (Array.isArray(d.impFound) && typeof IMP_FOUND !== 'undefined'){
     IMP_FOUND.clear();
@@ -13909,14 +13975,50 @@ function drawPlanetFrame(){
   }
 }
 
+/* 20261112：老档「按角色归池」—— 「每个角色一颗星球」的前提
+   ------------------------------------------------------------
+   老版本的株全塞在 PLANET.plants 一个数组里，没有按角色分池。
+   一旦改成「各角色只看自己的星球」，这批株要么被当前角色独吞，
+   要么切过去就凭空消失。这里把它们按 byId 拆回各自的池，并按 id 去重
+   （旧版存盘时把 pool[x] 和 plants 别名成同一个数组，同一株会存两份）。
+   幂等：跑几次结果都一样；没有 byId 的老株归当前视角的角色。 */
+function migratePlanetPools(fallbackId){
+  try {
+    /* 读档时 PLANET.viewId 还是空的（要等 season-init 才知道是谁进来），
+       所以必须允许外部把「这次进来的角色」传进来当归属基准。 */
+    const viewId = String(fallbackId || PLANET.viewId || PLANET.ownerId || '');
+    if (!viewId) return;
+    PLANET.pool = PLANET.pool || {};
+    const seen = {}, all = [];
+    const take = function(arr){
+      (arr || []).forEach(function(pl){
+        if (!pl || !pl.id || seen[pl.id]) return;
+        seen[pl.id] = 1;
+        all.push(pl);
+      });
+    };
+    take(PLANET.plants);
+    Object.keys(PLANET.pool).forEach(function(k){ take(PLANET.pool[k]); });
+    const bag = {};
+    all.forEach(function(pl){
+      const owner = pl.byId || pl.ownerId || viewId;
+      (bag[owner] = bag[owner] || []).push(pl);
+    });
+    if (!bag[viewId]) bag[viewId] = [];
+    PLANET.pool = bag;
+    PLANET.plants = bag[viewId];        /* 与 pool[viewId] 同一引用，切池靠它 */
+  } catch(e){}
+}
+
 function switchPlanetChar(id){
   if (id === PLANET.viewId) return;
-  PLANET.pool[PLANET.viewId] = PLANET.plants;
+  /* viewId 为空是「刚读档、还没告诉我是谁进来」的状态，别把池存成空键 */
+  if (PLANET.viewId) PLANET.pool[PLANET.viewId] = PLANET.plants;
   PLANET.viewId = id;
   PLANET.plants = PLANET.pool[id] || (PLANET.pool[id] = []);
   const ch = charById(id);
-  PLANET.owner = ch.name;
-  PLANET.ownerId = ch.id;
+  PLANET.owner = (ch && ch.name) || PLANET.owner || 'TA';
+  PLANET.ownerId = id;
   closePlantSheet();
   /* 每个角色的星球形态是各自记的：换角色就得把底图重画一遍 */
   if (typeof rebuildPlanetBase === 'function') rebuildPlanetBase();
@@ -14688,26 +14790,92 @@ function careGapRange(){
     hi: (typeof INTERACT !== 'undefined' ? INTERACT.careMaxMs : 5400000)
   };
 }
+/* ============================================================
+   20261112：每个角色一颗星球，各自照料（用户定案）
+   ------------------------------------------------------------
+   用户原话：「所有的角色都在后台各自照料」「玩家肯定是进去浇个水拍个照
+   就出来了，又不可能全程都待在那个星球页面，大部分时候还是在聊天」。
+   ⇒ 照料不能只作用于「正在看的那颗星球」：
+     每个角色的池都有自己的到点时间，谁到点谁动手，
+     跟玩家当前停在哪个角色的星球、甚至停不停在四季页都没有关系。
+   ============================================================ */
+/* 取某角色的星球池：**只读引用，不切视角、不动全局**，所以可以安心遍历别人 */
+function carePoolOf(cid){
+  if (!cid) return [];
+  if (!PLANET.pool) PLANET.pool = {};
+  if (cid === (PLANET.viewId || PLANET.ownerId)) return PLANET.plants || [];
+  if (!Array.isArray(PLANET.pool[cid])) PLANET.pool[cid] = [];
+  return PLANET.pool[cid];
+}
+/* 要照料哪些星球：当前视角 + 所有已经有池的角色。空池也会进来（由调用方推时间） */
+function careAllCharIds(){
+  const seen = {}, out = [];
+  const push = function(id){
+    if (!id || seen[id]) return;
+    seen[id] = 1; out.push(id);
+  };
+  push(PLANET.viewId || PLANET.ownerId);
+  Object.keys(PLANET.pool || {}).forEach(push);
+  return out;
+}
+function careNextAtOf(cid){
+  if (!cid) return 0;
+  const m = PLANET.careNextAtBy || (PLANET.careNextAtBy = {});
+  if (typeof m[cid] === 'number' && m[cid]) return m[cid];
+  /* 老档兼容：以前只有一根全局基准，它只属于「当时在看的那个角色」，
+     别的角色用各自的最后一笔动作兜底（见 careCatchUpFor），不能共用一根。 */
+  if (!Object.keys(m).length && cid === (PLANET.viewId || PLANET.ownerId)){
+    return PLANET.careNextAt || 0;
+  }
+  return 0;
+}
+function careSetNextAt(cid, t){
+  if (!cid) return;
+  const m = PLANET.careNextAtBy || (PLANET.careNextAtBy = {});
+  m[cid] = t;
+  /* 顺手把老字段同步成「当前视角那个角色」的，其他旧代码/老存档读到也不会错 */
+  if (cid === (PLANET.viewId || PLANET.ownerId)) PLANET.careNextAt = t;
+}
+/* 第一次见到这颗星球：给它一个首跳（和当前视角同一套算法，取区间的 1/6） */
+function careEnsureNextAt(cid){
+  if (!cid) return 0;
+  const n = careNextAtOf(cid);
+  if (n) return n;
+  const g = careGapRange();
+  const firstGap = Math.max(90000, Math.min(900000, Math.round(seasonRandGap(g.lo, g.hi) / 6)));
+  const t = Date.now() + firstGap;
+  careSetNextAt(cid, t);
+  return t;
+}
 /* 一跳：返回这一跳做了什么（water / fert / hold / skip / none）
    quiet=true → 不弹提示、不逐条写留言（补算用），由调用方汇总 */
-function careTickAt(t, quiet){
+function careTickAt(t, quiet, cid){
   const now = t || Date.now();
-  if (!PLANET.plants.length) return { kind: 'none' };
+  /* 20261112：cid = 这一跳照料哪颗星球。不传就是「当前视角」，
+     行为与以前一模一样；传了就能照料不在看的角色（后台各自照料）。 */
+  const target = cid || PLANET.viewId || PLANET.ownerId;
+  const list = carePoolOf(target);
+  if (!list.length) return { kind: 'none', cid: target };
   /* 能照料的：没烧苗、没枯死、还没长满 */
-  const cands = PLANET.plants.filter(function(x){
+  const cands = list.filter(function(x){
     return x && !x.burned && !x.dead && (x.grow || 0) < 100;
   });
   /* ★ 20261112：全都长满了 / 全烧了 → 以前直接 return 'none'，
      结果是「留言一条没有、互动记录一条没有」，看着像整个功能死了。
      现在改成「去看了一眼」——照样记进当天的观察摘要。 */
   if (!cands.length){
-    const any = PLANET.plants[0];
+    const any = list[0];
+    if (any && !any.byId) any.byId = target;   /* 摘要必须记到这颗星球的主人 */
     careSumAdd(any, '看', now);
-    return { kind: 'skip', pl: any, who: '' };
+    return { kind: 'skip', pl: any, who: '', cid: target };
   }
   const pl = cands[Math.floor(Math.random() * cands.length)];
-  const ch = charById(PLANET.viewId || PLANET.ownerId);
-  const who = (ch && ch.name) || PLANET.owner || 'TA';
+  /* 老档里个别株可能没有 byId（早期版本没记）→ 按池归属补上，
+     否则摘要会记到「当前正在看的那个角色」头上（串号） */
+  if (!pl.byId) pl.byId = target;
+  const ch = charById(target);
+  const who = (ch && ch.name) ||
+              (target === (PLANET.viewId || PLANET.ownerId) ? PLANET.owner : '') || 'TA';
 
   /* ---- 完全随机：这一跳做不做（用户 20261112「完全随机，要有不作为这个行为」） ---- */
   if (Math.random() < (SEASON_RULES.careSkipRate || 0.25)){
@@ -14744,117 +14912,125 @@ function careTickAt(t, quiet){
 
   if (!quiet){
     careSeq++;
-    /* 只在「玩家真的看着星球」时才重绘：四季层收起来（人在聊天）时照样照料，
-       但没必要重画一张看不见的 canvas。 */
-    if (curView === 'vPlanet' && !document.hidden){
+    /* 只在「玩家真的看着这颗星球」时才重绘：
+       照料别人的星球时画面根本没显示，重画纯属浪费（还会闪）。 */
+    if (target === (PLANET.viewId || PLANET.ownerId) &&
+        curView === 'vPlanet' && !document.hidden){
       renderPlanetList();
       drawPlanetFrame();
       if (sheetPlant === pl) renderPlantSheet();
     }
   }
-  return { kind: kind === '浇水' ? 'water' : 'fert', pl: pl, who: who };
+  return { kind: kind === '浇水' ? 'water' : 'fert', pl: pl, who: who, cid: target };
 }
-function startCare(){
-  if (careTimer) return;
-  const doCare = function(){
-    try { careTickAt(Date.now(), false); } catch(e){}
-    scheduleNext();
-  };
-  /* 每次触发后在 [careMinMs, careMaxMs] 随机取下一次（随机固定区间）
-     ★ 这两个值就是聊天设置里「照料间隔」的下限/上限（app.js seasonCareGapMin/Max →
-       _seasonGapsOf 下发 careGapMin/careGapMax → 这里换成 ms），
-       也就是说：设置里调的那个间隔，控的就是**下面这条真实照料**（会改生长、会溢水/肥伤）。
-     ★ 20261112：把「下一次到点」写进存档 —— App 被关掉后重新打开才有得补算。 */
-  const scheduleNext = function(){
-    const g = careGapRange();
-    const gap = seasonRandGap(g.lo, g.hi);
-    careTimer = setTimeout(doCare, gap);
-    PLANET.careNextAt = Date.now() + gap;
-    /* 落盘节流：前台才立刻存（要扛住进程被杀）；后台只在切走时统一存一次，
-       免得每次照料都把几百 KB 的照片一起序列化一遍。 */
-    if (!document.hidden){ try { seasonSave(); } catch(e){} }
-  };
-  /* 首跳：进页面后先让 TA 很快动一次（取区间的 1/6，夹在 90 秒 ~ 15 分钟），
-     之后严格按设置的区间走。
-     ★ 20261112 修：原来首跳写死 48 秒（demo 值），线上等于「刚进页面 TA 就浇一次」，
-       和设置里的 30~90 分钟完全对不上，也容易被当成 bug。 */
-  const g0 = careGapRange();
-  const firstGap = Math.max(90000, Math.min(900000, Math.round(seasonRandGap(g0.lo, g0.hi) / 6)));
-  careTimer = setTimeout(doCare, firstGap);
-  if (!PLANET.careNextAt) PLANET.careNextAt = Date.now() + firstGap;
-  try { seasonSave(); } catch(e){}
-}
-
-/* 次数写成中文数字（「浇了四次水」比「浇了 4 次水」更像人写的）。
-   0~99 都能转：十二、二十四、三十六；再大就交给阿拉伯数字。 */
-function careCnNum(n){
-  const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
-  if (!(n >= 0)) return String(n);
-  if (n === 2) return '两';            /* 「施了两次肥」比「二次」自然 */
-  if (n < 10) return d[n];
-  if (n < 20) return '十' + (n % 10 ? d[n % 10] : '');
-  if (n < 100){
-    const a = Math.floor(n / 10), b = n % 10;
-    return d[a] + '十' + (b ? d[b] : '');
-  }
-  return String(n);
-}
-/* ---- 补算：把「没人在的这段时间」按当时的间隔补回来 ----
-   · 以 PLANET.careNextAt 为起点一跳一跳往后推，直到追上现在；
-   · 每一跳把账本日期临时指到**那一天**（_careDayOverride），
-     两天就各按各的额度算（水 3+3 / 肥 2+2），不会两天的事全压进今天；
-   · 最多补 3 天，再久就不模拟了（避免一次跑几百跳、也避免一开就九株全熟）；
-   · 补算不弹提示，但**留言照留**：每天最多三条 —— 浇水一条、施肥一条、
-     静静看着一条，各自带「几点 / 哪一株」的明细，点开就能看。 */
-function careCatchUp(){
-  try {
-    if (!PLANET.plants || !PLANET.plants.length) return;
-    const now = Date.now();
-    let next = PLANET.careNextAt || 0;
+/* ============================================================
+   照料调度（20261112 定案：所有角色各自照料）
+   ------------------------------------------------------------
+   用户原话：「所有的角色都在后台各自照料」「玩家肯定是进去浇个水拍个照
+   就出来了，又不可能全程都待在那个星球页面，大部分时候还是在聊天」。
+   所以：一个心跳，把所有「已经到点」的星球各自补齐 ——
+   不再只照顾正在看的那颗，也不再指望玩家停在那颗星球上。
+   ============================================================ */
+function carePump(live){
+  const now = Date.now();
+  const g = careGapRange();
+  let moved = false;
+  careAllCharIds().forEach(function(cid){
+    const list = carePoolOf(cid);
+    if (!list.length) return;                  /* 这颗星球还没种过东西 → 不管它 */
+    let next = careNextAtOf(cid);
     if (!next){
-      /* 老存档没有基准（这次更新之前没人记过到点时间）→ 用「最后一笔照料 / 种下时间」兜底，
-         最多回看 3 天。这样玩家升级完第一次进来，之前空着的那段也能补上，
-         而不是「更新之后才开始有记录」。 */
+      /* 老档 / 刚种下的新星球：用「最后一笔动作 / 种下时间」兜底，最多回看 3 天 */
       let last = 0;
-      PLANET.plants.forEach(function(pl){
+      list.forEach(function(pl){
         const acts = (pl && pl.acts) || [];
         const at = acts.length ? (acts[acts.length - 1].t || 0) : (pl && pl.t0) || 0;
         if (at > last) last = at;
       });
-      if (!last) return;
+      if (!last){ careEnsureNextAt(cid); return; }
       next = Math.max(last, now - 3 * 86400000);
     }
-    if (next > now) return;                    /* 还没到点 → 不补 */
-    const g = careGapRange();
-    const CAP = 3 * 86400000;
-    let t = Math.max(next, now - CAP);
-    /* 补算只做「动作」，留言由 careSumAdd 按天并进那三条摘要里
-       （浇水 / 施肥 / 静静看着），所以这里不需要自己攒文字。 */
-    let guard = 0, touchedNotes = false;
+    if (next > now) return;                    /* 这颗还没到点 */
+    let t = next, guard = 0;
+    const isMe = (cid === (PLANET.viewId || PLANET.ownerId));
     const _nxQuietBak = _nxQuiet;
-    _nxQuiet = true;                           /* 补算不弹提示、不逐次重绘留言 */
+    _nxQuiet = true;                           /* 逐跳不重绘，pump 结束后统一重绘一次 */
     try {
       while (t <= now && guard++ < 400){
         _careDayOverride = dayStrOf(t);
-        try { careTickAt(t, true); touchedNotes = true; } catch(e){}
+        /* 差一两分钟 = 实时到点（照常重绘）；差得多 = 后台补算（静默）。
+           留意：这里只是「要不要重绘」，动作本身两边一模一样。 */
+        const quiet = !(live && isMe && (now - t) < 120000);
+        try { careTickAt(t, quiet, cid); } catch(e){}
         t += seasonRandGap(g.lo, g.hi);
       }
     } finally {
       _careDayOverride = null;                 /* 一定要清，否则之后都记到补算那天 */
       _nxQuiet = _nxQuietBak;
     }
-    PLANET.careNextAt = t;
-    try { seasonSave(); } catch(e){}
-    if (touchedNotes){ try { renderNotes(); } catch(e){} }
-    try { renderPlanetList(); } catch(e){}
-    try { drawPlanetFrame(); } catch(e){}
-    try { if (sheetPlant) renderPlantSheet(); } catch(e){}
+    careSetNextAt(cid, t);
+    moved = true;
+  });
+  return moved;
+}
+/* 照料之后统一重绘 + 落盘（避免每一跳都重画一遍看不到的东西） */
+function afterCareRender(){
+  try { seasonSave(); } catch(e){}          /* 账先落盘：进程随时可能被杀 */
+  if (document.hidden) return;              /* App 在后台：存盘就够了，别画看不见的画布 */
+  try { renderNotes(); } catch(e){}
+  try { renderPlanetList(); } catch(e){}
+  try { drawPlanetFrame(); } catch(e){}
+  try { if (sheetPlant) renderPlantSheet(); } catch(e){}
+}
+/* 对外入口：回到前台 / 收到宿主 tick / 刚进页面 →
+   把所有星球漏掉的那段一次性补回来（不再只管正在看的这颗） */
+function careCatchUp(){
+  try {
+    if (carePump(false)) afterCareRender();
   } catch(e){}
 }
+function startCare(){
+  if (careTimer) return;
+  const pump = function(){
+    let moved = false;
+    try { moved = carePump(true); } catch(e){}
+    if (moved) afterCareRender();
+    scheduleNext();
+  };
+  /* 心跳按「所有星球里最近的那个到点时间」排：
+     谁先到点就先醒一次，醒来把这一批到点的全补齐。 */
+  const scheduleNext = function(){
+    const now = Date.now();
+    let earliest = 0;
+    careAllCharIds().forEach(function(cid){
+      if (!carePoolOf(cid).length) return;
+      const n = careEnsureNextAt(cid);
+      if (n && (!earliest || n < earliest)) earliest = n;
+    });
+    const wait = earliest ? Math.max(1500, Math.min(2147000000, earliest - now)) : 60000;
+    careTimer = setTimeout(pump, wait);
+    /* 落盘节流：前台才立刻存（要扛住进程被杀）；后台只在切走时统一存一次，
+       免得每次照料都把几百 KB 的照片一起序列化一遍。 */
+    if (!document.hidden){ try { seasonSave(); } catch(e){} }
+  };
+  /* 首跳：每颗已经有株的星球各给一个「很快动一次」的起点
+     （取设置区间的 1/6，夹在 90 秒 ~ 15 分钟），之后严格按设置的区间走。
+     ★ 20261112 修：原来首跳写死 48 秒（demo 值），线上等于「刚进页面 TA 就浇一次」，
+       和设置里的 30~90 分钟完全对不上，也容易被当成 bug。 */
+  careAllCharIds().forEach(function(cid){
+    if (!carePoolOf(cid).length) return;
+    careEnsureNextAt(cid);
+  });
+  scheduleNext();
+  try { seasonSave(); } catch(e){}
+}
+
 function startPlanet(){
   buildPlanet();
   plWarm = true;
-  if (!PLANET.pool[PLANET.viewId]) PLANET.pool[PLANET.viewId] = PLANET.plants;
+  /* 20261112：plants 必须就是当前角色的池（换角色由 switchPlanetChar 负责），
+     这里只做一次同步；viewId 为空时别生成空键池 */
+  if (PLANET.viewId) PLANET.pool[PLANET.viewId] = PLANET.plants;
   renderPlanetChars();
   /* 20261112：先把「没人在的这段时间」补算掉，再开实时这条线 ——
      否则一进来就是「今天全空」，玩家要等好几个 30~90 分钟才看到 TA 动一次。 */
