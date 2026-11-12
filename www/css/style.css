@@ -3459,6 +3459,52 @@ body.has-bubble-fz .msg-row .bubble { font-size: var(--bubble-fz, 15px); }
 .tarot-meaning .tm-row { margin-top: 8px; }
 .tarot-meaning .tm-row:first-child { margin-top: 0; }
 
+/* ---------- 20261112：占卜 AI 解牌（三段式 + 关系判定 + 可反复追问） ---------- */
+.divi-ai { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.divi-round { margin-top: 12px; }
+.divi-round:first-child { margin-top: 0; }
+.divi-round-no { font-size: 10.5px; letter-spacing: 1.5px; color: var(--text-tertiary); margin-bottom: 5px; }
+/* 关系判定：让玩家知道 AI 走的是「梦占」还是普通解读，避免它偷偷脑补 */
+.divi-rel {
+  display: flex; align-items: flex-start; gap: 5px;
+  font-size: 11.5px; line-height: 1.6; color: var(--purple);
+  background: rgba(150, 120, 240, .10); border-left: 2px solid var(--purple);
+  border-radius: 7px; padding: 5px 8px; margin-bottom: 9px;
+}
+.divi-rel svg { flex: 0 0 auto; margin-top: 1px; }
+.divi-sec { margin-top: 11px; }
+.divi-sec:first-of-type { margin-top: 0; }
+.divi-h { font-size: 11px; font-weight: 700; letter-spacing: 2.5px; color: var(--text-tertiary); margin-bottom: 4px; }
+.divi-sec p { margin: 0; font-size: 13.5px; line-height: 1.9; color: var(--text-secondary); text-align: justify; }
+/* 解牌思路：默认收起，玩家拒绝补充背景时自动展开 */
+.divi-think { margin-top: 11px; border: 1px dashed var(--border); border-radius: 10px; padding: 7px 10px; }
+.divi-think summary { font-size: 11.5px; letter-spacing: 1px; color: var(--text-tertiary); cursor: pointer; }
+.divi-think p { margin: 6px 0 0; font-size: 12px; line-height: 1.78; color: var(--text-tertiary); }
+/* 玩家这一轮补充了什么（留在流里，方便回看） */
+.divi-note-me {
+  margin-top: 11px; padding: 7px 10px; border-radius: 9px;
+  background: rgba(150, 120, 240, .09); border-left: 2px solid var(--purple);
+}
+.divi-note-me span { font-size: 10.5px; letter-spacing: 1px; color: var(--purple); }
+.divi-note-me p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--text-secondary); }
+/* AI 主动要背景 */
+.divi-ask { margin-top: 11px; padding: 9px 11px; border: 1px dashed var(--purple); border-radius: 10px; }
+.divi-ask-t { font-size: 11px; letter-spacing: 1px; color: var(--purple); }
+.divi-ask-q { margin-top: 4px; font-size: 13px; line-height: 1.72; color: var(--text-secondary); }
+.divi-skip { margin-top: 9px; font-size: 12px; padding: 6px 11px; }
+/* 常驻追问输入条 */
+.divi-follow { display: flex; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.divi-input { flex: 1 1 auto; min-width: 0; font-size: 13px; }
+.divi-send { flex: 0 0 auto; padding: 0 14px; display: inline-flex; align-items: center; gap: 5px; font-size: 13px; }
+/* 解牌中 */
+.divi-loading { display: flex; align-items: center; gap: 4px; color: var(--text-tertiary); font-size: 12.5px; }
+.divi-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .3; animation: diviDot 1s infinite; }
+.divi-dot:nth-child(2) { animation-delay: .15s; }
+.divi-dot:nth-child(3) { animation-delay: .3s; }
+.divi-loading-t { margin-left: 6px; }
+@keyframes diviDot { 0%, 100% { opacity: .22; transform: translateY(0); } 50% { opacity: .9; transform: translateY(-2px); } }
+.divi-err { font-size: 12px; line-height: 1.7; color: var(--text-tertiary); }
+
 /* ---------- 20261103：占卜「询问梦角」居中卡片（聊天页中间，不走左右气泡） ---------- */
 .msg-row.divi-center-row {
   display: flex;

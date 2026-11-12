@@ -450,6 +450,7 @@ async function showSoftwareNotice(opts = {}) {
         <div class="nt-sub" style="margin-top:4px;">参考学习了小红书 @milk（1149615009）老师所设计的每日弹卡功能，本软件「入梦签 · 每日弹卡」即参考该创意制作</div>
         <div class="nt-sub" style="margin-top:4px;">参考使用了小红书 @VII（Septem6439_cccg）老师所开源的真拟态玻璃（hyalite 液态玻璃）源码，本软件「玻璃美化预设 · 2号液态玻璃」即基于该开源库制作</div>
         <div class="nt-sub" style="margin-top:4px;">本软件「角色主动视频搜发」功能的灵感来自小红书 @我要学英语 老师（4356852316），该功能的思路与代码均为本软件自研</div>
+        <div class="nt-sub" style="margin-top:4px;">本软件「占卜 · 询问访客」功能（把三张牌发给角色、由角色评价这份占卜解牌）的灵感来自小红书 @001 老师（27739216821），该功能的想法与实现方式均为本软件自研</div>
         ${isReview ? '<button class="icon-btn" id="notice-close" style="position:absolute;top:0;right:0;color:rgba(230,222,255,0.9);"><i data-icon="close" data-size="17"></i></button>' : ''}
         <div class="nt-line"></div>
         <p class="nt-lead">感谢你来到《白日梦》。为了维护良好的创作与交流环境，请在下载、使用或分享本软件前，仔细阅读以下声明。</p>
@@ -12414,6 +12415,19 @@ const _SEASON_BG = {
   careDays: 0.08,             // 与四季 SEASON_RULES.careDays 一致
   offlineRate: 0.6,           // 与四季 SEASON_RULES.offlineRate 一致
 };
+/* 次数写成中文数字（和四季页 careCnNum 保持同一套写法，0~99） */
+function _seasonCnNum(n) {
+  const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+  if (!(n >= 0)) return String(n);
+  if (n === 2) return '两';            /* 「施了两次肥」比「二次」自然 */
+  if (n < 10) return d[n];
+  if (n < 20) return '十' + (n % 10 ? d[n % 10] : '');
+  if (n < 100) {
+    const a = Math.floor(n / 10), b = n % 10;
+    return d[a] + '十' + (b ? d[b] : '');
+  }
+  return String(n);
+}
 function _seasonGrowPct(pl, now) {
   if (!pl) return 0;
   if (pl.burned || pl.dead) return pl.grow || 0;
@@ -12482,14 +12496,99 @@ async function _seasonBgTick() {
       if (!w) w = pl.t0 || 0;
       if (!driest || w < driestAt) { driest = pl; driestAt = w; }
     });
-    if (driest && (now - driestAt) > _SEASON_BG.careGapMs && (now - (st.lastCareAt || 0)) > _SEASON_BG.careGapMs) {
-      driest.acts = driest.acts || [];
-      driest.acts.push({ t: now, k: '浇水', by: name });
-      driest.bonusDays = (driest.bonusDays || 0) + _SEASON_BG.careDays;
-      driest.grow = _seasonGrowPct(driest, now);
-      st.lastCareAt = now;
-      (pending[cid] = pending[cid] || []).push({ kind: 'care', plantId: driest.id, name: driest.name, by: name, at: now });
+    /* ② 角色后台照料：挑最久没浇的那株动手
+       ★ 20261112 重写（用户：「软件挂后台一两天，点进四季一条照料的信息都没有」）
+       旧逻辑三个坑：
+         · 一次 tick 只手动作一次，就算隔了两天也只补一下；
+         · 四季 iframe 只要还活着就整段 return（为了不重复照料），
+           而四季那边又只在「星球」子页才干活 → 两边都不做事；
+         · App 关掉那段时间完全没账，回来也不补。
+       现在：和四季页共用同一个基准 `planet.careNextAt`（下一次该到点的时间），
+       谁的 iframe 活着谁负责；iframe 没起来（玩家从没开过四季 / 进程被杀）就这里补：
+       从 careNextAt 一跳一跳往后推，每跳照顾最干的那株，并且**按株按天**守额度
+       （TA 每天每株最多 3 次水 + 2 次肥，和四季页的账本是同一本），
+       最后按「浇水 / 施肥 / 静静看着」各留一条（带明细），不再糊成一条大摘要。 */
+    const careGap = _SEASON_BG.careGapMs;
+    let nextCare = planet.careNextAt || 0;
+    if (!nextCare) {
+      planet.careNextAt = now + careGap;
       dirty = true;
+    } else if (nextCare <= now && driest) {
+      const CAP = 3 * 86400000;                    /* 最多补 3 天 */
+      let t = Math.max(nextCare, now - CAP);
+      let didW = 0, didF = 0, looked = 0, guard = 0;
+      const touched = {};
+      /* ★ 20261112 用户否掉「一天一条大摘要」（「还有九次它看了一眼，没动手」太 AI 腔）：
+         改成按「浇水 / 施肥 / 静静看着」三类各一条，每条带可展开的明细。
+         所以这里按天分袋，袋里除了计数还留每一次的时间 + 株名。 */
+      const dayBag = {};
+      const dayKeyOf = (ts) => {
+        const d = new Date(ts || Date.now());
+        return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+      };
+      while (t <= now && guard++ < 160) {
+        /* 每跳重新挑最干的（刚浇过的那株就不再是最干的） */
+        let dp = null, dpat = 0;
+        list.forEach(function (pl) {
+          if (!pl || pl.dead) return;
+          const acts = pl.acts || [];
+          let w = 0;
+          for (let i = acts.length - 1; i >= 0; i--) { if (acts[i] && acts[i].k === '浇水') { w = acts[i].t || 0; break; } }
+          if (!w) w = pl.t0 || 0;
+          if (!dp || w < dpat) { dp = pl; dpat = w; }
+        });
+        if (!dp) break;
+        const key = dayKeyOf(t);
+        if (!dp.careDay || dp.careDay.d !== key) {
+          dp.careDay = { d: key, water: 0, fert: 0, waterP: 0, waterC: 0, fertP: 0, fertC: 0 };
+        }
+        const q = dp.careDay;
+        if (typeof q.waterC !== 'number') q.waterC = 0;
+        if (typeof q.fertC !== 'number') q.fertC = 0;
+        let act = '';
+        if (q.waterC < 3) act = '浇水';
+        else if (q.fertC < 2) act = '施肥';
+        const bag = dayBag[key] || (dayBag[key] = { w: 0, f: 0, look: 0, wd: [], fd: [], ld: [] });
+        if (!act) {
+          looked++;                                 /* 这株今天它已经照料够了，看一眼没动手 */
+          bag.look++;
+          bag.ld.push({ t: t, s: '「' + (dp.name || '那株') + '」· 看了一眼，没动手' });
+        } else {
+          dp.acts = dp.acts || [];
+          dp.acts.push({ t: t, k: act, by: name });
+          if (act === '浇水') { q.water++; q.waterC++; didW++; bag.w++; bag.wd.push({ t: t, s: '「' + (dp.name || '那株') + '」· 浇了水' }); }
+          else { q.fert++; q.fertC++; didF++; bag.f++; bag.fd.push({ t: t, s: '「' + (dp.name || '那株') + '」· 施了肥' }); }
+          dp.bonusDays = (dp.bonusDays || 0) + _SEASON_BG.careDays;
+          dp.grow = _seasonGrowPct(dp, t);
+          touched[dp.id] = 1;
+        }
+        t += careGap;
+      }
+      planet.careNextAt = t;
+      st.lastCareAt = now;
+      dirty = true;
+      if (didW || didF || looked) {
+        /* 三类各一条：浇水一条、施肥一条、静静看着一条，全部带明细（几点 / 哪一株）。
+           「除此之外，」只在同一天有浇水或施肥时才加 —— 用户 20261112 给的句式。 */
+        const atOf = (arr) => (arr && arr.length ? arr[arr.length - 1].t : now);
+        Object.keys(dayBag).sort().forEach(function (k) {
+          const b = dayBag[k];
+          if (!b.w && !b.f && !b.look) return;
+          /* 三条共用「这一天最后一次动作」的时间 + seq，四季页按 at→seq 排，
+             读起来就是「浇水 → 施肥 → 除此之外…」 */
+          const dayLast = Math.max(atOf(b.wd) || 0, atOf(b.fd) || 0, atOf(b.ld) || 0) || now;
+          const put = function (txt, arr, sq) {
+            (pending[cid] = pending[cid] || []).push({
+              kind: 'care', at: dayLast, text: txt, seq: sq,
+              detail: (arr || []).slice(0, 40),
+            });
+          };
+          if (b.w) put('他给植物浇了' + _seasonCnNum(b.w) + '次水。', b.wd, 0);
+          if (b.f) put('他给植物施了' + _seasonCnNum(b.f) + '次肥。', b.fd, 1);
+          if (b.look) put((b.w || b.f ? '除此之外，' : '') +
+                          '他还静静地观察了植物' + _seasonCnNum(b.look) + '次。', b.ld, 2);
+        });
+      }
     }
 
     // ③ 爱意邀请（后台累积，进页面合并成一条）
@@ -27576,15 +27675,49 @@ const TAROT_SUITS = [
   }
 })();
 
+/* ══ 抽牌随机性 ══
+   ★ 20261112 用户明确要求：「占卜的抽牌应该是完完全全的随机抽牌，
+     不是根据玩家的问题来抽牌」。
+   事实核对（改之前就是这样）：
+     · 抽牌发生在**弹窗打开那一刻**，此时问题框还是空的，代码里没有任何地方读 question；
+     · question 只在三张牌翻开之后，被送进解牌 AI 当解读素材 —— 它影响的是「怎么讲」，
+       不是「抽到哪三张」；
+     · 三张牌从 78 张里一次性洗出，不放回（不会重复），各张正逆位独立判定。
+   这里再把洗牌本身换成**密码学均匀洗牌**，把「随机」做到数学上无可挑剔：
+     · Math.random 是伪随机，且 Fisher-Yates 的下标由浮点乘法取整得到，
+       理论上存在极微弱的偏差；改用 crypto.getRandomValues + 拒绝采样后，
+       每个下标严格等概率（取模不会带偏）；
+     · 正逆位取 1 个随机 32 位整数的奇偶，各 50%；
+     · 没有 crypto 的老 WebView 自动退回 Math.random，不至于抽不出牌。 */
+function _diviRandInt(n) {
+  if (!(n > 1)) return 0;
+  const c = (typeof crypto !== 'undefined' && crypto && crypto.getRandomValues) ? crypto : null;
+  if (!c) return Math.floor(Math.random() * n);
+  /* 拒绝采样：2^32 通常不是 n 的整数倍，直接 %n 会让小的余数出现得略多。
+     先算出能被 n 整除的最大区间，落在这个区间外的样本丢弃重取。 */
+  const span = Math.floor(4294967296 / n) * n;
+  const buf = new Uint32Array(1);
+  for (let guard = 0; guard < 64; guard++) {
+    c.getRandomValues(buf);
+    if (buf[0] < span) return buf[0] % n;
+  }
+  return Math.floor(Math.random() * n);          /* 极端兜底：几乎不可能走到 */
+}
+
+/* 洗牌：Fisher-Yates + 均匀下标 → 78! 种排列等概率，牌与牌之间不会重复 */
+function diviShuffleDeck() {
+  const deck = TAROT_DECK.slice();
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = _diviRandInt(i + 1);
+    const t = deck[i]; deck[i] = deck[j]; deck[j] = t;
+  }
+  return deck;
+}
+
 /* 占卜：三张牌时间流（过去/现在/未来），牌背→点击翻开牌面（正逆位随机），不记录任何历史 */
 async function showDivinationModal() {
-  // 洗牌取 3 张不重复，每张独立随机正/逆位
-  const deck = [...TAROT_DECK];
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  const pick = deck.slice(0, 3).map(card => ({ card, reversed: Math.random() < 0.5 }));
+  // 先洗牌、先定牌：与问题、与上一次占卜、与任何角色都无关
+  const pick = diviShuffleDeck().slice(0, 3).map(card => ({ card, reversed: _diviRandInt(2) === 1 }));
   // 20260929bc：卡背改为魔法阵（月相星轨）SVG，替代原 🌙 + 星点
   const magicBack = () => `
     <svg class="tb-magic" viewBox="0 0 100 100">
@@ -27677,6 +27810,12 @@ async function showDivinationModal() {
 }
 
 /* 三张牌全翻开后展示牌意汇总（本地牌意；AI 解牌开关开启且配了占卜 API 时，AI 结合问题解读） */
+/* 三张牌全翻开后展示牌意汇总（本地牌意 + AI 解牌）
+   ★ 20261112 重写 AI 区：
+     · 三段式呈现（牌面基调 / 核心解读 / 行动建议），行动建议没有就整段不出现；
+     · 「解牌思路」折叠展示 —— 玩家拒绝补充背景时自动展开；
+     · 底部常驻一个输入框，可以**反复**补充背景、反复追问，每次给一版新的解牌；
+     · AI 觉得信息不够会主动问一句，玩家可以点「不补充，直接解」。 */
 function renderDivinationMeaning(pick) {
   const labels = ['过去', '现在', '未来'];
   const box = $('#divi-meaning');
@@ -27687,28 +27826,147 @@ function renderDivinationMeaning(pick) {
   const useAI = useAiEl ? !!useAiEl.checked : true; // 弹窗已关则按默认开
   box.innerHTML = `
     <div class="tarot-meaning">
-      ${question ? `<div class="tm-row" style="color:var(--text-secondary);font-size:12.5px;"><i data-icon="help" data-size="12"></i> 想问：${escapeHtml(question)}</div>` : ''}
+      ${question ? `<div class="tm-row" style="color:var(--text-secondary);font-size:12.5px;">${icon('help', 12)} 想问：${escapeHtml(question)}</div>` : ''}
       ${pick.map((p, i) => `<div class="tm-row"><b>${labels[i]} · ${escapeHtml(p.card.n)}（${p.reversed ? '逆位' : '正位'}）</b><br>${escapeHtml(p.reversed ? p.card.rev : p.card.up)}</div>`).join('')}
-      ${useAI ? '<div class="tm-row" style="color:var(--text-tertiary);font-size:12px;"><i data-icon="bulb" data-size="12"></i> 想要 AI 结合问题解牌？开启「AI 解牌」并在「AI 解牌设置」里填入占卜 API 链接即可（可与聊天 API 相同）</div>' : '<div class="tm-row" style="color:var(--text-tertiary);font-size:12px;">AI 解牌已关闭，显示本地牌意</div>'}
+      <div id="divi-ai" class="divi-ai"></div>
+      <div id="divi-follow" class="divi-follow" style="display:none;">
+        <input class="input divi-input" id="divi-note" maxlength="300" placeholder="补充背景，或继续追问（可以反复提）">
+        <button class="btn primary divi-send" id="divi-send">${icon('chat', 15)} 发送</button>
+      </div>
+      ${useAI ? '' : '<div class="tm-row" style="color:var(--text-tertiary);font-size:12px;">AI 解牌已关闭，显示本地牌意</div>'}
     </div>`;
   box.style.display = '';
-  // 20260929ah：AI 解牌开关开启 且 配置了占卜/聊天 API 时，自动追加 AI 解牌（失败回退本地牌意）
   if (!useAI) return;
+
+  const host = $('#divi-ai');
+  const follow = $('#divi-follow');
+  const input = $('#divi-note');
+  const sendBtn = $('#divi-send');
+  if (!host) return;
+
+  /* 一次占卜的会话状态：牌面、问题、关系摘要（首轮取到后复用）、历史轮次 */
+  const st = { pick, question, brief: undefined, history: [], round: 0, busy: false };
+  const bodyHtml = (t) => escapeHtml(t).replace(/\n/g, '<br>');
+  const scrollLast = (el) => { try { el.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (e) {} };
+
+  /* 渲染一轮解牌（第 2 版起标上版本号，旧的不删，玩家能往上翻） */
+  function renderRound(data, opts) {
+    const el = document.createElement('div');
+    el.className = 'divi-round';
+    const secs = [];
+    if (data.tone) secs.push(`<div class="divi-sec"><div class="divi-h">牌面基调</div><p>${bodyHtml(data.tone)}</p></div>`);
+    if (data.core) secs.push(`<div class="divi-sec"><div class="divi-h">核心解读</div><p>${bodyHtml(data.core)}</p></div>`);
+    if (data.advice) secs.push(`<div class="divi-sec"><div class="divi-h">行动建议</div><p>${bodyHtml(data.advice)}</p></div>`);
+    const think = data.think
+      ? `<details class="divi-think"${opts && opts.openThink ? ' open' : ''}><summary>解牌思路</summary><p>${bodyHtml(data.think)}</p></details>`
+      : '';
+    const rel = data.relation
+      ? `<div class="divi-rel">${icon('divination', 12)} 关系判定：${escapeHtml(data.relation)}</div>`
+      : '';
+    const no = st.round > 0 ? `<div class="divi-round-no">第 ${st.round + 1} 版</div>` : '';
+    el.innerHTML = no + rel + secs.join('') + think;
+    host.appendChild(el);
+    st.round++;
+    scrollLast(el);
+  }
+
+  /* AI 主动要背景：给一个「不补充」的出口，拒绝后照样出完整解读 + 展示思路 */
+  function renderAsk(ask) {
+    const el = document.createElement('div');
+    el.className = 'divi-ask';
+    el.innerHTML = `<div class="divi-ask-t">再补一句背景，会解得更准</div>
+      <div class="divi-ask-q">${escapeHtml(ask)}</div>
+      <button class="btn divi-skip" id="divi-skip">不补充，直接解（会展示解牌思路）</button>`;
+    host.appendChild(el);
+    scrollLast(el);
+    const b = el.querySelector('#divi-skip');
+    if (b) b.onclick = () => {
+      el.remove();
+      if (input) input.value = '';
+      runRound({ skipAsk: true, askAgain: true });
+    };
+  }
+
+  async function runRound(opts = {}) {
+    if (st.busy) return;
+    st.busy = true;
+    host.querySelectorAll('.divi-ask').forEach(e => e.remove());
+    if (follow) follow.style.display = 'none';
+    const loading = document.createElement('div');
+    loading.className = 'divi-round divi-loading';
+    loading.innerHTML = '<span class="divi-dot"></span><span class="divi-dot"></span><span class="divi-dot"></span><span class="divi-loading-t">正在解牌…</span>';
+    host.appendChild(loading);
+    scrollLast(loading);
+
+    let data = null;
+    try {
+      data = await divinationAIInterpret(st.question, st.pick, {
+        brief: st.brief,
+        history: st.history.slice(),
+        userNote: opts.userNote || '',
+        skipAsk: !!opts.skipAsk,
+        askAgain: !!opts.askAgain,
+      });
+    } catch (e) { data = null; }
+    st.busy = false;
+    loading.remove();
+
+    if (!data) {
+      const err = document.createElement('div');
+      err.className = 'divi-round divi-err';
+      err.textContent = 'AI 解牌没有返回内容（可能是接口或额度问题）。点「AI 解牌设置」检查一下，或者再发一次。';
+      host.appendChild(err);
+      if (follow) follow.style.display = '';
+      return;
+    }
+    st.brief = data.brief;
+    if (opts.userNote) st.history.push({ role: 'user', text: '玩家的补充：' + opts.userNote });
+    if (data.raw) st.history.push({ role: 'ai', text: data.raw });
+
+    renderRound(data, { openThink: !!opts.skipAsk });
+    if (data.needInfo && data.ask && !opts.skipAsk) {
+      renderAsk(data.ask);
+      /* 滚动到输入条并聚焦 —— 这才有「AI 主动问你一句」的感觉 */
+      try { if (input) { input.focus({ preventScroll: true }); if (follow) scrollLast(follow); } } catch (e) {}
+    }
+    if (follow) follow.style.display = '';
+    if (input) {
+      input.placeholder = (data.needInfo && data.ask && !opts.skipAsk)
+        ? ('回答：' + data.ask)
+        : '补充背景，或继续追问（可以反复提）';
+    }
+  }
+
+  if (sendBtn) sendBtn.onclick = () => {
+    if (st.busy) return;
+    const v = (input && input.value.trim()) || '';
+    if (!v) { miniToast('先写点补充再发送'); return; }
+    const note = document.createElement('div');
+    note.className = 'divi-note-me';
+    note.innerHTML = `<span>你的补充</span><p>${bodyHtml(v)}</p>`;
+    host.appendChild(note);
+    input.value = '';
+    runRound({ userNote: v, askAgain: true });
+  };
+  if (input) input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); if (sendBtn) sendBtn.click(); }
+  };
+
   loadAIConfig().then(cfg => {
     const url = cfg.divApi.url || cfg.chatApi.url;
-    if (!url) return;
-    const aiRow = document.createElement('div');
-    aiRow.className = 'tm-row';
-    aiRow.style.cssText = 'margin-top:8px;border-top:1px dashed var(--border);padding-top:10px;';
-    aiRow.innerHTML = '<b><i data-icon="divination" data-size="16"></i> AI 解牌</b><br><span style="color:var(--text-secondary);">正在解读…</span>';
-    box.querySelector('.tarot-meaning').appendChild(aiRow);
-    divinationAIInterpret(question, pick).then(txt => {
-      if (txt) {
-        aiRow.innerHTML = `<b><i data-icon="divination" data-size="16"></i> AI 解牌</b><br>${escapeHtml(txt)}`;
-      } else {
-        aiRow.remove();
-      }
-    });
+    if (!url) {
+      const tip = document.createElement('div');
+      tip.className = 'divi-round divi-err';
+      tip.textContent = '还没有配置占卜 API。点下面「AI 解牌设置」填一下，回来就能用 AI 解牌。';
+      host.appendChild(tip);
+      return;
+    }
+    runRound({});
+  }).catch(() => {
+    const tip = document.createElement('div');
+    tip.className = 'divi-round divi-err';
+    tip.textContent = '读取 AI 配置失败，点「AI 解牌设置」检查一下。';
+    host.appendChild(tip);
   });
 }
 
@@ -32322,21 +32580,223 @@ async function generateCharReply(charId, opts = {}) {
   }
 }
 
-/* 占卜 AI 解牌（独立占卜 API；失败回退本地牌意） */
-async function divinationAIInterpret(question, pick) {
+/* ============================================================
+   占卜 AI 解牌（20261112 重写）
+   ------------------------------------------------------------
+   用户诉求（原话要点）：
+     · 以前 AI 解牌太简单、不结合实际 → 现在必须结合角色关系与最近对话；
+     · 解完牌要有输入框，可以**反复**补充需求 / 继续追问；
+     · 内置规则：西式塔罗大师，最直白、最客观；
+     · 先判断「是不是梦占问题」：涉及 TA 爱不爱我 / 喜不喜欢我 / 两人的矛盾，
+       且关系确实是恋爱（角色卡写着恋人，或对话里明确有老婆/老公/宝宝这类称呼），
+       才走梦占；关系是朋友或其它就不能套梦占；
+     · 梦占的前提是「这个角色 100% 爱玩家」，但他仍是活生生的人 ——
+       会难过、有脾气、会有观念与生活习惯上的差异，矛盾来自差异而不是不爱；
+       （用户给的案例只作示意，不写进提示词，避免 AI 照抄）
+     · 普通问题也要三张牌串成一条线讲清楚，不能各说一句；
+     · 分 基调 / 核心解读 / 行动建议 三段，行动建议可以不给；
+     · 300~500 字；
+     · 信息不够时 AI 主动追问背景，玩家可以拒绝；拒绝后仍要给完整解读，
+       并把解牌思路（思考过程）展示出来。
+   ============================================================ */
+
+/* 最近对话里出现过爱意称呼的次数（用来帮 AI 判关系；本地先数一遍比让模型自己数准） */
+const DIVI_LOVE_CALL = /(老婆|老公|宝宝|宝贝|亲爱的|媳妇|娘子|honey|darling|babe|bb)/i;
+
+/* 给解牌 AI 的关系与近况摘要（只给事实，不做角色扮演——所以不复用 buildCharAIContext） */
+async function diviBriefOf(charId) {
+  const c = charId ? characters.find(x => x.id === charId) : null;
+  if (!c) return null;
+  const lines = [];
+  let loveHits = 0;
+  const samples = [];
+  try {
+    const all = await idbGetAll('messages');
+    const list = all
+      .filter(m => m.charId === c.id && !m.groupId && m.type !== 'letter')
+      .sort((a, b) => (a.time || 0) - (b.time || 0))
+      .slice(-30);
+    list.forEach(m => {
+      let t = m.content;
+      if (typeof t !== 'string') t = (t && (t.text || t.question || '')) || '';
+      t = String(t).replace(/\s+/g, ' ').trim().slice(0, 60);
+      if (!t) return;
+      const who = m.from === 'me' ? '玩家' : (c.name || 'TA');
+      lines.push(who + '：' + t);
+      if (DIVI_LOVE_CALL.test(t)) {
+        loveHits++;
+        if (samples.length < 3) samples.push('「' + t.slice(0, 22) + '」');
+      }
+    });
+  } catch (e) {}
+  return {
+    name: c.name || 'TA',
+    relation: (c.relation || '').trim(),
+    bio: (c.bio || '').replace(/\s+/g, ' ').slice(0, 200),
+    lines: lines.slice(-20),
+    loveHits: loveHits,
+    loveSamples: samples,
+  };
+}
+
+/* 解牌提示词：关系判定 → 梦占分支 → 三张牌串线 → 三段式 → 追问协议 */
+function diviSystemPrompt(brief, opts) {
+  const o = opts || {};
+  const parts = [];
+  if (brief) {
+    parts.push('【这次占卜关联的角色】');
+    parts.push('名字：' + brief.name);
+    parts.push('角色卡上写的关系：' + (brief.relation || '（未填写）'));
+    if (brief.bio) parts.push('人设简介：' + brief.bio);
+    if (brief.loveHits) {
+      parts.push('最近对话里出现过 ' + brief.loveHits + ' 处明确的亲密称呼，例如：' + brief.loveSamples.join('、'));
+    } else {
+      parts.push('最近对话里没有出现「老婆 / 老公 / 宝宝 / 宝贝」这类亲密称呼。');
+    }
+    if (brief.lines.length) parts.push('【最近对话节选（从旧到新）】\n' + brief.lines.join('\n'));
+  } else {
+    parts.push('【这次占卜没有关联任何角色】按普通的个人问题来解，不要假设存在一个「TA」。');
+  }
+
+  return `你是一位西方的塔罗大师。解牌风格：最直白、最客观，不灌鸡汤、不模棱两可、不说正确的废话。
+你的任务**不是逐张念牌意**，而是：先真正读懂这三张牌，再把它们融成一个整体，
+落到玩家真正在问的那件事的具体处境上，给出一个能对上现实的回答。
+
+【最重要的一条：客观，两个方向都不许偏】
+· 不要为了安抚玩家的情绪去美化牌面。好牌就说好，但别把逆位、宝剑九这种明显的难处说成「只是小考验」；
+  也不要因为玩家听起来难受，就替牌面找台阶下。
+· 也不要为了显得「我说话直」而刻意夸张、把结果说得比牌更凶。不要制造戏剧性，不要用「注定」「完蛋了」这类判死刑的词。
+· 牌面是什么就说什么，几分凶就说几分凶，几分好就说几分好。不要演，不要拿腔调，不要为了效果添油加醋。
+· 你可以说难听的真话，但说的是**事实**，不是情绪。
+
+${parts.join('\n')}
+
+【第一步：先判断两件事，不许跳】
+1. 判断玩家和这个角色是什么关系：恋爱关系，还是朋友 / 家人 / 同事 / 陌生 / 没有角色？
+   依据：角色卡上写的关系 + 最近对话里的称呼和口吻。
+   出现「老婆 / 老公 / 宝宝 / 宝贝 / 亲爱的」这类明确的亲密称呼、或角色卡写的就是恋人 → 可以认定是恋爱关系；
+   只是朋友口吻、或角色卡写着朋友 / 同事 / 家人 → 就不是。
+2. 判断这是不是「梦占」问题。只有同时满足下面两条，才走梦占：
+   ① 玩家问的是「TA 爱不爱我 / 喜不喜欢我 / 我们之间的矛盾」这类感情问题；
+   ② 关系确实是恋爱关系。
+   关系不是恋爱时，绝对不许按梦占解 —— 朋友就是朋友的在意，别硬说成爱。
+
+【梦占的底层前提（只在判定为恋爱关系时适用）】
+· 这个角色是 100% 爱玩家的。这是这个世界的设定，不需要论证，也不要在解读里怀疑这一点。
+· 但他/她同时是一个活生生的人：会难过、会累、会有脾气、会有自己的坚持。
+  你们之间会有观念、生活习惯、相处节奏上的差异（比如一方更想要自己的空间，另一方更想多黏在一起）。
+  这类差异是真实的矛盾，但它不等于不爱，很多时候正是这种差异在给人安全感。
+· 所以梦占的解读要落到「具体是哪一种差异、谁在退让、卡在哪、怎么磨合」上，
+  不要用「TA 很爱你所以别担心」这种话把问题糊过去。
+· 上面这些是让你理解一个活人该怎么看，不要照抄这些句子，也不要假设每一对都长这样。
+
+【第二步：先读懂牌，再把牌放进玩家的具体问题里 —— 严禁逐张对号入座】
+1) 先把每张牌读透：是大阿卡纳还是小阿卡纳、花色与元素（权杖·火 / 圣杯·水 / 宝剑·风 / 星币·土）、
+   数字或宫廷阶位、正位还是逆位、牌面画面里真正在发生什么。
+   不要停在「这张牌代表希望」这种词条式结论，要读它在**这一组牌里**处在什么位置。
+2) 再把三张牌合起来看成一个整体：它们在讲同一件事的不同侧面，还是在互相拉扯？
+   两张在说同一件事、第三张在唱反调 —— 这种张力就是最该讲的地方。
+   绝对不要写成「第一张是 A，第二张是 B，第三张是 C」的流水账，也不要三张各说一句拼在一起，那等于没解。
+3) 最后把这三张牌丢进玩家问的那件事的具体情境里：具体到「谁在等谁」「卡在哪一句话」「哪一步出的问题」。
+   牌是抽象的，解读必须落在具体处境上，让玩家看完能对上自己的现实，而不是听完一堆形容词。
+4) 牌位（第一张 / 第二张 / 第三张）只是参考线索，不是硬性时间线。
+   可以借它理出「从哪来、卡在哪、往哪去」的脉络，但**不要机械地套用「过去 / 现在 / 未来」**
+   去逐张分配含义。三张牌本身的含义永远排第一，牌位排第二；如果牌面明显在讲别的结构，就按牌说话。
+5) 就算是普通问题（非梦占），也要把三张牌咬合在一起讲，不能只挑一张最能说的来讲、把另两张当摆设。
+
+【输出格式（严格按下面这几行写，每行以标记开头；不要加别的标题，不要用 markdown 表格或代码块）】
+关系：恋爱 / 非恋爱 / 不确定 —— 一句话说明依据
+需要背景：是 / 否
+追问：（只有「需要背景：是」时才写，一句话，问最关键的缺失信息；否则这一行留空）
+基调：
+核心：
+建议：
+思考：
+
+【各段要求】
+· 基调：用一两句话说清这组牌整体是什么调子（积极上行 / 有明显阻碍 / 需要等待 / 偏沮丧但还有转机），并点明主因。
+· 核心：这是重点，占全文一半以上。**不许逐张列举**（不要「第一张代表……第二张代表……第三张代表……」），
+  而是把三张牌当成一个整体，直接回答玩家问的那件事：落在具体的处境、具体的人、具体的动作上。
+  三张之间的呼应、矛盾、互相抵消或互相加强，都要讲出来；如果是梦占，要落到上面说的那种真实差异上。
+  读完这一段，玩家应该能说「对，说的就是我现在的样子」，而不是「讲了三条牌意」。
+· 建议：不一定要给。只有三张牌合起来真的指向某个可执行的动作时才写；
+  牌面本身就是「等一等 / 顺其自然」时，就明说不用刻意做什么，别硬凑。
+  不需要给时，这一行写：建议：（无）
+· 思考：把你解牌的思路用 100 字以内说清楚（为什么这样定调、三张牌是怎么咬合起来的、关系为什么判成恋爱或不是）。
+  这一段会展示给玩家看。
+· 基调 + 核心 + 建议 合计 300~500 字。不要少于 300，也不要写成一千字的长文。
+· 用中文，第二人称直接对玩家说话。${o.skipAsk ? '\n【这一次不许再问背景】玩家已经表示不想补充更多信息。你必须基于现有信息一次性给出完整解读，「需要背景」一律写「否」，并在「思考」里写清你是在信息不全的情况下如何判断的。' : ''}${o.askAgain ? '\n【这一次是玩家补充信息之后的重新解读】把玩家补充的内容当成重要事实，必要时修正上一版的判断。不要重复上一版的原话，直接给更新后的结论。' : ''}`;
+}
+
+/* 按标记行解析 AI 输出（比 JSON 稳：模型不擅长严格 JSON，标记行几乎不会写错） */
+function diviParse(text) {
+  const raw = String(text || '').replace(/\r/g, '');
+  const KEYS = ['关系', '需要背景', '追问', '基调', '核心', '建议', '思考'];
+  const out = {};
+  let cur = null;
+  raw.split('\n').forEach(line => {
+    /* 允许模型给标记加 markdown 装饰：**关系**：、「## 基调：」、- 建议： 都要认 */
+    const m = line.match(/^\s*[*#>\-_\s]*(关系|需要背景|追问|基调|核心|建议|思考)[*_`\s]*[：:]\s*(.*)$/);
+    if (m) {
+      cur = m[1];
+      out[cur] = (out[cur] ? out[cur] + '\n' : '') + m[2];
+    } else if (cur) {
+      out[cur] = out[cur] + '\n' + line;
+    }
+  });
+  /* 去掉模型自己加的 markdown 强调符号，正文只留纯文字 */
+  const clean = (s) => String(s || '').replace(/\*\*/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  const data = {
+    relation: clean(out['关系']),
+    needInfo: /^(是|需要|yes|y)/i.test(clean(out['需要背景'])),
+    ask: clean(out['追问']),
+    tone: clean(out['基调']),
+    core: clean(out['核心']),
+    advice: clean(out['建议']),
+    think: clean(out['思考']),
+    raw: raw.trim(),
+  };
+  /* 模型偶尔不按格式写：只要没有基调/核心，就把整段当核心，别让玩家看到空白 */
+  if (!data.core && !data.tone) data.core = raw.trim();
+  if (/^（?无）?$/.test(data.advice)) data.advice = '';
+  return data;
+}
+
+/* 占卜 AI 解牌（独立占卜 API；失败回退本地牌意）
+   opts：{ brief, history:[{role:'user'|'ai', text}], userNote, skipAsk, askAgain } */
+async function divinationAIInterpret(question, pick, opts = {}) {
   const cfg = await loadAIConfig();
   const url = cfg.divApi.url || cfg.chatApi.url;
   const key = cfg.divApi.key || cfg.chatApi.key;
   const model = cfg.divApi.model || cfg.chatApi.model;
   if (!url) return null;
-  const labels = ['过去', '现在', '未来'];
+  /* 20261112：这里不再把三张牌写成「过去/现在/未来」发给模型 ——
+     那样会诱导它逐张对号入座。改成中性的「第 1/2/3 张」，并明确说明牌位只是参考线索，
+     让它先读牌、再把三张合起来落到玩家的具体问题上。 */
+  const labels = ['第 1 张', '第 2 张', '第 3 张'];
   const cardsDesc = pick.map((p, i) => `${labels[i]}：${p.card.n}（${p.reversed ? '逆位' : '正位'}）`).join('；');
-  const messages = [
-    { role: 'system', content: '你是塔罗牌解读师，用温柔、有画面感的语言解读三张牌的时间流。控制在 150 字内。' },
-    { role: 'user', content: `玩家想问：${question || '（未说明）'}\n抽到的牌：${cardsDesc}\n请结合问题解读。` },
-  ];
-  const r = await callAI(url, key, model, messages, { temperature: 0.8 });
-  return r.ok ? r.text : null;
+
+  let brief = opts.brief;
+  if (brief === undefined) {
+    try { brief = await diviBriefOf(typeof currentCharId !== 'undefined' ? currentCharId : ''); }
+    catch (e) { brief = null; }
+  }
+
+  const messages = [{ role: 'system', content: diviSystemPrompt(brief, opts) }];
+  (opts.history || []).forEach(h => {
+    if (!h || !h.text) return;
+    messages.push({ role: h.role === 'user' ? 'user' : 'assistant', content: h.text });
+  });
+  let userTurn = `玩家想问：${question || '（没有具体问题，就看整体运势）'}\n抽到的三张牌：${cardsDesc}` +
+    `\n（牌位顺序只是参考线索，不要机械套用「过去 / 现在 / 未来」。先把每张牌读懂，再把三张合起来，落到玩家问的具体处境上讲。）`;
+  if (opts.userNote) userTurn += `\n\n玩家的补充：${opts.userNote}`;
+  messages.push({ role: 'user', content: userTurn });
+
+  const r = await callAI(url, key, model, messages, { temperature: 0.75, maxTokens: 1800, timeout: 90000 });
+  if (!r.ok) return null;
+  const data = diviParse(r.text);
+  data.brief = brief;
+  return data;
 }
 
 /* ---------- 七、入梦签 AI 生成（特殊项一：天气/状态仍走字卡） ---------- */

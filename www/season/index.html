@@ -576,7 +576,7 @@ body{
 }
 .book-head{display:flex;align-items:center;gap:8px;border-bottom:2px dashed var(--line);padding-bottom:6px;margin-bottom:9px}
 .book-h1{flex:0 0 auto;white-space:nowrap;font-size:16px;letter-spacing:1px}
-.book-h2{flex:1 1 auto;min-width:0;text-align:center;white-space:nowrap;
+.book-h2{flex:1 1 auto;min-width:0;text-align:center;white-space:nowrap;overflow:hidden;
   font-size:16px;transform:scale(.56);transform-origin:center center;color:var(--ink2);letter-spacing:1px}
 .bk-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
 /* mini 书签 = 票根 */
@@ -1176,8 +1176,9 @@ body{
   padding:2px 0}
 /* 「← 回到目录」：原来 scale(.5) 太小、贴着左边不舒服。
    放大到 .74，并往右挪 5mm（CSS mm 单位，按屏幕物理尺寸走）。 */
-.bp-toc{flex:0 0 auto;display:flex;justify-content:flex-start;padding:3px 0 7px}
-.bp-toc-a{font-size:16px;transform:scale(.88);transform-origin:left center;cursor:pointer;
+.bp-toc{flex:0 0 auto;display:flex;justify-content:flex-start;padding:3px 0 7px;
+  position:relative;z-index:4;   /* 20261111：「回到目录」永远压在票根之上，不被盖 */}
+.bp-toc-a{font-size:16px;transform:scale(.88);transform-origin:left center;cursor:pointer;display:inline-block;
   border:1px solid var(--line);background:rgba(255,255,255,.55);color:#6b6252;
   padding:6px 15px;letter-spacing:1px;white-space:nowrap;margin-left:5mm}
 .bp-toc-a:active{background:var(--ink);color:var(--paper)}
@@ -1221,7 +1222,7 @@ body{
 
 /* 票根（静态 · 详情页 / 书签页） */
 .ticket.still{position:relative;left:auto;top:auto;margin:0 auto;transform:none;
-  width:262px;height:auto;min-height:352px;
+  width:262px;height:auto;min-height:352px;transition:none;   /* 书页上的票根不要「升起」过渡，缩放要即时生效 */
   box-shadow:5px 5px 0 rgba(0,0,0,.16)}
 .ticket.read .tk-desc{font-size:16px;transform:scale(.72);transform-origin:center top;
   width:139%;margin-left:-19.5%;line-height:1.62;min-height:42px;padding:6px 0 0;color:var(--tk-desc)}
@@ -1565,6 +1566,8 @@ body{
 .pn-t small{font-size:8px;letter-spacing:1.2px;color:#a2957c;margin-left:5px;font-weight:400}
 .pn-c{font-size:9px;letter-spacing:1px;color:#8b8271}
 .pn-list{display:flex;flex-direction:column;gap:8px;max-height:190px;overflow-y:auto}
+/* 展开某条摘要时把留言区放高，否则明细挤在 190px 的小框里看不全 */
+.pn-list.open{max-height:430px}
 .pn-i{display:flex;gap:7px;align-items:flex-start}
 .pn-av{width:15px;height:15px;flex:0 0 auto;image-rendering:pixelated;margin-top:1px;
   border:1px solid rgba(0,0,0,.35)}
@@ -1574,6 +1577,14 @@ body{
   background:#f0e4c6;border:1px solid #cdbb92;padding:0 3px;margin-right:4px;
   vertical-align:1px}
 .pn-m{font-size:8.5px;color:#9a9082;letter-spacing:.5px;margin-top:2px}
+/* 20261112：带明细的照料留言 —— 「展开 N 条」小钮 + 逐条明细（时间 · 株名 · 动作） */
+.pn-more{display:inline-block;margin-top:3px;padding:0 5px;height:15px;line-height:15px;
+  font-size:8.5px;letter-spacing:.4px;color:#8a7550;background:#f2e8cd;
+  border:1px solid #d5c49c;cursor:pointer;font-family:inherit}
+.pn-more:active{background:#e9dbba}
+.pn-det{margin-top:4px;padding:4px 6px;border-left:2px solid #ddcfae;background:rgba(246,238,218,.66)}
+.pn-dr{font-size:8.8px;line-height:1.7;color:#6d6250;letter-spacing:.2px}
+.pn-dt{display:inline-block;min-width:32px;margin-right:5px;color:#9c8f76;font-variant-numeric:tabular-nums}
 .pn-empty{font-size:10.5px;color:#8d8474;line-height:1.7;text-align:center;padding:9px 0}
 
 /* 票根下的角色留言条 */
@@ -1772,13 +1783,15 @@ body{
 .pl-imprint.off{opacity:.38;pointer-events:none;}
 .pl-imprint small{display:block;font-size:9px;letter-spacing:.14em;margin-top:4px;opacity:.75;font-weight:400;}
 
-.bk-tools{flex:0 0 auto;display:flex;align-items:center;gap:5px;min-width:0;max-width:62%;}
-.bk-tools .book-filter,.bk-tools .book-manage{overflow:hidden;text-overflow:ellipsis;max-width:96px;}
+.bk-tools{flex:0 0 auto;display:flex;align-items:center;gap:5px;min-width:0;max-width:48%;}
+.bk-tools .book-filter,.bk-tools .book-manage{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  max-width:92px;flex:0 1 auto;min-width:0;}
 .book-filter{border:1px solid var(--line);background:rgba(255,255,255,.42);padding:3px 7px;
   font-size:10px;letter-spacing:.04em;color:#5c5344;cursor:pointer;white-space:nowrap;}
 .book-filter.on{background:var(--accent);color:#fff;border-color:var(--accent);}
 .book-h1{cursor:text;}
-.bp-acts{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;}
+.bp-acts{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap;
+  position:relative;z-index:3;   /* 20261111：票根再高也不能压住底部按钮 */}
 .bp-acts .bp-act{flex:1 1 calc(50% - 4px);min-width:0;font-size:12px;letter-spacing:1.5px;padding:8px 0;}
 .bki-nm{cursor:pointer;text-decoration:underline dotted rgba(0,0,0,.2);text-underline-offset:3px;}
 .tk-alias{margin-top:-2px;margin-bottom:5px;font-size:11px;color:#6b6252;text-align:center;
@@ -4489,6 +4502,10 @@ function showView(id, opt){
        看起来就是「封面上什么都没有」。20261107 修。 */
     try { drawCoverPx(); } catch (e) {}
     if (!opt.keepOpen){ resetCover(); setTimeout(openBook, 2200); }
+    /* 20261111：进书签集后量两次 —— 一次立刻（布局已定），一次等封面翻开后
+       （翻开动画结束才算真正可量，早量会拿到 0 高度） */
+    setTimeout(function(){ try { fitBookTicket(); } catch(e){} }, 60);
+    setTimeout(function(){ try { fitBookTicket(); } catch(e){} }, 2350);
   }
   if (id === 'vDex') renderDexTab();
   if (id === 'vSeed') renderSeed();
@@ -4943,12 +4960,13 @@ function openTicket(p){
   const nt = $('#tkNote');
   if (nt){
     /* 20261109：便签只写「角色给这枚书签的留言」（一签一角色最多一条）。
-       玩家寄语不再是便签主角 —— 它在星球下方被角色回应（见 nxGiftText）。 */
-    const line = p.noteText || '';
-    if (line){
+       玩家寄语不再是便签主角 —— 它在星球下方被角色回应（见 nxGiftText）。
+       ★ 20261111：显示条件收敛到 bookNoteVisible（单角色视野 + 留言人必须是这个角色），
+         和书签集书页那边同一套判断，不会一处显示一处不显示。 */
+    if (bookNoteVisible(p)){
       nt.className = 'tk-note on';
       nt.innerHTML = '<div class="tkn-tape"></div>' +
-        '<div class="tkn-q">「' + nxEsc(line) + '」</div>' +
+        '<div class="tkn-q">「' + nxEsc(p.noteText) + '」</div>' +
         '<div class="tkn-by">—— ' + nxEsc(p.noteBy || p.giftedTo || '') + ' · ' + (p.giftedAt || '') + '</div>';
     } else {
       nt.className = 'tk-note';
@@ -5334,7 +5352,7 @@ function renderWikiGrow(d, own){
      t 是这一轮里已经过去的毫秒数（0 ~ WK_GROW_CYCLE）。 */
   function paintAt(t){
     const k = Math.min(1, Math.max(0, t / WK_GROW_GROW));
-    if (t < 140) pl._bloomOn = 0;              /* 每轮开头复位，下一轮才会再「叮」一次 */
+    if (t < 140){ pl._bloomOn = 0; pl._bloomAt = 0; }  /* 每轮开头复位：星芒与叮都重来一次 */
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, cv.width, cv.height);
     g.save(); g.scale(WK_GROW_PX, WK_GROW_PX);
@@ -5416,13 +5434,15 @@ function buildBookPage(host, idx){
     wrap.className = 'bp-ticket';
     host.appendChild(wrap);
     mountTicket(wrap, p, true);
-    /* 20261109：便签＝角色给这枚书签的留言；只在「本角色单人」模式里贴 */
-    const noteLine = p.noteText || '';
-    if (noteLine && bookScope === 'char'){
+    /* 20261109：便签＝角色给这枚书签的留言；只在「本角色单人」模式里贴
+       ★ 20261111 用户强调：「留言的标签只有在看单个角色的时候才会出现，
+         而且只记录单个角色」⇒ 三个条件同时满足才贴：
+         ① 这枚书签有留言 ② 当前是单角色视野 ③ 留言正是**这个角色**留的 */
+    if (bookNoteVisible(p)){
       const nt = document.createElement('div');
       nt.className = 'tk-note on';
       nt.innerHTML = '<div class="tkn-tape"></div>' +
-        '<div class="tkn-q">「' + nxEsc(noteLine) + '」</div>' +
+        '<div class="tkn-q">「' + nxEsc(p.noteText) + '」</div>' +
         '<div class="tkn-by">—— ' + nxEsc(p.noteBy || p.giftedTo || '') + ' · ' + (p.giftedAt || '') + '</div>';
       host.appendChild(nt);
     }
@@ -5455,6 +5475,53 @@ function buildBookPage(host, idx){
   }
 }
 
+/* ============================================================
+   书页票根自适应缩放（20261111 修「书签挡住回到目录 / 底部按钮」）
+   ------------------------------------------------------------
+   ★ 用户反馈（附截图）
+     「这个书签不应该挡住这些按钮啊，上面那个回到目录的按钮被挡住了，
+       下面的按钮也被挡住了，这书签没这么大呀我记得」
+   ⇒ 根因：票根是**固定尺寸的印刷品**（.ticket.still 300×364px），
+     而书页可用高度随屏幕变（矮屏 / 底部多一条「模型下载中」 /
+     宿主 App 多一层顶栏都会压矮）。票根比 .bp-ticket 高时，
+     flex 居中会让它上下各溢出一截 —— 上面盖住「← 回到目录」，
+     下面压住「送 / 改名 / 存图片 / 看大图」。
+   ⇒ 修法：票根是印刷品，不能重排，只能**等比缩放**。
+     量一次 .bp-ticket 的可用宽高，取 min(1, 宽比, 高比) 做 scale，
+     保证任何屏幕下都完整落在书页里，永远不压按钮。
+   ⇒ 植物书签（270×364）和星球邮票（300×364）共用这一套，两种都不会溢出。
+   ============================================================ */
+let _tkFitS = 1;
+function fitBookTicket(root){
+  const host = root || $('#bookPage');
+  if (!host) return;
+  const box = host.querySelector('.bp-ticket');
+  const tk = box && box.querySelector('.ticket');
+  if (!box || !tk) return;
+  /* 先清掉上一轮的缩放再量原始尺寸，否则会越缩越小 */
+  tk.style.transform = 'none';
+  const bw = box.clientWidth, bh = box.clientHeight;
+  const tw = tk.offsetWidth, th = tk.offsetHeight;
+  if (!bw || !bh || !tw || !th) return;      /* 还没布局（书页隐藏中）→ 跳过，下次再量 */
+  const s = Math.min(1, bw / tw, bh / th);
+  _tkFitS = s;
+  tk.style.transformOrigin = 'center center';
+  tk.style.transform = s < 0.995 ? ('scale(' + (Math.floor(s * 1000) / 1000) + ')') : 'none';
+}
+/* 翻页纸片里的票根：用同一套缩放值，免得翻页瞬间看着「变大又变小」 */
+function applyTicketFit(root){
+  if (!root) return;
+  const arr = root.querySelectorAll('.bp-ticket > .ticket');
+  for (let i = 0; i < arr.length; i++){
+    arr[i].style.transformOrigin = 'center center';
+    arr[i].style.transform = _tkFitS < 0.995
+      ? ('scale(' + (Math.floor(_tkFitS * 1000) / 1000) + ')') : 'none';
+  }
+}
+window.addEventListener('resize', function(){
+  if (typeof curView !== 'undefined' && curView === 'vBook') fitBookTicket();
+});
+
 function renderBookPage(){
   const host = $('#bookPage');
   if (!host) return;
@@ -5463,6 +5530,8 @@ function renderBookPage(){
   if (cnt) cnt.textContent = 'HERBARIUM · ' + pad2(bookList().length) + ' 枚';
   const pn = $('#bpNum');
   if (pn) pn.textContent = pad2(bookIdx + 1) + ' / ' + pad2(1 + bookList().length);
+  /* 20261111：每次重画都量一次 —— 票根比书页高时等比缩小，绝不压住上下按钮 */
+  try { fitBookTicket(); } catch(e){}
 }
 
 /* 当前页的快照（DOM 克隆 + 画布像素复制），供翻页纸片使用 */
@@ -5505,6 +5574,8 @@ function turnPage(dir){
     f.appendChild(buildPageNode(nx));
     b.appendChild(snapPageNode());
   }
+  /* 20261111：翻页的两面也套用同一缩放，避免翻页瞬间票根「跳一下」 */
+  try { applyTicketFit(f); applyTicketFit(b); } catch(e){}
   bookTurning = true;
   leaf.classList.add('on');
   leaf.style.transition = 'none';
@@ -7016,6 +7087,15 @@ function todayStr(){
   const d = new Date();
   return d.getFullYear() + '.' + String(d.getMonth()+1).padStart(2,'0') + '.' + String(d.getDate()).padStart(2,'0');
 }
+/* 20261112：把任意时间戳写成和 todayStr 同格式的「那一天」。
+   后台补算时账本必须记在**那一天**，否则两天攒下来的照料会全堆进今天，
+   一下子把你和 TA 今天的 3+3 额度吃光。 */
+function dayStrOf(ts){
+  const d = new Date(ts || Date.now());
+  return d.getFullYear() + '.' + String(d.getMonth()+1).padStart(2,'0') + '.' + String(d.getDate()).padStart(2,'0');
+}
+/* 补算期间临时把「今天」指到某一天（只影响照料账本，不影响界面上的日期） */
+let _careDayOverride = null;
 
 function drawCamFrame(){
   if (!imgReady) return;
@@ -7685,6 +7765,7 @@ function bmPlantEnsureModel(urgent){
   if (BM_PLANT_MODEL.ready) return Promise.resolve(BM_PLANT_MODEL.sess);
   if (BM_PLANT_MODEL.loading) return BM_PLANT_MODEL.loading;
   BM_PLANT_MODEL.loading = (async function(){
+    let gotModel = false;   /* 模型文件是否已经拿到手（决定失败时该「重试」还是「直接收条」） */
     try {
       if (typeof ort === 'undefined') throw new Error('ort 未加载');
       ort.env.wasm.wasmPaths = './';
@@ -7696,6 +7777,12 @@ function bmPlantEnsureModel(urgent){
       /* 20261111：先自己带进度下到内存（并落缓存），再交给 onnxruntime 解析。
          注意 onnxruntime 的 create() 读 URL 时没有任何进度回调，才会「静默卡住」。 */
       const buf = await bmFetchModelWithProgress(bmModelProgress);
+      gotModel = true;
+      /* ★ 20261111 用户反馈：「下载完了进度条应该自动消失，不要一直在这待着」★
+         根因：下载完只把 localStorage 写成 done，提示条还停在「29.6 / 29.6MB · 100%」，
+         因为只有「进相机页预下载」那条路才会去收条，拍照触发的这条（urgent）没人收。
+         这里补上完整收尾：下载完 → 转「正在装载」→ 装载成功再收掉。 */
+      if (!BM_PLANT_MODEL._quiet) mdlTipRender({ state: 'load', got: 0, total: 0 });
       /* 20261111 加载提速（网页端「扫了 5 分钟」的关键）：
          默认 graphOptimizationLevel:'all' 会对这张 4066 类的图做一整轮重写，
          手机上光这一步就要几十秒到几分钟，而且闷在里面没有任何反馈。
@@ -7721,12 +7808,20 @@ function bmPlantEnsureModel(urgent){
       BM_PLANT_MODEL.names = Object.keys(taxa).sort((a,b)=>Number(a)-Number(b)).map(k => taxa[k].chinese_name);
       BM_PLANT_MODEL.latins = Object.keys(taxa).sort((a,b)=>Number(a)-Number(b)).map(k => taxa[k].latin_name);
       BM_PLANT_MODEL.ready = true;
+      /* 20261111：装载成功 → 提示条收掉（幂等：预下载那条路也调过一次，多调无副作用） */
+      if (!BM_PLANT_MODEL._quiet) mdlTipDone(); else mdlTipHide();
       return sess;
     } catch(e){
       /* 20261111：不再一次失败就永久判死（旧代码 failed=true →
          网络抖一下就永远「未识别」）。清掉 loading，下次按快门会再试一次。 */
       BM_PLANT_MODEL.loading = null;
       bmModelBarHide();
+      /* 20261111：已经下完的（gotModel）只是装载失败 → 不能再说「没下下来」，
+         也不能把 100% 那条一直挂在底部；真没下下来才给「点这里重试」。 */
+      try {
+        if (gotModel) mdlTipHide();
+        else if (!BM_PLANT_MODEL._quiet) mdlTipFail();
+      } catch (_e){}
       throw e;
     }
   })();
@@ -9528,6 +9623,10 @@ function applySeasonGaps(g){
     // 让「TA 自己把种子种下去」即使四季层没开、玩家不在四季页面，也能按时结算（taSeedTick）。
     // 种下后回发 season-taplant 给主项目，主项目据此弹通知提醒玩家。
     if (d.type === 'season-tick'){
+      /* 20261112：宿主每次主动扫描（前台 15s）都会发这个 →
+         顺手做一次补算。App 从后台被叫醒、玩家还在聊天页时，
+         四季里漏掉的照料就是靠这里补回来的。 */
+      try { if (typeof careCatchUp === 'function') careCatchUp(); } catch(e){}
       try {
         if (typeof taSeedTick === 'function'){
           const before = (PLANET && PLANET.plants) ? PLANET.plants.length : 0;
@@ -9543,7 +9642,20 @@ function applySeasonGaps(g){
       } catch(e){}
     }
   });
-  // 通知父页面四季已就绪，请求注入角色/字卡
+  /* 20261112：回到前台就补一次照料。
+     Android WebView 一切到后台，页面里的 setTimeout 会被冻住（甚至在系统回收进程时直接没），
+     所以「挂后台两小时 / 两天」这段时间必须靠回前台时补算，而不是指望定时器还在跑。 */
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible'){
+      try { if (typeof careCatchUp === 'function') careCatchUp(); } catch(e){}
+    } else {
+      /* 切走前把 careNextAt 存一下：进程被系统回收后，靠它算「漏了多久」 */
+      try { seasonSave(); } catch(e){}
+    }
+  });
+  window.addEventListener('focus', function(){
+    try { if (typeof careCatchUp === 'function') careCatchUp(); } catch(e){}
+  });
   if (window.parent && window.parent !== window){
     try { window.parent.postMessage({ type: 'season-ready' }, '*'); } catch(e){}
   }
@@ -9625,7 +9737,12 @@ function seasonFlushPending(){
         nxPush(cid, 'love', txt, { merged: loveN });
       }
       cares.forEach(function(x){
-        nxPush(cid, 'care', '你不在的时候，' + name + '给「' + (x.name || '那株') + '」浇了水', { plantId: x.plantId });
+        /* 20261112：主项目补算出来的格式是
+             { kind:'care', at, text:'他给植物浇了四次水。', detail:[{t,s}] }
+           每类一条、带明细；老格式是一条一条的单株记录（带 name）—— 两种都认。
+           时间必须原样带过来（at），否则两天前的事全挤在「刚刚」。 */
+        const txt = x.text || ('他给「' + (x.name || '那株') + '」浇了水。');
+        nxPush(cid, 'care', txt, { plantId: x.plantId, at: x.at, detail: x.detail, seq: x.seq });
       });
       stages.forEach(function(x){
         nxPush(cid, 'star', '「' + (x.name || '那株') + '」又长了一阶', { plantId: x.plantId });
@@ -9863,6 +9980,9 @@ function seasonSerialize(){
        必须一起存，否则四季一保存就把主项目刚写进去的队列冲掉了。 */
     planet.pending = Object.assign({}, PLANET.pending || {});
     planet.bg = Object.assign({}, PLANET.bg || {});
+    /* 20261112：照料「下一次该到点」的时间戳。
+       有了它，App 被关掉 / 被系统杀掉之后重新打开，才知道漏了多久、要补几次。 */
+    planet.careNextAt = PLANET.careNextAt || 0;
   } catch(e){}
   return {
     __season: true, version: '1.1', exportedAt: Date.now(),
@@ -10036,6 +10156,7 @@ function _seasonApply(d){
     if (gp.seenKinds && typeof gp.seenKinds === 'object') PLANET.seenKinds = Object.assign({}, gp.seenKinds);
     if (gp.pending && typeof gp.pending === 'object') PLANET.pending = Object.assign({}, gp.pending);
     if (gp.bg && typeof gp.bg === 'object') PLANET.bg = Object.assign({}, gp.bg);
+    if (gp.careNextAt) PLANET.careNextAt = gp.careNextAt;   /* 20261112：补算基准 */
   }
   if (Array.isArray(d.impFound) && typeof IMP_FOUND !== 'undefined'){
     IMP_FOUND.clear();
@@ -10106,6 +10227,8 @@ function makeGiftMsg(ch, p){
    ============================================================ */
 PLANET.notes = [];
 let nxSeq = 0;
+/* 哪些留言条现在处于「展开看明细」状态（重绘时保留，不然点开一下就合上了） */
+const _pnOpen = new Set();
 const NOTE_TAG = { gift:'收到书签', star:'凝星', draw:'字卡', care:'照料', love:'爱意' };
 
 function nxEsc(s){
@@ -10115,9 +10238,25 @@ function nxEsc(s){
 function nxPush(byId, kind, text, ref){
   if (!text) return null;
   const ch = charById(byId);
+  /* ★ 20261112 用户要求（补算一条一条来、摘要也要能展开看细节）：
+       ref.at     → 这条留言记在「发生的那一刻」（补算两天前的事就落在两天前），
+                    不传就是此刻；
+       ref.detail → 展开后的逐条明细 [{t, s}]：几点、哪一株、做了什么。
+     两者都不进 ref 存下来（detail 会重复一份，白白撑大存档）。 */
+  const at = (ref && ref.at) || Date.now();
+  const detail = (ref && ref.detail && ref.detail.length) ? ref.detail.slice(0, 40) : null;
+  /* ref.seq：同一天三条（浇水 0 / 施肥 1 / 静静看着 2）共用同一个时间戳，
+     列表按时间倒序时靠它把顺序固定成「浇水 → 施肥 → 除此之外…」 */
+  const seq = (ref && typeof ref.seq === 'number') ? ref.seq : 9;
+  let keep = null;
+  if (ref){
+    keep = Object.assign({}, ref);
+    delete keep.at; delete keep.detail; delete keep.seq;
+    if (!Object.keys(keep).length) keep = null;
+  }
   const n = {
     id: 'nt' + (++nxSeq) + '_' + Date.now(), byId: ch.id, by: ch.name,
-    kind: kind, text: String(text), at: Date.now(), ref: ref || null
+    kind: kind, text: String(text), at: at, ref: keep, detail: detail, seq: seq
   };
   PLANET.notes.push(n);
   if (PLANET.notes.length > 80) PLANET.notes.splice(0, PLANET.notes.length - 80);
@@ -10339,6 +10478,20 @@ function nxDrawText(ch, pl, scene){ return seasonDrawCard(ch, pl, scene); }
    接主项目时在「翻开书签集 / 收到一枚新星球票」时调用它即可。 */
 function bookNoteLine(ch){ return seasonDrawCard(ch, null, 'book'); }
 
+/* 这枚书签的便签该不该出现（20261111 用户连说两遍的规则）
+   ------------------------------------------------------------
+   「留言的标签只有在看单个角色的时候才会出现，而且只记录单个角色」
+   ⇒ ① 不在单角色视野（比如「全部」）→ 不出现
+     ② 留言是别的角色留的 → 也不出现（绝不串角色）
+     ③ 旧存档只有 noteBy 没 noteById → 退回按名字比 */
+function bookNoteVisible(p){
+  if (!p || !p.noteText) return false;
+  if (typeof bookScope === 'undefined' || bookScope !== 'char') return false;
+  if (!bookScopeCharId) return false;
+  if (p.noteById) return p.noteById === bookScopeCharId;
+  return !!p.noteBy && p.noteBy === bookScopeCharName;
+}
+
 /* ============================================================
    20261109：书签便签留言（书签集留言）
    ------------------------------------------------------------
@@ -10356,6 +10509,10 @@ const BOOK_NOTE_CHANCE = 0.5;
 function bookNoteOpen(ch, p){
   if (!p || !ch) return false;
   if (p.noteById && p.noteById === ch.id) return false;      /* 已留过 → 封口 */
+  /* ★ 20261111（用户连说两遍）：「只记录单个角色」——
+     一枚书签只贴一张便签，先留的那个角色占位；后来者不覆盖，
+     免得 A 的留言被 B 的手写成自己的，串到别的角色视野里。 */
+  if (p.noteText) return false;
   /* 20261110：多归属后，只要「这张书签也送给了 TA」就能留言；
      没送给 TA（送给了别人）则不能。 */
   if (giftLogOf(p).length && !giftHasChar(p, ch.id, ch.name)) return false;
@@ -10380,6 +10537,7 @@ async function bookNoteMake(ch, p){
 function bookNoteSet(ch, p, text){
   if (!p || !ch || !text) return;
   if (p.noteById === ch.id) return;
+  if (p.noteText) return;                 /* 20261111：已有便签 → 不覆盖（见 bookNoteOpen） */
   p.noteById = ch.id;
   p.noteBy = ch.name;
   p.noteAt = Date.now();
@@ -10598,6 +10756,29 @@ const PRESET_CARE = [
   '浇了半壶，剩下的留着晚上。',
   '给它记了一笔，今天是第 {d} 天。',
   '什么都没做，就是蹲下来看了一会儿。'
+];
+
+/* ---- 真实动作对应的台词（20261112 新增）----
+   用户：「一条条来」——每次浇水 / 施肥都要单独留一条。
+   所以文案必须和动作对得上：浇水的池子只写浇水，施肥的池子只写施肥，
+   不能像 PRESET_CARE 那样混着「松土 / 除草 / 换盆」却其实只浇了一瓢水。 */
+const CARE_WATER_LINES = [
+  '给「{n}」浇了水，土喝得很慢。',
+  '沿着盆边浇的，别冲了根。',
+  '浇透了，底下流出水来。',
+  '土面发白，是该浇了。',
+  '用温水浇的，早上那水太凉。',
+  '浇了半壶，剩下的留着晚上。',
+  '手指插进去两节，里头干了，给「{n}」补了水。',
+  '拿竹签探了探土，底下还是干的，浇了。'
+];
+const CARE_FERT_LINES = [
+  '给「{n}」施了点薄肥，别嫌我手重。',
+  '施了第二次肥，隔了半个月。',
+  '边上撒了点草木灰。',
+  '施了点骨粉，慢慢来。',
+  '肥埋进土里两指深，离根远一点。',
+  '拌了点腐熟的土，味道不太好闻。'
 ];
 
 /* ---- 爱意：情感类，50 条。{n} = 植物名 ----
@@ -10860,6 +11041,8 @@ const SEASON_RULES = {
        「肥伤是不会害死苗苗的」
      ⇒ 所以下面写的 6 / 4 是**玩家 + 角色两边合计**：
          玩家 3 次 + 角色 3 次 = 6 次有效浇水；玩家 2 + 角色 2 = 4 次有效施肥。
+     ⇒ 20261111 起两边**各算各的**（浇水和施肥同一套规则）：
+         你自己那份用完就白做，剩下的必须等对方自己来做才算数。
      ⇒ 超过有效次数**不是不能做**，是「做了也白做」；再往上才开始有风险。
        按钮**永不置灰** —— 靠后果约束，不靠禁用（旧实现做成了硬上限，是错的）。
      ⇒ 账本按**每株 × 一天**记（pl.careDay），大按钮「全局浇水」= 逐株各 +1 次。
@@ -10869,19 +11052,31 @@ const SEASON_RULES = {
        7 ~ 12    不加速（浇了也白浇）
        13 起     不加速 + 有概率进入「溢水」（叶尖挂水珠的形态）
        溢水中再累计 > waterFloodN(10) 次 → 每次浇水有概率淹死
-     ---- 施肥档位 ----
-       1 ~ 4     有效，+careDays×1.6
-       5 ~ 6     不加速 + 45% 肥伤
-       7 起      不加速 + 80% 肥伤
+     ---- 施肥档位（同样按「谁施的」分开算，20261111 与浇水同规）----
+       你 1 ~ 2 / TA 1 ~ 2   有效，+careDays×1.6
+       合计 5 ~ 6            不再加速 + 45% 肥伤
+       合计 7 起             不再加速 + 80% 肥伤
        同一株累计 3 次肥伤 → 卷边定型（不可逆，但不死）
      ⇒ 肥伤和溢水都是「当天的状态」：第二天不再重复该动作就自动恢复。
      ⇒ 肥伤只影响外观，**永远不会弄死苗**（用户 20261112 明确）。 */
   waterPerDay: 6,       /* 当天合计「有效浇水」次数（玩家 3 + 角色 3） */
+  /* ★ 20261111 用户定案：有效次数按「谁浇的」分开算 ★
+     原话：「玩家端每一株浇水，玩家端有效生长只有三次，另外三次必须是角色主动浇的，
+            无论是浇全局还是单株浇」
+     ⇒ 你浇的只有前 3 次有效，第 4 次起白浇；TA 浇的同样是前 3 次有效。
+       两边加起来才是 waterPerDay(6)。不会再出现「你一个人就能把 6 次浇满」。 */
+  waterSidePerDay: 3,
   waterSoftMax: 12,     /* 到这一次为止都不加速、但也不会出事 */
   waterFloodN: 10,      /* 已经溢水之后，再累计浇这么多次 → 开始有淹死概率 */
   overflowRate: 0.35,   /* 第 13 次起，每次浇水进入「溢水」的概率 */
   drownRate: 0.35,      /* 溢水中超限后，每次浇水被淹死的概率 */
   fertPerDay: 4,        /* 当天合计「有效施肥」次数（玩家 2 + 角色 2） */
+  /* ★ 20261111 用户定案：施肥与浇水同规，有效次数按「谁施的」分开算 ★
+     原话：「施肥当然也要改了」「玩家端每株有效只有两次是玩家施的，
+            另外两次必须是角色施的」
+     ⇒ 你施的前 2 次有效，第 3 次起白施；TA 同样是前 2 次有效。
+       两边加起来才是 fertPerDay(4)。肥伤概率仍按**合计**次数判（第 5 次起）。 */
+  fertSidePerDay: 2,
   fertBurnFrom: 5,      /* 第 5 次起开始判肥伤 */
   fertBurnRate2: 0.45,  /* 第 5~6 次施肥 → 45% 肥伤 */
   fertBurnRate3: 0.80,  /* 第 7 次起施肥 → 80% 肥伤 */
@@ -10996,7 +11191,11 @@ function renderNotes(){
   const box = $('#pnList');
   if (!box) return;
   const id = PLANET.viewId || PLANET.ownerId;
-  const list = notesOf(id).slice().sort((a, b) => b.at - a.at).slice(0, 30);
+  /* 时间倒序；同一时刻（补算一天的浇水/施肥/观察三条）按 seq 排成
+     浇水 → 施肥 → 除此之外…，否则「除此之外」会跑到最上面 */
+  const list = notesOf(id).slice().sort((a, b) =>
+    (b.at - a.at) || (((a.seq === undefined ? 9 : a.seq)) - ((b.seq === undefined ? 9 : b.seq)))
+  ).slice(0, 30);
   const cnt = $('#pnCount');
   if (cnt) cnt.textContent = list.length ? (list.length + ' 条') : '';
   if (!list.length){
@@ -11017,9 +11216,45 @@ function renderNotes(){
     const m = document.createElement('div'); m.className = 'pn-m';
     m.textContent = n.by + ' · ' + agoStr(n.at);
     b.appendChild(x); b.appendChild(m);
+    /* ★ 20261112：带明细的留言（补算按「浇水 / 施肥 / 静静看着」各一条）下面挂一个展开钮，
+       点开就是逐条的时间 + 株名 + 动作 —— 用户要的「能看具体什么时候去照料的」。 */
+    if (n.detail && n.detail.length){
+      const more = document.createElement('button');
+      more.type = 'button'; more.className = 'pn-more';
+      const det = document.createElement('div');
+      det.className = 'pn-det';
+      const openNow = _pnOpen.has(n.id);
+      more.textContent = (openNow ? '收起 ' : '展开 ') + n.detail.length + ' 条';
+      det.style.display = openNow ? 'block' : 'none';
+      n.detail.forEach(function(d){
+        const dr = document.createElement('div');
+        dr.className = 'pn-dr';
+        const dt = document.createElement('span');
+        dt.className = 'pn-dt'; dt.textContent = nxHHMM(d.t);
+        dr.appendChild(dt);
+        dr.appendChild(document.createTextNode(d.s || ''));
+        det.appendChild(dr);
+      });
+      more.onclick = function(){
+        const on = !_pnOpen.has(n.id);
+        if (on) _pnOpen.add(n.id); else _pnOpen.delete(n.id);
+        det.style.display = on ? 'block' : 'none';
+        more.textContent = (on ? '收起 ' : '展开 ') + n.detail.length + ' 条';
+        /* 有任意一条处于展开 → 留言区放高，避免明细被 190px 的滚动框切掉 */
+        box.classList.toggle('open', _pnOpen.size > 0);
+      };
+      b.appendChild(more); b.appendChild(det);
+    }
     row.appendChild(cv); row.appendChild(b);
     box.appendChild(row);
   });
+  box.classList.toggle('open', _pnOpen.size > 0);
+}
+/* 明细里的「几点」：只给时分，日期在那条留言的时间上已经写了 */
+function nxHHMM(ts){
+  if (!ts) return '';
+  const d = new Date(ts);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
 /* ============================================================
@@ -11172,7 +11407,9 @@ function booksOfChar(id){
       return {
         no: x.no, name: x.name, kind: x.kind || 'plant',
         imprintKey: x.imprintKey || '', at: x.giftedAt || '',
-        myMsg: x.myMsg || '', taNote: x.noteText || ''
+        myMsg: x.myMsg || '',
+        /* 20261111：便签属于留它的那个角色 —— 别的角色留的，不能出现在这个角色的上下文里 */
+        taNote: (x.noteText && (!x.noteById || x.noteById === id)) ? x.noteText : ''
       };
     });
   } catch(e){ return []; }
@@ -11183,17 +11420,22 @@ function booksOfChar(id){
 function seasonRulesText(){
   const R = SEASON_RULES;
   const w = R.waterPerDay || 6, f = R.fertPerDay || 4;
-  const w1 = Math.max(1, Math.round(w / 2)), f1 = Math.max(1, Math.round(f / 2));
+  const w1 = R.waterSidePerDay || Math.max(1, Math.round(w / 2));
+  const f1 = R.fertSidePerDay || Math.max(1, Math.round(f / 2));
   const soft = R.waterSoftMax || 12, flood = R.waterFloodN || 10;
   const l = R.lovePerRound || 8, ls = R.loveLimit || 6;
   const pc = function(x, d){ return Math.round((x || d) * 100); };
   return [
-    '浇水：每株每天合计 ' + w + ' 次有效（两边各 ' + w1 + ' 次，写同一本账），每次 +' +
-      R.waterDays + ' 天；' + (w + 1) + '~' + soft + ' 次白浇不长；' + (soft + 1) + ' 次起 ' +
+    '浇水：每株每天你 ' + w1 + ' 次 + TA ' + w1 + ' 次有效（各算各的，不能互相顶 —— 你浇满 ' +
+      w1 + ' 次后，剩下 ' + w1 + ' 次要 TA 自己来浇才算数）；每次 +' +
+      R.waterDays + ' 天；超出自己的额度就白浇不长；合计第 ' + (soft + 1) + ' 次起 ' +
       pc(R.overflowRate, 0.35) + '% 溢水；溢水后再浇 ' + flood + ' 次以上，每次 ' +
       pc(R.drownRate, 0.35) + '% 被淹死。',
-    '施肥：每天合计 ' + f + ' 次有效（两边各 ' + f1 + ' 次）；第 ' + (R.fertBurnFrom || 5) + '~' +
-      ((R.fertBurnFrom || 5) + 1) + ' 次 ' + pc(R.fertBurnRate2, 0.45) + '% 肥伤，第 ' +
+    '施肥：每株每天你 ' + f1 + ' 次 + TA ' + f1 + ' 次有效（同样各算各的 —— 你施满 ' +
+      f1 + ' 次后，剩下 ' + f1 + ' 次要 TA 自己来施才算数）；每次 +' +
+      (Math.round((R.careDays || 0.08) * 1.6 * 1000) / 1000) + ' 天；超出自己的额度就白施不长；' +
+      '合计第 ' + (R.fertBurnFrom || 5) + '~' +
+      ((R.fertBurnFrom || 5) + 1) + ' 次 ' + pc(R.fertBurnRate2, 0.45) + '% 肥伤，合计第 ' +
       ((R.fertBurnFrom || 5) + 2) + ' 次起 ' + pc(R.fertBurnRate3, 0.8) + '%；肥伤不会弄死苗，' +
       '累计 ' + (R.fertCurlTimes || 3) + ' 次永久卷边。',
     '爱意：按这一株的整个生长周期算，不按天；两边各 ' + l + ' 次；' + ls + ' 次以内安全，第 ' +
@@ -11217,11 +11459,15 @@ function buildAiContext(ch){
         stage: s.name, stageIdx: s.i, stageN: s.n,
         growPct: Math.round(growOf(p)),
         burned: !!p.burned, mutant: !!p.mutantAt, dead: !!p.dead,
-        /* ★ 20261112：角色要看得见「玩家今天浇了几次、施了几次」以及当前状态 ★ */
+        /* ★ 20261112：角色要看得见「玩家今天浇了几次、施了几次」以及当前状态 ★
+           ★ 20261111：再给一份「它自己」浇了几次 —— 有效额度是一边一半，
+             它要知道的是自己还剩几次，而不是看着玩家的次数以为浇满了。 */
         waterToday: careUsedOf('浇水', p), fertToday: careUsedOf('施肥', p),
+        waterMine: careSideUsedOf('浇水', p, ch.name), fertMine: careSideUsedOf('施肥', p, ch.name),
         waterCap: careCapOf('浇水'), fertCap: careCapOf('施肥'),
+        waterMyCap: careSideCapOf('浇水'), fertMyCap: careSideCapOf('施肥'),
         overflow: !!p.overflow, fertBurn: !!p.fertBurn, fertCurl: !!p.fertCurl,
-        canCare: !careShouldHold(p, '浇水') || !careShouldHold(p, '施肥'),
+        canCare: !careShouldHold(p, '浇水', ch.name) || !careShouldHold(p, '施肥', ch.name),
         loveRound: loveQuotaOf(p), loveCap: SEASON_RULES.lovePerRound || 8,
         loveTotal: p.loveCount || 0,
         lastWaterAt: wAt || null, lastFertAt: fAt || null,
@@ -11279,7 +11525,7 @@ function aiTick(ch, id){
       /* ★ 20261112：AI 的照料也走和玩家**同一套**函数（账本、溢水、肥伤都在里面），
          并且先看状态 —— 不该动的时候只留一句「看了一眼植物的状态，选择了不作为」。 */
       const kind = Math.random() < 0.5 ? '浇水' : '施肥';
-      if (careShouldHold(pl, kind)){
+      if (careShouldHold(pl, kind, ch.name)){
         carePushSkip(pl, ch.name, Date.now(), kind);
       } else {
         if (kind === '浇水') waterOnePlant(pl, Date.now(), ch.name);
@@ -13498,21 +13744,44 @@ function drawPlantForm(g, x, y, k, sh, form, cols, light, pl, deco){
                  [3,'#6f9fb2'],[4,'#8ec0d2'],[5,'#4d7f94']];
     for (let i2 = 0; i2 < _pw.length; i2++) pset(g, _pw[i2][0], base - 1, _pw[i2][1], sh);
   }
-  /* ---- 开花的一瞬间：星星闪一下 + 叮铃（20261108 加）----
-     用户：「开花的时候有一个类似于叮的那种叮铃，就是有点星星闪闪的那种音效」
-     · 音效只在「刚开」那一帧响一次，靠 pl._bloomOn 记着；花谢 / 被铲就清位。
-     · 星芒按开花后 1.1 秒的进度从花心往外散，之后留两颗小星慢慢呼吸着闪。
-     · 花顶位置取 tips 的最高点再往上 3 格 —— 比在 20 套画法里各算一遍省事。 */
-  if (deco && boo && !burnLove && !(pl && pl.dead)){
+  /* ---- 最后一帧：星芒 + 叮铃 ----
+     20261108 加开花那一套（用户：「开花的时候有一个类似于叮的那种叮铃，
+     就是有点星星闪闪的那种音效」）；20261112 用户报障修正：
+     「宽叶车前草、我目前有的几种植物，动画到最后一帧都没有叮的星芒和音效」
+     ⇒ 旧判定用 boo（真的开花了），可是 boo 要求「走到最后一档 且 浇过爱意
+       且 没烧没枯」—— 没浇过爱意的株、以及最后一档本来就是成株/只结个苞的
+       物种，boo 全是 false，于是整段星芒和叮被一起跳过。
+     ⇒ 改成看「**走到最后一档**」（si.i >= si.n-1）：最后一帧无论开出花、
+       只结个苞、还是停在成株，都该响一声、散一圈星。成株中间那一档不再单独加高光。
+     · 音效只在进入最后一档的那一帧响一次，靠 pl._bloomOn 记着；退回苗/被铲就清位。
+     · 星芒按进入最后一帧后 1.1 秒的进度从株顶往外散，之后留三颗小星呼吸着闪。
+     · 株顶位置取 tips 的最高点再往上 3 格 —— 比在 20 套画法里各算一遍省事。 */
+  const _lastFrame = si ? (si.i >= si.n - 1) : (st === 5);
+  if (deco && _lastFrame && !burnLove && !(pl && pl.dead)){
     const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    if (pl && !pl._bloomOn){ pl._bloomOn = 1; pl._bloomAt = nowMs; bloomChime(); }
+    if (pl){
+      /* 视觉计时和「音频已经响过」是两个标记，必须分开：
+         _bloomAt —— 一进最后一帧就落一次，星芒按它算进度；
+         _bloomOn —— 只有音频真的在跑（ac.state==='running'）才置位。
+         20261112 修：以前两者合一，页面刚开时 AudioContext 还是 suspended，
+         标记先被置上、声音却没出来，之后整局再也不响 —— 这就是
+         「最后一帧没有叮」的真正原因之一。suspended 时不置位，等解锁后补响。 */
+      if (!pl._bloomAt) pl._bloomAt = nowMs;
+      if (!pl._bloomOn){
+        const ac0 = _tCtx();
+        if (ac0 && ac0.state === 'running'){ pl._bloomOn = 1; bloomChime(); }
+      }
+    }
     let tY = -6;
     if (tips && tips.length){
       tY = 0;
       for (let i2 = 0; i2 < tips.length; i2++) if (tips[i2][1] < tY) tY = tips[i2][1];
       tY -= 3;
     }
-    const age = pl ? (nowMs - (pl._bloomAt || nowMs)) : 9999;
+    /* 跨会话读回来的 _bloomAt 属于另一套 performance.now 基准，会算出负数，
+       负数 age 会被当成「刚开始」而误闪一次 —— 直接判成过期。 */
+    const _rawAge = pl ? (nowMs - (pl._bloomAt || nowMs)) : 9999;
+    const age = (_rawAge < 0 || _rawAge > 600000) ? 99999 : _rawAge;
     const RR = deco ? 9 : 6;
     if (age < 1100){
       const u = age / 1100;
@@ -13546,8 +13815,11 @@ function drawPlantForm(g, x, y, k, sh, form, cols, light, pl, deco){
         }
       }
     }
-  } else if (pl && pl._bloomOn){
-    pl._bloomOn = 0;                      /* 花谢 / 被铲 / 烧了 → 下回再开要重新叮 */
+  } else if (pl && (pl._bloomOn || pl._bloomAt)){
+    /* 还没到最后一帧 / 花谢 / 被铲 / 烧了 → 两个标记一起清，
+       下回再长到头要重新散星、重新叮。 */
+    pl._bloomOn = 0;
+    pl._bloomAt = 0;
   }
   g.restore();
 }
@@ -14275,8 +14547,8 @@ document.addEventListener('keydown', function(e){
      从「抽卡留言」线挪到这里（用户 20261112 指定）：每跳 15% 顺手问一次，
      仍受 loveGapMs 冷却约束。
    ---- 角色也会把植物浇坏 ----
-     账本和玩家共用（每株每天 6 次有效浇水 / 4 次有效施肥）：
-     角色浇超了照样溢水、浇到淹死；施超了照样肥伤、卷边。
+     账本和玩家共用（每株每天：你 3 + TA 3 次有效浇水、你 2 + TA 2 次有效施肥，
+     各算各的）：角色浇超了照样溢水、浇到淹死；施超了照样肥伤、卷边。
    间隔由 INTERACT.careGapMs 控制（demo 48s，线上 30~90 分钟）。
    接主项目：把 setTimeout 换成后台调度/前台 Service，函数体不用改。
    ============================================================ */
@@ -14306,22 +14578,86 @@ function careSkipLineFor(pl, kind){
   if (pl && (pl.fertBurn || pl.fertCurl)) return 'TA 本想给「' + nm + '」施肥，看了一眼植物的状态，选择了不作为 —— 叶子还伤着。';
   return 'TA 本想给「' + nm + '」施肥，看了一眼植物的状态，选择了不作为 —— 今天已经吃够了。';
 }
-/* 这一株现在该不该被这个动作动？只看「能不能再加」，不改任何数值。 */
-function careShouldHold(pl, kind){
+/* 这一株现在该不该被这个动作动？只看「能不能再加」，不改任何数值。
+   20261111：浇水按「这个人自己的额度」判 —— 你浇满 3 次不代表 TA 也不能浇。 */
+function careShouldHold(pl, kind, who){
   if (!pl) return true;
   if (kind === '浇水'){
-    return !!pl.overflow || careUsedOf('浇水', pl) >= careCapOf('浇水');
+    return !!pl.overflow || careSideUsedOf('浇水', pl, who) >= careSideCapOf('浇水');
   }
-  return !!pl.fertBurn || !!pl.fertCurl || careUsedOf('施肥', pl) >= careCapOf('施肥');
+  /* 施肥同规：看「这个人自己」施了几次，不看合计 —— 你施满 2 次不代表 TA 也不能施 */
+  return !!pl.fertBurn || !!pl.fertCurl ||
+         careSideUsedOf('施肥', pl, who) >= careSideCapOf('施肥');
 }
-/* 写一条「未照料」记录 + 留言（植株日志里也能看见它来过） */
+/* 写一条「未照料」记录（只进植株互动记录，不进留言 —— 留言只放摘要） */
 function carePushSkip(pl, who, t, kind){
   const line = careSkipLineFor(pl, kind);
   pl.acts.push({ t: t, k: '未照料', by: who, note: line });
-  try { nxPush(pl.byId || PLANET.viewId, 'care', line, { plantId: pl.id }); } catch(e){}
+  careSumAdd(pl, '看', t);
   renderPlanetList();
   if (sheetPlant === pl) renderPlantSheet();
 }
+/* ============================================================
+   照料摘要（20261112 最终版，改之前先读）
+   ------------------------------------------------------------
+   用户原话：
+     「留言那里只出现摘要」「哪怕是摘要也是浇水算是一条、施肥算是一条、
+       静静地看着算是一条」「这些条是可以展开看细节的，就是看具体角色
+       是什么时候去照料的」「正常的那种一个一个的互动是互动记录，别搞错」
+   ⇒ 每天最多三条：浇水 / 施肥 / 静静看着。
+     每来一次动作，就**更新当天那一条**（次数 +1、明细多一行），
+     不新开留言，留言区永远不会被刷屏。
+   ⇒ 逐次的动作本身写进 pl.acts（植株面板「互动记录」），两条线各管各的。
+   ============================================================ */
+const CARE_SUM_LABEL = { '水': '浇了水', '肥': '施了肥', '看': '看了一眼，没动手' };
+const CARE_SUM_SEQ = { '水': 0, '肥': 1, '看': 2 };
+function careSumOf(dayKey, kind, byId){
+  for (let i = PLANET.notes.length - 1; i >= 0; i--){
+    const n = PLANET.notes[i];
+    if (n && n.kind === 'care' && n.sumDay === dayKey && n.sumKind === kind && n.byId === byId) return n;
+  }
+  return null;
+}
+/* 三项文案一起重算：「除此之外」要看当天有没有浇过/施过 */
+function careSumText(dayKey, byId){
+  const w = careSumOf(dayKey, '水', byId);
+  const f = careSumOf(dayKey, '肥', byId);
+  const l = careSumOf(dayKey, '看', byId);
+  const nw = w ? w.detail.length : 0, nf = f ? f.detail.length : 0, nl = l ? l.detail.length : 0;
+  if (w) w.text = '他给植物浇了' + careCnNum(nw) + '次水。';
+  if (f) f.text = '他给植物施了' + careCnNum(nf) + '次肥。';
+  if (l) l.text = ((nw || nf) ? '除此之外，' : '') + '他还静静地观察了植物' + careCnNum(nl) + '次。';
+}
+function careSumAdd(pl, kind, t){
+  try {
+    const ts = t || Date.now();
+    const dayKey = _careDayOverride || dayStrOf(ts);
+    const byId = (pl && pl.byId) || PLANET.viewId || PLANET.ownerId;
+    const ch = charById(byId);
+    let n = careSumOf(dayKey, kind, ch.id);
+    if (!n){
+      n = { id: 'nt' + (++nxSeq) + '_' + ts, byId: ch.id, by: ch.name, kind: 'care',
+            text: '', at: ts, ref: null, detail: [], seq: CARE_SUM_SEQ[kind],
+            sumDay: dayKey, sumKind: kind };
+      PLANET.notes.push(n);
+      if (PLANET.notes.length > 120) PLANET.notes.splice(0, PLANET.notes.length - 120);
+    }
+    n.detail.push({ t: ts, s: '「' + ((pl && pl.name) || '那株') + '」· ' + CARE_SUM_LABEL[kind] });
+    if (n.detail.length > 60) n.detail = n.detail.slice(-60);
+    /* 同一天三条共用「这一天最后一次动作」的时间：
+       列表按时间倒序时三条必然挨在一起，再由 seq 固定成
+       「浇水 → 施肥 → 除此之外…」，不会散到别的日期中间去。 */
+    ['水', '肥', '看'].forEach(function(k){
+      const m = careSumOf(dayKey, k, ch.id);
+      if (m) m.at = Math.max(m.at || 0, ts);
+    });
+    careSumText(dayKey, ch.id);
+    if (!_nxQuiet && typeof curView !== 'undefined' && curView === 'vPlanet' && !document.hidden){
+      try { renderNotes(); } catch(e){}
+    }
+  } catch(e){}
+}
+/* 顺口一句（PRESET_CARE 池）—— 现在留言只放摘要，这条只备用 */
 function careLineFor(pl){
   const nm = pl.name;
   const dd = Math.floor((Date.now() - (pl.t0 || Date.now())) / 86400000) + 1;
@@ -14333,80 +14669,196 @@ function careLineFor(pl){
   lastCareLine = pick;
   return pick.replace(/\{n\}/g, nm).replace(/\{d\}/g, dd);
 }
+/* ============================================================
+   角色照料：一跳 = 一次随机动作（浇水 / 施肥 / 看一眼不动手）
+   ------------------------------------------------------------
+   ★ 20261112 用户报：「我把软件挂后台一两天，点进四季一条照料的信息都没有」
+   根因三条（旧代码）：
+     ① 只有停在「星球」那一页（curView === 'vPlanet'）才干活 ——
+        你去书签集、去采集页，或者把四季层收起来去聊天，TA 就永远不动手；
+     ② 主项目那条后台线 _seasonBgTick 一旦发现四季 iframe 还活着就直接 return
+        （为了不重复照料），而四季自己又被 ① 卡住 → 两边都不做事，一条记录都没有；
+     ③ 完全没有补算：App 被关掉的那段时间是空白，重新打开也不会补。
+   ⇒ 现在：① 不再看停在哪个子页；② 下一次到点时间落盘（PLANET.careNextAt）；
+     ③ 回到前台 / 收到宿主 tick 时，careCatchUp() 按时间顺序把漏掉的那段补算回来。
+   ============================================================ */
+function careGapRange(){
+  return {
+    lo: (typeof INTERACT !== 'undefined' ? INTERACT.careMinMs : 1800000),
+    hi: (typeof INTERACT !== 'undefined' ? INTERACT.careMaxMs : 5400000)
+  };
+}
+/* 一跳：返回这一跳做了什么（water / fert / hold / skip / none）
+   quiet=true → 不弹提示、不逐条写留言（补算用），由调用方汇总 */
+function careTickAt(t, quiet){
+  const now = t || Date.now();
+  if (!PLANET.plants.length) return { kind: 'none' };
+  /* 能照料的：没烧苗、没枯死、还没长满 */
+  const cands = PLANET.plants.filter(function(x){
+    return x && !x.burned && !x.dead && (x.grow || 0) < 100;
+  });
+  /* ★ 20261112：全都长满了 / 全烧了 → 以前直接 return 'none'，
+     结果是「留言一条没有、互动记录一条没有」，看着像整个功能死了。
+     现在改成「去看了一眼」——照样记进当天的观察摘要。 */
+  if (!cands.length){
+    const any = PLANET.plants[0];
+    careSumAdd(any, '看', now);
+    return { kind: 'skip', pl: any, who: '' };
+  }
+  const pl = cands[Math.floor(Math.random() * cands.length)];
+  const ch = charById(PLANET.viewId || PLANET.ownerId);
+  const who = (ch && ch.name) || PLANET.owner || 'TA';
+
+  /* ---- 完全随机：这一跳做不做（用户 20261112「完全随机，要有不作为这个行为」） ---- */
+  if (Math.random() < (SEASON_RULES.careSkipRate || 0.25)){
+    if (!quiet) carePushSkip(pl, who, now, '');
+    else careSumAdd(pl, '看', now);            /* 补算也记进当天摘要（观察 +1） */
+    return { kind: 'skip', pl: pl, who: who };
+  }
+
+  /* ---- 浇还是施：1:1 纯随机，**不再按顺序轮**（用户 20261112 定案） ---- */
+  const kind = Math.random() < 0.5 ? '浇水' : '施肥';
+
+  /* ---- 它看得见这一株的状态（用户 20261112）----
+     抽到浇水、但它自己今天已经浇满 / 正在溢水 → 不浇了；
+     抽到施肥、但这株已经在肥伤 / 已经吃够 → 不施了。
+     留言就是用户给的那句式：「TA 本想给植物浇水，看了一眼植物的状态，选择了不作为。」
+     ⇒ 浇水看的是「TA 自己」的额度：你浇满 3 次之后，TA 那 3 次仍然有效、也仍然会浇
+       —— 这正是用户要的「另外三次必须是角色主动浇的」。
+       施肥同规：看 TA 自己施了几次（你施满 2 次不影响 TA 的 2 次）。 */
+  if (careShouldHold(pl, kind, who)){
+    if (!quiet) carePushSkip(pl, who, now, kind);
+    else careSumAdd(pl, '看', now);
+    return { kind: 'hold', pl: pl, who: who, act: kind };
+  }
+
+  if (kind === '浇水') waterOnePlant(pl, now, who);
+  else feedOnePlant(pl, now, who);
+  /* ★ 20261112 用户定案（第二次澄清，这条是最终版）：
+       「留言那里只出现摘要」—— 每一次动作不单独刷一条留言，
+       而是**更新当天那条摘要**（浇水一条 / 施肥一条 / 静静看着一条），
+       次数跟着涨，明细里多一行「几点 · 哪一株」。
+       一拍一拍的动作本身留在植株的「互动记录」里，两边不混。
+       补算也走同一条路，所以补出来的和实时长出来的长得一模一样。 */
+  careSumAdd(pl, kind === '浇水' ? '水' : '肥', now);
+
+  if (!quiet){
+    careSeq++;
+    /* 只在「玩家真的看着星球」时才重绘：四季层收起来（人在聊天）时照样照料，
+       但没必要重画一张看不见的 canvas。 */
+    if (curView === 'vPlanet' && !document.hidden){
+      renderPlanetList();
+      drawPlanetFrame();
+      if (sheetPlant === pl) renderPlantSheet();
+    }
+  }
+  return { kind: kind === '浇水' ? 'water' : 'fert', pl: pl, who: who };
+}
 function startCare(){
   if (careTimer) return;
   const doCare = function(){
-    if (!PLANET.plants.length) { scheduleNext(); return; }
-    if (curView !== 'vPlanet') { scheduleNext(); return; }
-    /* 能照料的：没烧苗、没枯死、还没长满 */
-    const cands = PLANET.plants.filter(function(x){
-      return x && !x.burned && !x.dead && (x.grow || 0) < 100;
-    });
-    if (!cands.length) { scheduleNext(); return; }
-    const pl = cands[Math.floor(Math.random() * cands.length)];
-    const ch = charById(PLANET.viewId || PLANET.ownerId);
-    const who = (ch && ch.name) || PLANET.owner || 'TA';
-    const t = Date.now();
-
-    /* ---- 完全随机：这一跳做不做（用户 20261112「完全随机，要有不作为这个行为」） ---- */
-    if (Math.random() < (SEASON_RULES.careSkipRate || 0.25)){
-      carePushSkip(pl, who, t, '');
-      scheduleNext();
-      return;
-    }
-
-    /* ---- 浇还是施：1:1 纯随机，**不再按顺序轮**（用户 20261112 定案） ---- */
-    const kind = Math.random() < 0.5 ? '浇水' : '施肥';
-
-    /* ---- 它看得见这一株的状态（用户 20261112）----
-       抽到浇水、但这株今天已经浇满 / 正在溢水 → 不浇了；
-       抽到施肥、但这株已经在肥伤 / 已经吃够 → 不施了。
-       留言就是用户给的那句式：「TA 本想给植物浇水，看了一眼植物的状态，选择了不作为。」
-       ⇒ 数值上它和玩家写同一本账：玩家今天浇了几次，它看得见，也不会硬往上加。 */
-    if (careShouldHold(pl, kind)){
-      carePushSkip(pl, who, t, kind);
-      scheduleNext();
-      return;
-    }
-
-    if (kind === '浇水') waterOnePlant(pl, t, who);
-    else feedOnePlant(pl, t, who);
-
-    careSeq++;
-    renderPlanetList();
-    drawPlanetFrame();
-    if (sheetPlant === pl) renderPlantSheet();
-
-    /* 每 3 跳顺口留一句（台词只从后台预设池抽，不掺字卡） */
-    if (careSeq % 3 === 0){
-      try { nxPush(pl.byId || PLANET.viewId, 'care', careLineFor(pl), { plantId: pl.id }); } catch(e){}
-    }
+    try { careTickAt(Date.now(), false); } catch(e){}
     scheduleNext();
   };
   /* 每次触发后在 [careMinMs, careMaxMs] 随机取下一次（随机固定区间）
      ★ 这两个值就是聊天设置里「照料间隔」的下限/上限（app.js seasonCareGapMin/Max →
        _seasonGapsOf 下发 careGapMin/careGapMax → 这里换成 ms），
-       也就是说：设置里调的那个间隔，控的就是**下面这条真实照料**（会改生长、会溢水/肥伤）。 */
+       也就是说：设置里调的那个间隔，控的就是**下面这条真实照料**（会改生长、会溢水/肥伤）。
+     ★ 20261112：把「下一次到点」写进存档 —— App 被关掉后重新打开才有得补算。 */
   const scheduleNext = function(){
-    const lo = (typeof INTERACT !== 'undefined' ? INTERACT.careMinMs : 1800000);
-    const hi = (typeof INTERACT !== 'undefined' ? INTERACT.careMaxMs : 5400000);
-    const gap = seasonRandGap(lo, hi);
+    const g = careGapRange();
+    const gap = seasonRandGap(g.lo, g.hi);
     careTimer = setTimeout(doCare, gap);
+    PLANET.careNextAt = Date.now() + gap;
+    /* 落盘节流：前台才立刻存（要扛住进程被杀）；后台只在切走时统一存一次，
+       免得每次照料都把几百 KB 的照片一起序列化一遍。 */
+    if (!document.hidden){ try { seasonSave(); } catch(e){} }
   };
   /* 首跳：进页面后先让 TA 很快动一次（取区间的 1/6，夹在 90 秒 ~ 15 分钟），
      之后严格按设置的区间走。
      ★ 20261112 修：原来首跳写死 48 秒（demo 值），线上等于「刚进页面 TA 就浇一次」，
        和设置里的 30~90 分钟完全对不上，也容易被当成 bug。 */
-  const _lo0 = (typeof INTERACT !== 'undefined' ? INTERACT.careMinMs : 1800000);
-  const _hi0 = (typeof INTERACT !== 'undefined' ? INTERACT.careMaxMs : 5400000);
-  const firstGap = Math.max(90000, Math.min(900000, Math.round(seasonRandGap(_lo0, _hi0) / 6)));
+  const g0 = careGapRange();
+  const firstGap = Math.max(90000, Math.min(900000, Math.round(seasonRandGap(g0.lo, g0.hi) / 6)));
   careTimer = setTimeout(doCare, firstGap);
+  if (!PLANET.careNextAt) PLANET.careNextAt = Date.now() + firstGap;
+  try { seasonSave(); } catch(e){}
+}
+
+/* 次数写成中文数字（「浇了四次水」比「浇了 4 次水」更像人写的）。
+   0~99 都能转：十二、二十四、三十六；再大就交给阿拉伯数字。 */
+function careCnNum(n){
+  const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+  if (!(n >= 0)) return String(n);
+  if (n === 2) return '两';            /* 「施了两次肥」比「二次」自然 */
+  if (n < 10) return d[n];
+  if (n < 20) return '十' + (n % 10 ? d[n % 10] : '');
+  if (n < 100){
+    const a = Math.floor(n / 10), b = n % 10;
+    return d[a] + '十' + (b ? d[b] : '');
+  }
+  return String(n);
+}
+/* ---- 补算：把「没人在的这段时间」按当时的间隔补回来 ----
+   · 以 PLANET.careNextAt 为起点一跳一跳往后推，直到追上现在；
+   · 每一跳把账本日期临时指到**那一天**（_careDayOverride），
+     两天就各按各的额度算（水 3+3 / 肥 2+2），不会两天的事全压进今天；
+   · 最多补 3 天，再久就不模拟了（避免一次跑几百跳、也避免一开就九株全熟）；
+   · 补算不弹提示，但**留言照留**：每天最多三条 —— 浇水一条、施肥一条、
+     静静看着一条，各自带「几点 / 哪一株」的明细，点开就能看。 */
+function careCatchUp(){
+  try {
+    if (!PLANET.plants || !PLANET.plants.length) return;
+    const now = Date.now();
+    let next = PLANET.careNextAt || 0;
+    if (!next){
+      /* 老存档没有基准（这次更新之前没人记过到点时间）→ 用「最后一笔照料 / 种下时间」兜底，
+         最多回看 3 天。这样玩家升级完第一次进来，之前空着的那段也能补上，
+         而不是「更新之后才开始有记录」。 */
+      let last = 0;
+      PLANET.plants.forEach(function(pl){
+        const acts = (pl && pl.acts) || [];
+        const at = acts.length ? (acts[acts.length - 1].t || 0) : (pl && pl.t0) || 0;
+        if (at > last) last = at;
+      });
+      if (!last) return;
+      next = Math.max(last, now - 3 * 86400000);
+    }
+    if (next > now) return;                    /* 还没到点 → 不补 */
+    const g = careGapRange();
+    const CAP = 3 * 86400000;
+    let t = Math.max(next, now - CAP);
+    /* 补算只做「动作」，留言由 careSumAdd 按天并进那三条摘要里
+       （浇水 / 施肥 / 静静看着），所以这里不需要自己攒文字。 */
+    let guard = 0, touchedNotes = false;
+    const _nxQuietBak = _nxQuiet;
+    _nxQuiet = true;                           /* 补算不弹提示、不逐次重绘留言 */
+    try {
+      while (t <= now && guard++ < 400){
+        _careDayOverride = dayStrOf(t);
+        try { careTickAt(t, true); touchedNotes = true; } catch(e){}
+        t += seasonRandGap(g.lo, g.hi);
+      }
+    } finally {
+      _careDayOverride = null;                 /* 一定要清，否则之后都记到补算那天 */
+      _nxQuiet = _nxQuietBak;
+    }
+    PLANET.careNextAt = t;
+    try { seasonSave(); } catch(e){}
+    if (touchedNotes){ try { renderNotes(); } catch(e){} }
+    try { renderPlanetList(); } catch(e){}
+    try { drawPlanetFrame(); } catch(e){}
+    try { if (sheetPlant) renderPlantSheet(); } catch(e){}
+  } catch(e){}
 }
 function startPlanet(){
   buildPlanet();
   plWarm = true;
   if (!PLANET.pool[PLANET.viewId]) PLANET.pool[PLANET.viewId] = PLANET.plants;
   renderPlanetChars();
+  /* 20261112：先把「没人在的这段时间」补算掉，再开实时这条线 ——
+     否则一进来就是「今天全空」，玩家要等好几个 30~90 分钟才看到 TA 动一次。 */
+  try { careCatchUp(); } catch(e){}
   startCare();
   startCharLife();
   startLoveLine();          /* 爱意邀请：独立的一条固定间隔线（20261112 用户定案） */
@@ -14450,39 +14902,75 @@ function stopPlanet(){
      后果由 waterTierOf / fertTierOf 决定（用户明确不要硬上限）。
    ============================================================ */
 function careQuotaOf(pl){
-  const d = todayStr();
-  if (!pl) return { d: d, water: 0, fert: 0 };   /* 没有株就没有账，避免误写全局 */
-  if (!pl.careDay || pl.careDay.d !== d) pl.careDay = { d: d, water: 0, fert: 0 };
-  return pl.careDay;
+  const d = _careDayOverride || todayStr();   /* 补算时按「那一天」记账 */
+  if (!pl) return { d: d, water: 0, fert: 0, waterP: 0, waterC: 0, fertP: 0, fertC: 0 };   /* 没有株就没有账，避免误写全局 */
+  if (!pl.careDay || pl.careDay.d !== d) pl.careDay = { d: d, water: 0, fert: 0, waterP: 0, waterC: 0, fertP: 0, fertC: 0 };
+  /* 旧存档兼容：只有 water/fert 的老账本，分项补 0。
+     老数据只进「合计」，不硬塞给某一方 —— 否则你今晚一打开就变成
+     「你已经浇了 3 次、这株不能长了」。 */
+  const q = pl.careDay;
+  if (typeof q.waterP !== 'number') q.waterP = 0;
+  if (typeof q.waterC !== 'number') q.waterC = 0;
+  if (typeof q.fertP !== 'number') q.fertP = 0;
+  if (typeof q.fertC !== 'number') q.fertC = 0;
+  return q;
 }
 function careCapOf(kind){
   return (kind === '施肥') ? (SEASON_RULES.fertPerDay || 0) : (SEASON_RULES.waterPerDay || 0);
+}
+/* 这一笔是谁做的：by 为空或者是「你」→ 玩家；带角色名 → 角色。
+   20261111：浇水要分账，所以每个入口都必须把 by 传进来。 */
+function careIsChar(by){ return !!by && by !== '你'; }
+/* 单方有效额度：浇水「你 3 + TA 3」，施肥「你 2 + TA 2」（各取合计的一半） */
+function careSideCapOf(kind){
+  if (kind === '施肥') return SEASON_RULES.fertSidePerDay || Math.max(1, Math.round((SEASON_RULES.fertPerDay || 4) / 2));
+  return SEASON_RULES.waterSidePerDay || Math.max(1, Math.round((SEASON_RULES.waterPerDay || 6) / 2));
 }
 function careUsedOf(kind, pl){
   const q = careQuotaOf(pl);
   return (kind === '施肥') ? (q.fert || 0) : (q.water || 0);
 }
+/* 某一方（你 / TA）今天已经用掉几次 —— 有效额度按这个判。
+   side 显式取 'me' / 'char'；也可以直接传 by（角色名就当 char）。 */
+function careSideOf(kind, pl, side){
+  const q = careQuotaOf(pl);
+  const isChar = (side === 'char');
+  if (kind === '施肥') return isChar ? (q.fertC || 0) : (q.fertP || 0);
+  return isChar ? (q.waterC || 0) : (q.waterP || 0);
+}
+function careSideUsedOf(kind, pl, by){
+  return careSideOf(kind, pl, careIsChar(by) ? 'char' : 'me');
+}
 function careLeftOf(kind, pl){
   return Math.max(0, careCapOf(kind) - careUsedOf(kind, pl));
 }
-function careUse(kind, pl){
+function careUse(kind, pl, by){
   const q = careQuotaOf(pl);
-  if (kind === '施肥') q.fert++; else q.water++;
+  const isChar = careIsChar(by);
+  if (kind === '施肥') {
+    q.fert++;
+    if (isChar) q.fertC = (q.fertC || 0) + 1; else q.fertP = (q.fertP || 0) + 1;
+  } else {
+    q.water++;
+    if (isChar) q.waterC = (q.waterC || 0) + 1; else q.waterP = (q.waterP || 0) + 1;
+  }
 }
-/* 档位（n = 这株今天第几次，含刚这次）：
+/* 档位（按「浇水的那个人」自己的额度判）：
    'ok'   有效，正常加速
    'flat' 白做：不加生长，也不会出事
-   'over' 超限：不加生长，开始有风险（溢水 / 肥伤） */
-function waterTierOf(pl){
-  const n = careUsedOf('浇水', pl);
-  if (n <= careCapOf('浇水')) return 'ok';
-  if (n <= (SEASON_RULES.waterSoftMax || 12)) return 'flat';
+   'over' 超限：不加生长，开始有风险 */
+function waterTierOf(pl, by){
+  const mine = careSideUsedOf('浇水', pl, by);      /* 你 / TA 各自今天第几次 */
+  const total = careUsedOf('浇水', pl);             /* 合计：决定溢水/水淹的风险阶段 */
+  if (mine <= careSideCapOf('浇水')) return 'ok';   /* 前 3 次有效 —— 两边各 3 次 */
+  if (total <= (SEASON_RULES.waterSoftMax || 12)) return 'flat';
   return 'over';
 }
-function fertTierOf(pl){
-  const n = careUsedOf('施肥', pl);
-  if (n <= careCapOf('施肥')) return 'ok';
-  return (n >= (SEASON_RULES.fertBurnFrom || 5)) ? 'over' : 'flat';
+function fertTierOf(pl, by){
+  const mine = careSideUsedOf('施肥', pl, by);     /* 你 / TA 各自今天第几次 */
+  const total = careUsedOf('施肥', pl);            /* 合计：决定肥伤风险阶段 */
+  if (mine <= careSideCapOf('施肥')) return 'ok';  /* 前 2 次有效 —— 两边各 2 次 */
+  return (total >= (SEASON_RULES.fertBurnFrom || 5)) ? 'over' : 'flat';
 }
 /* 星球页的「浇一次水」和植株面板里的「浇水 / 施肥」共用一个额度，
    所以三处按钮的状态必须同一处刷新，不然会出现「这个灰了那个还能点」 */
@@ -14494,7 +14982,7 @@ function updateCareBtns(){
        用户 20261112 明确：动作永远可点，靠后果（溢水/淹死）约束，不靠禁用。 */
     if (alive === 0) b.setAttribute('disabled', ''); else b.removeAttribute('disabled');
     b.innerHTML = '浇 一 次 水<small>' + (alive
-      ? ('WATER · 全局浇一遍 · 每株各记 1 次（有效 ' + careCapOf('浇水') + ' 次）')
+      ? ('WATER · 全局浇一遍 · 每株各记 1 次（你 ' + careSideCapOf('浇水') + ' 次 + TA ' + careSideCapOf('浇水') + ' 次）')
       : 'WATER · 这一轮没有能浇的株了') + '</small>';
   }
   const sw = $('#plsWater'), sf = $('#plsFeed');
@@ -14502,20 +14990,29 @@ function updateCareBtns(){
   const _sp = (typeof sheetPlant !== 'undefined') ? sheetPlant : null;
   if (sw){
     sw.removeAttribute('disabled');
-    const n = _sp ? careUsedOf('浇水', _sp) : 0;
+    /* 20261111：显示的是「你自己」第几次 —— 有效额度是你 3 次 + TA 3 次，分开算 */
+    const mine = _sp ? careSideOf('浇水', _sp, 'me') : 0;
+    const myCap = careSideCapOf('浇水');
+    const other = _sp ? careSideOf('浇水', _sp, 'char') : 0;
     sw.innerHTML = '浇 水<small>' + (_sp
-      ? (n < careCapOf('浇水')
-          ? ('这株今天第 ' + (n + 1) + ' 次 · 有效 ' + careCapOf('浇水') + ' 次')
-          : ('这株今天第 ' + (n + 1) + ' 次 · 已经浇多了'))
+      ? (mine < myCap
+          ? ('你这株今天第 ' + (mine + 1) + ' 次 · 有效 ' + myCap + ' 次')
+          : ('你这株今天第 ' + (mine + 1) + ' 次 · 你已浇满 ' + myCap + ' 次' + (other < myCap ? '，剩 ' + (myCap - other) + ' 次等 TA 来浇' : '')))
       : '打开一株再浇') + '</small>';
   }
   if (sf){
     sf.removeAttribute('disabled');
-    const n2 = _sp ? careUsedOf('施肥', _sp) : 0;
+    /* 20261111：施肥与浇水同规 —— 显示「你自己」第几次，有效额度你 2 次 + TA 2 次 */
+    const mineF = _sp ? careSideOf('施肥', _sp, 'me') : 0;
+    const myCapF = careSideCapOf('施肥');
+    const otherF = _sp ? careSideOf('施肥', _sp, 'char') : 0;
     sf.innerHTML = '施 肥<small>' + (_sp
-      ? (n2 < careCapOf('施肥')
-          ? ('这株今天第 ' + (n2 + 1) + ' 次 · 有效 ' + careCapOf('施肥') + ' 次')
-          : ('这株今天第 ' + (n2 + 1) + ' 次 · 多施会肥伤'))
+      ? (mineF < myCapF
+          ? ('你这株今天第 ' + (mineF + 1) + ' 次 · 有效 ' + myCapF + ' 次')
+          : ('你这株今天第 ' + (mineF + 1) + ' 次 · 你已施满 ' + myCapF + ' 次' +
+             (otherF < myCapF
+               ? '，剩 ' + (myCapF - otherF) + ' 次等 TA 来施'
+               : '，再多施会肥伤')))
       : '打开一株再施') + '</small>';
   }
 }
@@ -14530,10 +15027,11 @@ function waterOnePlant(pl, now, by){
   const t = now || Date.now();
   if (!pl) return null;
   pl.acts = pl.acts || [];
-  careUse('浇水', pl);                       /* 先记这一次，n 就是「今天第几次」 */
-  const n = careUsedOf('浇水', pl);
-  const tier = waterTierOf(pl);
-  const res = { n: n, tier: tier, overflowed: false, drowned: false };
+  careUse('浇水', pl, by);                   /* 先记这一次（分账：记到浇水人头上） */
+  const n = careUsedOf('浇水', pl);          /* 合计：第几次（风险阶段用） */
+  const myN = careSideUsedOf('浇水', pl, by);/* 这一方今天第几次（有效额度用） */
+  const tier = waterTierOf(pl, by);
+  const res = { n: n, myN: myN, tier: tier, overflowed: false, drowned: false };
   pl.acts.push({ t: t, k: '浇水', by: by || '你' });
 
   /* 枯死浇不回来；爱意烧苗的只记一笔（自愈要「浇过水」这个条件），都不给加速 */
@@ -14542,10 +15040,12 @@ function waterOnePlant(pl, now, by){
   /* ★ 20261112 用户要求：浇到「超过三次」时给一次小窗，把溢水/水淹的规则讲清 ★
      用户原话：「然后告诉玩家到时候给个小窗告诉玩家，浇水超过三次就可能让植物变成
                溢出状态。次数多了会水淹，就是把这个规则说一下」
-     ⇒ 只在玩家亲手浇（by 不是角色名）、这一株当天**刚好浇到第 4 次**时弹；
+     ⇒ 只在玩家亲手浇（by 不是角色名）、**你自己**这一株今天浇到第 4 次时弹；
        全局只弹一次（localStorage 记一笔），提醒过一次就不再打扰。
+     ⇒ 20261111 修正：条件从「合计第 4 次」改成「你自己第 4 次」——
+       否则你浇 3 次、TA 浇 1 次，合计到 4 也会弹，说的却是你。
      ⇒ 延后 1.7 秒：调用方那句「浇了一次水」还占着 toast，直接弹会被它覆盖掉。 */
-  if ((!by || by === '你') && n === 4){
+  if ((!by || by === '你') && myN === 4){
     let _seen = false;
     try { _seen = !!localStorage.getItem('bmSeasonTipWater'); } catch(e){}
     if (!_seen){
@@ -14600,11 +15100,27 @@ function feedOnePlant(pl, now, by){
   const t = now || Date.now();
   if (!pl) return null;
   pl.acts = pl.acts || [];
-  careUse('施肥', pl);
-  const nth = careUsedOf('施肥', pl);
-  const tier = fertTierOf(pl);
+  careUse('施肥', pl, by);                    /* 分账：记到施肥人头上（20261111） */
+  const nth = careUsedOf('施肥', pl);         /* 合计：第几次（肥伤风险用） */
+  const myN = careSideUsedOf('施肥', pl, by); /* 这一方今天第几次（有效额度用） */
+  const tier = fertTierOf(pl, by);
   pl.acts.push({ t: t, k: '施肥', by: by || '你' });
-  const res = { nth: nth, tier: tier, wasInjured: false, gotBurn: false, justCurl: false };
+  const res = { nth: nth, myN: myN, tier: tier, wasInjured: false, gotBurn: false, justCurl: false };
+
+  /* ★ 与浇水对称（20261111）：你自己这一株今天施到第 3 次 = 超过有效额度，
+     给一次小窗讲清「你那 2 次用完了，剩下 2 次得等 TA」，全局只弹一次。 */
+  if ((!by || by === '你') && myN === 3){
+    let _seenF = false;
+    try { _seenF = !!localStorage.getItem('bmSeasonTipFert'); } catch(e){}
+    if (!_seenF){
+      try { localStorage.setItem('bmSeasonTipFert', '1'); } catch(e){}
+      setTimeout(function(){
+        toast('这株今天你已经施到第 3 次了',
+              '你自己的 ' + careSideCapOf('施肥') + ' 次已经用完 —— 再多施也不会长，' +
+              '剩下 ' + careSideCapOf('施肥') + ' 次要等 TA 自己来施才算数（点 ⓘ 看完整规则）');
+      }, 1700);
+    }
+  }
 
   if (pl.dead || pl.burned) return res;
 
@@ -14622,14 +15138,22 @@ function feedOnePlant(pl, now, by){
     return res;
   }
 
-  /* 有效施肥：当天合计 1~4 次 */
-  if (tier === 'ok'){
+  /* 有效施肥：这个人自己的前 2 次，且**合计**还没到肥伤线（第 5 次起） */
+  const burnFrom = SEASON_RULES.fertBurnFrom || 5;
+  if (tier === 'ok' && nth < burnFrom){
     pl.bonusDays = (pl.bonusDays || 0) + SEASON_RULES.careDays * 1.6;
     pl.grow = growOf(pl, t);
     return res;
   }
 
-  /* 超量：白施 + 有概率肥伤（肥伤不会弄死苗） */
+  /* 白施：你自己那 2 次已经施满，但合计还没到肥伤线 —— 不长，也不会伤。
+     20261111 起分账，所以「你施第 3 次」只是白做，不会立刻变成肥伤风险。 */
+  if (nth < burnFrom){
+    pl.grow = growOf(pl, t);
+    return res;
+  }
+
+  /* 超量：合计到肥伤线了 —— 白施 + 有概率肥伤（肥伤不会弄死苗） */
   const rate = nth >= 7 ? (SEASON_RULES.fertBurnRate3 || 0.80)
              : (SEASON_RULES.fertBurnRate2 || 0.45);
   pl.grow = growOf(pl, t);
@@ -14677,12 +15201,12 @@ function waterPlanet(){
   updateCareBtns();
   if (drowning.length){
     toast('水浇得太多了 · ' + drowning.join('、') + ' 淹死了',
-          '一株一天有效浇水只有 ' + careCapOf('浇水') + ' 次 —— 水多了根会烂在里面');
+          '一株一天你浇 ' + careSideCapOf('浇水') + ' 次、TA 浇 ' + careSideCapOf('浇水') + ' 次 —— 水多了根会烂在里面');
     return;
   }
   const parts = [];
   if (grew) parts.push(grew + ' 株长高了一点');
-  if (flat) parts.push(flat + ' 株今天已经浇够了（白浇）');
+  if (flat) parts.push(flat + ' 株你的额度已经浇满（白浇，等 TA 来浇）');
   if (over) parts.push(over + ' 株浇超了，叶子上挂着水');
   toast('浇了一遍水 · ' + (parts.length ? parts.join('；') : '都浇过了'));
 }
@@ -14847,8 +15371,8 @@ function rulesBodyHTML(){
   const R = SEASON_RULES;
   const wAll = R.waterPerDay || 6;
   const fAll = R.fertPerDay || 4;
-  const wOne = Math.max(1, Math.round(wAll / 2));
-  const fOne = Math.max(1, Math.round(fAll / 2));
+  const wOne = R.waterSidePerDay || Math.max(1, Math.round(wAll / 2));
+  const fOne = R.fertSidePerDay || Math.max(1, Math.round(fAll / 2));
   const soft  = R.waterSoftMax || 12;
   const flood = R.waterFloodN || 10;
   const fFrom = R.fertBurnFrom || 5;
@@ -14870,8 +15394,9 @@ function rulesBodyHTML(){
   };
   let h = '';
   h += sec('浇 水', 'WATER',
-    '<span class="ru-ok">1 ~ ' + wAll + ' 次</span>　有效：每浇一次提前 ' + wd +
-      ' 天，是它长得最快的量。你和 TA 各算 ' + wOne + ' 次，两边记在同一本账上。' +
+    '<span class="ru-ok">你 ' + wOne + ' 次 + TA ' + wOne + ' 次</span>　有效：每浇一次提前 ' + wd +
+      ' 天。<b>各算各的</b> —— 你浇满 ' + wOne + ' 次之后，剩下那 ' + wOne +
+      ' 次必须 TA 自己来浇才算数（全局浇一遍也一样，每株各记 1 次）。' +
     '<br>' + (wAll + 1) + ' ~ ' + soft + ' 次　白浇：一点也不长，但也不会出事。' +
     '<br><span class="ru-warn">' + (soft + 1) + ' 次起</span>　每次都有 ' + pOv +
       '% 泡出「溢水」—— 叶尖开始挂水珠。' +
@@ -14879,11 +15404,12 @@ function rulesBodyHTML(){
       '% 被淹死。' +
     '<br>第二天不再猛浇，溢水会自己退。');
   h += sec('施 肥', 'FERT',
-    '<span class="ru-ok">1 ~ ' + fAll + ' 次</span>　有效：每次提前 ' + fd +
-      ' 天。你和 TA 各算 ' + fOne + ' 次。' +
-    '<br><span class="ru-warn">' + fFrom + ' ~ ' + (fFrom + 1) + ' 次</span>　不长，' + p45 +
+    '<span class="ru-ok">你 ' + fOne + ' 次 + TA ' + fOne + ' 次</span>　有效：每施一次提前 ' + fd +
+      ' 天。<b>各算各的</b> —— 你施满 ' + fOne + ' 次之后，剩下那 ' + fOne +
+      ' 次必须 TA 自己来施才算数；你自己多施的只白施，不长也不伤。' +
+    '<br><span class="ru-warn">合计第 ' + fFrom + ' ~ ' + (fFrom + 1) + ' 次</span>　不长，' + p45 +
       '% 叶尖焦（肥伤）。' +
-    '<br><span class="ru-warn">' + (fFrom + 2) + ' 次起</span>　不长，' + p80 + '% 肥伤。' +
+    '<br><span class="ru-warn">合计第 ' + (fFrom + 2) + ' 次起</span>　不长，' + p80 + '% 肥伤。' +
     '<br>肥伤只伤外观，<b>永远不会弄死苗</b>；第二天不再施就自己好。' +
     '<br>同一株累计 ' + curl + ' 次肥伤 → 叶缘卷边定型，<b>再也回不去</b>。');
   h += sec('浇 灌 爱 意', 'LOVE',
@@ -14901,8 +15427,10 @@ function rulesBodyHTML(){
   /* ★ 20261112 用户要求：「把规则都放进详情里，另外角色也可以看到规则」★
      角色那边看到的是同一份文字（buildAiContext.rules），这边也要写清楚它会怎么动。 */
   h += sec('TA 怎 么 照 料', 'TA',
-    'TA 也浇水、施肥，和你写<b>同一本账</b> —— TA 浇掉的也算在今天那 ' + wAll + ' 次里。' +
-    '<br>TA 会先看这一株的状态：已经浇够 / 土还泡着水 / 叶子还伤着，TA 就<b>不动手</b>，' +
+    'TA 也浇水、施肥，但<b>两边各算各的</b> —— 浇水你 ' + wOne + ' 次、TA ' + wOne +
+    ' 次；施肥你 ' + fOne + ' 次、TA ' + fOne + ' 次。你把自己的那份用完，TA 那份照样有效，' +
+    '所以要给 TA 留出机会。' +
+    '<br>TA 会先看这一株的状态：<b>它自己</b>今天已经浇够 / 施够 / 土还泡着水 / 叶子还伤着，TA 就<b>不动手</b>，' +
     '只留一句「看了一眼植物的状态，选择了不作为」。' +
     '<br>爱意邀请是单独一条线：到点也不一定来（这一轮可能就算了），间隔可以在聊天设置里自己调。');
   return h;
@@ -15918,7 +16446,7 @@ function sheetAct(kind){
     const winD = (SEASON_RULES.burnRecoverDays || 3);
     const passed = (now - (pl.burnAt || now)) / 86400000;
     const left = Math.max(0, Math.ceil(winD - passed));
-    toast('你给它浇了一次水（这株今天第 ' + r.n + ' 次）',
+    toast('你给它浇了一次水（你这株第 ' + r.myN + ' 次）',
           left > 0
             ? ('它被爱浇过了头，还得缓 ' + left + ' 天 —— 这几天别再施肥')
             : '它已经缓得差不多了，别再施肥就会自己回来');
@@ -15933,30 +16461,32 @@ function sheetAct(kind){
     renderPlantSheet(); drawPlanetFrame(); renderPlanetList(); updateCareBtns();
     if (r.drowned){
       toast('「' + pl.name + '」被水淹死了',
-            '一株一天有效浇水 ' + careCapOf('浇水') + ' 次就够了 —— 浇太多根会烂在里面');
+            '一株一天你浇 ' + careSideCapOf('浇水') + ' 次、TA 浇 ' + careSideCapOf('浇水') + ' 次就够了 —— 浇太多根会烂在里面');
     } else if (r.overflowed){
-      toast('「' + pl.name + '」的叶子开始往下滴水了（这株今天第 ' + r.n + ' 次）',
+      toast('「' + pl.name + '」的叶子开始往下滴水了（你这株第 ' + r.myN + ' 次）',
             '水浇多了 —— 明天别再浇它、也别施肥，它自己会缓过来');
     } else if (r.tier === 'ok'){
-      toast('你给它浇了一次水（这株今天第 ' + r.n + ' 次 · 有效 ' + careCapOf('浇水') + ' 次）');
+      toast('你给它浇了一次水（你这株第 ' + r.myN + ' 次 · 有效 ' + careSideCapOf('浇水') + ' 次）');
     } else {
-      toast('浇是浇了，但它今天已经喝够了（这株今天第 ' + r.n + ' 次）',
-            '再多浇也不会长 —— 叶子上已经开始挂水了');
+      toast('浇是浇了，但它今天已经喝够了（你这株第 ' + r.myN + ' 次）',
+            '你的 ' + careSideCapOf('浇水') + ' 次已经浇满 —— 另外 ' + careSideCapOf('浇水') + ' 次要等 TA 自己来浇才会长');
     }
     return;
   }
 
-  /* ---- 施肥：前 4 次有效，第 5 次起才开始有肥伤风险 ----
+  /* ---- 施肥：分账后「你自己」前 2 次有效，第 3 次起白施 ----
      ★ 20261112 用户重定：
        「你的施肥的思路定的太苛刻了。那岂不是肥伤状态根本就没有什么缓冲空间」
        「肥伤是不会害死苗苗的」「第二天不浇水不施肥就会恢复」
-     ⇒ 玩家 2 次 + 角色 2 次 = 当天合计 4 次有效；
-       第 5、6 次白施 + 45% 肥伤；第 7 次起 80%；
+     ★ 20261111 分账（与浇水同规）：
+       「施肥当然也要改了」⇒ 你 2 次 + TA 2 次，各算各的；
+       你施第 3 次只白施、不掷肥伤；肥伤线仍看**合计**（第 5 次起 45%、第 7 次起 80%）；
        同一株累计 3 次肥伤才卷边（卷边不可逆，但也只是外观，不会死）。
      ⇒ 肥伤恢复期从 3 天缩到 1 天（fertRecoverDays），这才叫「缓冲空间」。
      ⇒ 卷边株照常能施肥、照常长、照常开花，只是不再叠新的肥伤（已经卷到底了）。 */
   const r = feedOnePlant(pl, now, '你');
   renderPlantSheet(); drawPlanetFrame(); renderPlanetList(); updateCareBtns();
+  const myCapF = careSideCapOf('施肥');
   if (r.justCurl){
     toast('「' + pl.name + '」的叶缘卷起来了',
           '连着施太多肥烧定的形 —— 这一卷就回不去了，之后长出来的叶子也一直是卷的');
@@ -15969,11 +16499,14 @@ function sheetAct(kind){
           '只是叶缘一点灼伤，明天别施就会自己缓过来' +
           (pl.fertBurnCount ? ('（这株已经烧过 ' + pl.fertBurnCount + ' / ' +
             (SEASON_RULES.fertCurlTimes || 3) + ' 次，烧满就卷边了）') : ''));
-  } else if (r.tier === 'ok'){
-    toast('你给它施了一点肥（这株今天第 ' + r.nth + ' 次 · 有效 ' + careCapOf('施肥') + ' 次）');
+  } else if (r.tier === 'ok' && r.nth < (SEASON_RULES.fertBurnFrom || 5)){
+    toast('你给它施了一点肥（你这株第 ' + r.myN + ' 次 · 有效 ' + myCapF + ' 次）');
   } else if (pl.fertCurl){
-    toast('你给它施了一点肥（这株今天第 ' + r.nth + ' 次）',
+    toast('你给它施了一点肥（你这株第 ' + r.myN + ' 次）',
           '它叶子已经卷了，别再猛施 —— 卷边的形收不回来');
+  } else if (r.tier === 'flat'){
+    toast('施是施了，但它今天已经吃够了（你这株第 ' + r.myN + ' 次）',
+          '你的 ' + myCapF + ' 次已经施满 —— 另外 ' + myCapF + ' 次要等 TA 自己来施才会长');
   } else {
     toast('施是施了，但它今天已经吃够了（这株今天第 ' + r.nth + ' 次）',
           '再多施也不会长 —— 叶子已经开始焦边了');
@@ -19377,8 +19910,14 @@ function applyScopeUI(){
   if (bookScope === 'char' && !bookScopeCharId && typeof snapBookScopeChar === 'function') snapBookScopeChar();
   /* 按钮文案＝当前视野：
      'all'  → 「全部」     整本书，所有角色的书签都在
-     'char' → 「XX 的」    XX = 进入书签集时定格的当前角色 */
-  b.textContent = bookScope === 'char' ? (bookScopeCharName + ' 的') : '全部';
+     'char' → 「XX 的」    XX = 进入书签集时定格的当前角色
+     ★ 20261111：角色名可能很长（「屋檐膏（Raven）」这种），
+       直接塞进 chip 会把中间的「HERBARIUM · 02 枚」挤到变形/被盖住。
+       超过 6 个字就截断加省略号，完整名字放进 title。 */
+  const nm = bookScopeCharName || '';
+  const shown = nm.length > 6 ? (nm.slice(0, 6) + '…') : nm;
+  b.textContent = bookScope === 'char' ? (shown + ' 的') : '全部';
+  b.setAttribute('title', bookScope === 'char' ? nm : '全部书签');
   b.classList.toggle('on', bookScope === 'char');
 }
 
@@ -21457,7 +21996,7 @@ const SG_STEPS = [
                可以施肥两次」。所以这一步直接把玩家带到「浇一次水」那颗按钮上，
      让他自己按一下，比纯说一句记得牢。 */
   { v:'vPlanet',  s:'#plWater',      act:'#plWater',     t:'每天三次水，两次肥',
-    d:'种下之后就能照料了：每天浇三次水、施两次肥，它就能长得最快；TA 也会自己来浇三次、施两次，两边记在同一本账上（合计 6 次水、4 次肥）。点一下这颗「浇一次水」—— 它一次给星球上每一株都浇一遍。' },
+    d:'种下之后就能照料了：每天你浇三次水、施两次肥，它就能长得最快；TA 也会自己来浇三次、施两次 —— 浇水和施肥都分开算，你那三次水、两次肥用满之后，得等 TA 自己来浇、来施才算数（合计 6 次水、4 次肥）。点一下这颗「浇一次水」—— 它一次给星球上每一株都浇一遍。' },
   /* ★ 20261112：把「风险」在新手引导里说清（用户要求的「浇水超过三次可能溢水、
      次数多了水淹」「肥伤的规则也要说」），并顺手教会 ⓘ 这个入口。
      点 ⓘ 会同时打开规则抽屉、引导到这里就结束 —— 玩家接着读到的就是完整规则。 */
