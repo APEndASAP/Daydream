@@ -558,9 +558,18 @@ select.input option:checked { color: #fff; }
    端头太圆，看着像短胶囊，不是用户要的「尖细声波」。
    这里收窄到 2px、圆角压到 1px（几乎方头＝视觉上收尖）、拉高到 14px，
    间距同步收紧到 3px，整体像一根根细声波柱。 */
-.typing { display: inline-flex; align-items: center; gap: 3px; padding: 13px 16px; }
+.typing {
+  display: inline-flex; align-items: center; gap: 3px; padding: 13px 16px;
+  /* 20261111 三改：竖线宽度被挤没了 —— 气泡上挂着 .msg-row .bubble 的
+     max-width: 72%（相对还没定宽度的 .msg-body 解析成 0），三根 span 作为
+     flex 子项被压成 0 宽，真机上只剩一个空气泡轮廓。
+     给一个能容纳「3 根线 + 2 个间距 + 左右内边距」的最小宽度兜底。 */
+  min-width: 58px;
+}
 .typing span {
   width: 2px; height: 14px; border-radius: 1px;
+  /* 上面那个压缩问题的另一半：允许收缩就会归零，这里禁止收缩 */
+  flex-shrink: 0;
   /* 20260930cb：跟随对方气泡的文字色（用户自定义深色气泡美化时仍可读，不再固定用全局文字色） */
   background: var(--bubble-them-text, var(--text));
   animation: typing 1.9s infinite ease-in-out;
