@@ -559,12 +559,17 @@ select.input option:checked { color: #fff; }
    这里收窄到 2px、圆角压到 1px（几乎方头＝视觉上收尖）、拉高到 14px，
    间距同步收紧到 3px，整体像一根根细声波柱。 */
 .typing {
-  display: inline-flex; align-items: center; gap: 3px; padding: 13px 16px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px; padding: 13px 16px;
   /* 20261111 三改：竖线宽度被挤没了 —— 气泡上挂着 .msg-row .bubble 的
      max-width: 72%（相对还没定宽度的 .msg-body 解析成 0），三根 span 作为
      flex 子项被压成 0 宽，真机上只剩一个空气泡轮廓。
      给一个能容纳「3 根线 + 2 个间距 + 左右内边距」的最小宽度兜底。 */
-  min-width: 58px;
+  /* 20261112 用户反馈「声波不居中、右边留一大截空」：气泡被 min-width 撑到 58px，
+     三根线仍按 flex-start 贴左，实测左空 15px / 右空 31px。
+     ① justify-content:center 让多余空间两侧均分；② min-width 收到 46px
+     （三根线 5px + 两个间距 6px + 左右内边距 28px = 39px，留 7px 余量），
+     气泡不再比内容宽出一大块。 */
+  min-width: 46px;
 }
 .typing span {
   width: 2px; height: 14px; border-radius: 1px;
@@ -3581,14 +3586,43 @@ body.has-bubble-fz .msg-row .bubble { font-size: var(--bubble-fz, 15px); }
   background: linear-gradient(160deg, rgba(30,24,52,.92) 0%, rgba(22,17,40,.94) 100%);
 }
 .checkin-loc svg { display: block; }
+/* 20261112：地图可点按放大（全球 → 区域 → 城市），右下角标出当前档位 */
+.checkin-loc-map { position: relative; line-height: 0; cursor: zoom-in; }
+.checkin-loc-zoom {
+  position: absolute; right: 8px; bottom: 7px;
+  font-size: 10px; letter-spacing: .5px; line-height: 1.6;
+  color: rgba(228,218,255,.82);
+  background: rgba(20,14,40,.55);
+  padding: 2px 8px; border-radius: 9px; pointer-events: none;
+}
+body.theme-light .checkin-loc-zoom { color: #6a54c4; background: rgba(255,255,255,.72); }
 .checkin-loc-meta {
   padding: 8px 10px 9px;
   display: flex; flex-direction: column; gap: 5px;
 }
 .checkin-loc-pos {
   font-size: 11.5px; color: var(--purple-soft); letter-spacing: .5px;
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: flex-start; gap: 5px;
 }
+/* 20261112：地名三行排（原文 / 中文 / 经纬度）。原文那行可能是一长串英文，
+   用 break-word 换行 + min-width:0，绝不允许把卡片撑宽或挤掉别的元素。 */
+.checkin-loc-pos .cl-line {
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 0; flex: 1 1 auto;
+}
+.checkin-loc-pos .cl-raw {
+  font-size: 11.5px; line-height: 1.35; opacity: .92;
+  word-break: break-word; overflow-wrap: anywhere;
+}
+.checkin-loc-pos .cl-cn {
+  font-size: 12.5px; line-height: 1.35; color: var(--text); letter-spacing: 0;
+  word-break: break-word; overflow-wrap: anywhere;
+}
+.checkin-loc-pos .cl-coord {
+  font-size: 10.5px; letter-spacing: .6px; opacity: .7;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.checkin-loc-tags .cl-dist { color: var(--purple-soft); white-space: nowrap; }
 .checkin-loc-tags {
   display: flex; flex-wrap: wrap; gap: 6px 10px;
   font-size: 11px; color: var(--text-secondary);

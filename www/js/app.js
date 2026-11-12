@@ -341,6 +341,8 @@ async function init() {
     buildPlusPanel();
     bindEvents();
     scheduleAutoBackup();  // 20261002ce：自动备份兜底（APK 端静默写「文档/白日梦备份」，防卸载丢数据）
+    // 20261112e：启动后空闲预读每个角色最近的消息，点第 2/3 个角色时和点第 1 个一样快（真机 WebView 冷读慢 5~10 倍）
+    setTimeout(() => { try { warmupChatReads(); } catch (e) {} }, 1500);
     startProactiveTimer(); // 5.3 主动发消息
     startStatusTimer();    // 7 聊天页顶部状态按时段自动换
     startDayRolloverTimer(); // 8 聊天天数过零点自动 +1
@@ -2525,7 +2527,7 @@ async function renderGroupMessages(groupId) {
     scroll.innerHTML = `<div class="empty"><div class="empty-icon"><i data-icon="group" data-size="16"></i></div><div>群聊已开启，说点什么吧</div></div>`;
     return;
   }
-  _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), end: msgs.length, mode: 'group', busy: false, suspend: false };
+  _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), end: msgs.length, mode: 'group', busy: false, suspend: false, noMoreOlder: true };
   ensureChatWindowHooks();
   chatRenderSentinel(scroll);
   _chatWin.suspend = true;
@@ -3212,7 +3214,9 @@ function renderBatchList() {
   };
 }
 
+let _openChatSeq = 0;   // 20261112：openChat 的并发令牌（快速连点不同角色时，只让最后一次生效）
 async function openChat(charId) {
+  const _ocToken = ++_openChatSeq;
   if (currentGroupId) markGroupBgChatWindow(currentGroupId); // az：离开群聊 → 挂 20 分钟窗口
   currentCharId = charId;
   currentGroupId = null;
@@ -3235,6 +3239,19 @@ async function openChat(charId) {
      中间隔着一到两帧 —— 这段时间 DOM 里还是上一个人的消息，切过去就会先看到一秒旧内容。
      所以在切页之前先把消息容器清空，并且把虚拟滚动游标置空
      （不清游标的话，清空后 scrollTop 归零会触发滚动钩子，用旧游标把上一个角色的更早消息补回来）。 */
+  /* 20261112 修「从角色池点第二/第三个角色，进去先白屏好几秒」：
+     原来是「清空 → 切到聊天页 → 再 await 读库 → 渲染」，读库那几秒（消息多的角色要遍历上万条）
+     用户看到的就是一片空空的星空。现在改成**先把数据读完，再切页**：
+     等待发生在角色池那一屏（用户看到的是列表，不是空白聊天页），读完一次性切进去并同步渲染，
+     切过去就是有内容的一屏。读失败就传 null，让 renderMessages 自己再读一次，行为退回旧版。 */
+  let _preMsgs = null;
+  /* 20261112b：只读最近一批，不再一次拉全量。
+     原来这里是 100000 条——消息多的角色要在 IndexedDB 里遍历上万条、再在 JS 里过滤，
+     点下去到切页之间那一下就是它造成的卡顿（用户反馈「还没进去就卡一瞬」）。
+     现在首读 300 条（几十毫秒），更早的记录在上滑到顶时再分批补（chatLoadOlderFromDB）。 */
+  try { _preMsgs = await idbGetMessagesByChar(charId, CHAT_PREFETCH); } catch (e) { _preMsgs = null; }
+  // 读库期间玩家又点了别的角色 → 这次作废，交给最新那次去切页（避免两屏内容互相覆盖）
+  if (_ocToken !== _openChatSeq) return;
   {
     const _csPre = $('#chat-scroll');
     if (_csPre) _csPre.innerHTML = '';
@@ -3244,7 +3261,7 @@ async function openChat(charId) {
   ensureModeSwitchUI(); // 20260929ae：聊天窗口内字卡/AI 模式切换胶囊
   applyChatTheme(); // 按角色应用独立聊天背景
   buildPlusPanel(); // az：按单聊模式重建 + 号面板（群聊专属项隐藏）
-  await renderMessages(charId);
+  await renderMessages(charId, _preMsgs);
   // 标记已读：清除该访客未读数
   await setSetting('lastRead_' + charId, Date.now());
   bmClearConversationTray(charId); // 20261004dr：点进单聊=已读 → 清托盘会话通知+插件历史
@@ -3264,7 +3281,33 @@ async function openChat(charId) {
    appendMessage / appendGroupMessage 的行交互（长按菜单/多选/卡片刷新）全部保留不动。 */
 const CHAT_WINDOW = 60;    // 首屏渲染条数
 const CHAT_LOAD_STEP = 60; // 上滑每次补载条数
-const CHAT_MAX_DOM = 240;  // DOM 消息行上限，超出从顶部清理
+const CHAT_MAX_DOM = 240;  // DOM 消息行上限：只在玩家滚回最底部时才按它回收顶部（回收≠删除，数据仍在 all 里）
+const CHAT_RECLAIM_STEP = 600; // 20261112e：回到底部时每帧最多回收的行数，避免一次删几万个节点卡死
+/* 20261112b：进聊天时首批从库里读多少条。够覆盖「进来看最近聊天」的全部需要，
+   更早的在上滑到顶时再按同样大小往前补。读太大是切角色卡顿的根因。 */
+const CHAT_PREFETCH = 300;
+/* 20261112e：聊天冷读预热。
+   真机上点「第 1 个角色」往往不卡、点第 2/3 个会卡一瞬 —— 因为第 1 个是默认角色，
+   启动阶段已经被读过一次，IndexedDB 的页缓存是热的；另外两个是彻底冷读。
+   这里在启动后（以及回到角色池时）把每个角色最近一批消息静默读一遍，
+   只热缓存、不渲染、不写任何状态，失败静默。三个角色从此走同一条热路径。 */
+let _chatWarmAt = 0, _chatWarmBusy = false;
+async function warmupChatReads() {
+  if (_chatWarmBusy) return;
+  const now = Date.now();
+  if (now - _chatWarmAt < 120000) return;      // 2 分钟节流，避免频繁读库
+  _chatWarmAt = now;
+  _chatWarmBusy = true;
+  try {
+    const list = (typeof characters !== 'undefined' && characters) ? characters.slice() : [];
+    for (const c of list) {
+      if (!c || !c.id) continue;
+      try { await idbGetMessagesByChar(c.id, CHAT_PREFETCH); } catch (e) {}
+    }
+  } finally {
+    _chatWarmBusy = false;
+  }
+}
 let _chatWin = null;       // { all, start, mode:'single'|'group', busy, suspend }
 
 /* 渲染完窗口后，在顶部插一个「加载更早」哨兵行（start==0 时显示已到开头） */
@@ -3288,8 +3331,13 @@ function ensureChatWindowHooks() {
     if (!_chatWin || _chatWin.busy) return;
     // 20261031：双向窗口——接近顶部补载更早（往上滚），接近底部补载更新（往下滚）；
     // 不再靠 busy 锁单点防抖，改在 chatLoadOlder/Newer 内部用 rAF 节流，避免惯性滚动高频触发。
-    if (_chatWin.start > 0 && scroll.scrollTop < 200) chatLoadOlder();
-    else if (_chatWin.end < _chatWin.all.length && scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 200) chatLoadNewer();
+    const nearBottom = scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 200;
+    if (scroll.scrollTop < 200 && (_chatWin.start > 0 || (!_chatWin.noMoreOlder && _chatWin.mode === 'single'))) chatLoadOlder();
+    else if (nearBottom) {
+      // 20261112d：底部有更新的就先补，补完了（已经是最末尾）才回收顶部旧行
+      if (_chatWin.end < _chatWin.all.length) chatLoadNewer();
+      else maybeReclaimTop(scroll, _chatWin);
+    }
   }, { passive: true });
   // 20261004：引用块点击跳转（事件委托，单聊/群聊共用；closest 兼容引用块内嵌元素点击）
   scroll.addEventListener('click', (e) => {
@@ -3375,7 +3423,10 @@ function bindChatPullGesture(scroll) {
 function chatLoadOlder() {
   const scroll = $('#chat-scroll');
   const w = _chatWin;
-  if (!w || w.busy || w.start <= 0) return;
+  if (!w || w.busy) return;
+  /* 20261112b：内存里已经滑到最早一条 —— 不再「到开头」，而是去库里再往前读一批。
+     群聊的 all 本来就是全量，不走这条路（noMoreOlder 恒为 true）。 */
+  if (w.start <= 0) { chatLoadOlderFromDB(w); return; }
   w.busy = true;
   // 20261031：try/finally 保证 busy 锁必定释放——真实设备 20000 条含图片/语音/问卷/转账等
   // 复杂消息，某一条在 appendMessage 里抛异常会卡死 busy=true，导致后续上滑全部 return、彻底卡住。
@@ -3406,28 +3457,10 @@ function chatLoadOlder() {
     else scroll.appendChild(frag);
     w.suspend = false;
     w.start -= step;
-    // 顶部清理：DOM 行数超上限时，删「离当前视口最远」的旧行，保证补载的顶部旧消息不被误删。
-    // 20261031 修复根因：之前删 rows[0..excess-1]（DOM 最顶部），而上滑补载插入的恰好是顶部，
-    // 刚插入就被删 → 锚点净位移 0 → scrollTop 补偿 0 → 停在顶部 → scroll 事件高频重触发 → 补载风暴卡死。
-    // 正确做法：优先删「视口下方」的最新行（用户上滑看历史时已离开），不够再删「视口上方」已滚过的旧行；
-    // 锚点（视口内第一条）永不删，补偿后 scrollTop 远离顶部，自然停止触发。
-    const rendered = scroll.querySelectorAll('.msg-row').length;
-    if (rendered > CHAT_MAX_DOM) {
-      const r2 = scroll.querySelectorAll('.msg-row');
-      let toRemove = rendered - CHAT_MAX_DOM;
-      const vh = scroll.clientHeight || 1;
-      // 第一遍：删视口下方（rect.top >= vh，完全在底部外）
-      for (let i = r2.length - 1; i >= 0 && toRemove > 0; i--) {
-        if (r2[i] === anchor) continue;
-        if (r2[i].getBoundingClientRect().top >= vh) { r2[i].remove(); toRemove--; }
-      }
-      // 第二遍：还不够，删视口上方（rect.bottom <= 0，完全在顶部外）
-      for (let i = 0; i < r2.length && toRemove > 0; i++) {
-        if (!r2[i].parentNode) continue;
-        if (r2[i] === anchor) continue;
-        if (r2[i].getBoundingClientRect().bottom <= 0) { r2[i].remove(); toRemove--; }
-      }
-    }
+    /* 20261112d：上滑补载期间**一行都不回收**。
+       玩家已经看见的内容（不论在视口上面还是下面）都留在 DOM 里，只增不减；
+       回收只在「玩家自己滚回最底部」时发生 —— 见 maybeReclaimTop()。
+       这样上滑进度永远不会被回收抵消，也不会出现「刚加载出来的消息又被删掉」。 */
     // 锚点行仍存在则按视口坐标差值回补（视觉零跳动）；否则（极端情况被清理）回到底部
     if (anchor && anchor.parentNode === scroll) {
       void scroll.clientTop; // 强制 reflow
@@ -3438,6 +3471,43 @@ function chatLoadOlder() {
     }
     // 哨兵重插（在最顶，锚点其后，不影响上面的补偿）
     chatRenderSentinel(scroll);
+  } finally {
+    w.busy = false;
+  }
+}
+
+/* 20261112b：内存里滑到头了 —— 去库里再往前读一批（首屏只读了 CHAT_PREFETCH 条）。
+   插到视口上方，并按插入前后的高度差补偿 scrollTop，用户看到的内容不跳。
+   群聊的 all 本来就是全量，不走这里（noMoreOlder 恒为 true）。 */
+async function chatLoadOlderFromDB(w) {
+  if (!w || w.busy || w.mode !== 'single' || w.noMoreOlder || !w.charId) return;
+  const scroll = $('#chat-scroll');
+  if (!scroll) return;
+  w.busy = true;
+  try {
+    const raw = await idbGetMessagesByChar(w.charId, CHAT_PREFETCH, w.dbOffset);
+    if (!raw || !raw.length) { w.noMoreOlder = true; return; }
+    w.dbOffset += raw.length;
+    if (raw.length < CHAT_PREFETCH) w.noMoreOlder = true;
+    const older = raw.filter(m => !m.groupId);
+    if (!older.length) return;
+    if (_chatWin !== w) return;              // 数据回来时玩家已经切了角色：丢掉
+    const h0 = scroll.scrollHeight;
+    const top0 = scroll.scrollTop;
+    const frag = document.createDocumentFragment();
+    w.suspend = true;
+    for (const m of older) {
+      try { appendMessage(m, false, frag); } catch (err) { console.warn('[chatLoadOlderFromDB] 跳过异常消息', m && m.id, err); }
+    }
+    w.suspend = false;
+    const sentinel = scroll.querySelector('#chat-loadmore');
+    if (sentinel) scroll.insertBefore(frag, sentinel);
+    else scroll.insertBefore(frag, scroll.firstChild);
+    // 补进来的这批就是新的最前面，已渲染区间仍从 all[0] 开始 → start 保持 0
+    w.all = older.concat(w.all);
+    w.end += older.length;
+    chatRenderSentinel(scroll);
+    scroll.scrollTop = top0 + (scroll.scrollHeight - h0);   // 内容长高了，视口跟着下移，视觉不动
   } finally {
     w.busy = false;
   }
@@ -3465,25 +3535,69 @@ function chatLoadNewer() {
     scroll.appendChild(frag);
     w.suspend = false;
     w.end += step;
-    // 底部补载不改变顶部锚点，scrollTop 无需补偿；只做 DOM 上限清理（删视口上方已滚过的）
-    const rendered = scroll.querySelectorAll('.msg-row').length;
-    if (rendered > CHAT_MAX_DOM) {
-      const r2 = scroll.querySelectorAll('.msg-row');
-      let toRemove = rendered - CHAT_MAX_DOM;
-      for (let i = 0; i < r2.length && toRemove > 0; i++) {
-        if (r2[i].getBoundingClientRect().bottom <= 0) { r2[i].remove(); toRemove--; }
-      }
-    }
+    /* 20261112d：底部补载不改变顶部锚点，scrollTop 无需补偿；
+       DOM 回收统一交给 maybeReclaimTop（只在真正贴底时才动顶部）。 */
   } finally {
     w.busy = false;
   }
+  maybeReclaimTop(scroll, w);
 }
 
-async function renderMessages(charId) {
+/* 20261112d：只在「玩家滚回最底部」时回收视口上方多余的行。
+   回收 ≠ 删除：数据仍在 _chatWin.all 里，只是移出 DOM（start 前移）；
+   玩家再往上滑时 chatLoadOlder 会按 start 把它们重新渲染回来，所以「先存着，再滚上去还能看见」。
+   回收后按高度差下调 scrollTop，保证底部视口一动不动。 */
+function maybeReclaimTop(scroll, w, force) {
+  if (!scroll || !w || w.busy) return;
+  const rows = scroll.querySelectorAll('.msg-row').length;
+  if (rows <= CHAT_MAX_DOM) return;
+  // 必须真的贴在底部（差 24px 内），否则一律不动；force=分帧续删，放宽到 400px（否则第一批删完就再也删不动）
+  const gap = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+  if (gap > (force ? 400 : 24)) return;
+  let toRemove = rows - CHAT_MAX_DOM;
+  const h0 = scroll.scrollHeight;
+  const st0 = scroll.scrollTop;
+  let removed = 0;
+  // 20261112e：分帧回收——一次滑出几万行后回到底部，一口气删两万多个节点会卡住好几秒，
+  // 所以每帧最多删 RECLAIM_STEP 行，剩下的下一帧继续，直到回到上限。
+  const budget = Math.min(toRemove, CHAT_RECLAIM_STEP);
+  const list = scroll.querySelectorAll('.msg-row');
+  /* 先收集、后删除：如果「删一个 → 读下一个位置 → 再删」地循环，
+     每删一次都会触发一次完整重排，几千行会拖到十几秒（实测 3600 行 9.8s）。
+     这里一次性读完位置再批量 remove，布局只算一次。 */
+  const del = [];
+  for (const r of list) {
+    if (del.length >= budget) break;
+    if (r.getBoundingClientRect().bottom > 0) break;   // 已到视口：只从最顶连续回收，保证区间连续
+    del.push(r);
+  }
+  if (!del.length) return;
+  for (const r of del) r.remove();
+  removed = del.length;
+  w.start += removed;                                  // 已渲染起点后移，数据仍留在 all 里
+  void scroll.clientTop;                               // 强制 reflow，取新的 scrollHeight
+  /* 用「删除前 scrollTop − 高度差」的绝对值还原，而不是 -=：
+     Chromium 有滚动锚定（scroll anchoring），删顶部节点时它可能已经自动补过一次，
+     再减一次就会把视口推到离底部很远的地方，回收随即被「贴底」判断拦住、永远删不干净。 */
+  scroll.scrollTop = Math.max(0, st0 - (h0 - scroll.scrollHeight));
+  chatRenderSentinel(scroll);
+  if (scroll.querySelectorAll('.msg-row').length > CHAT_MAX_DOM) {
+    // 用定时器而不是 rAF：后台/省电模式下 rAF 会被节流甚至不触发，回收就会停在半路
+    setTimeout(() => {
+      if (_chatWin !== w) return;   // 期间切了角色/退出聊天，停手
+      try { maybeReclaimTop(scroll, w, true); } catch (e) {}
+    }, 16);
+  }
+}
+
+/* preMsgs：openChat 提前读好的该角色消息（20261112 消白屏用）。
+   传了就不再重复读库；没传（或读失败传 null）就走原来的 await 读取。 */
+async function renderMessages(charId, preMsgs) {
   const scroll = $('#chat-scroll');
   // 数据乱串根治（用户 20260925 反馈）：群聊消息落库带 charId+groupId，之前这里只按 charId 取，
   // 群聊里说的话全被串进该访客的单聊——现在排除一切带 groupId 的消息，单聊只留单聊
-  const msgs = (await idbGetMessagesByChar(charId, 100000)).filter(m => !m.groupId);
+  const raw = preMsgs || (await idbGetMessagesByChar(charId, CHAT_PREFETCH));
+  const msgs = raw.filter(m => !m.groupId);
   // 20261101 APP 端：预热本批消息里的 {__img:5} 图片引用 URL（后台异步，不阻塞渲染）。
   //   冷启动后 _bmImgUrlMap 为空，先预热再渲染，避免首屏图片空白。
   if (bmImgIsApp()) _bmImgWarmupOn(msgs);
@@ -3493,11 +3607,25 @@ async function renderMessages(charId) {
     scroll.innerHTML = `<div class="empty"><div class="empty-icon"><i data-icon="comment" data-size="16"></i></div><div>说点什么，开启你们的对话吧</div></div>`;
     return;
   }
-  _chatWin = { all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), end: msgs.length, mode: 'single', busy: false, suspend: false };
+  /* 20261112b：记下「这个窗口属于谁、已经从库里读到第几条」——
+     上滑到内存里的最早一条时，靠 dbOffset 再往前分批读，不用一次全量。 */
+  _chatWin = {
+    all: msgs, start: Math.max(0, msgs.length - CHAT_WINDOW), end: msgs.length,
+    mode: 'single', busy: false, suspend: false,
+    charId: charId,
+    dbOffset: raw.length,                 // 已从库中读取的原始条数（含被过滤掉的群聊消息）
+    noMoreOlder: raw.length < CHAT_PREFETCH,
+  };
   ensureChatWindowHooks();
   chatRenderSentinel(scroll);
   _chatWin.suspend = true;
-  for (let i = _chatWin.start; i < msgs.length; i++) appendMessage(msgs[i], false);
+  /* 20261112：先拼进 fragment 再一次性挂上，别一条一条 append 到文档里。
+     原来 60 条逐条 append 会触发 60 次重排，消息含图片/语音时这一下就是几百毫秒的白屏。 */
+  const _frag = document.createDocumentFragment();
+  for (let i = _chatWin.start; i < msgs.length; i++) {
+    try { appendMessage(msgs[i], false, _frag); } catch (err) { console.warn('[renderMessages] 跳过异常消息', msgs[i] && msgs[i].id, err); }
+  }
+  scroll.appendChild(_frag);
   _chatWin.suspend = false;
   scrollToBottom();
   syncBubbleHyalite(); // 20261011：按气泡预设 2号挂 hyalite（watch 接管消息气泡）
@@ -3722,6 +3850,130 @@ function jumpToChatMessage(msgId) {
   setTimeout(() => { try { row.classList.remove('msg-jump-flash'); } catch (e) {} }, 1800);
 }
 
+/* 20261112：地名中英对照（本地词表，不联网）。   反向地理编码有时回英文（Unknown Sea / Île de Ré 这种）——**原文照样显示**，
+   下面补一行中文；玩家要的是真实感，不是把看不懂的那串藏起来。
+   查不到就按「通名词根 × 专名」硬拼（Xxx Island → Xxx 岛），彻底没辙才写「未知地点」。 */
+const _GEO_WORD_CN = {
+  'unknown sea': '未知海域', 'unknown ocean': '未知海域', 'unknown waters': '未知海域',
+  'unknown island': '未知小岛', 'unknown islands': '未知群岛', 'unknown islet': '未知小岛',
+  'unknown location': '未知地点', 'unknown place': '未知地点', 'unknown region': '未知区域',
+  'unknown area': '未知区域', 'unknown city': '未知城市', 'unknown coast': '未知海岸',
+  sea: '海', ocean: '洋', waters: '水域', island: '岛', islands: '群岛', isle: '岛', islet: '小岛',
+  bay: '湾', gulf: '湾', cove: '小湾', port: '港', harbor: '港', harbour: '港',
+  lake: '湖', river: '河', creek: '溪', strait: '海峡', channel: '海峡', cape: '角',
+  peninsula: '半岛', coast: '海岸', beach: '海滩', reef: '礁', atoll: '环礁',
+  mountain: '山', mount: '山', hill: '丘', valley: '谷', desert: '沙漠', forest: '森林',
+  plain: '平原', plateau: '高原', glacier: '冰川', falls: '瀑布', spring: '泉',
+  province: '省', state: '州', county: '县', district: '区', city: '市', town: '镇',
+  village: '村', region: '地区', area: '地区', territory: '领地', islandgroup: '群岛',
+  north: '北', south: '南', east: '东', west: '西', central: '中', upper: '上', lower: '下',
+  great: '大', little: '小', new: '新', old: '旧', saint: '圣', st: '圣',
+  // 法语/西语/葡语常见地理词（反向地理编码在非英语区会回这些）
+  ile: '岛', 'île': '岛', isla: '岛', mer: '海', mar: '海', cabo: '角',
+  rio: '河', 'río': '河', lago: '湖', lagoa: '湖', praia: '海滩', playa: '海滩',
+  mont: '山', serra: '山脉', sierra: '山脉', terra: '地',
+  // 冠词/介词：翻译时直接丢掉，不参与拼词
+  de: '', du: '', des: '', la: '', le: '', les: '', el: '', los: '', las: '', del: '', di: '', da: '', do: '', of: '', sur: '', sous: '',
+};
+/* 真正的「地理通名」——只有它们出现在词首时，才说明这句是法语/西语式的「通名在前」。
+   saint / great / north / little 这些只是修饰词，不能拿来判语序（否则 Saint Paul Bay 会被倒成「Paul 湾圣」）。 */
+const _GEO_HEAD_NOUN = new Set([
+  'sea','ocean','island','islands','isle','île','ile','islet','bay','gulf','lake','river',
+  'strait','channel','cape','peninsula','coast','beach','reef','atoll','mountain','mount',
+  'desert','forest','valley','plain','plateau','isla','mer','mar','rio','río','lago',
+  'cabo','playa','praia','mont','sierra','serra',
+]);
+const _GEO_NAME_CN = {
+  shanghai: '上海', beijing: '北京', shenzhen: '深圳', guangzhou: '广州', hangzhou: '杭州',
+  chengdu: '成都', chongqing: '重庆', wuhan: '武汉', nanjing: '南京', tianjin: '天津',
+  xian: "西安", suzhou: '苏州', qingdao: '青岛', dalian: '大连', xiamen: '厦门',
+  paris: '巴黎', london: '伦敦', newyork: '纽约', 'new york': '纽约', tokyo: '东京',
+  seoul: '首尔', singapore: '新加坡', sydney: '悉尼', melbourne: '墨尔本', berlin: '柏林',
+  munich: '慕尼黑', rome: '罗马', milan: '米兰', madrid: '马德里', barcelona: '巴塞罗那',
+  lisbon: '里斯本', amsterdam: '阿姆斯特丹', brussels: '布鲁塞尔', vienna: '维也纳',
+  prague: '布拉格', budapest: '布达佩斯', warsaw: '华沙', moscow: '莫斯科',
+  istanbul: '伊斯坦布尔', cairo: '开罗', dubai: '迪拜', mumbai: '孟买', delhi: '德里',
+  bangkok: '曼谷', hanoi: '河内', manila: '马尼拉', jakarta: '雅加达',
+  losangeles: '洛杉矶', 'los angeles': '洛杉矶', sanfrancisco: '旧金山', 'san francisco': '旧金山',
+  chicago: '芝加哥', boston: '波士顿', seattle: '西雅图', toronto: '多伦多',
+  vancouver: '温哥华', mexico: '墨西哥城', 'são paulo': '圣保罗', 'sao paulo': '圣保罗',
+  'rio de janeiro': '里约热内卢', buenosaires: '布宜诺斯艾利斯', 'buenos aires': '布宜诺斯艾利斯',
+  reykjavik: '雷克雅未克', oslo: '奥斯陆', stockholm: '斯德哥尔摩', helsinki: '赫尔辛基',
+  copenhagen: '哥本哈根', dublin: '都柏林', edinburgh: '爱丁堡', athens: '雅典',
+  china: '中国', japan: '日本', korea: '韩国', france: '法国', germany: '德国',
+  italy: '意大利', spain: '西班牙', portugal: '葡萄牙', britain: '英国', england: '英格兰',
+  scotland: '苏格兰', ireland: '爱尔兰', netherlands: '荷兰', belgium: '比利时',
+  switzerland: '瑞士', austria: '奥地利', greece: '希腊', turkey: '土耳其',
+  russia: '俄罗斯', america: '美国', usa: '美国', canada: '加拿大', brazil: '巴西',
+  argentina: '阿根廷', chile: '智利', peru: '秘鲁', australia: '澳大利亚',
+  'new zealand': '新西兰', egypt: '埃及', india: '印度', thailand: '泰国',
+  vietnam: '越南', malaysia: '马来西亚', indonesia: '印度尼西亚', philippines: '菲律宾',
+};
+/* 返回 { raw, cn }：raw 是原文（中文地名时为 ''），cn 是中文说法 */
+function _geoName(raw, lat, lng, dim) {
+  const s = String(raw == null ? '' : raw).trim();
+  const hasCn = /[\u4e00-\u9fa5]/.test(s);
+  if (dim > 0) return { raw: '', cn: '第 ' + dim + ' 维度 · 坐标不可测' };
+  if (hasCn) return { raw: '', cn: s };
+  if (!s) return { raw: '', cn: '未知地点' };
+  const key = s.toLowerCase();
+  if (_GEO_NAME_CN[key]) return { raw: s, cn: _GEO_NAME_CN[key] };
+  if (_GEO_WORD_CN[key]) return { raw: s, cn: _GEO_WORD_CN[key] };
+  // 逐词翻译：认识的通名/形容换成中文，不认识的专名保留原文 —— "Ré Island" → "Ré 岛"
+  const rawWords = s.split(/[\s,，.·\-]+/).filter(Boolean);
+  const cnWords = [];
+  let hit = 0;
+  rawWords.forEach((w, i) => {
+    const k = w.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(_GEO_WORD_CN, k)) {
+      const cn = _GEO_WORD_CN[k];
+      if (cn) { cnWords.push(cn); hit++; }
+      return;                       // 冠词/介词（映射成空串）直接丢掉，不参与拼词
+    }
+    if (_GEO_NAME_CN[k]) { cnWords.push(_GEO_NAME_CN[k]); hit++; return; }
+    cnWords.push(w);
+  });
+  if (hit === 0) return { raw: s, cn: '未知地点' };
+  /* 中文语序要按语言摆：
+     英语是「专名 + 通名」（Ré Island → Ré 岛 / Saint Paul Bay → 圣 Paul 湾），
+     法语西语是「通名 + 专名」（Île de Ré → Ré 岛 / Mer de Glace → Glace 海）。
+     判断依据：第一个词本身是不是地理通名。 */
+  const firstKey = (rawWords[0] || '').toLowerCase();
+  const firstIsNoun = _GEO_HEAD_NOUN.has(firstKey);
+  let ordered;
+  if (firstIsNoun && rawWords.length > 1) {
+    ordered = cnWords.slice(1).concat([cnWords[0]]);
+  } else if (hit < rawWords.length) {
+    ordered = cnWords.slice(0, -1).concat([cnWords[cnWords.length - 1]]);
+  } else {
+    ordered = cnWords;
+  }
+  return { raw: s, cn: _joinCnParts(ordered) };
+}
+/* 拼中文：中文与中文直接接，英文词两侧留空格（「圣 Paul 湾」而不是「圣Paul湾」） */
+function _joinCnParts(parts) {
+  let out = '';
+  for (const p of parts) {
+    if (!p) continue;
+    if (!out) { out = p; continue; }
+    const ascii = /[A-Za-z\u00C0-\u024F]/.test(p);
+    const prevAscii = /[A-Za-z\u00C0-\u024F]$/.test(out);
+    out += (ascii || prevAscii) ? ' ' + p : p;
+  }
+  return out;
+}
+/* 距离显示：有玩家坐标时用真实距离；没有就随机模拟一个（前面加 ≈ 表示估算，别假装精确） */
+function _distText(distKm) {
+  let v = distKm;
+  let approx = false;
+  if (v == null || !isFinite(Number(v))) {
+    v = Math.max(1, Math.round(Math.pow(Math.random(), 2) * 12000));
+    approx = true;
+  }
+  v = Math.max(1, Math.round(Number(v)));
+  return `${approx ? '≈ ' : ''}距你 ${v.toLocaleString('zh-CN')} km`;
+}
+
 /* 查岗/报备卡片内的「位置+天气+状态」区块（有位置数据时显示）。
    loc: { lat, lng, dim }, weather: { desc, temp }, doing, marker, distKm, showLocation */
 function _locInfoHTML(loc, weather, doing, marker, distKm) {
@@ -3731,15 +3983,25 @@ function _locInfoHTML(loc, weather, doing, marker, distKm) {
   if (loc.denied) {
     return `<div class="checkin-loc-denied"><i data-icon="location" data-size="16"></i> ${marker || 'TA'} 未发送位置（已拒绝定位）</div>`;
   }
-  const map = _worldMapSvg({ lat: loc.lat, lng: loc.lng, dim, marker });
+  // 20261112：地图改为「从世界地图上按位置截一块」，默认落在区域档（每张卡片天然不同）
+  const zoom = Math.max(0, Math.min(2, (loc._zoom === undefined || loc._zoom === null ? 1 : loc._zoom) | 0));
+  const who = marker || '';
+  const map = `<div class="checkin-loc-map" data-checkin-map="1" data-lat="${loc.lat}" data-lng="${loc.lng}" data-dim="${dim}" data-zoom="${zoom}" data-marker="${escapeHtml(who)}">${_worldMapSvg({ lat: loc.lat, lng: loc.lng, dim, marker: who, zoom })}<span class="checkin-loc-zoom">${_WM_VIEWS[zoom].name} · 点一下放大</span></div>`;
   const weatherHtml = weather
     ? `<span style="display:inline-flex;align-items:center;gap:4px;">${escapeHtml(weather.desc)} ${weather.temp != null ? weather.temp + '°C' : ''}</span>`
     : '';
   const doingHtml = doing ? `<span style="display:inline-flex;align-items:center;gap:4px;"><i data-icon="clock" data-size="16"></i> ${escapeHtml(doing)}</span>` : '';
-  const distHtml = (distKm != null) ? `<span style="display:inline-flex;align-items:center;gap:4px;">↔ ${distKm} km</span>` : '';
-  const posLine = dim > 0
-    ? `<i data-icon="location" data-size="14"></i> 第 ${dim} 维度 · 坐标不可测`
-    : (loc.city ? `<i data-icon="location" data-size="14"></i> ${escapeHtml(loc.city)}` : `<i data-icon="location" data-size="14"></i> ${loc.lat}, ${loc.lng}`);
+  const distHtml = `<span class="cl-dist" style="display:inline-flex;align-items:center;gap:4px;">↔ ${_distText(distKm)}</span>`;
+  /* 20261112：地名按「原文 / 中文 / 经纬度」三行排。
+     英文地名照常显示（真实感），下面补中文翻译；两行都不许撑破卡片（见 .cl-raw 的换行规则）。 */
+  const geo = _geoName(loc.city, loc.lat, loc.lng, dim);
+  const coord = dim > 0 ? '' : _fmtLatLng(loc.lat, loc.lng);
+  const posLine = `<i data-icon="location" data-size="14" style="flex-shrink:0;margin-top:2px;"></i>
+    <span class="cl-line">
+      ${geo.raw ? `<span class="cl-raw">${escapeHtml(geo.raw)}</span>` : ''}
+      <span class="cl-cn">${escapeHtml(geo.cn)}</span>
+      ${coord ? `<span class="cl-coord">${coord}</span>` : ''}
+    </span>`;
   return `<div class="checkin-loc">
     ${map}
     <div class="checkin-loc-meta">
@@ -3748,6 +4010,19 @@ function _locInfoHTML(loc, weather, doing, marker, distKm) {
     </div>
   </div>`;
 }
+/* 20261112：点地图循环放大 全球 → 区域 → 城市 → 全球（委托到 document，只绑一次） */
+document.addEventListener('click', function (e) {
+  const box = e.target && e.target.closest ? e.target.closest('[data-checkin-map]') : null;
+  if (!box) return;
+  e.stopPropagation();
+  const zoom = (Number(box.dataset.zoom) + 1) % 3;
+  const dim = Number(box.dataset.dim) || 0;
+  box.dataset.zoom = zoom;
+  box.innerHTML = _worldMapSvg({
+    lat: Number(box.dataset.lat), lng: Number(box.dataset.lng),
+    dim, marker: box.dataset.marker || '', zoom
+  }) + `<span class="checkin-loc-zoom">${_WM_VIEWS[zoom].name} · 点一下放大</span>`;
+}, true);
 
 /* 查岗卡片 HTML（突击查岗 + 主动报备共用渲染） */
 function _checkinRepliesHTML(replies) {
@@ -4853,6 +5128,10 @@ function parseDeveloperCommand(text) {
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:发|来)(?:一个|一次)?(?:突击)?查岗$/u, 'checkin'],
     [/^(?:发|来)(?:一个|一次)?(?:突击)?查岗$/u, 'checkin'],
     [/^(?:突击)?查岗$/u, 'checkin'],
+    // 报备（20261112 新增）：让[名]报备 / 报备 / 汇报位置 / 主动报备
+    [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:发|来)(?:一个|一次)?(?:主动)?报备$/u, 'report'],
+    [/^(?:发|来)(?:一个|一次)?(?:主动)?报备$/u, 'report'],
+    [/^(?:(?:主动)?报备|(?:汇报|上报)(?:一下)?(?:位置|行踪))$/u, 'report'],
     // 超频：让[名]触发超频 / 触发超频 / 超频礼物 / 超频惊喜
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:触发|发送|送)(?:一次)?超频(?:礼物|惊喜)?$/u, 'overclock'],
     [/^(?:触发|发送|送)(?:一次)?超频(?:礼物|惊喜)?$/u, 'overclock'],
@@ -4922,6 +5201,24 @@ async function _devCommandEmoji(c, raw) {
   if (currentCharId === c.id && document.body.dataset.view === 'chat') appendMessage(m); else renderChatList();
 }
 
+/* 20261112：开发者模式「报备」命令 —— 角色主动发一条带位置的报备卡片。
+   位置固定落本世界（不做随机维度），这样能直接在卡片里看到地图取景、经纬度与缩放效果。 */
+async function _devCommandReport(c) {
+  const p = _randWorldPos();
+  const loc = { lat: p.lat, lng: p.lng, dim: 0 };
+  let weather = null, distKm = null;
+  try {
+    const city = await _reverseGeo(p.lat, p.lng);
+    if (city) loc.city = city;
+    weather = await _fetchWeather(p.lat, p.lng) || _randWeather();
+    const myPos = await _getPlayerLocation();
+    if (myPos.ok) distKm = _distKm(p.lat, p.lng, myPos.lat, myPos.lng);
+  } catch (e) {}
+  const doing = _drawCheckinStatus();
+  const text = `我到这边了，跟你报个备。\n我在：${doing}`;
+  await deliverCharMessage(c, text, 'checkin', { text, report: true, location: loc, weather, doing, marker: 'TA', distKm });
+}
+
 /* 开发者密码校验（20260929av）：代码只存 djb2-32/base36 哈希，不落明文——
    防止普通用户在源码里直接看穿密码；本地校验时对输入算哈希后比对。
    更换密码：node -e "let h=5381;for(const c of '新密码'){h=(((h<<5)+h)+c.charCodeAt(0))>>>0}console.log(h.toString(36))" → 替换 DEV_PWD_HASH */
@@ -4954,6 +5251,7 @@ async function executeDeveloperCommand(command) {
     else if (command.action === 'emoji') await _devCommandEmoji(c, command.raw);
     else if (command.action === 'poke') await sendCharPoke(c);
     else if (command.action === 'checkin') await deliverCharMessage(c, '突击查岗！你现在在做什么？', 'checkin', { text:'突击查岗！你现在在做什么？', replies:[] });
+    else if (command.action === 'report') await _devCommandReport(c);
     else if (command.action === 'overclock') {
       // 20260929au：开发者命令为绝对命令，绕过超频解锁/惊喜解锁限制，直接触发
       const wantSurprise = /惊喜/u.test(command.raw);
@@ -12756,6 +13054,11 @@ async function _pomodoroPushChars() {
       avatar,
       color: pomodoroCharColor(x.id, x.name),
       emoji: '✨',
+      // 20261112：角色对玩家的专属称呼下发（番茄钟「陪伴邀请」台词要带称呼：
+      //   「{称呼}，我忙完了，来陪你啦」）。角色卡里没设置则为空数组，台词会自动去掉称呼。
+      playerNicknames: (Array.isArray(x.playerNicknames)
+        ? x.playerNicknames.filter(n => n && String(n).trim()).map(n => String(n).trim()).slice(0, 5)
+        : []),
     });
   }
   // 20261104：附带 AI 模式判定 + 当前角色行程标签（字卡模式「角色做自己的事」抽取用）
@@ -12851,6 +13154,10 @@ async function _pomodoroSaveSettle(data) {
       // 20261105：番茄钟前台互动气泡 AI 模式——iframe 请求主项目用 AI 生成
       //   「一句陪伴动作 + 一句台词」，生成后回传 pomodoro-comp-interact-result
       _pomodoroGenCompInteract(d.payload || {});
+    } else if (d.type === 'pomodoro-gen-invite') {
+      // 20261112：番茄钟「陪伴邀请」台词 AI 模式——被拒/忙完回来/连着邀请后服软答应，
+      //   三种语境的台词交给 AI 按人设生成，回传 pomodoro-invite-result
+      _pomodoroGenInvite(d.payload || {});
     } else if (d.type === 'pomodoro-lock-perm') {
       // 20261105：番茄钟锁机——iframe 请求主项目申请「使用情况访问」权限（BmRemoteControl 插件），
       //   授权结果回传 pomodoro-lock-perm-result。修「锁机按钮点不了」（iframe 拿不到 Capacitor 插件）。
@@ -12912,6 +13219,53 @@ async function _pomodoroGenCompInteract(p) {
 }
 /* 番茄钟「角色做自己的事」AI 生成：字卡模式不需要（iframe 本地抽标签），
    AI 模式由主项目 callAI 生成一句贴合角色的「TA 刚做了什么事」，回传给 iframe。 */
+/* 20261112：番茄钟「陪伴邀请」台词 AI 生成。
+   kind: 'refuse'=拒绝（手上正忙）/ 'return'=忙完自己回来 / 'accept'=连着邀请几次后服软答应。
+   台词必须带角色对玩家的称呼（人设里配了才带）。
+   回传 pomodoro-invite-result { reqId, kind, text }；text 为空时 iframe 走字卡池兜底。 */
+async function _pomodoroGenInvite(p) {
+  const frame = document.getElementById('pomodoro-frame');
+  const reqId = p.reqId || '';
+  const kind = p.kind || 'refuse';
+  let text = '';
+  try {
+    const aiOn = await isAIMode();
+    if (aiOn) {
+      const cfg = await loadAIConfig();
+      const { url, key, model } = (cfg && cfg.chatApi) || {};
+      if (url && url.trim()) {
+        const charName = p.charName || 'TA';
+        const nick = p.nickname
+          ? `你平时叫玩家「${p.nickname}」，这句话里要自然地带上这个称呼。`
+          : '你不知道该怎么称呼玩家，就直接说话，不要硬加称呼。';
+        let task = '';
+        if (kind === 'refuse') {
+          task = '玩家刚发来一条「陪我一起专注」的邀请，可你手上正有事走不开，这次去不了。请用一句话婉拒，说清自己这边有点事、待会儿再过来。语气像真人，别客套，别长篇道歉，不超过 28 字。';
+        } else if (kind === 'return') {
+          /* 20261112：角色是自己注意到玩家在专注、悄悄过来的，不是被叫来的。
+             语气要轻，要表明自己会很安静不打扰；写了待办就把那件事点出来。 */
+          const t = p.task ? `玩家正在专注的事是「${p.task}」。` : '';
+          task = `${t}玩家正在专注，你注意到了，于是悄悄过去陪着 TA。请用一句话告诉 TA 你来了，语气轻、说清自己会很安静、不会打扰，可以提到 TA 正在做的事；不超过 32 字。`;
+        } else {
+          task = '玩家已经连着邀了你好几次，这一次你终于放下手上的事答应过去陪 TA。请用一句话回应，可以带一点无奈又纵容的味道，不超过 25 字。';
+        }
+        const r = await callAI(url, key, model, [
+          { role: 'system', content: `你在扮演虚拟角色「${charName}」。${nick}只输出角色说的一句台词，不要引号、不要旁白、不要动作描写、不要解释。` },
+          { role: 'user', content: task },
+        ], { temperature: 0.9, maxTokens: 70 });
+        if (r && r.ok && r.text) {
+          text = String(r.text).trim().split(/\n+/)[0].replace(/^["「『]+|["」』]+$/g, '').trim();
+        }
+      }
+    }
+  } catch (e) { text = ''; }
+  try {
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.postMessage({ type: 'pomodoro-invite-result', reqId, kind, text }, '*');
+    }
+  } catch (e) {}
+}
+
 /* 20261111：AI 关着 / 生成失败时的兜底文案池（原来固定一句「在忙自己的一点小事」） */
 const _pomoSelfFallback = [
   '在忙自己的一点小事',
@@ -13440,39 +13794,72 @@ function _proj(lat, lng) {
   return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
 }
 
-/* 手绘手稿风世界地图 SVG（简化大陆轮廓 + 经纬网 + 标点）。
-   opts: { lat, lng, dim, marker } marker='你'/'TA'；dim>0 时显示「第 N 维度」不落点 */
-function _worldMapSvg(opts) {
+/* 20261112 重画：查岗/报备的位置地图。
+   旧版是一张固定不动的 340×150 手绘缩略图 —— 不管人在哪都是同一张图，也不能放大，
+   定位点只是叠在图上，所以看起来「每次都一样」。
+   新版按真实经纬度做等距圆柱投影，铺成 360×180 的世界坐标画布，再用 viewBox
+   从这张世界地图上「截一块」出来：全球 / 区域 / 城市 三档，取景框跟着定位点走，
+   于是每张卡片看到的是该位置附近真实的那一块地（上海看到的是中国东部沿海，
+   巴黎看到的是西欧，不会都长得一样）。
+   opts: { lat, lng, dim, marker, zoom }  zoom: 0=全球 1=区域 2=城市 */
+const _WM_LAND = [
+  // 北美（含阿拉斯加、加拿大、美国、墨西哥、中美）
+  [[-168,65],[-166,68],[-156,71],[-140,70],[-128,70],[-115,69],[-100,69],[-85,70],[-75,68],[-62,60],[-55,52],[-60,47],[-67,45],[-70,42],[-75,37],[-81,31],[-80,25],[-83,23],[-90,29],[-97,26],[-105,22],[-112,29],[-118,33],[-124,40],[-124,48],[-130,54],[-140,60],[-152,59],[-160,56],[-165,60]],
+  // 格陵兰
+  [[-45,83],[-20,80],[-22,70],[-40,60],[-52,64],[-55,72],[-50,78]],
+  // 南美
+  [[-80,9],[-72,12],[-62,11],[-52,5],[-44,0],[-35,-6],[-38,-16],[-48,-25],[-58,-34],[-62,-40],[-66,-46],[-70,-53],[-75,-52],[-73,-44],[-72,-36],[-71,-28],[-70,-18],[-75,-14],[-79,-6],[-81,0],[-79,5]],
+  // 欧亚主体（伊比利亚 → 西伯利亚 → 东亚 → 南亚 → 中东 → 地中海）
+  [[-10,36],[-9,43],[-2,44],[0,47],[2,51],[7,54],[10,57],[14,55],[18,55],[21,60],[26,66],[30,70],[40,68],[50,69],[60,70],[70,72],[80,74],[95,77],[110,75],[125,73],[140,72],[155,71],[168,69],[180,66],[180,62],[170,60],[160,59],[150,59],[142,54],[140,48],[135,43],[130,42],[126,38],[122,31],[118,24],[110,21],[105,10],[100,7],[98,10],[93,20],[88,22],[82,17],[77,8],[73,15],[70,22],[66,25],[60,25],[57,20],[52,17],[45,12],[43,12],[40,15],[36,22],[34,29],[30,31],[26,36],[20,40],[14,38],[10,37],[4,38],[-2,36],[-6,36]],
+  // 非洲
+  [[-17,15],[-16,21],[-10,27],[-5,31],[0,33],[8,33],[11,33],[20,32],[26,32],[32,31],[35,28],[37,22],[39,16],[43,12],[48,12],[51,11],[45,5],[42,-1],[41,-8],[40,-15],[36,-22],[32,-26],[28,-33],[22,-34],[18,-33],[15,-26],[13,-18],[12,-8],[9,-1],[9,4],[3,6],[-4,5],[-9,5],[-13,9],[-16,12]],
+  // 印度次大陆
+  [[68,23],[70,20],[73,16],[76,8],[78,8],[80,13],[83,18],[88,21],[90,22],[92,21],[91,17],[89,22],[86,24],[80,25],[75,28],[71,25]],
+  // 澳洲
+  [[113,-22],[114,-26],[116,-32],[120,-34],[128,-32],[133,-32],[137,-35],[141,-38],[147,-39],[150,-37],[153,-30],[153,-25],[148,-20],[142,-11],[135,-12],[130,-11],[125,-14],[121,-19],[116,-21]],
+  // 马达加斯加
+  [[44,-12],[50,-15],[50,-22],[46,-25],[43,-20],[43,-15]],
+  // 日本
+  [[130,31],[133,34],[137,37],[141,41],[145,44],[142,40],[139,36],[136,34],[132,31]],
+  // 英国
+  [[-6,50],[-5,54],[-3,58],[-5,58],[-6,56],[-8,54],[-6,51]],
+  // 新西兰
+  [[172,-34],[176,-38],[178,-38],[175,-41],[172,-44],[167,-46],[166,-44],[170,-40],[172,-36]],
+  // 南极洲
+  [[-180,-70],[-140,-73],[-100,-74],[-60,-70],[-20,-70],[20,-70],[60,-68],[100,-67],[140,-67],[180,-70],[180,-90],[-180,-90]]
+];
+/* 三档视野：宽度是按 340:150 的卡片比例反推的，保证取景框不变形 */
+const _WM_VIEWS = [
+  { w: 360, h: 158.9, step: 30, name: '全球', dot: 4.2,  stroke: 0.40, dotA: 0.55 },
+  { w: 64,  h: 28.2,  step: 10, name: '区域', dot: 1.0,  stroke: 0.12, dotA: 0.50 },
+  { w: 8,   h: 3.53,  step: 1,  name: '城市', dot: 0.2,  stroke: 0.028, dotA: 0.30 }
+];
+function _wmLandPath(){
+  return _WM_LAND.map(poly => poly.map(([lo, la], i) =>
+    (i ? 'L' : 'M') + (lo + 180).toFixed(2) + ',' + (90 - la).toFixed(2)
+  ).join(' ') + ' Z').join(' ');
+}
+/* 经纬度文本：31.23°N · 121.47°E（用户要求直接标出坐标） */
+function _fmtLatLng(lat, lng){
+  const f = (v, pos, neg) => Math.abs(v).toFixed(2) + '°' + (v >= 0 ? pos : neg);
+  return f(lat, 'N', 'S') + ' · ' + f(lng, 'E', 'W');
+}
+function _worldMapSvg(opts){
   const dim = opts.dim || 0;
-  // 简化大陆轮廓（粗分块，手稿感：用几条大折线勾勒欧亚非/美洲/澳洲等）
-  const land = `
-    <g fill="rgba(196,181,253,.10)" stroke="rgba(196,181,253,.55)" stroke-width="1.2" stroke-linejoin="round">
-      <!-- 欧亚大陆 -->
-      <path d="M120,18 L140,14 L170,16 L200,22 L230,26 L245,40 L240,58 L225,70 L210,88 L198,102 L185,108 L175,100 L168,78 L155,70 L145,52 L128,44 L118,30 Z"/>
-      <!-- 非洲 -->
-      <path d="M175,100 L198,102 L200,118 L192,134 L178,138 L168,128 L172,112 L175,100 Z"/>
-      <!-- 北美 -->
-      <path d="M40,28 L62,20 L78,24 L84,40 L76,58 L62,66 L52,58 L46,44 L40,28 Z"/>
-      <!-- 南美 -->
-      <path d="M78,78 L92,74 L98,92 L90,112 L80,120 L74,108 L78,78 Z"/>
-      <!-- 澳洲 -->
-      <path d="M250,100 L268,98 L276,110 L266,120 L252,116 L250,100 Z"/>
-      <!-- 南极洲 -->
-      <path d="M30,140 L320,140 L320,148 L30,148 Z"/>
-    </g>
-    <g stroke="rgba(196,181,253,.14)" stroke-width=".5">
-      <line x1="0" y1="25" x2="340" y2="25"/><line x1="0" y1="50" x2="340" y2="50"/>
-      <line x1="0" y1="75" x2="340" y2="75"/><line x1="0" y1="100" x2="340" y2="100"/>
-      <line x1="0" y1="125" x2="340" y2="125"/>
-      <line x1="68" y1="0" x2="68" y2="150"/><line x1="136" y1="0" x2="136" y2="150"/>
-      <line x1="204" y1="0" x2="204" y2="150"/><line x1="272" y1="0" x2="272" y2="150"/>
-    </g>`;
+  const zoom = Math.max(0, Math.min(2, opts.zoom | 0));
+  const v = _WM_VIEWS[zoom];
+  const uid = 'wm' + Math.random().toString(36).slice(2, 8);
+  const landD = _wmLandPath();
 
+  // 其他维度：不落具体点，中央显示维度星环（保留原表现）
   if (dim > 0) {
-    // 其他维度：不落具体点，中央显示维度星环
-    const cx = 170, cy = 75;
-    return `<svg viewBox="0 0 340 150" style="width:100%;height:auto;display:block;" fill="none">
-      ${land}
+    const cx = 180, cy = 90;
+    return `<svg viewBox="0 0 360 180" style="width:100%;height:auto;display:block;" fill="none">
+      <defs><clipPath id="${uid}c"><path d="${landD}"/></clipPath>
+        <pattern id="${uid}p" width="4.2" height="4.2" patternUnits="userSpaceOnUse"><circle cx="2.1" cy="2.1" r="0.72" fill="rgba(196,181,253,.5)"/></pattern>
+      </defs>
+      <path d="${landD}" fill="rgba(167,139,250,.10)" stroke="rgba(196,181,253,.4)" stroke-width="0.42" stroke-linejoin="round"/>
+      <rect x="0" y="0" width="360" height="180" fill="url(#${uid}p)" clip-path="url(#${uid}c)"/>
       <circle cx="${cx}" cy="${cy}" r="30" stroke="rgba(196,181,253,.6)" stroke-width="1" stroke-dasharray="3 4"/>
       <circle cx="${cx}" cy="${cy}" r="20" stroke="rgba(196,181,253,.35)" stroke-width=".8"/>
       <polygon points="${cx},${cy-13} ${cx+3.5},${cy-4} ${cx+13},${cy-4} ${cx+6},${cy+3} ${cx+8.5},${cy+12} ${cx},${cy+6.5} ${cx-8.5},${cy+12} ${cx-6},${cy+3} ${cx-13},${cy-4} ${cx-3.5},${cy-4}" stroke="rgba(236,228,255,.9)" stroke-width="1"/>
@@ -13481,14 +13868,48 @@ function _worldMapSvg(opts) {
     </svg>`;
   }
 
-  const p = _proj(opts.lat || 0, opts.lng || 0);
+  const lat = Math.max(-85, Math.min(85, Number(opts.lat) || 0));
+  const lng = ((Number(opts.lng) || 0) + 540) % 360 - 180;
+  const px = lng + 180, py = 90 - lat;
+
+  // 取景框以定位点为中心；贴边时允许少量外扩，避免永远顶在角落
+  let vx = px - v.w / 2, vy = py - v.h / 2;
+  vx = Math.max(-v.w * 0.12, Math.min(360 - v.w * 0.88, vx));
+  vy = Math.max(-v.h * 0.12, Math.min(180 - v.h * 0.88, vy));
+
+  // 经纬网：步长随档位变化，只画落在取景框里的线
+  let grid = '';
+  const lo0 = Math.ceil((vx - 180) / v.step) * v.step;
+  for (let lo = lo0; lo <= vx + v.w - 180 + 0.001; lo += v.step) {
+    const x = lo + 180;
+    grid += `<line x1="${x.toFixed(2)}" y1="${vy.toFixed(2)}" x2="${x.toFixed(2)}" y2="${(vy + v.h).toFixed(2)}"/>`;
+  }
+  const la0 = Math.ceil((90 - vy - v.h) / v.step) * v.step;
+  for (let la = la0; la <= 90 - vy + 0.001; la += v.step) {
+    const y = 90 - la;
+    grid += `<line x1="${vx.toFixed(2)}" y1="${y.toFixed(2)}" x2="${(vx + v.w).toFixed(2)}" y2="${y.toFixed(2)}"/>`;
+  }
+
+  const rDot = v.w / 150;          // 中心实点
+  const rRing = v.w / 42;          // 外圈
+  const fs = v.w / 32;             // 标注字号
   const label = opts.marker || '';
-  return `<svg viewBox="0 0 340 150" style="width:100%;height:auto;display:block;" fill="none">
-    ${land}
+  return `<svg viewBox="${vx.toFixed(2)} ${vy.toFixed(2)} ${v.w} ${v.h}" style="width:100%;height:auto;display:block;" fill="none">
+    <defs>
+      <clipPath id="${uid}c"><path d="${landD}"/></clipPath>
+      <pattern id="${uid}p" width="${v.dot}" height="${v.dot}" patternUnits="userSpaceOnUse">
+        <circle cx="${(v.dot/2).toFixed(3)}" cy="${(v.dot/2).toFixed(3)}" r="${(v.dot*0.17).toFixed(3)}" fill="rgba(196,181,253,${v.dotA})"/>
+      </pattern>
+    </defs>
+    <g stroke="rgba(196,181,253,.16)" stroke-width="${(v.stroke*0.5).toFixed(3)}">${grid}</g>
+    <path d="${landD}" fill="rgba(167,139,250,.13)" stroke="rgba(196,181,253,.5)" stroke-width="${v.stroke}" stroke-linejoin="round"/>
+    <rect x="${vx.toFixed(2)}" y="${vy.toFixed(2)}" width="${v.w}" height="${v.h}" fill="url(#${uid}p)" clip-path="url(#${uid}c)"/>
     <g>
-      <circle cx="${p.x}" cy="${p.y}" r="9" fill="rgba(167,139,250,.22)" stroke="rgba(216,202,255,.7)" stroke-width="1"/>
-      <circle cx="${p.x}" cy="${p.y}" r="3.5" fill="rgba(236,228,255,.95)" stroke="rgba(123,97,220,.9)" stroke-width="1.2"/>
-      <text x="${p.x}" y="${p.y - 12}" text-anchor="middle" fill="rgba(226,214,255,.95)" font-size="9" font-weight="700">${label}</text>
+      <circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="${rRing.toFixed(3)}" fill="rgba(167,139,250,.20)" stroke="rgba(216,202,255,.75)" stroke-width="${(v.stroke*0.6).toFixed(3)}"/>
+      <circle cx="${px.toFixed(2)}" cy="${py.toFixed(2)}" r="${rDot.toFixed(3)}" fill="rgba(240,234,255,.98)" stroke="rgba(123,97,220,.95)" stroke-width="${(v.stroke*0.8).toFixed(3)}"/>
+      <line x1="${(px - rRing*1.5).toFixed(2)}" y1="${py.toFixed(2)}" x2="${(px + rRing*1.5).toFixed(2)}" y2="${py.toFixed(2)}" stroke="rgba(226,214,255,.55)" stroke-width="${(v.stroke*0.5).toFixed(3)}"/>
+      <line x1="${px.toFixed(2)}" y1="${(py - rRing*1.5).toFixed(2)}" x2="${px.toFixed(2)}" y2="${(py + rRing*1.5).toFixed(2)}" stroke="rgba(226,214,255,.55)" stroke-width="${(v.stroke*0.5).toFixed(3)}"/>
+      ${label ? `<text x="${px.toFixed(2)}" y="${(py - rRing * 1.9).toFixed(2)}" text-anchor="middle" fill="rgba(232,222,255,.96)" font-size="${fs.toFixed(2)}" font-weight="700">${label}</text>` : ''}
     </g>
   </svg>`;
 }
@@ -18855,6 +19276,16 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     ${!isPerChar ? `
     <div class="field">
+      <label>AI 解牌篇幅（字数 50～3000）</label>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <input class="input" type="number" min="50" max="3000" value="${s.diviMinWords || 300}" id="cs-divi-min" style="width:96px;">
+        <span style="color:var(--text-tertiary);">～</span>
+        <input class="input" type="number" min="50" max="3000" value="${s.diviMaxWords || 500}" id="cs-divi-max" style="width:96px;">
+        <span style="font-size:12px;color:var(--text-tertiary);">字</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">AI 占卜解牌时「基调 + 核心 + 建议」三段合计的字数区间。默认 300～500：想解得更细就把上限调大，想看得短一点就把两边一起调小。前面填得比后面大时会自动对调。</div>
+    </div>
+    <div class="field">
       <label>群聊自动接龙轮次上限（0～5）</label>
       <input class="input" type="number" min="0" max="5" value="${s.groupRounds ?? 2}" id="cs-group-rounds" style="width:100px;">
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">1 轮 = 群内每个成员各发言一次；到轮立即停止，防刷屏防卡死。可在每个群的群聊设置里单独覆盖。此项只与群聊相关，访客个人主页的聊天设置里不再显示</div>
@@ -19509,7 +19940,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
     </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="comment" data-size="12"></i> 前台互动（陪伴动作 / 陪伴回复）</label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">专注过程中，角色会随机「找你说句话」或「做一个陪伴小动作」，内容从字卡库的「陪伴动作」「陪伴回复」里抽。这里设触发间隔（随机固定区间）。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">专注过程中，角色会随机「找你说句话」或「做一个陪伴小动作」，内容从字卡库的「陪伴动作」「陪伴回复」里抽。这里填的是<b>专注陪伴</b>档的触发间隔，每次到点后在这个区间里重新随机取一次。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.7;">三档的区别（在番茄钟设置页选「专注模式」）：<br>· <b>轻陪伴</b>　间隔拉长 1.5 倍，出现得最少（8～20 → 12～30 分钟）<br>· <b>专注陪伴</b>　就按上面这两格来（8～20 分钟），基准档<br>· <b>深度陪伴</b>　间隔缩到一半，出现得最勤（8～20 → 4～10 分钟）</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.7;">还有一套你不会被打扰的：角色想说话但忍住了、或者自己做了点小事，全程不打扰你，只在结算页出现。它的节奏固定是上面实际间隔的 0.7 倍，你改这两个数，它跟着一起变。</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">间隔</span>
         <input type="number" id="cs-companion-interact-min" min="1" max="720" step="1" value="${typeof s.companionInteractMin === 'number' ? s.companionInteractMin : 8}" style="width:72px;padding:4px 8px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;" title="最小间隔（分钟）">
@@ -20481,6 +20914,15 @@ function bindChatSettings(s, onSave, tcChar) {
     // az：群聊自动接龙轮次上限（仅总聊天设置渲染该输入；0~5）
     const grEl = $('#cs-group-rounds');
     if (grEl) s.groupRounds = Math.min(5, Math.max(0, parseInt(grEl.value, 10) || 0));
+    // 20261112：AI 解牌篇幅（50~3000 字；min>max 自动对调；默认 300~500）
+    const dvmEl = $('#cs-divi-min'), dvmxEl = $('#cs-divi-max');
+    if (dvmEl && dvmxEl) {
+      let dLo = Math.min(3000, Math.max(50, parseInt(dvmEl.value, 10) || 300));
+      let dHi = Math.min(3000, Math.max(50, parseInt(dvmxEl.value, 10) || 500));
+      if (dLo > dHi) { const t = dLo; dLo = dHi; dHi = t; }
+      dvmEl.value = String(dLo); dvmxEl.value = String(dHi);
+      s.diviMinWords = dLo; s.diviMaxWords = dHi;
+    }
     // 20260929an：查岗/来电每日上限（0=不限制；默认 0）
     const cklEl = $('#cs-checkin-limit');
     if (cklEl) s.checkinDailyLimit = Math.min(99, Math.max(0, parseInt(cklEl.value, 10) || 0));
@@ -32675,6 +33117,11 @@ async function diviBriefOf(charId) {
 /* 解牌提示词：关系判定 → 梦占分支 → 三张牌串线 → 三段式 → 追问协议 */
 function diviSystemPrompt(brief, opts) {
   const o = opts || {};
+  /* 20261112：解牌篇幅改成可调（聊天设置 →「回复」→ AI 解牌篇幅）。
+     默认还是 300~500 字；玩家自己改了就按玩家的来，min>max 时自动对调。 */
+  const _csDivi = (typeof chatSettings !== 'undefined' && chatSettings) ? chatSettings : {};
+  const wMin = Math.min(3000, Math.max(50, parseInt(_csDivi.diviMinWords, 10) || 300));
+  const wMax = Math.min(3000, Math.max(wMin, parseInt(_csDivi.diviMaxWords, 10) || 500));
   const parts = [];
   if (brief) {
     parts.push('【这次占卜关联的角色】');
@@ -32715,7 +33162,7 @@ ${parts.join('\n')}
    其余情况（普通问题 / 非恋爱 / 关系未知 / 没有角色）一律按普通塔罗解。
    「非恋爱」是「不套梦占」，不是「不解」；「无关」更不是「不解」。
 
-★ 无论判定成哪种，都必须完整写出「基调 + 核心 + 建议」三段（合计 300~500 字）。
+★ 无论判定成哪种，都必须完整写出「基调 + 核心 + 建议」三段（合计 ${wMin}~${wMax} 字）。
   判定结果只决定**用哪个视角**，不决定**解多深**，更不决定**要不要解**。
   这三张牌永远都要被认真解完，玩家是来求解读的，不是来听你做关系分类的。
 
@@ -32772,7 +33219,7 @@ ${parts.join('\n')}
   不需要给时，这一行写：建议：（无）
 · 思考：把你解牌的思路用 100 字以内说清楚（为什么这样定调、三张牌是怎么咬合起来的、关系为什么判成恋爱或不是）。
   这一段会展示给玩家看。
-· 基调 + 核心 + 建议 合计 300~500 字。不要少于 300，也不要写成一千字的长文。
+· 基调 + 核心 + 建议 合计 ${wMin}~${wMax} 字。不要少于 ${wMin} 字，也不要超过 ${wMax} 字。
 · 用中文，第二人称直接对玩家说话。${o.skipAsk ? '\n【这一次不许再问背景】玩家已经表示不想补充更多信息。你必须基于现有信息一次性给出完整解读，「需要背景」一律写「否」，并在「思考」里写清你是在信息不全的情况下如何判断的。' : ''}${o.askAgain ? '\n【这一次是玩家补充信息之后的重新解读】把玩家补充的内容当成重要事实，必要时修正上一版的判断。不要重复上一版的原话，直接给更新后的结论。' : ''}`;
 }
 

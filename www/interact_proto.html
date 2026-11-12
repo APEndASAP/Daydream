@@ -251,6 +251,42 @@
   }
   .switch-toggle__btn svg{width:16px;height:16px;}
   .switch-toggle[data-on='true'] .switch-toggle__btn{background:var(--main);color:#fff;border-color:var(--main);}
+  /* 20261112 邀请等待态：点「陪伴我」后、角色还没回应的那一两秒，按钮显示「邀请中…」并轻微呼吸 */
+  .switch-toggle[data-pending='1'] .switch-toggle__btn{
+    animation:inviteBreath 1.15s ease-in-out infinite;
+    border-style:dashed;
+  }
+  @keyframes inviteBreath{
+    0%,100%{opacity:.72;transform:scale(.985);}
+    50%{opacity:1;transform:scale(1);}
+  }
+  /* 20261112 陪伴邀请结果浮层（设置页用：不挡「陪伴我」按钮，4 秒左右自己淡出，点一下也能关）
+     kind：busy=角色正忙被婉拒 / accept=忙完赶来或服软答应 / tip=轻提示 */
+  .companion-notice{
+    /* 20261112 定稿位置：屏幕下方空白带（开始按钮上方），不压 25:00 大数字、不挡「陪伴我」和模式选择 */
+    position:fixed;left:50%;bottom:168px;top:auto;z-index:80;width:min(86%,330px);
+    transform:translate(-50%,10px);opacity:0;pointer-events:none;
+    padding:12px 15px 13px;border-radius:16px;
+    /* 比气泡实一点：这是「一句要说清的话」，不是氛围气泡，不能薄到读不清 */
+    background:color-mix(in srgb, var(--card-bg,#fff) 88%, transparent);
+    -webkit-backdrop-filter:blur(18px) saturate(1.2);backdrop-filter:blur(18px) saturate(1.2);
+    border:1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+    box-shadow:0 14px 34px var(--shadow-color);color:var(--ink);
+    transition:opacity .26s ease,transform .3s cubic-bezier(.34,1.4,.44,1);
+  }
+  .companion-notice.show{opacity:1;transform:translate(-50%,0);pointer-events:auto;cursor:pointer;}
+  .companion-notice .cn-head{display:flex;align-items:baseline;gap:7px;margin-bottom:5px;}
+  .companion-notice .cn-name{font-size:12.5px;font-weight:700;letter-spacing:.5px;}
+  .companion-notice .cn-state{font-size:11px;letter-spacing:1px;opacity:.55;}
+  .companion-notice .cn-text{font-size:13.5px;line-height:1.62;word-break:break-word;}
+  .companion-notice.is-busy .cn-state{color:var(--ink2);}
+  .companion-notice.is-accept .cn-state{color:var(--main-deep);}
+  /* 结算页那条「邀请—迟到—赶来」的叙述：一句话回忆，不做条目/不做次数统计 */
+  .ss-story{
+    margin-top:10px;padding:9px 11px;border-left:2px solid var(--main-deep);
+    font-size:12.5px;line-height:1.75;opacity:.82;font-style:italic;
+    background:color-mix(in srgb, var(--ink) 4%, transparent);border-radius:0 8px 8px 0;
+  }
   /* 20261106：铃铛点击摇摆动画——点击开关时铃铛图标左右摇摆一下（transform-origin 在铃铛顶部挂点） */
   .switch-toggle__btn svg{transform-origin:50% 0%;will-change:transform;}
   .switch-toggle__btn.bell-swing svg{animation:bell-swing .6s cubic-bezier(.36,.07,.19,.97);}
@@ -368,6 +404,14 @@
     z-index:5;cursor:grab;width:88px;height:88px;pointer-events:auto;
     transition:transform .3s cubic-bezier(.34,1.56,.64,1), opacity .3s ease;
     filter:drop-shadow(0 3px 4px rgba(0,0,0,.28));
+    /* 20261112 修「深色模式下帽子拖不动」：
+       touch-action 原来是 auto，手指按下去拖动时浏览器把它当成「页面滚动手势」，
+       先派发 pointerdown、紧接着 pointercancel，拖动被中途取消并弹回原位，
+       手指上就是「完全拖不动」。这里声明本元素不参与滚动/缩放手势，
+       pointer 事件才会完整交给我们。user-drag/user-select 一并关掉，防止长按选中 SVG。 */
+    touch-action:none;
+    -webkit-user-drag:none;
+    user-select:none;-webkit-user-select:none;
   }
   .sleep-cap.hidden{opacity:0;transform:translateX(-50%) scale(.4);pointer-events:none;}
   /* SVG 睡帽：铺满容器，颜色全部走主题变量 */
@@ -621,13 +665,20 @@
   /* 米白手稿纸张（顶部锯齿撕边，略微向左倾，带纸纤维纹理） */
   .folder .fold-paper{
     position:absolute;left:14%;right:12%;top:10%;bottom:16%;z-index:2;
+    /* 20261112：纸色抽成变量，默认值＝原来的米黄手稿纸 → 浅色主题一个像素都不变；
+       深色主题在下方「深色主题：纸跟着沉下去」里把这几个变量换成深色值。 */
+    --fp-hi:#fdf8ec;
+    --fp-mid:#f6eedb;
+    --fp-lo:#efe3c8;
+    --fp-line:rgba(120,90,40,.035);
+    --fp-edge:#faf5e9;
     background-color:#faf5e9;
     background-image:
       /* 纸纤维噪点纹理（天文手稿的颗粒感） */
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0.55 0 0 0 0 0.48 0 0 0 0 0.38 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23p)'/%3E%3C/svg%3E"),
       /* 横向细纹（手稿横线纸感） */
-      repeating-linear-gradient(0deg, transparent 0 6px, rgba(120,90,40,.035) 6px 7px),
-      linear-gradient(180deg,#fdf8ec 0%,#f6eedb 55%,#efe3c8 100%);
+      repeating-linear-gradient(0deg, transparent 0 6px, var(--fp-line) 6px 7px),
+      linear-gradient(180deg,var(--fp-hi) 0%,var(--fp-mid) 55%,var(--fp-lo) 100%);
     border-radius:3px 3px 6px 6px;
     box-shadow:0 3px 10px rgba(0,0,0,.18), inset 0 0 0 1px rgba(140,110,60,.08);
     transform:rotate(-3deg);
@@ -639,8 +690,20 @@
   .folder .fold-paper::before{
     content:'';position:absolute;top:0;left:0;right:0;height:8px;
     background:
-      linear-gradient(135deg, transparent 4px, #faf5e9 0) 0 0 / 12px 8px repeat-x,
-      linear-gradient(45deg, transparent 4px, #faf5e9 0) 0 0 / 12px 8px repeat-x;
+      linear-gradient(135deg, transparent 4px, var(--fp-edge) 0) 0 0 / 12px 8px repeat-x,
+      linear-gradient(45deg, transparent 4px, var(--fp-edge) 0) 0 0 / 12px 8px repeat-x;
+  }
+  /* 深色主题专属：手稿纸跟着沉下去（浅色主题完全不碰，仍用上面的米黄纸 + 深墨） */
+  body.theme-dark .folder .fold-paper,
+  body.theme-choco .folder .fold-paper,
+  body.theme-blackred .folder .fold-paper,
+  body.theme-gray .folder .fold-paper{
+    --fp-hi:color-mix(in srgb, var(--bg) 88%, var(--ink) 12%);
+    --fp-mid:color-mix(in srgb, var(--bg) 78%, var(--ink) 22%);
+    --fp-lo:color-mix(in srgb, var(--bg) 68%, var(--ink) 32%);
+    --fp-line:color-mix(in srgb, var(--ink) 4%, transparent);
+    --fp-edge:color-mix(in srgb, var(--bg) 88%, var(--ink) 12%);
+    box-shadow:0 3px 10px rgba(0,0,0,.4), inset 0 0 0 1px color-mix(in srgb, var(--ink) 12%, transparent);
   }
   /* 纸上角色头像（封面主角，居中于标题上方，带手稿星环） */
   .folder .fold-avatar{
@@ -830,6 +893,9 @@
   .session-settle.show{display:flex;}
   .ss-card{
     position:relative;width:100%;max-width:340px;border-radius:8px;padding:34px 26px 26px;
+    /* 20261112：纸色走 --paper-a / --paper-b，默认值就是原来的米白信纸 → 浅色主题完全不变。
+       深色主题在下方「深色主题：纸跟着沉下去」一节里只改这两个变量，
+       纸变深、墨仍用 --ink（深色主题下是浅色）→ 深纸白字。 */
     background:linear-gradient(170deg,var(--paper-a,#fffdfa) 0%,var(--paper-b,#f7f0e3) 100%);
     box-shadow:0 24px 60px rgba(60,64,60,.35);color:var(--ink,#4a4d50);max-height:90vh;overflow-y:auto;
   }
@@ -849,6 +915,45 @@
   .ss-reply .who{font-weight:700;color:var(--main-deep,#4a4060);}
   .ss-btn{width:100%;height:46px;border-radius:23px;border:0;margin-top:18px;background:linear-gradient(135deg,var(--btn-grad-a),var(--btn-grad-b));color:#fff;font-size:14px;font-weight:700;letter-spacing:1px;cursor:pointer;}
   .ss-done{width:100%;height:42px;border-radius:21px;border:1px solid rgba(120,110,90,.25);background:transparent;color:var(--ink,#4a4d50);font-size:14px;margin-top:10px;cursor:pointer;}
+
+  /* ============ 深色主题：纸跟着沉下去（只对 4 个深色主题生效） ============
+     20261112 用户明确：「深色主题的信纸应该是深色的，字相应改成白色；但浅色主题千万不要动」。
+     所以这里只写深色主题的覆盖，浅色主题（含绛红 red / 红浆果 berry，它们本质是浅色）一律不碰，
+     仍走上面的默认米白纸 + 深墨。纸色用「主题底 --bg + 墨 --ink」少量混合：
+     深色底 + 浅墨 12~24% = 比背景亮一档的深纸，字继续吃 --ink 就是白色。 */
+  body.theme-dark .ss-card,
+  body.theme-choco .ss-card,
+  body.theme-blackred .ss-card,
+  body.theme-gray .ss-card{
+    --paper-a:color-mix(in srgb, var(--bg) 88%, var(--ink) 12%);
+    --paper-b:color-mix(in srgb, var(--bg) 76%, var(--ink) 24%);
+    box-shadow:0 24px 60px rgba(0,0,0,.46), inset 0 0 0 1px color-mix(in srgb, var(--ink) 12%, transparent);
+  }
+  /* 深纸上的噪点改为柔光混合，否则 multiply 在深底上等于没效果 */
+  body.theme-dark .ss-card::before,
+  body.theme-choco .ss-card::before,
+  body.theme-blackred .ss-card::before,
+  body.theme-gray .ss-card::before{mix-blend-mode:soft-light;}
+  body.theme-dark .ss-close,
+  body.theme-choco .ss-close,
+  body.theme-blackred .ss-close,
+  body.theme-gray .ss-close{background:color-mix(in srgb, var(--ink) 12%, transparent);color:var(--ink2);}
+  body.theme-dark .ss-big,
+  body.theme-choco .ss-big,
+  body.theme-blackred .ss-big,
+  body.theme-gray .ss-big{border-bottom-color:color-mix(in srgb, var(--ink) 22%, transparent);}
+  body.theme-dark .ss-row,
+  body.theme-choco .ss-row,
+  body.theme-blackred .ss-row,
+  body.theme-gray .ss-row{border-bottom-color:color-mix(in srgb, var(--ink) 16%, transparent);}
+  body.theme-dark .ss-reply,
+  body.theme-choco .ss-reply,
+  body.theme-blackred .ss-reply,
+  body.theme-gray .ss-reply{background:color-mix(in srgb, var(--ink) 9%, transparent);}
+  body.theme-dark .ss-done,
+  body.theme-choco .ss-done,
+  body.theme-blackred .ss-done,
+  body.theme-gray .ss-done{border-color:color-mix(in srgb, var(--ink) 24%, transparent);}
 
   /* ============ 成果输入框 ============ */
   .result-box{width:100%;}
@@ -986,6 +1091,9 @@
     </div>
     <div class="interact-row col-radio">
       <div class="jelly-radio" id="jr2"></div>
+    </div>
+    <div class="interact-row col">
+      <div class="lab" style="font-size:11px;line-height:1.65;opacity:.65;">轻陪伴把聊天设置里的间隔拉长 1.5 倍，深度陪伴缩短一半。例：设 8～20 → 轻 12～30 · 专注 8～20 · 深 4～10。</div>
     </div>
     <div class="interact-row">
       <div class="lab">待办<small id="todoSub">未绑定待办</small></div>
@@ -1399,9 +1507,21 @@ function createSwitchToggle(el, opts={}){
   function render(){
     const ic = on && onIcon ? onIcon : icon;
     el.innerHTML = `<button type="button" class="switch-toggle__btn" aria-pressed="${on}">${ic}<span>${on ? onLabel : offLabel}</span></button>`;
-    el.querySelector('button').addEventListener('click', ()=>{
+    el.querySelector('button').addEventListener('click', async ()=>{
+      /* 20261112：闸门（gate）——点击前先问外部，能不能真的翻。
+         番茄钟「陪伴我」用它：点下去是**发一条邀请**，角色可能答应也可能正忙着拒绝；
+         被拒时开关必须保持「陪伴我」（不点亮），玩家还可以再点、再邀。
+         gate 返回 false 就按当前 on 重绘，等于弹回原状。 */
+      if(opts.gate){
+        const btn0 = el.querySelector('button');
+        if(btn0 && el.dataset.pending === '1') return;   // 邀请中，忽略连点
+        let ok = false;
+        try{ ok = await opts.gate(!on); }catch(e){ ok = false; }
+        if(!ok){ render(); return; }
+      }
       on = !on;
       el.dataset.on = on ? 'true' : 'false';
+      el.dataset.pending = '';
       render();
       if(opts.onChange) opts.onChange(on);
       // 20261106：点击时铃铛摇摆一下（小交互动画）
@@ -1415,7 +1535,26 @@ function createSwitchToggle(el, opts={}){
     });
   }
   render();
-  return { get on(){ return on; }, set on(v){ on=v; el.dataset.on=on?'true':'false'; render(); } };
+  return {
+    get on(){ return on; },
+    set on(v){
+      on = v; el.dataset.on = on?'true':'false';
+      // 程序化点亮（角色忙完自己回来）不该触发 onBefore 之类，只重绘
+      el.dataset.pending = '';
+      render();
+    },
+    /* 邀请等待态：按钮临时显示「邀请中…」并轻微呼吸，清空传 null 恢复原样 */
+    setPending(label){
+      const btn = el.querySelector('button');
+      if(!btn) return;
+      if(label === null || label === undefined){
+        el.dataset.pending = '';
+        return;   // 不在这里重绘：调用方（gate）紧接着会按最终结果 render 一次
+      }
+      el.dataset.pending = '1';
+      btn.innerHTML = `${icon}<span>${label}</span>`;
+    }
+  };
 }
 
 /* ============ JellyRadio ============ */
@@ -1453,16 +1592,263 @@ document.getElementById('sealTL').innerHTML = sealSVG(inkInit);
 document.getElementById('sealBR').innerHTML = sealSVG(inkInit);
 
 // 开关状态
-let companionOn = false;   // 陪伴开关
+let companionOn = false;   // 互动陪伴（点了「陪伴我」并且角色答应了才是 true；默认安静陪）
 let lockOn = false;        // 锁机开关
 let focusMode = '轻陪伴';   // 当前专注模式
+
+/* ============ 20261112 番茄钟「陪伴邀请」（点「陪伴我」才发） ============
+   用户定稿的规则：
+   ① 不点按钮 = 角色安静挂机陪着你，不互动；点了才发邀请。
+   ② 每一次邀请都**独立随机**——第三次、第四次一样可能被拒，因为人可能真的走不开。
+   ③ 被拒时按钮**不点亮**（保持「陪伴我」），玩家可以马上再点、再邀，不需要「再请他一次」按钮。
+   ④ 被拒后角色过一阵子可能自己忙完回来：定时到点再掷一次骰子，没中就继续等。
+   ⑤ 同一轮里第 3 次及以后**并且真的答应了**，才用「服软」台词（我也想你了 / 去他的工作）。
+   ⑥ 与「轻陪伴/专注陪伴/深度陪伴」无关，那三档只管互动频率。
+   ⑦ 台词一律带角色对玩家的专属称呼；没配称呼就把称呼去掉。 */
+const INVITE_REFUSE_POOL = [
+  '{称呼}，我这边手头正忙着，等我一会儿好不好？',
+  '我这边还有点事没处理完，{称呼}先等我一下。',
+  '{称呼}，我有点事情要处理，待会儿再过来陪你。',
+  '{称呼}，我这儿还压着事儿呢。',
+  '这会儿不太方便，{称呼}，我忙完就来找你。',
+  '等一下我，{称呼}，这边还差一点收尾。',
+  '有点走不开，{称呼}，等我处理完就来。',
+];
+/* 20261112：角色**自己赶来**时说的话（不是玩家点按钮当场答应的那种，也不是服软）。
+   用户定的语气：我注意到你在专注，想过来陪着你，我会很安静的；
+   写了待办就把待办原样嵌进去，没有待办就用不带任务的那一池。 */
+const INVITE_NOTICE_POOL = [
+  '{称呼}，我注意到你在专注「{task}」，想过来陪着你，我会很安静的。',
+  '{称呼}，看到你在做「{task}」，我悄悄过来坐一会儿，不打扰你。',
+  '{称呼}，你这边在忙「{task}」啊，我在旁边待着就好。',
+];
+const INVITE_NOTICE_POOL_NOTASK = [
+  '{称呼}，我注意到你在专注，想过来陪着你，我会很安静的。',
+  '看你忙半天了。',
+  '{称呼}，你忙你的。',
+];
+/* 自己赶来时专注页那条气泡的动作行（不用字卡库，避免「托腮看你」那种高存在感的动作） */
+const INVITE_NOTICE_ACT = '（拉过椅子坐到你旁边）';
+const INVITE_SOFT_POOL = [
+  '我也想你了，{称呼}，我这就来陪你。',
+  '去他的工作，先陪你。',
+  '{称呼}，来了来了。',
+  '好好好，{称呼}，我什么都放下了，现在就陪你。',
+  '是我不好，{称呼}，这就来。',
+];
+/* 结算页那句回忆（不列次数、不做账本）：分「后来赶来了」和「一直没脱开身」两种 */
+const INVITE_STORY_JOINED = [
+  '你一开始就邀我陪你，我那时正忙着没过来。后来我飞快把手上的事处理完，赶紧跑来陪你了。',
+  '你想让我陪你，我起先走不开。心里一直记着这件事，忙完抬头看你还在那儿，就过来了。',
+  '我说了待会儿再来。后来我真的来了，没让你一个人待到最后。',
+];
+const INVITE_STORY_MISSED = [
+  '你叫了我好几次，我一直在忙。等我终于脱开身，你已经专注完了——这件事我记着。',
+];
+/* 20261112：玩家自己把互动关掉、后来 TA 又悄悄过来的那一种（没被拒，所以不套上面两句） */
+const INVITE_STORY_SELF_CAME = [
+  '你把互动关掉了，我看见了。后来我还是悄悄过来了，没出声。',
+  '你说不用陪，我就没吭声。过了一会儿还是坐到了你旁边，很安静。',
+  '你说不用了，我应了一声。可看你一个人在那儿，还是过来了。',
+];
+
+let inviteBusy = false;        // 邀请判定中（防连点）
+let inviteCount = 0;           // 本轮已邀请次数（进入专注后清零，用于第 3 次起的「服软」台词）
+let inviteRefusedOnce = false; // 本轮是否被拒过（结算页那句回忆用）
+/* 20261112：本轮专注的「性质定格」——在按下「开始专注」那一瞬间算一次，之后不再改。
+   sessionInvited：这一轮玩家点过「陪伴我」并发起过邀请（哪怕被拒也算点过）。
+     只有它为 true，角色才可能在专注中途「忙完赶来」；没点过就永远不回来。
+   sessionQuiet：纯安静陪伴——没点过邀请、也不在互动陪伴里。全程零互动：
+     不冒互动气泡、不记后台事件、结算不出任何互动条目。 */
+let sessionInvited = false;
+let sessionQuiet = false;
+/* 最后一次邀请的结果：true=被拒（TA 还在忙）／false=答应了或玩家自己关掉了。
+   用来区分「被拒，还等着 TA 赶来」与「我自己不想要互动了」——后者不该再被自动打扰。 */
+let lastInviteRefused = false;
+/* 这一轮的陪伴是不是「TA 自己赶来的」（玩家没当场点答应）。自己赶来的互动频率要低到几乎没有。 */
+let selfCameCompanion = false;
+let inviteReqSeq = 1;
+let currentInviteReqId = '';
+let companionReturnTimer = null;   // 被拒后「忙完自己回来」的定时器
+let noticeTimer = null;
+
+function pickOne(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+/* 当前该用哪个角色：专注页用 currentChar，设置页用 selectedChar */
+function activeChar(){
+  const idx = (focusActive && currentChar >= 0) ? currentChar : selectedChar;
+  return (idx !== null && idx !== undefined && idx >= 0 && CHARS[idx]) ? CHARS[idx] : null;
+}
+function nickOf(c){
+  if(!c || !Array.isArray(c.playerNicknames)) return '';
+  const n = c.playerNicknames.find(x => x && String(x).trim());
+  return n ? String(n).trim() : '';
+}
+/* 把 {称呼} 换成角色对玩家的称呼；没配称呼就整段去掉（连逗号一起），不留空位 */
+function withNick(line, nick){
+  if(!nick) return line.replace(/\{称呼\}，?/g, '').replace(/^[，,]\s*/, '');
+  return line.replace(/\{称呼\}/g, nick);
+}
+/* 邀请结果浮层（设置页）：busy=正在忙被婉拒 / accept=忙完赶来或服软答应 / tip=轻提示 */
+function showNotice(kind, name, text){
+  let el = document.getElementById('companionNotice');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'companionNotice';
+    el.className = 'companion-notice';
+    el.innerHTML = '<div class="cn-head"><span class="cn-name"></span><span class="cn-state"></span></div><div class="cn-text"></div>';
+    el.addEventListener('click', () => hideNotice());
+    document.body.appendChild(el);
+  }
+  el.querySelector('.cn-name').textContent = name || 'TA';
+  el.querySelector('.cn-state').textContent = (kind === 'busy') ? '正在忙' : (kind === 'accept' ? '来了' : '');
+  el.querySelector('.cn-text').textContent = text || '';
+  el.classList.remove('show');
+  void el.offsetWidth;               // 强制重排，让每次都能重播淡入
+  el.classList.add('show');
+  if(noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(hideNotice, kind === 'busy' ? 4600 : 3400);
+}
+function hideNotice(){
+  const el = document.getElementById('companionNotice');
+  if(el) el.classList.remove('show');
+  if(noticeTimer){ clearTimeout(noticeTimer); noticeTimer = null; }
+}
+/* 点「陪伴我」→ 发邀请 → 随机等角色回应。
+   返回 true 才让开关点亮；false 时开关保持原样，玩家可以再点。 */
+function inviteCompanion(){
+  if(inviteBusy) return Promise.resolve(false);
+  const c = activeChar();
+  if(!c){
+    showNotice('tip', '提示', '先选一个角色，再邀请 TA 陪你。');
+    return Promise.resolve(false);
+  }
+  inviteBusy = true;
+  inviteCount++;
+  clearCompanionReturn();          // 手动再邀，作废上一次的自动回访
+  const nick = nickOf(c);
+  companionToggle.setPending('邀请中…');
+  const wait = 560 + Math.random() * 900;   // 让「邀请」有个被回应的过程，不是瞬间弹一下
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const accepted = Math.random() < 0.5;  // 完完全全随机：事急就是来不了，跟邀第几次无关
+      inviteBusy = false;
+      companionToggle.setPending(null);
+      if(accepted){
+        lastInviteRefused = false;
+        selfCameCompanion = false;   // 当场答应的，不算「自己赶来」
+        // 第 3 次及以后才说一句「服软」的话；前两次只把按钮点亮
+        if(inviteCount >= 3){
+          const line = withNick(pickOne(INVITE_SOFT_POOL), nick);
+          showNotice('accept', c.name, line);
+          askInviteAi('accept', c, nick, line);
+        }
+        resolve(true);
+      } else {
+        lastInviteRefused = true;
+        inviteRefusedOnce = true;
+        const line = withNick(pickOne(INVITE_REFUSE_POOL), nick);
+        showNotice('busy', c.name, line);
+        askInviteAi('refuse', c, nick, line);
+        scheduleCompanionReturn();
+        resolve(false);
+      }
+    }, wait);
+  });
+}
+/* 被拒后：过一阵子醒一次，再掷骰子决定「忙完了没有」。没忙完就继续等，直到专注结束。 */
+function clearCompanionReturn(){
+  if(companionReturnTimer){ clearTimeout(companionReturnTimer); companionReturnTimer = null; }
+}
+function scheduleCompanionReturn(){
+  clearCompanionReturn();
+  companionReturnTimer = setTimeout(tryCompanionReturn, (2 + Math.random() * 6) * 60 * 1000);
+}
+function tryCompanionReturn(){
+  companionReturnTimer = null;
+  if(companionOn) return;                        // 已经来了（玩家当场邀成功 / 已经赶来过）
+  /* 20261112：只有玩家这一轮真的点过「陪伴我」，角色才可能自己赶来。
+     「点过」包含两种：被拒了，或者玩家自己又把互动关掉了 —— 后者同样可能被 TA 注意到。
+     从没点过的纯安静陪伴永远不会有人冒出来。
+     专注中看开始那一刻定格的 sessionInvited；还在设置页就看本轮点过没有。 */
+  const invitedThisRound = focusActive ? sessionInvited : (inviteCount > 0);
+  if(!invitedThisRound) return;
+  /* 完全随机：不设「小概率」参数，到点就掷一次，没来就再等一个随机间隔，可能一直不来。 */
+  if(Math.random() >= 0.5){ scheduleCompanionReturn(); return; }
+  const c = activeChar();
+  if(!c) return;
+  const nick = nickOf(c);
+  // 有待办就把原事项嵌进去；没有就用不带任务的那几句
+  const task = String(currentTask || '').trim();
+  let line = task
+    ? pickOne(INVITE_NOTICE_POOL).replace(/\{task\}/g, task)
+    : pickOne(INVITE_NOTICE_POOL_NOTASK);
+  line = withNick(line, nick);
+  selfCameCompanion = true;                      // 标记：这一轮是 TA 自己来的 → 互动频率压到极低
+  companionToggle.on = true;                     // 程序化点亮，不走 gate
+  companionOn = true;
+  updateCompanionSub();
+  if(focusActive){
+    // 专注页：一条低声的「我过来了」，动作行固定用「轻轻坐下」，不用字卡库
+    const wrap = document.getElementById('cvBubbles');
+    if(wrap){
+      wrap.innerHTML = '';
+      emitCompBubbles(wrap, [INVITE_NOTICE_ACT, line]);
+      wrap.querySelectorAll('.cv-bubble').forEach(b => { b.dataset.fromInvite = '1'; });
+    }
+    startCompInteract();                         // 接上互动心跳（内部按 selfCame 用超长间隔）
+    startHeldEventTimer(true);                   // 后台心跳也改长间隔重启；true=保留已记录的事件
+  } else {
+    showNotice('accept', c.name, line);          // 还没进专注，就在设置页说一声
+  }
+  askInviteAi('return', c, nick, line, task);
+}
+/* AI 模式下，三种语境的台词交给主项目按人设生成（先显示字卡池，AI 回来再替换文字） */
+function askInviteAi(kind, c, nick, localLine, task){
+  if(!aiMode) return;
+  if(!(window.parent && window.parent !== window)) return;
+  currentInviteReqId = 'inv' + (inviteReqSeq++);
+  window.parent.postMessage({
+    type: 'pomodoro-gen-invite',
+    payload: { reqId: currentInviteReqId, kind, charName: c.name, nickname: nick, task: task || '' }
+  }, '*');
+}
+function onInviteAiResult(reqId, kind, text){
+  if(!text) return;
+  if(reqId && reqId !== currentInviteReqId) return;
+  if(kind === 'return'){
+    const b = document.querySelector('#cvBubbles .cv-bubble[data-from-invite="1"]');
+    if(b) b.textContent = text;
+    return;
+  }
+  const el = document.getElementById('companionNotice');
+  if(el && el.classList.contains('show')){
+    const t = el.querySelector('.cn-text');
+    if(t) t.textContent = text;
+  }
+}
+
 const companionToggle = createSwitchToggle(document.getElementById('companionToggle'), {
   offLabel:'陪伴我', onLabel:'陪伴中', defaultOn:false, icon:ICONS.companion,
-  onChange:(on)=>{ companionOn = on; updateCompanionSub(); }
+  // 点「陪伴我」= 发邀请（随机答应/拒绝）；点「陪伴中」= 直接关掉互动
+  gate:(nextOn) => (nextOn ? inviteCompanion() : Promise.resolve(true)),
+  onChange:(on)=>{
+    companionOn = on;
+    updateCompanionSub();
+    if(!on){
+      /* 20261112：玩家自己把互动关掉，也可能被 TA 注意到 —— 照样挂上「随机间隔、到点完全随机」这条线。
+         只有这一轮从来没点过邀请的人（纯安静陪伴）才不排。 */
+      lastInviteRefused = false;
+      if(inviteCount > 0) scheduleCompanionReturn();
+      else clearCompanionReturn();
+    }
+  }
 });
 function updateCompanionSub(){
-  document.getElementById('companionSub').textContent = companionOn ? '专注中 TA 偶尔和你互动' : 'TA 会安静陪着你';
+  document.getElementById('companionSub').textContent = companionOn
+    ? '专注中 TA 会来和你说话'
+    : 'TA 会安静陪着你，全程不打扰你';
 }
+updateCompanionSub();   // 初始态就说清楚：不点按钮＝角色安静陪着
 
 // 锁机开关（顶部栏，用锁形图标）
 const lockBtn = document.getElementById('lockBtn');
@@ -1736,9 +2122,34 @@ const HELD_EVENT_POOL = [
   '想提醒你喝水，见你眉头微皱，没忍心打断',
   '有几次想喊你名字，最后只是默默看着你',
 ];
-/* 后台事件触发间隔：陪伴过程中 5~15 分钟随机一次（可能触发，也可能不触发） */
+/* ============ 20261112f 三档陪伴 × 后台心跳，统一由「玩家填的间隔」派生 ============
+   规则（用户定稿）：
+   ① 玩家在聊天设置里填的那对数字 = 「专注陪伴」档的间隔，是基准；
+   ② 轻陪伴把间隔拉长 1.5 倍（出现得更少），深度陪伴压到 0.5 倍（出现得更勤）；
+      例：填 8~20 → 轻 12~30 / 专注 8~20 / 深度 4~10。
+   ③ 后台「真发生但你看不到」的那套心跳，恒定是前台实际间隔的 0.7 倍——
+      玩家把 8~20 改成 4~10，它就从 5.6~14 自动变成 2.8~7，不需要另外调。
+   ④ TA 自己赶来这一轮（玩家点过「陪伴我」又自己取消 / 被拒后自己过来），**不看当前档位**，
+      一律按「轻陪伴再降三分之一」算，也就是基准 ×2.25（1.5 × 1.5）——
+      玩家既然把互动关掉了，TA 自己过来时就该是最安静的一种，选深度档也一样。
+   ⑤ 后台心跳永远 = 前台实际间隔 ×0.7，所以上面每一种情况它都跟着同比例变。 */
+const COMP_MODE_SCALE = { '轻陪伴': 1.5, '专注陪伴': 1, '深度陪伴': 0.5 };
+const BG_EVENT_RATIO = 0.7;
+const SELF_CAME_SCALE = 2.25;   // 自己赶来：轻陪伴 1.5 再降三分之一频率 = 1.5 × 1.5
+/* 算出本轮「实际生效」的前台间隔区间（分钟，还没取随机值）。
+   前台取随机值、后台定心跳，都从这里派生，保证两边永远同倍数增减。 */
+function compRange(){
+  const baseLo = Math.max(1, compInteractMin || 8);
+  const baseHi = Math.max(baseLo, compInteractMax || 20);
+  const k = selfCameCompanion ? SELF_CAME_SCALE : (COMP_MODE_SCALE[focusMode] || 1);
+  return { lo: baseLo * k, hi: baseHi * k };
+}
+/* 后台事件触发间隔：跟随前台实际间隔，恒为 0.7 倍（可能触发，也可能不触发） */
 function bgEventInterval(){
-  return (5 + Math.floor(Math.random()*11)) * 60 * 1000;   // 5~15 分钟
+  const r = compRange();
+  const lo = Math.max(1, r.lo * BG_EVENT_RATIO);
+  const hi = Math.max(lo, r.hi * BG_EVENT_RATIO);
+  return (lo + Math.random() * (hi - lo)) * 60 * 1000;
 }
 /* 从指定文案池随机抽一条（避免与已记录重复） */
 function pickFromPool(pool, tag){
@@ -1835,11 +2246,15 @@ function fillSelfEventResult(eventId, text){
   const ev = sessionEvents.find(e => e._tag==='self' && e._pendingAI===eventId);
   if(ev){ ev.text = text; delete ev._pendingAI; }
 }
-/* 启动后台事件心跳：陪伴开关开才启动；专注过程中按 5~15 分钟随机触发 */
-function startHeldEventTimer(){
+/* 启动后台事件心跳：陪伴开关开才启动；间隔由 bgEventInterval() 给出（前台实际间隔 ×0.7） */
+function startHeldEventTimer(keepEvents){
   stopHeldEventTimer();
+  /* 20261112：清空必须放在「安静陪伴直接 return」之前。
+     原来这行在 return 后面，安静陪伴那一轮压根不清 —— 上一轮互动陪伴记下的
+     事件会原样带进这一轮的结算页，看着像「TA 明明没说话，结算里却有互动记录」。
+     keepEvents=true 时不清：TA 中途自己赶来的情况下重启心跳，不能把之前记下的事件抹掉。 */
+  if(!keepEvents) sessionEvents = [];
   if(!companionOn) return;              // 陪伴关=角色安静陪，无后台互动
-  sessionEvents = [];                   // 新一轮专注，清空上一轮
   const loop = () => {
     if(!focusActive){ sessionEventTimer = null; return; }  // 已退出专注则停
     triggerBgEvent();
@@ -1955,6 +2370,24 @@ let currentChar = -1;          // 当前陪伴角色 idx
 function openClearView(){
   currentChar = selectedChar !== null ? selectedChar : -1;
   currentTask = selectedTask;
+  /* 20261112：按下「开始专注」＝这一轮开始了，此刻把本轮性质定格，之后不再改判。
+       判定「这一轮点过陪伴申请」有两种成立情况：
+         · 已经在互动陪伴里（companionOn）——玩家点过并且 TA 答应了；
+         · 点过（inviteCount>0）——被拒了，或者玩家自己又把互动关掉了，都可能被 TA 注意到。
+       从没点过的纯安静陪伴：清掉一切可能冒出来的回访、前台/后台互动，
+       保证全程一句互动都不发，结算里也不会出现任何互动条目。 */
+  sessionInvited = companionOn || inviteCount > 0;
+  sessionQuiet = !sessionInvited;
+  selfCameCompanion = false;          // 新一轮，还没有人自己赶来
+  if(sessionQuiet){
+    clearCompanionReturn();
+    stopCompInteract();
+    stopHeldEventTimer();
+    sessionEvents = [];
+  } else if(!companionOn){
+    // 点过但被拒：确保「忙完赶来」这根线还挂着（可能刚被清过或还没排上）
+    if(!companionReturnTimer) scheduleCompanionReturn();
+  }
   focusActive = true;
   focusCountdown = focusSet;   // 设置专注时长 → 倒计时；否则正计时
   document.getElementById('clearView').classList.add('show');
@@ -2031,55 +2464,105 @@ function bindSleepCapDrag(){
   if(!cap || cap.dataset.bound) return;
   cap.dataset.bound = '1';
   const wrap = document.getElementById('cvAvatarWrap');
-  let dragging = false, offX = 0, offY = 0;
-  cap.addEventListener('pointerdown', (e)=>{
-    if(!isNightTheme() || cap.classList.contains('hidden')) return;
-    dragging = true;
-    cap.classList.add('dragging');
-    cap.setPointerCapture(e.pointerId);
-    const rect = cap.getBoundingClientRect();
-    offX = e.clientX - rect.left;
-    offY = e.clientY - rect.top;
-    e.preventDefault();
-  });
-  cap.addEventListener('pointermove', (e)=>{
+  let dragging = false, offX = 0, offY = 0, pid = null;
+  let startX = 0, startY = 0;   // 手指按下的起点（判「到底拖了多远」用）
+
+  const backHome = ()=>{
+    cap.style.left = '50%';
+    cap.style.top = '-60px';
+    cap.style.transform = 'translateX(-50%)';
+  };
+  /* 20261112 修「一按就跳半个帽子」：
+     帽子平时用 left:50% + translateX(-50%) 居中，第一次跟手移动时若只把 left 改成像素、
+     同时把 transform 清成 none，定位基准瞬间从「中心」变成「左上角」，视觉上会横跳 44px。
+     这里在按下的一瞬间先把居中写法换算成实打实的像素 left/top，再清 transform。 */
+  const freezePos = ()=>{
+    const r = cap.getBoundingClientRect();
+    const w = wrap.getBoundingClientRect();
+    cap.style.transform = 'none';
+    cap.style.left = (r.left - w.left) + 'px';
+    cap.style.top  = (r.top  - w.top ) + 'px';
+  };
+  const moveTo = (e)=>{
     if(!dragging) return;
     const wRect = wrap.getBoundingClientRect();
-    let x = e.clientX - wRect.left - offX;
-    let y = e.clientY - wRect.top - offY;
-    cap.style.left = x + 'px';
-    cap.style.top = y + 'px';
+    cap.style.left = (e.clientX - wRect.left - offX) + 'px';
+    cap.style.top  = (e.clientY - wRect.top  - offY) + 'px';
     cap.style.transform = 'none';
-  });
-  const endDrag = (e)=>{
+  };
+  /* 收尾：drop=true 表示「拖走了，丢掉」，false 表示「放回原位」 */
+  const stopDrag = (drop)=>{
     if(!dragging) return;
     dragging = false;
     cap.classList.remove('dragging');
-    // 拖离头像区域一定距离 = 丢掉
-    const wRect = wrap.getBoundingClientRect();
-    const cRect = cap.getBoundingClientRect();
-    const dist = Math.hypot(cRect.left - wRect.left - wRect.width/2, cRect.top - wRect.top + 10);
-    if(dist > 70){
+    if(pid !== null){ try{ cap.releasePointerCapture(pid); }catch(e){} pid = null; }
+    if(drop){
       cap.classList.add('hidden');
       // 过段时间刷新回来
       if(sleepCapTimer) clearTimeout(sleepCapTimer);
       sleepCapTimer = setTimeout(()=>{
         if(document.getElementById('clearView').classList.contains('show')){
           cap.classList.remove('hidden');
-          cap.style.left = '50%';
-          cap.style.top = '-60px';
-          cap.style.transform = 'translateX(-50%)';
+          backHome();
         }
       }, 8000);
     } else {
-      // 弹回原位
-      cap.style.left = '50%';
-      cap.style.top = '-60px';
-      cap.style.transform = 'translateX(-50%)';
+      backHome();
     }
   };
-  cap.addEventListener('pointerup', endDrag);
-  cap.addEventListener('pointercancel', endDrag);
+  /* 20261112 真机「老是拉回 / 小拖一下就消失」的真正原因：
+     旧代码判定用的是「帽子左上角 ↔ 头像中心」的绝对距离，阈值 70px。
+     而帽子初始状态（top:-60px、宽 88px、水平居中）套进这个公式算出来就是 66.6px ——
+     离阈值只剩 3.4px。于是手指往右下一动就 >70（被判丢弃，帽子消失），
+     往左上动又 <70（抬手弹回原位）。跟手指实际拖了多远完全无关。
+     现在改成量「手指从按下到抬起真正走过的距离」，拖够 56px 才算丢。 */
+  const endDrag = (e)=>{
+    if(!dragging) return;
+    const dx = (e && e.clientX != null) ? (e.clientX - startX) : 0;
+    const dy = (e && e.clientY != null) ? (e.clientY - startY) : 0;
+    stopDrag(Math.hypot(dx, dy) >= 56);
+  };
+
+  cap.addEventListener('pointerdown', (e)=>{
+    if(dragging) return;   // 多指同时按下时只认第一根手指，避免两个指针抢着算坐标
+    if(!isNightTheme() || cap.classList.contains('hidden')) return;
+    dragging = true;
+    pid = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    // 顺序有讲究：先 class 关掉过渡动画 → 再把居中定位冻成像素 → 最后才算抓取偏移
+    cap.classList.add('dragging');
+    freezePos();
+    const rect = cap.getBoundingClientRect();
+    offX = e.clientX - rect.left;
+    offY = e.clientY - rect.top;
+    // 20261112：捕获失败（部分 WebView / 合成指针）不能中断后面的 preventDefault，
+    //   所以单独 try；捕获成功时事件会全部回送到 cap，失败时由下面的 document 监听兜底。
+    try{ cap.setPointerCapture(pid); }catch(err){}
+    try{ e.preventDefault(); }catch(err){}
+  });
+  cap.addEventListener('pointermove', moveTo);
+  /* 20261112 修「帽子拖不动」：移动/抬起改挂 document。
+     以前只挂在 cap 上、完全依赖 setPointerCapture —— 真机上一旦捕获没生效，
+     手指移出帽子那 88px 就收不到 pointermove，看起来像彻底拖不动。 */
+  document.addEventListener('pointermove', (e)=>{
+    if(!dragging) return;
+    try{ e.preventDefault(); }catch(err){}
+    moveTo(e);
+  }, { passive:false });
+  document.addEventListener('pointerup', (e)=>{ if(dragging) endDrag(e); }, true);
+  // 手势被系统打断（来电、通知下拉等）= 取消，回原位而不是判定丢弃
+  document.addEventListener('pointercancel', ()=>{ stopDrag(false); }, true);
+  /* 20261112 兜底：老 WebView 对 touch-action:none 支持不完整时，手指一动浏览器仍会把它
+     当页面滚动，于是派 pointercancel 把拖动掐掉（真机上就是「一拖就弹回去」）。
+     这里在拖动期间显式吃掉 touchmove 的默认行为，保证 pointer 序列不被打断。
+     只拦 dragging 期间，平时不影响页面正常滚动。 */
+  document.addEventListener('touchmove', (e)=>{
+    if(!dragging) return;
+    try{ e.preventDefault(); }catch(err){}
+  }, { passive:false });
+  // 拖到一半页面被切走/失焦：当作取消，回原位，不留下半截的帽子
+  window.addEventListener('blur', ()=>{ if(dragging) stopDrag(false); });
 }
 
 function applyLockState(){
@@ -2148,10 +2631,11 @@ function spawnBubbles(){
   const wrap = document.getElementById('cvBubbles');
   wrap.innerHTML = '';
   if(!companionOn){
-    // 陪伴关：仍邀请角色，但角色安静陪、不互动
+    /* 20261112：默认就是「安静陪伴」——哪怕没点「陪伴我」，角色也在，只是不打扰你。
+       原来是「TA 收到你的邀请，安静地陪着你」，但邀请是玩家自己点了按钮才发的，没点就不该有这句。 */
     const b = document.createElement('div');
     b.className = 'cv-bubble';
-    b.textContent = '（TA 收到你的邀请，安静地陪着你）';
+    b.textContent = '（TA 安静地陪着你，没有打扰你）';
     b.style.top = '6%'; b.style.left = '2%';
     wrap.appendChild(b);
     stopCompInteract();  // 陪伴关，停止前台互动心跳
@@ -2164,9 +2648,13 @@ function spawnBubbles(){
 
 /* ============ 20261104 前台互动（陪伴动作/陪伴回复，字卡库抽取 + 可配间隔） ============ */
 function compInterval(){
-  const lo = Math.max(1, compInteractMin || 8);
-  const hi = Math.max(lo, compInteractMax || 20);
-  return (lo + Math.random() * (hi - lo)) * 60 * 1000;  // 分钟 → 毫秒
+  const r = compRange();
+  /* 20261112d：跟查岗 / 来电 / 超频 / 书信同一套「随机固定间隔」——
+     每次到点后，在区间里重新随机取一次（app.js 里 proactiveRandMin/Max 就是这么写的）。
+     注意：这个数永远表示「从现在起再等多久」，不是「第几分钟响」。第 9 分钟冒过一次之后，
+     下一轮是 9 + 新抽的数，不是在 10 或 20 那个刻度上对齐。
+     20261112f：区间改由 compRange() 统一算出（已含三档倍率 + 自己赶来 ×1.5），这里只负责取随机值。 */
+  return (r.lo + Math.random() * (r.hi - r.lo)) * 60 * 1000;  // 分钟 → 毫秒
 }
 function startCompInteract(){
   stopCompInteract();
@@ -2243,6 +2731,7 @@ function exitFocus(){
   if(timerId) clearInterval(timerId);
   stopHeldEventTimer();          // 停止后台互动心跳（结算读取已记录的真实事件）
   stopCompInteract();            // 20261104：停止前台互动心跳（退出专注不再发陪伴气泡）
+  clearCompanionReturn();        // 20261112：退出专注＝这一轮结束，不再等 TA「忙完回来」
   stopNoises();                  // 20261104：退出专注即停止白噪音（否则主项目 BgAudio 一直播）
   // 20261105：退出专注=锁机结束，postMessage 请求父窗口移除全屏锁机覆盖层
   if(lockOn && window.parent && window.parent !== window){
@@ -2250,6 +2739,13 @@ function exitFocus(){
   }
   addSettleRecord();              // 记一次结算（存入历史归档）
   openSessionSettle();            // 弹【本次结算页】
+  // 20261112：结算写完再清零——下一轮专注从「第 1 次邀请」重新算
+  inviteCount = 0;
+  inviteRefusedOnce = false;
+  sessionInvited = false;
+  sessionQuiet = false;
+  lastInviteRefused = false;
+  selfCameCompanion = false;
 }
 
 /* 退出锁机：只解除锁机，不退出清屏页（专注继续） */
@@ -2411,6 +2907,23 @@ function addSettleRecord(){
     events: sessionEvents.slice(),       // 20261104：读取陪伴过程后台真实发生的事件（不再结算时随机生成）
     results: [],                        // 玩家上传的成果 {text, imgs, reply}
     reply: null,                        // 角色对本次专注的留言
+    /* 20261112：本次专注里「邀请—被婉拒—后来赶来」那句回忆。
+       两个前提缺一不可：这一轮玩家真的点过邀请（sessionInvited），并且真被拒过。
+       纯安静陪伴（从没点过「陪伴我」）一句都不写 —— 没邀请过就没什么可回忆的。
+       不写次数、不写「婉拒 1 次」这种账本。 */
+    /* 20261112：自己关掉之后赶来的，用「你把互动关掉了…」那几句；
+       被拒之后赶来的，用「你一开始就邀我…」。两种都算 TA 自己来的。 */
+    inviteStory: selfCameCompanion
+      ? (lastInviteRefused
+          ? pickOne(INVITE_STORY_JOINED)
+          : pickOne(INVITE_STORY_SELF_CAME))
+      : ((sessionInvited && inviteRefusedOnce)
+          ? (companionOn ? pickOne(INVITE_STORY_JOINED) : pickOne(INVITE_STORY_MISSED))
+          : ''),
+    /* 20261112：结算里写清这一轮到底是哪种陪伴，方便玩家自己核对 */
+    companionText: selfCameCompanion
+      ? 'TA 自己来了'
+      : (sessionQuiet ? '安静陪伴' : (companionOn ? '互动陪伴' : '邀请了，没来')),
   };
   settleRecords.push(rec);
   persistSettle();                      // 20261104：结算即落盘，刷新不丢
@@ -2463,7 +2976,9 @@ function openSessionSettle(){
   document.getElementById('ssRows').innerHTML = `
     <div class="ss-row"><span class="k">专注任务</span><span class="v">${r.task}</span></div>
     <div class="ss-row"><span class="k">专注模式</span><span class="v">${r.mode}</span></div>
-    <div class="ss-row"><span class="k">陪伴角色</span><span class="v">${c.name}</span></div>`;
+    <div class="ss-row"><span class="k">陪伴方式</span><span class="v">${r.companionText || (r.inviteStory ? '互动陪伴' : '安静陪伴')}</span></div>
+    <div class="ss-row"><span class="k">陪伴角色</span><span class="v">${c.name}</span></div>`
+    + (r.inviteStory ? `<div class="ss-story">${r.inviteStory}</div>` : '');
   // TA 处理的事（详细）
   const evHtml = (r.events||[]).map(ev=>`<div class="ss-row"><span class="k">· ${ev.secret?'🤫':''}${ev.text}</span></div>`).join('');
   if(evHtml) document.getElementById('ssRows').innerHTML += `<div style="margin-top:8px;font-size:12px;opacity:.6;">TA 处理的事</div>${evHtml}`;
@@ -3288,6 +3803,8 @@ setInterval(updateCvClock, 1000);
       color: x.color || '#8b7a66',
       emoji: x.emoji || '✨',
       avatar: x.avatar || null,
+      // 20261112：角色对玩家的专属称呼（邀请台词「{称呼}，我忙完了」用），没配就是空数组
+      playerNicknames: Array.isArray(x.playerNicknames) ? x.playerNicknames.slice() : [],
     }));
     // 若当前已选中角色但索引越界，重置
     if(selectedChar !== null && selectedChar >= CHARS.length) selectedChar = null;
@@ -3332,6 +3849,9 @@ setInterval(updateCvClock, 1000);
     } else if(d.type === 'pomodoro-comp-interact-result'){
       // 20261105：主项目 AI 生成前台互动气泡结果回传，回填气泡
       if(typeof fillCompInteractResult === 'function') fillCompInteractResult(d.eventId, d.lines || []);
+    } else if(d.type === 'pomodoro-invite-result'){
+      // 20261112：主项目 AI 生成的「陪伴邀请」台词回传（拒绝/回来/服软答应三种语境）
+      if(typeof onInviteAiResult === 'function') onInviteAiResult(d.reqId || '', d.kind || '', d.text || '');
     }
   });
   // 若已处于 iframe 环境，主动向父窗口请求初始化数据
