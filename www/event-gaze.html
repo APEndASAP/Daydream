@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>大眼睛事件 · 像素版（真实聊天页）</title>
+<style>
+  /* ============================================================
+     预览：把「大眼睛事件」直接叠在《白日梦》真实聊天页上。
+     聊天页按项目 css/style.css 的窄屏尺寸还原：360×760、气泡 72% 宽、
+     头像 42px、顶部栏 66px、输入栏 62px —— 不是随手画的假聊天。
+     ============================================================ */
+  :root{
+    --bg:#121116; --bg-elev:#1b1920; --bg-elev2:#242129;
+    --purple:#a78bfa; --purple-soft:#c4b5fd;
+    --text:#f5f4f7; --text-2:rgba(245,244,247,.62); --text-3:rgba(245,244,247,.38);
+    --border:rgba(255,255,255,.08);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{overflow-x:hidden;}
+  body{margin:0;min-height:100vh;background:radial-gradient(70% 40% at 50% 0%,rgba(120,40,80,.16),transparent 70%),#070509;
+    color:#efe8f2;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex;flex-direction:column;align-items:center;padding:18px 0 40px;width:100vw;max-width:100vw;overflow-x:hidden;}
+  .head{width:360px;max-width:100%;padding:0 14px;box-sizing:border-box;}
+  h1{font-size:16px;margin:0 0 6px;font-weight:700;}
+  .sub{font-size:12px;line-height:1.65;color:#9a8fa6;margin-bottom:12px;max-width:392px;}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+  .btn{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:#efe8f2;
+    padding:7px 12px;border-radius:999px;font-size:12px;cursor:pointer;font-family:inherit;}
+  .btn.on{background:rgba(255,64,89,.22);border-color:rgba(255,90,115,.5);}
+
+  /* ---------- 手机 ---------- */
+  .phone{position:relative;width:360px;height:760px;flex:0 0 auto;border-radius:32px;overflow:hidden;
+    background:var(--bg);box-shadow:0 24px 60px rgba(0,0,0,.65),0 0 0 1px rgba(255,255,255,.06);}
+  .statusbar{height:30px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 18px;font-size:10.5px;color:var(--text-2);font-weight:600;letter-spacing:.3px;}
+  .app{position:relative;height:calc(100% - 30px);display:flex;flex-direction:column;background:var(--bg);}
+
+  .topbar{display:flex;align-items:center;gap:10px;padding:10px 12px 12px;flex-shrink:0;}
+  .icon-btn{width:34px;height:34px;border-radius:50%;border:none;background:transparent;
+    color:var(--text-2);display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0;}
+  .icon-btn svg{width:19px;height:19px;display:block;}
+  .avatar{width:38px;height:38px;border-radius:50%;background:linear-gradient(145deg,#6b4a9c,#2a1c40);
+    display:flex;align-items:center;justify-content:center;font-size:15px;color:#e9ddff;flex-shrink:0;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);}
+  .who{min-width:0;flex:1;}
+  .name{font-size:15px;font-weight:600;color:var(--text);line-height:1.2;}
+  .status{font-size:11px;color:var(--text-3);margin-top:2px;}
+  .sign{font-size:10.5px;color:var(--text-3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+  .chat-scroll{flex:1;min-height:0;overflow:hidden;padding:12px 14px 6px;}
+  .msg-row{display:flex;gap:8px;align-items:flex-start;}
+  .msg-row + .msg-row{margin-top:10px;}
+  .msg-row.me{flex-direction:row-reverse;}
+  .msg-avatar{width:42px;height:42px;border-radius:50%;flex-shrink:0;margin-top:2px;
+    background:linear-gradient(145deg,#6b4a9c,#2a1c40);display:flex;align-items:center;justify-content:center;
+    font-size:17px;color:#e9ddff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);}
+  .msg-row.me .msg-avatar{background:linear-gradient(145deg,#a78bfa,#6d4fc4);color:#1a1226;}
+  .msg-body{display:flex;flex-direction:column;gap:2px;min-width:0;max-width:72%;}
+  .msg-row.me .msg-body{align-items:flex-end;}
+  .bubble{position:relative;padding:9px 13px;border-radius:18px;font-size:14.5px;line-height:1.55;
+    word-break:break-word;}
+  .msg-row.them .bubble{background:rgba(22,20,28,.78);border:1px solid rgba(255,255,255,.05);
+    color:var(--text);border-top-left-radius:6px;}
+  .msg-row.them .bubble::after{content:'✦';position:absolute;top:-7px;right:-6px;font-size:9px;
+    color:var(--purple-soft);opacity:.8;text-shadow:0 0 6px rgba(167,139,250,.5);}
+  .msg-row.me .bubble{background:var(--purple);color:#141019;border-top-right-radius:6px;}
+  .msg-time{font-size:10.5px;color:var(--text-3);padding:0 4px;}
+
+  .poke-row{display:flex;justify-content:center;margin-top:10px;}
+  .poke-msg{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:999px;
+    background:rgba(139,125,255,.18);border:1px solid rgba(139,125,255,.30);
+    color:#c4b5fd;font-size:12.5px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12);}
+
+  .input-bar{display:flex;align-items:center;gap:4px;padding:9px 10px 12px;
+    border-top:1px solid var(--border);background:rgba(18,17,22,.96);flex-shrink:0;}
+  .input-bar .icon-btn{width:32px;height:32px;}
+  .input{flex:1;height:38px;border-radius:19px;background:rgba(255,255,255,.06);border:none;outline:none;
+    display:flex;align-items:center;padding:0 14px;font-size:13px;color:var(--text);margin:0 4px;
+    font-family:inherit;}
+  .input::placeholder{color:var(--text-3);}
+  .send{width:38px;height:38px;border-radius:50%;background:var(--purple);color:#141019;
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .send svg{width:17px;height:17px;}
+
+  /* ---------- 特效层 ---------- */
+  .veil{position:absolute;inset:0;z-index:30;pointer-events:none;opacity:0;transition:opacity .7s ease;
+    background:radial-gradient(74% 56% at 50% 42%,rgba(6,3,10,.88),rgba(6,3,10,.66) 56%,rgba(6,3,10,.30) 100%);}
+  .veil.on{opacity:1;}
+  .stage{position:absolute;inset:0;z-index:40;pointer-events:none;}
+  /* 整块（眼睛＋三行字）一起放在画面偏中下的位置 */
+  .eye-wrap{position:absolute;left:0;right:0;top:56px;z-index:20;display:flex;flex-direction:column;align-items:center;
+    opacity:0;transition:opacity .55s ease,transform .55s ease;transform:translateY(14px);}
+  .eye-wrap.on{opacity:1;transform:none;}
+  body.shot .eye-wrap,body.shot .veil{transition:none;}
+
+  .eye{width:340px;height:260px;overflow:visible;display:block;}
+  /* 入场：先被压扁、再弹起来，回弹两次才稳住 —— 布丁/捏捏那种夸张形变 */
+  .eye-beat{transform-box:fill-box;transform-origin:50% 60%;}
+  .eye-wrap.on .eye-beat{animation:popIn .92s cubic-bezier(.16,1.3,.38,1) 1;}
+  body.shot .eye-wrap.on .eye-beat{animation:none;transform:none;}
+  @keyframes popIn{
+    0%{transform:scale(.62,.18);}
+    32%{transform:scale(1.16,.88);}
+    54%{transform:scale(.90,1.10);}
+    74%{transform:scale(1.05,.96);}
+    88%{transform:scale(.985,1.015);}
+    100%{transform:scale(1,1);}
+  }
+  /* 心跳：夸张的挤压回弹 —— 横着撑开、竖着压扁，再晃回来，像一颗布丁在跳 */
+  @keyframes beat{
+    0%,100%{transform:scale(1,1);}
+    10%{transform:scale(1.075,.895);}
+    20%{transform:scale(.955,1.065);}
+    32%{transform:scale(1.045,.965);}
+    44%{transform:scale(.985,1.022);}
+    56%{transform:scale(1.012,.994);}
+    70%{transform:scale(1,1);}
+  }
+  .blk{shape-rendering:crispEdges;}
+
+  /* 文字：两行大字之间留空隙，小字再往下压一段 */
+  .words{position:relative;z-index:3;text-align:center;margin-top:30px;}
+  .words::before{content:'';position:absolute;left:-46px;right:-46px;top:-26px;bottom:-22px;z-index:-1;
+    background:radial-gradient(62% 64% at 50% 50%,rgba(5,2,8,.95),rgba(5,2,8,.86) 58%,rgba(5,2,8,.55) 82%,transparent 100%);
+    filter:blur(5px);}
+  .l1{font:900 29px/1.25 "PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:5px;
+    color:#ff2e4d;text-shadow:2px 0 rgba(0,229,255,.40),-2px 0 rgba(255,0,90,.5),0 0 18px rgba(255,30,70,.30);
+    min-height:36px;}
+  .l2{font:900 21px/1.4 "PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:7px;
+    color:#ffd9df;text-shadow:0 0 14px rgba(255,60,90,.45);min-height:30px;margin-top:24px;}
+  .small{margin-top:34px;font-size:11.5px;color:#c3b3d1;letter-spacing:1px;min-height:42px;
+    padding:0 34px;line-height:1.85;}
+  /* 只有这行字有心跳：一下一下轻轻胀，像贴着胸口说的话 */
+  .small span#smTxt{display:inline-block;transform-origin:50% 50%;
+    animation:textBeat 1.9s cubic-bezier(.4,0,.2,1) infinite;}
+  @keyframes textBeat{
+    0%,100%{transform:scale(1);}
+    12%{transform:scale(1.045);}
+    22%{transform:scale(.995);}
+    34%{transform:scale(1.022);}
+    48%{transform:scale(1);}
+  }
+  .cr{display:inline-block;width:6px;height:12px;background:#ff4059;vertical-align:-1px;
+    margin-left:2px;opacity:0;}
+  .cr.on{opacity:1;animation:blinkC .7s steps(1) infinite;}
+  @keyframes blinkC{50%{opacity:0;}}
+  /* ---------- 故障层：只抄超频里「一块一块」的那部分 ----------
+     不要满屏乱码矩阵、不要暗底、不要整屏白闪 —— 那会把眼睛和下面的字糊掉。
+     这里只有：随机矩形色块 + 几道错位切片 + 少量彩色噪点，全部 screen 叠加，
+     层还压在眼睛下面，所以闪的时候眼睛和字始终看得见。 */
+  .gl{position:absolute;inset:0;z-index:12;pointer-events:none;opacity:0;
+    transition:opacity .12s linear;overflow:hidden;}
+  .gl.on{opacity:1;}
+  .gl-slice{position:absolute;inset:0;z-index:2;}
+  .gl-slice > div{position:absolute;mix-blend-mode:screen;border-radius:1px;}
+  .gl-noise{position:absolute;inset:0;z-index:2;}
+  .gl-noise > span{position:absolute;mix-blend-mode:screen;}
+  /* 一块一块的闪：像液晶屏坏了，随机矩形块啪地亮一下 */
+  .gl-blocks{position:absolute;inset:0;z-index:4;}
+  /* 每 70~100ms 换一批块、各自不同的亮度 —— 靠刷新频率做出一阵一阵的坏屏感，
+     不依赖 CSS 动画（动画在后台/无头里会被节流，闪不起来） */
+  .gl-blocks i{position:absolute;mix-blend-mode:screen;border-radius:1px;
+    box-shadow:0 0 14px rgba(255,110,140,.35),0 0 3px rgba(255,255,255,.5);}
+  /* 前层闪屏：压在眼睛和字的上面 —— 只放几块，遮一下就过，眼睛本身不会消失 */
+  .gl-front{position:absolute;inset:0;z-index:46;pointer-events:none;opacity:0;overflow:hidden;
+    transition:opacity .1s linear;}
+  .gl-front.on{opacity:1;}
+  .gl-front i{position:absolute;border-radius:1px;
+    box-shadow:0 0 12px rgba(255,255,255,.45),0 2px 0 rgba(0,0,0,.55),0 0 2px rgba(0,0,0,.8);}
+
+  /* ---------- 泪水：波光粼粼 ---------- */
+  .tearwater{opacity:0;transition:opacity .6s ease;}
+  body.cry .tearwater{opacity:1;}
+  /* 水面整层极缓慢地左右晃 —— 眼睛里的水在滚动 */
+  .watersway{animation:sway 4.6s ease-in-out infinite;}
+  @keyframes sway{0%,100%{transform:translateX(-2.2px);}50%{transform:translateX(2.2px);}}
+  /* 细碎的反光点：错开时间亮灭，就是波光粼粼 */
+  .glint{transform-box:fill-box;transform-origin:center;animation:glint 3.1s ease-in-out infinite;opacity:0;}
+  @keyframes glint{
+    0%,100%{opacity:0;transform:translateX(0) scaleY(1);}
+    32%{opacity:.95;transform:translateX(2px) scaleY(1);}
+    58%{opacity:.1;transform:translateX(-1px) scaleY(.6);}
+  }
+  /* 水面那条亮线：一呼一吸 */
+  .surfline{animation:surf 3.4s ease-in-out infinite;}
+  @keyframes surf{0%,100%{opacity:.45;transform:translateX(-1.5px);}50%{opacity:.95;transform:translateX(1.5px);}}
+
+  .teardrop{opacity:0;transform-box:fill-box;}
+  body.cry.shot .teardrop{animation:none!important;opacity:.95;transform:translateY(20px);}
+  body.cry .teardrop{animation:tearFall 2.7s cubic-bezier(.45,0,.72,.42) infinite;animation-delay:var(--d);}
+  @keyframes tearFall{
+    0%{opacity:0;transform:translateY(-4px);}
+    10%{opacity:1;transform:translateY(0);}
+    64%{opacity:.9;transform:translateY(46px);}
+    100%{opacity:0;transform:translateY(82px);}
+  }
+
+  /* 故障风：字被横向切片错位 200ms，偶尔来一次；再配一条扫过的亮线 */
+  @keyframes glitchShake{
+    0%{transform:translate(0,0);}30%{transform:translate(-3px,1px);}
+    60%{transform:translate(3px,-1px);}100%{transform:translate(0,0);}
+  }
+  .glitch{animation:glitchA .22s steps(2,end) 1;}
+  @keyframes glitchA{
+    0%{transform:translateX(0);}
+    22%{transform:translate(-3px,1px);clip-path:inset(14% 0 46% 0);}
+    46%{transform:translate(3px,-1px);clip-path:inset(56% 0 16% 0);}
+    70%{transform:translate(-2px,0);clip-path:inset(32% 0 34% 0);}
+    100%{transform:none;clip-path:none;}
+  }
+  .gbar{position:absolute;left:-6px;right:-6px;height:2px;z-index:45;opacity:0;pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(255,60,90,.55),rgba(0,229,255,.35),transparent);}
+  .gbar.on{animation:gbarRun .34s steps(3) 1;}
+  @keyframes gbarRun{0%{opacity:.9;transform:translateX(-4px);}60%{opacity:.55;transform:translateX(4px);}100%{opacity:0;}}
+
+  .hint{width:360px;max-width:100%;padding:0 14px;box-sizing:border-box;font-size:11.5px;color:#7e7389;line-height:1.75;margin-top:14px;}
+  .hint code{color:#a99cba;}
+
+  /* ============ 事件遮罩：事件期间整页锁住，只能回答角色的留言 ============ */
+  .lock{position:absolute;inset:0;z-index:44;pointer-events:none;opacity:0;
+    transition:opacity .55s ease;
+    background:linear-gradient(to bottom,
+      rgba(8,4,11,.46) 0%,
+      rgba(8,4,11,.06) 10%,
+      rgba(8,4,11,0) 15%,
+      rgba(8,4,11,0) 84%,
+      rgba(8,4,11,.32) 100%);}
+  .lock.on{opacity:1;pointer-events:auto;}
+  .lock.off{opacity:0;pointer-events:none;}
+
+  .reply-box{position:absolute;left:46px;right:46px;bottom:132px;z-index:2;
+    background:linear-gradient(180deg,rgba(46,26,56,.97),rgba(30,16,38,.97));
+    border:1px solid rgba(255,124,164,.38);border-radius:14px;
+    padding:4px 5px 4px 10px;
+    box-shadow:0 0 0 1px rgba(255,124,164,.06),0 8px 20px rgba(0,0,0,.5),
+               0 0 18px rgba(255,80,130,.16) inset,0 0 18px rgba(255,80,130,.10);}
+  .reply-box .rb-hint{font-size:9px;letter-spacing:1px;color:#ff9ab8;margin:0 0 2px 2px;
+    display:flex;align-items:center;gap:6px;}
+  .reply-box .rb-hint::before{content:'';width:5px;height:5px;border-radius:50%;
+    background:#ff5d8f;box-shadow:0 0 8px rgba(255,93,143,.95);}
+  .reply-box .rb-row{display:flex;align-items:center;gap:6px;}
+  .reply-box .rb-input{flex:1;height:25px;border-radius:13px;border:1px solid rgba(255,255,255,.09);
+    background:rgba(255,255,255,.05);outline:none;padding:0 10px;font-size:11.5px;
+    color:var(--text);font-family:inherit;}
+  .reply-box .rb-input::placeholder{color:#8d7f9c;}
+  .reply-box .rb-input:focus{border-color:rgba(255,124,164,.55);
+    box-shadow:0 0 0 3px rgba(255,124,164,.12);}
+  .reply-box .rb-send{flex:0 0 auto;height:25px;padding:0 10px;border-radius:13px;border:none;
+    background:linear-gradient(145deg,#a78bfa,#7c5ce0);color:#17101f;font-size:11px;font-weight:700;
+    font-family:inherit;letter-spacing:.5px;cursor:pointer;}
+  .reply-box .rb-send:active{transform:scale(.96);}
+  /* ============================================================
+     20261113g：嵌入主项目（?embed=1）
+     预览页那套「手机外壳 + 假聊天记录」全部收掉，只留
+     遮罩(.lock) + 眼睛舞台(.stage) + 三行字，铺满整个视口。
+     主项目用一个全屏 iframe 载入本页，聊天页就在下面，被遮罩盖住。
+     ============================================================ */
+  body.embed{padding:0;display:block;background:#070509;overflow:hidden;}
+  body.embed .head,
+  body.embed .hint,
+  body.embed .statusbar,
+  body.embed .topbar,
+  body.embed .chat-scroll,
+  body.embed .input-bar{display:none !important;}
+  body.embed .phone{width:100vw;height:100vh;border-radius:0;box-shadow:none;}
+  body.embed .app{height:100%;}
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>大眼睛事件 · 真实聊天页</h1>
+    <div class="sub">按 360×760 的窄屏聊天页还原（气泡 72%、头像 42px、输入栏 62px）。<b>扁椭圆眼眶</b>（上下弧度接近、眼角收尖）、紫色像素眼珠、中心方瞳；平时自己左右扫，<b>点一下才看过去</b>。</div>
+    <div class="bar">
+      <button class="btn" id="cryBtn">形态：普通</button>
+      <button class="btn" id="palBtn">眼珠：紫</button>
+      <button class="btn on" id="playBtn">重播</button>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="statusbar"><span>22:47</span><span>白日梦</span></div>
+    <div class="app">
+      <div class="topbar">
+        <button class="icon-btn" aria-label="返回"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <div class="avatar">梦</div>
+        <div class="who">
+          <div class="name">TA</div>
+          <div class="status">在线 · 刚刚</div>
+          <div class="sign">今天也想见你</div>
+        </div>
+        <button class="icon-btn" aria-label="字卡模式"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M12 4v16"/></svg></button>
+        <button class="icon-btn" aria-label="搜索"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/></svg></button>
+        <button class="icon-btn" aria-label="更多"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+      </div>
+
+      <div class="chat-scroll" id="chatScroll">
+        <div class="msg-row them">
+          <div class="msg-avatar">梦</div>
+          <div class="msg-body"><div class="bubble">你还没睡吗？</div><div class="msg-time">22:38</div></div>
+        </div>
+        <div class="msg-row me">
+          <div class="msg-avatar">我</div>
+          <div class="msg-body"><div class="bubble">刚躺下，在等你说晚安。</div><div class="msg-time">22:39</div></div>
+        </div>
+        <div class="msg-row them">
+          <div class="msg-avatar">梦</div>
+          <div class="msg-body"><div class="bubble">那我不说了，你就一直等吧。</div><div class="msg-time">22:39</div></div>
+        </div>
+        <div class="msg-row me">
+          <div class="msg-avatar">我</div>
+          <div class="msg-body"><div class="bubble">……你好狠。</div><div class="msg-time">22:40</div></div>
+        </div>
+        <div class="msg-row them">
+          <div class="msg-avatar">梦</div>
+          <div class="msg-body"><div class="bubble">骗你的。今天路过那家店，看到一只很像你的猫。</div><div class="msg-time">22:41</div></div>
+        </div>
+        <div class="msg-row them">
+          <div class="msg-avatar">梦</div>
+          <div class="msg-body"><div class="bubble">它蹲在门口，看谁都爱答不理的。</div><div class="msg-time">22:41</div></div>
+        </div>
+        <div class="msg-row me">
+          <div class="msg-avatar">我</div>
+          <div class="msg-body"><div class="bubble">我哪有。</div><div class="msg-time">22:42</div></div>
+        </div>
+        <div class="msg-row them">
+          <div class="msg-avatar">梦</div>
+          <div class="msg-body"><div class="bubble">你有。</div><div class="msg-time">22:42</div></div>
+        </div>
+        <div class="poke-row"><div class="poke-msg">你 戳了戳 TA 的脸</div></div>
+      </div>
+
+      <div class="input-bar">
+        <button class="icon-btn" aria-label="功能"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="icon-btn" aria-label="表情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><circle cx="9" cy="10" r=".9" fill="currentColor"/><circle cx="15" cy="10" r=".9" fill="currentColor"/><path d="M9 14.5c1.8 1.4 4.2 1.4 6 0" stroke-linecap="round"/></svg></button>
+        <button class="icon-btn" aria-label="通话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 4h3l1.6 4-2 1.4a11 11 0 005.9 5.9L16 13.4 20 15v3a2 2 0 01-2.2 2A15 15 0 014 6.2 2 2 0 016 4z"/></svg></button>
+        <input class="input" id="typeInput" type="text" placeholder="说点什么…" autocomplete="off" spellcheck="false">
+        <div class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l16-8-6 8 6 8z"/></svg></div>
+      </div>
+
+      <div class="veil" id="veil"></div>
+
+      <!-- 遮罩：事件期间压在整页上，聊天、发送键都点不到；只留底下一个回留言的框 -->
+      <div class="lock" id="lock">
+        <div class="reply-box">
+          <div class="rb-hint">回 TA 一句</div>
+          <div class="rb-row">
+            <input class="rb-input" id="replyInput" type="text" placeholder="你会怎么回 TA…" autocomplete="off" spellcheck="false">
+            <button class="rb-send" id="replySend">回复</button>
+          </div>
+        </div>
+      </div>
+      <div class="gl-front" id="glFront"></div>
+      <div class="gl" id="gl">
+        <div class="gl-slice" id="glSliceR"></div>
+        <div class="gl-slice" id="glSliceC"></div>
+        <div class="gl-noise" id="glNoise"></div>
+        <div class="gl-blocks" id="glBlocks"></div>
+      </div>
+      <div class="stage" id="stage">
+        <div class="eye-wrap" id="wrap">
+          <svg class="eye" id="eye" viewBox="0 0 392 300" aria-hidden="true">
+            <defs>
+              <linearGradient id="lidG" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#ff7488"/>
+                <stop offset="1" stop-color="#c31f3c"/>
+              </linearGradient>
+              <linearGradient id="lidG2" x1="0" y1="1" x2="0" y2="0">
+                <stop offset="0" stop-color="#ff6b80"/>
+                <stop offset="1" stop-color="#a8172f"/>
+              </linearGradient>
+              <clipPath id="socketClip"><path id="clipPathEl" d=""/></clipPath>
+            </defs>
+            <!-- 图层顺序：眼窝底 → 眼眶 → 眼珠 → 泪水 → 泪滴
+                 眼珠画在眼眶之后，底部只压住下边缘一点点，像眼球撑着睑缘。 -->
+            <g class="eye-beat">
+              <g id="socket"></g>
+              <g id="frame"></g>
+              <!-- 泪水先画、眼珠后画：眼珠永远压在泪层上方 -->
+              <g id="tears"></g>
+              <g id="iris"></g>
+              <g id="drops"></g>
+            </g>
+          </svg>
+          <div class="words">
+            <div class="l1" id="l1"></div>
+            <div class="l2" id="l2"></div>
+            <div class="small" id="sm"><span id="smTxt"></span><span class="cr" id="cr"></span></div>
+          </div>
+          <div class="scan"></div>
+          <div class="gbar" id="gbar"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hint">形状照参考图：<b>扁椭圆</b>，框厚约 2 格，上下弧度接近（上略深），眼角收尖；眼珠是紫色同心圆＋中心方瞳＋左上角高光。<br>参数：<code>?done=1</code> 静态全字，<code>?cry=1</code> 落泪，<code>?shot=1</code> 关过渡。</div>
+
+<script>
+/* ============================================================
+   0. 参数
+   ============================================================ */
+const NS = 'http://www.w3.org/2000/svg';
+const QS = new URLSearchParams(location.search);
+const DONE = QS.has('done');
+if (QS.has('shot')) document.body.classList.add('shot');
+
+const BLK = 10;                  // 像素块
+const CX = 196, CY = 128;        // 眼眶中心
+const HW = 128;                  // 半宽：照手绘轮廓，宽:高 ≈ 1.73
+const H1 = 74;                   // 上睑深度：和下方对称，成梭形
+const H2 = 74;                   // 下睑深度：与上睑对称
+const FT = 10;                   // 眼眶厚度（1 格）—— 上下眼睑都收薄
+const IR = 50;                   // 眼珠半径：比之前大一档，但不撑满眼眶
+/* 眼珠底部 = CY+32+48 = CY+80：下睑内缘在 CY+74，
+   所以眼球压着睑缘凸出去 6px —— 是真的凸出来，不是被硬挡住 */
+const ICY = CY + 34;   /* 眼珠底 = CY+84，越过下睑内缘约 10px —— 再鼓出来一点点 */
+
+const socketG = document.getElementById('socket');
+const frameG  = document.getElementById('frame');
+const irisG   = document.getElementById('iris');
+const tearG   = document.getElementById('tears');
+const dropG   = document.getElementById('drops');
+const wrap    = document.getElementById('wrap');
+const veil    = document.getElementById('veil');
+
+const PALS = {
+  /* 眼珠配色照参考图：亮紫外圈 + 中紫 + 深紫内圈 + 黑方瞳 */
+  purple: { outer:'#8b78f0', ring:'#b3a2ff', inner:'#6d57d8', pup:'#0a0614', hi:'#ffffff' },
+  red:    { outer:'#e0405a', ring:'#ff9aa9', inner:'#a81d36', pup:'#0a0306', hi:'#fff6f7' }
+};
+let palKey = 'purple';
+
+/* ============================================================
+   1. 眼眶：扁椭圆
+      内缘与外缘用同一条曲线族，只差「深度」和「收尖位置」，
+      所以不会出现梯形；外缘收尖更晚 → 眼角有一小截厚度。
+   ============================================================ */
+function lidCurve(a, H, q, taper){
+  let v = H * Math.pow(Math.max(0, 1 - a * a), q);
+  if (a > taper) v *= Math.max(0, (1 - a) / (1 - taper));
+  return v;
+}
+const colA = lx => Math.min(1, Math.abs((lx + BLK / 2 - HW) / HW));
+const snapY = v => Math.round(v / BLK) * BLK;
+
+function rect(g, x, y, fill, opacity, size){
+  const sz = size || BLK;
+  const r = document.createElementNS(NS, 'rect');
+  r.setAttribute('x', x); r.setAttribute('y', y);
+  r.setAttribute('width', sz); r.setAttribute('height', sz);
+  r.setAttribute('fill', fill);
+  if (opacity !== undefined) r.setAttribute('opacity', opacity);
+  r.setAttribute('class', 'blk');
+  g.appendChild(r);
+}
+
+/* 眼窝底：纯暗（不是眼白），让去掉眼白之后眼眶里仍然「有底」 */
+function drawSocket(){
+  socketG.innerHTML = '';
+  const cols = Math.ceil(HW * 2 / BLK);
+  for (let i = 0; i < cols; i++){
+    const lx = i * BLK, a = colA(lx);
+    const yTop = snapY(CY - lidCurve(a, H1, .70, .96));
+    const yBot = snapY(CY + lidCurve(a, H2, .70, .96));
+    for (let y = yTop; y <= yBot; y += BLK) rect(socketG, CX - HW + lx, y, '#0a0509');
+  }
+}
+
+/* 眼眶：每一列都把上下两条带铺在内缘上，边缘就是单格台阶，不会两格错位 */
+const FRAME_ROWS = 1;
+function drawFrame(){
+  frameG.innerHTML = '';
+  const cols = Math.ceil(HW * 2 / BLK);
+  for (let i = 0; i < cols; i++){
+    const lx = i * BLK, a = colA(lx), a2 = colA(Math.min(HW * 2 - BLK, lx + BLK));
+    const yTop = CY - lidCurve(a, H1, .70, .96);
+    const yTop2 = CY - lidCurve(a2, H1, .70, .96);
+    const yBot = CY + lidCurve(a, H2, .70, .96);
+    const yBot2 = CY + lidCurve(a2, H2, .70, .96);
+
+    /* 陡的地方（弧线一列就掉两格）自动加厚，边缘才连成一条，不会断开 */
+    const rTop = Math.min(4, Math.max(FRAME_ROWS, Math.ceil(Math.abs(yTop2 - yTop) / BLK) + 1));
+    const rBot = Math.min(4, Math.max(FRAME_ROWS, Math.ceil(Math.abs(yBot2 - yBot) / BLK) + 1));
+
+    for (let k = 1; k <= rTop; k++) rect(frameG, CX - HW + lx, snapY(yTop - k * BLK), 'url(#lidG)');
+    for (let k = 0; k < rBot; k++) rect(frameG, CX - HW + lx, snapY(yBot + k * BLK), 'url(#lidG2)');
+
+    /* 快到眼角时上下两条带之间只剩几格 → 直接填满，眼角才是收在一起的尖 */
+    if (yBot - yTop <= BLK * 2){
+      for (let y = snapY(yTop); y < snapY(yBot); y += BLK) rect(frameG, CX - HW + lx, y, 'url(#lidG2)');
+    }
+  }
+}
+
+/* 给泪水用的裁剪路径：眼窝内缘轮廓 */
+function buildClip(){
+  const cols = Math.ceil(HW * 2 / BLK);
+  const tops = [], bots = [];
+  for (let i = 0; i <= cols; i++){
+    const lx = Math.min(HW * 2 - BLK, i * BLK), a = colA(lx);
+    tops.push([CX - HW + lx, snapY(CY - lidCurve(a, H1, .70, .96))]);
+    bots.push([CX - HW + lx, snapY(CY + lidCurve(a, H2, .70, .96)) + 9]);
+  }
+  let d = 'M' + tops[0][0] + ' ' + tops[0][1];
+  tops.forEach(p => { d += 'L' + p[0] + ' ' + p[1]; });
+  for (let i = bots.length - 1; i >= 0; i--) d += 'L' + bots[i][0] + ' ' + bots[i][1];
+  d += 'Z';
+  document.getElementById('clipPathEl').setAttribute('d', d);
+}
+
+/* ============================================================
+   2. 眼珠：紫色同心圆 + 黑方瞳 + 左上角高光（照参考图，不做复杂圈纹）
+   ============================================================ */
+let gazeG = null;
+function drawIris(){
+  irisG.innerHTML = '';
+  const P = PALS[palKey];
+  const g = document.createElementNS(NS, 'g');
+  irisG.appendChild(g);
+
+  const qx = v => Math.round(v / 5) * 5;
+
+  /* 眼珠还是「像素拼出来的圆」——整只眼睛都是像素的，不能只它一个是矢量圆。
+     只是把格子从 10px 收到 5px，台阶细一倍，看着圆润些。 */
+  const x0 = qx(CX - IR), x1 = qx(CX + IR);
+  const y0 = qx(ICY - IR), y1 = qx(ICY + IR);
+  for (let bx = x0; bx <= x1; bx += 5){
+    for (let by = y0; by <= y1; by += 5){
+      const dx = bx + 2.5 - CX, dy = by + 2.5 - ICY;
+      const d = Math.hypot(dx, dy);
+      if (d > IR) continue;
+      let c;
+      if (d > IR - 8)        c = P.outer;
+      else if (d > IR * .56) c = P.ring;
+      else                   c = P.inner;
+      rect(g, bx, by, c, undefined, 5);
+    }
+  }
+  /* 方瞳 2×2：保持 10px 的瞳，像素感更足 */
+  const cBx = Math.round((CX - BLK) / BLK) * BLK, cBy = Math.round((ICY - BLK) / BLK) * BLK;
+  for (let dy2 = 0; dy2 < 2; dy2++)
+    for (let dx2 = 0; dx2 < 2; dx2++) rect(g, cBx + dx2 * BLK, cBy + dy2 * BLK, P.pup);
+  rect(g, cBx - BLK, cBy - BLK, P.hi);
+
+  gazeG = g;
+  applyGaze();
+}
+
+/* ============================================================
+   3. 泪水：清亮蓝、波光粼粼、会滚
+      ① 水积在下睑上，水面带起伏；
+      ② 水里撒一把反光小方块，错开时间亮灭 → 波光；
+      ③ 整层水极缓慢左右晃 → 滚动感。
+   ============================================================ */
+const GLINT_COLS = ['#e8f8ff', '#bfeaff', '#9fdcff'];
+
+/* 水面：几乎水平的一汪水，只留一点极缓的起伏 */
+function waterSurface(){
+  const cols = Math.ceil(HW * 2 / BLK);
+  const out = [];
+  for (let i = 0; i < cols; i++){
+    const a = colA(i * BLK);
+    const yLid = CY + lidCurve(a, H2, .70, .96);
+    const wob = Math.sin(i * .34) * 1.5 + Math.sin(i * .15 + 1.1) * 1.1;
+    /* 泪水贴着下眼睑积：眼底中间最厚、往眼角收薄；
+       yBot 越过睑缘往下鼓几像素 —— 含着一泡要溢出来的泪。 */
+    const th    = 11 + 7 * Math.cos(a * Math.PI * .82) + wob;
+    const bulge = 4 + 4 * Math.cos(a * Math.PI * .72);
+    out.push({ a, i, yLid, yTop: snapY(yLid - Math.max(5, th)), yBot: yLid + bulge });
+  }
+  return out;
+}
+
+function drawTears(){
+  tearG.innerHTML = '';
+
+  const water = document.createElementNS(NS, 'g');
+  water.setAttribute('class', 'tearwater');
+  const sway = document.createElementNS(NS, 'g');
+  sway.setAttribute('class', 'watersway');
+  sway.setAttribute('clip-path', 'url(#socketClip)');
+  water.appendChild(sway);
+
+  const surf = waterSurface();
+  const surfaceY = {};
+
+  surf.forEach(({ a, i, yLid, yTop, yBot }) => {
+    if (Math.abs(a) > .86) return;   /* 眼角两侧不铺水，免得越过眼眶 */
+    surfaceY[i] = yTop;
+    for (let y = yTop; y < snapY(yBot); y += BLK){
+      const k = (y - yTop) / Math.max(BLK, snapY(yBot) - BLK - yTop);
+      /* 清亮的蓝：水面最亮，往下渐深，但始终保持蓝、不发灰 */
+      const c = k < .3 ? '#8dd8fb' : (k < .66 ? '#4bb4ee' : '#2b8fd8');
+      rect(sway, CX - HW + i * BLK, y, c, k < .3 ? .82 : (k < .66 ? .74 : .66));
+    }
+  });
+
+  /* 波光：只落在水里（水面下第二、三格），错开时间亮灭 */
+  const cols = Object.keys(surfaceY).map(Number);
+  const picks = [2, 4, 7, 9, 12, 15, 18, 21, 24, 27, 30, 32, 5, 11, 23, 29];
+  picks.forEach((ci, n) => {
+    const yTop = surfaceY[ci];
+    if (yTop === undefined) return;
+    const col = surf[ci];
+    const y = yTop + BLK * (1 + (n % 2));
+    const r = document.createElementNS(NS, 'rect');
+    r.setAttribute('x', CX - HW + ci * BLK + BLK * .12);
+    r.setAttribute('y', y + BLK * .25);
+    r.setAttribute('width', BLK * .72);
+    r.setAttribute('height', BLK * .5);
+    r.setAttribute('fill', GLINT_COLS[n % GLINT_COLS.length]);
+    r.setAttribute('class', 'glint');
+    r.style.animationDelay = (n * .23).toFixed(2) + 's';
+    r.style.animationDuration = (2.5 + (n % 4) * .4).toFixed(2) + 's';
+    sway.appendChild(r);
+  });
+
+  tearG.appendChild(water);
+
+  /* 泪滴：像素雨滴 —— 顶尖一格，往下逐行变宽，底边收圆 */
+  /* 水滴：顶尖一格 → 逐行变宽 → 底部圆润 */
+  const DROP = ['00100', '01110', '11111', '11111', '01110'];
+  const DB = 3.6;                 /* 泪珠格子：从 5 收到 3.6，小一圈才像滴下来的水珠 */
+  const dropAt = [[CX - 66, CY + H2 + 8, 0], [CX + 30, CY + H2 + 14, 1.2]];
+  dropAt.forEach(([dx, dy, delay]) => {
+    const g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'teardrop');
+    g.style.setProperty('--d', delay + 's');
+    DROP.forEach((row, ry) => {
+      for (let rx = 0; rx < row.length; rx++){
+        if (row[rx] !== '1') continue;
+        const r = document.createElementNS(NS, 'rect');
+        r.setAttribute('x', dx + (rx - 2) * DB);
+        r.setAttribute('y', dy + ry * DB);
+        r.setAttribute('width', DB); r.setAttribute('height', DB);
+        r.setAttribute('fill', (rx === 2 && ry === 2) ? '#ffffff' : (ry < 2 ? '#bfe9ff' : '#6cc6f2'));
+        r.setAttribute('class', 'blk');
+        g.appendChild(r);
+      }
+    });
+    dropG.appendChild(g);
+  });
+}
+
+function buildEye(){
+  drawSocket();
+  drawFrame();
+  buildClip();
+  drawIris();
+  drawTears();
+}
+
+/* ============================================================
+   4. 视线：平时自己左右扫；只有点下去才看一次
+   ============================================================ */
+let gx = 0, gy = 0, easeT = 0, alive = true, lookTimer = null, holdUntil = 0;
+
+/* 眼珠不是水平平移：它贴着下睑那条圆弧走 —— 往两边去的时候被弧线带着抬起来 */
+function eyeArcY(x){
+  const a = Math.min(1, Math.abs(x) / HW);
+  return (CY + lidCurve(a, H2, .70, .96)) - (CY + H2);   /* 中间 0，两端为负 */
+}
+function applyGaze(){
+  if (!gazeG) return;
+  const ty = gy + eyeArcY(gx) * .92;
+  gazeG.setAttribute('transform', 'translate(' + gx.toFixed(1) + ',' + ty.toFixed(1) + ')');
+}
+function easeTo(nx, ny, dur){
+  if (easeT) clearInterval(easeT);
+  const sx0 = gx, sy0 = gy, t0 = performance.now();
+  easeT = setInterval(() => {
+    if (!alive){ clearInterval(easeT); easeT = 0; return; }
+    const k = Math.min(1, (performance.now() - t0) / dur);
+    const e = k < .5 ? 4*k*k*k : 1 - Math.pow(-2*k + 2, 3)/2;
+    gx = sx0 + (nx - sx0) * e;
+    gy = sy0 + (ny - sy0) * e;
+    applyGaze();
+    if (k >= 1){ clearInterval(easeT); easeT = 0; }
+  }, 16);
+}
+function autoLook(){
+  if (!alive) return;
+  if (Date.now() < holdUntil){ lookTimer = setTimeout(autoLook, 300); return; }
+  const r = Math.random();
+  let nx, ny;
+  if (r < .42){ nx = -34 - Math.random()*16; ny = -8 + Math.random()*16; }
+  else if (r < .84){ nx = 34 + Math.random()*16; ny = -8 + Math.random()*16; }
+  else { nx = -10 + Math.random()*20; ny = -14 + Math.random()*10; }
+  easeTo(nx, ny, 340);
+  lookTimer = setTimeout(autoLook, 1000 + Math.random()*1500);
+}
+/* 点哪儿看哪儿——只响应 pointerdown（鼠标划过不算） */
+function lookAtPoint(cx, cy){
+  const svg = document.getElementById('eye');
+  const r = svg.getBoundingClientRect();
+  const px = (cx - r.left) / r.width * 392;
+  const py = (cy - r.top) / r.height * 168;
+  let ox = (px - CX) * .62;
+  let oy = (py - ICY) * .55;
+  /* 眼珠可以被推到眼眶内缘附近，留一格不撞框 —— 活动范围比之前大得多 */
+  const MX = HW - IR - 16;   // 眼珠推到边上也不会压住框
+  ox = Math.max(-MX, Math.min(MX, ox));
+  /* 纵向只往上：底部已经凸出下缘 14px，再往下就飞出眼眶了 */
+  oy = Math.max(-16, Math.min(2, oy));
+  holdUntil = Date.now() + 900;
+  easeTo(ox, oy, 210);
+}
+document.addEventListener('pointerdown', e => {
+  if (e.target && e.target.closest && e.target.closest('.btn')) return;
+  lookAtPoint(e.clientX, e.clientY);
+}, true);
+
+/* ============================================================
+   5. 眨眼
+   ============================================================ */
+let blinkT = null;
+function blink(){
+  if (!alive) return;
+  const el = document.getElementById('eye');
+  const t0 = performance.now(), D = 120, HOLD = 50, UP = 180;
+  const timer = setInterval(() => {
+    if (!alive){ clearInterval(timer); return; }
+    const p = performance.now() - t0;
+    let k;
+    if (p < D) k = p / D;
+    else if (p < D + HOLD) k = 1;
+    else if (p < D + HOLD + UP) k = 1 - (p - D - HOLD) / UP;
+    else k = 0;
+    el.style.transformOrigin = '50% 50%';
+    el.style.transform = 'scaleY(' + (1 - .90 * Math.min(1, k)).toFixed(3) + ')';
+    if (p >= D + HOLD + UP){ clearInterval(timer); el.style.transform = ''; }
+  }, 16);
+  blinkT = setTimeout(blink, 2800 + Math.random()*2400);
+}
+
+/* ============================================================
+   6. 文字
+   ============================================================ */
+const L1 = '你在看别人？';
+const L2 = '我想要你看我';
+/* 末行是角色给玩家的留言：从回复字卡里随机抽 2~3 条，用「，」接起来。
+   语气必须是 TA 在说话——不是玩家在解释。 */
+const SMALL_SETS = [
+  ['你今天回得很慢', '我数着的', '别嫌我烦'],
+  ['我不问你跟谁说话', '我只是想让你看我', '就一会儿'],
+  ['对话框别关', '我还想再看你一会儿', '就一会儿'],
+  ['你笑一下', '我今晚就能睡着了', '真的']
+];
+let smIdx = Math.floor(Math.random() * SMALL_SETS.length), timers = [];
+/* 20261113h：末行留言改成实时生成 —— 主项目用 ?sm= 把写好的那句传进来
+   （AI 模式由 AI 写，字卡模式从字卡里随机抽 2~3 条拼成）。
+   传了就用它，按「，」切成几段、一段一段蹦出来；没传才用上面的内置文案兜底。 */
+let SMALL_LIVE = null;
+try {
+  const _sm = new URLSearchParams(location.search).get('sm');
+  if (_sm) {
+    const arr = _sm.split(/[，,]/).map(s => s.trim()).filter(Boolean);
+    if (arr.length) SMALL_LIVE = arr;
+  }
+} catch (e) {}
+/* 20261113h：回复框上方那行提示必须显示**当前角色**的名字（主项目用 ?cn= 传进来）。
+   之前预览页写死的「回 TA 一句」已经作废，取不到名字就退回「TA」。 */
+try {
+  const _cn = new URLSearchParams(location.search).get('cn');
+  const _hint = document.querySelector('.reply-box .rb-hint');
+  if (_hint) _hint.textContent = '回 ' + (_cn || 'TA') + ' 一句';
+} catch (e) {}
+const l1 = document.getElementById('l1'), l2 = document.getElementById('l2');
+const smTxt = document.getElementById('smTxt'), cr = document.getElementById('cr');
+
+function clearTimers(){ timers.forEach(t => clearTimeout(t)); timers = []; }
+function wait(ms){ return new Promise(r => timers.push(setTimeout(r, ms))); }
+async function typeInto(el, str, speed){
+  for (let i = 1; i <= str.length; i++){
+    if (!alive) return;
+    el.textContent = str.slice(0, i);
+    await wait(speed);
+  }
+}
+async function playText(){
+  clearTimers();
+  l1.textContent = ''; l2.textContent = ''; smTxt.textContent = '';
+  cr.classList.remove('on');
+  if (DONE){
+    l1.textContent = L1; l2.textContent = L2;
+    smTxt.textContent = (SMALL_LIVE || SMALL_SETS[smIdx]).join('，');
+    return;
+  }
+  await wait(700);
+  await typeInto(l1, L1, 155);
+  await wait(320);
+  await typeInto(l2, L2, 140);
+  await wait(420);
+  cr.classList.add('on');
+  const parts = SMALL_LIVE || SMALL_SETS[smIdx];
+  for (let i = 0; i < parts.length; i++){
+    if (!alive) return;
+    if (i){ smTxt.textContent += '，'; await wait(180); }
+    for (const ch of parts[i]){
+      if (!alive) return;
+      smTxt.textContent += ch;
+      await wait(48);
+    }
+  }
+  cr.classList.remove('on');
+}
+
+/* ============================================================
+   7. 启动
+   ============================================================ */
+buildEye();
+if (QS.has('cry')) document.body.classList.add('cry');
+
+function play(){
+  alive = true;
+  clearTimeout(blinkT); clearTimeout(lookTimer); clearTimeout(glitchT); clearTimers();
+  if (easeT){ clearInterval(easeT); easeT = 0; }
+  wrap.classList.remove('on');
+  veil.classList.remove('on');
+  lockEl.classList.remove('on', 'off');
+  replyInput.value = '';
+  gx = 0; gy = 0;
+  applyGaze();
+  document.getElementById('eye').style.transform = '';
+  void wrap.offsetWidth;
+  wrap.classList.add('on');
+  veil.classList.add('on');
+  blinkT = setTimeout(blink, 900);
+  if (!QS.has('still')) lookTimer = setTimeout(autoLook, 500);
+  clearTimeout(glitchT);
+  glitchT = setTimeout(glitchPulse, 1400);
+  setTimeout(() => { if (alive) glitchBurst(true); }, 420);
+  playText();
+  setTimeout(lockOn, 900);
+}
+
+/* ---------- 事件遮罩：整页锁住，只有底下那个「回留言」的框能用，
+   回答之后遮罩才撤；这期间聊天、发送键都点不到 ---------- */
+const lockEl     = document.getElementById('lock');
+const replyInput = document.getElementById('replyInput');
+const replySend  = document.getElementById('replySend');
+
+function lockOn(){
+  lockEl.classList.remove('off');
+  lockEl.classList.add('on');
+  setTimeout(() => { try { replyInput.focus({ preventScroll: true }); } catch(e){} }, 560);
+}
+function answerAndUnlock(){
+  const v = replyInput.value.trim();
+  if (!v){ try { replyInput.focus({ preventScroll: true }); } catch(e){} return; }
+  const row = document.createElement('div');
+  row.className = 'msg-row me';
+  row.innerHTML = '<div class="msg-avatar">我</div>' +
+    '<div class="msg-body"><div class="bubble"></div><div class="msg-time">22:47</div></div>';
+  row.querySelector('.bubble').textContent = v;
+  const cs = document.getElementById('chatScroll');
+  cs.appendChild(row);
+  cs.scrollTop = cs.scrollHeight;
+  replyInput.value = '';
+  replyInput.blur();
+  lockEl.classList.remove('on');
+  lockEl.classList.add('off');          /* 撤了就不再拦截点击 */
+  setTimeout(() => {
+    if (alive){ veil.classList.remove('on'); wrap.classList.remove('on'); }
+  }, 760);
+  /* 20261113g：嵌入模式下把这句回复交给主项目发出去，并在遮罩退干净后关掉这一层 */
+  if (_EMBED){
+    _postToParent({ type: 'gaze-reply', text: v });
+    setTimeout(() => { _postToParent({ type: 'gaze-done' }); }, 900);
+  }
+}
+/* 唯一的出口就是「回复」：把话发出去，遮罩才撤 */
+replySend.addEventListener('click', answerAndUnlock);
+replyInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter'){ e.preventDefault(); answerAndUnlock(); }
+});
+
+let glitchT = null;
+const appEl = document.querySelector('.app');
+const glEl = document.getElementById('gl');
+const glSliceR = document.getElementById('glSliceR'), glSliceC = document.getElementById('glSliceC');
+const glNoise = document.getElementById('glNoise');
+
+const GLYPHS = 'アイウエオカキクケコサシスセソ!@#$%^&*()_+-=[]{}|;:,.<>?/~ABCDEF0123456789ｦｧｨｩｪｫﾊﾋﾌﾍﾎ';
+function randStr(n){ let out = ''; for (let i = 0; i < n; i++) out += GLYPHS[Math.floor(Math.random() * GLYPHS.length)]; return out; }
+
+/* 红/青错落切片：宽度 18%~85%、位置随机、长短不一，不横贯全屏 */
+function makeSlices(el, color){
+  const n = 8 + Math.floor(Math.random() * 6);
+  let parts = '';
+  for (let i = 0; i < n; i++){
+    const top = Math.random() * 92;
+    const kind = Math.random();
+    const h = kind < .45 ? (1 + Math.random() * 3) : kind < .8 ? (4 + Math.random() * 6) : (10 + Math.random() * 12);
+    const w = 18 + Math.random() * 67;
+    const left = Math.random() * (100 - w);
+    const off = Math.random() < .7 ? (Math.random() * 40 - 20) : (Math.random() * 120 - 60);
+    const op = .22 + Math.random() * .55;
+    parts += '<div style="top:' + top.toFixed(1) + '%;left:' + left.toFixed(1) + '%;width:' + w.toFixed(1) +
+      '%;height:' + h.toFixed(1) + 'px;transform:translateX(' + off.toFixed(0) + 'px);opacity:' + op.toFixed(2) +
+      ';background:' + color + ';' + (h > 8 ? 'filter:blur(.6px);' : '') + '"></div>';
+  }
+  el.innerHTML = parts;
+}
+/* 彩色噪点：品红/青/绿/黄/白/紫小色块 */
+function makeNoise(){
+  const n = 40 + Math.floor(Math.random() * 30);
+  const cols = ['255,80,160', '90,220,255', '90,255,180', '255,220,80', '255,255,255', '180,120,255'];
+  let parts = '';
+  for (let i = 0; i < n; i++){
+    const c = cols[Math.floor(Math.random() * cols.length)];
+    parts += '<span style="left:' + (Math.random() * 100).toFixed(1) + '%;top:' + (Math.random() * 100).toFixed(1) +
+      '%;width:' + (1 + Math.random() * 4).toFixed(1) + 'px;height:' + (1 + Math.random() * 3).toFixed(1) +
+      'px;background:rgba(' + c + ',' + (.15 + Math.random() * .7).toFixed(2) + ');"></span>';
+  }
+  glNoise.innerHTML = parts;
+}
+
+const glBlocks = document.getElementById('glBlocks');
+const glFront  = document.getElementById('glFront');
+/* 一块一块：随机位置、随机大小，亮灭错开 —— 就是元件烧了的那种花屏 */
+function makeBlocks(strong){
+  /* 只在眼睛这一带砸块：范围收在眼眶上下，别铺满整屏，眼睛和字才不会被糊住 */
+  const n = (strong ? 11 : 7) + Math.floor(Math.random() * 5);
+  const cols = ['#ffffff', '#ffffff', '#ffd0dd', '#bfe9ff', '#ff5c78', '#c4b5fd'];
+  let parts = '';
+  for (let i = 0; i < n; i++){
+    const w = 22 + Math.random() * 88;
+    const h = 12 + Math.random() * 44;
+    const left = Math.random() * Math.max(0, 360 - w);
+    const top = 132 + Math.random() * 300;
+    parts += '<i style="left:' + left.toFixed(0) + 'px;top:' + top.toFixed(0) + 'px;width:' +
+      w.toFixed(0) + 'px;height:' + h.toFixed(0) + 'px;background:' +
+      cols[Math.floor(Math.random() * cols.length)] + ';opacity:' +
+      (.22 + Math.random() * .58).toFixed(2) + ';transform:translateX(' +
+      (Math.random() * 14 - 7).toFixed(0) + 'px)"></i>';
+  }
+  glBlocks.innerHTML = parts;
+
+  /* 前层：只砸 3~5 块，压在眼睛和字的前面 —— 闪一下挡一下就过去，
+     眼睛本身还在（块之间有缝、透明度也不满），不是整块糊死。 */
+  const fn = 4 + Math.floor(Math.random() * 3);
+  const fcols = ['#ffffff', '#ffe4ec', '#d7f0ff', '#ffc9d8'];
+  let fp = '';
+  for (let i = 0; i < fn; i++){
+    const w = 24 + Math.random() * 76;
+    const h = 10 + Math.random() * 32;
+    const left = Math.random() * Math.max(0, 360 - w);
+    const top = 238 + Math.random() * 148;
+    fp += '<i style="left:' + left.toFixed(0) + 'px;top:' + top.toFixed(0) + 'px;width:' +
+      w.toFixed(0) + 'px;height:' + h.toFixed(0) + 'px;background:' +
+      fcols[Math.floor(Math.random() * fcols.length)] + ';opacity:' +
+      (.48 + Math.random() * .36).toFixed(2) + ';transform:translateY(' +
+      (Math.random() * 6 - 3).toFixed(0) + 'px)"></i>';
+  }
+  glFront.innerHTML = fp;
+}
+
+let glIv = 0, glEnd = 0;
+/* 故障脉冲：只做局部花屏（块状 + 少量切片 + 噪点），不做满屏乱码和白闪。
+   strong 只是「块更多、闪得久一点」，眼睛和下面的字全程都在。 */
+function glitchBurst(strong){
+  if (!alive) return;
+  if (document.body.classList.contains('shot') && !QS.has('flash')) return;
+  const dur = strong ? 460 : 260;
+  clearInterval(glIv);
+  clearTimeout(glEnd);
+  glEl.classList.add('on');
+  glFront.classList.add('on');
+  makeSlices(glSliceR, 'rgba(255,80,110,.75)');
+  makeSlices(glSliceC, 'rgba(120,225,255,.7)');
+  makeNoise();
+  makeBlocks(strong);
+  glIv = setInterval(() => {
+    if (Math.random() < .65) makeSlices(glSliceR, 'rgba(255,80,110,.75)');
+    if (Math.random() < .65) makeSlices(glSliceC, 'rgba(120,225,255,.7)');
+    if (Math.random() < .8) makeBlocks(strong);
+    makeNoise();
+  }, strong ? 70 : 100);
+  glEnd = setTimeout(() => {
+    clearInterval(glIv);
+    glEl.classList.remove('on');
+    glFront.classList.remove('on');
+    glFront.innerHTML = '';
+    glBlocks.innerHTML = '';
+    glSliceR.innerHTML = '';
+    glSliceC.innerHTML = '';
+    glNoise.innerHTML = '';
+  }, dur);
+}
+
+function glitchPulse(){
+  if (!alive) return;
+  const el = Math.random() < .55 ? l1 : l2;
+  if (el.textContent){ el.classList.add('glitch'); setTimeout(() => el.classList.remove('glitch'), 240); }
+  /* 隔几次来一次局部花屏 */
+  if (Math.random() < .55) glitchBurst(Math.random() < .3);
+  glitchT = setTimeout(glitchPulse, 2600 + Math.random() * 3200);
+}
+
+document.getElementById('cryBtn').onclick = e => {
+  const on = document.body.classList.toggle('cry');
+  e.currentTarget.textContent = '形态：' + (on ? '落泪' : '普通');
+  e.currentTarget.classList.toggle('on', on);
+};
+document.getElementById('palBtn').onclick = e => {
+  palKey = palKey === 'purple' ? 'red' : 'purple';
+  drawIris();
+  e.currentTarget.textContent = '眼珠：' + (palKey === 'purple' ? '紫' : '红');
+};
+document.getElementById('playBtn').onclick = play;
+
+play();
+
+/* ?lock=1：钉住遮罩，方便核对「事件期间只能回留言」的观感 */
+if (QS.has('lock')) setTimeout(lockOn, 700);
+
+/* ?gl=1：把闪屏钉住，方便核对「前后分层」的效果 */
+if (QS.has('gl')){
+  setTimeout(() => {
+    glEl.classList.add('on'); glFront.classList.add('on');
+    makeSlices(glSliceR, 'rgba(255,80,110,.75)');
+    makeSlices(glSliceC, 'rgba(120,225,255,.7)');
+    makeNoise(); makeBlocks(true);
+    setInterval(() => { makeBlocks(true); makeNoise(); }, 90);
+  }, 600);
+}
+</script>
+<script>
+/* ============================================================================
+   20261113g：嵌入模式（主项目全屏 iframe 载入）
+   ----------------------------------------------------------------------------
+   · 进来自动开演，不需要点任何按钮
+   · 玩家在回复框写下的话 → postMessage 交给主项目，由主项目当作一条玩家消息发出去
+   · 回复完（遮罩撤掉）→ 通知主项目关闭 iframe
+   · 没有任何超时兜底 —— 这个演出只能靠回复退出（用户定案，不许加自动退出）
+   ========================================================================== */
+const _EMBED = /[?&]embed=1/.test(location.search);
+function _postToParent(msg){
+  try { if (window.parent && window.parent !== window) window.parent.postMessage(msg, '*'); } catch (e) {}
+}
+if (_EMBED){
+  document.body.classList.add('embed');
+  setTimeout(function () { try { play(); } catch (e) {} }, 140);
+}
+</script>
+</body>
+</html>
+<script>
+if (location.search.indexOf('debug') >= 0){
+  setTimeout(function(){
+    var e = document.getElementById('eye').getBoundingClientRect();
+    var p = document.querySelector('.phone').getBoundingClientRect();
+    var wide = [];
+    document.querySelectorAll('body *').forEach(function(el){
+      var r = el.getBoundingClientRect();
+      if (r.right > 362) wide.push(el.className + ':' + Math.round(r.left) + '-' + Math.round(r.right));
+    });
+    document.title = 'EYE ' + [e.left, e.top, e.width, e.height].map(Math.round).join(',') +
+                     ' | PHONE ' + [p.left, p.width].map(Math.round).join(',') +
+                     ' | WIDE ' + wide.slice(0,6).join(' ; ') + ' | DOC ' + document.documentElement.scrollWidth;
+    document.querySelector('.sub').textContent = document.title;
+  }, 600);
+}
+</script>
+<script>
+if(location.search.indexOf('mw')>=0){
+  setTimeout(function(){
+    var widest=[]; document.querySelectorAll('body *').forEach(function(el){var r=el.getBoundingClientRect(); if(r.right>1) widest.push([Math.round(r.right), el.tagName+'.'+(el.className||'')]);});
+    widest.sort(function(a,b){return b[0]-a[0];});
+    document.title='CW '+document.documentElement.clientWidth+' BODY '+Math.round(document.body.getBoundingClientRect().width)+' DOC '+document.documentElement.scrollWidth+' TOP '+widest.slice(0,4).map(function(x){return x[1]+'@'+x[0];}).join(' ');
+  },500);
+}
+</script>

@@ -175,6 +175,10 @@
   }
   /* 输入框/文本域保留可选中编辑 */
   input, textarea{ user-select:text;-webkit-user-select:text; }
+  /* 20261112：番茄钟内一律不显示滚动条（用户：「这个拖动条好丑，不要拖动条，能正常滚就行」）
+     触摸滑动 / 鼠标滚轮 / 触控板滚动全部照常，只是不画那条视觉拖动条 */
+  *{ scrollbar-width:none;-ms-overflow-style:none; }
+  *::-webkit-scrollbar{ width:0;height:0;display:none; }
   .phone{
     width:100%;max-width:420px;min-height:100vh;position:relative;display:flex;flex-direction:column;
     background:linear-gradient(180deg,var(--phone-grad-a) 0%,var(--phone-grad-b) 100%);
@@ -600,15 +604,40 @@
   .bulk-bar .bb-acts{display:flex;gap:8px;}
   .bulk-bar .bb-btn{height:32px;padding:0 13px;border-radius:16px;border:0;font-size:13px;font-weight:600;cursor:pointer;background:rgba(255,255,255,.22);color:#fff;}
   .bulk-bar .bb-btn.danger{background:#e0505a;}
-  /* 目标文件夹选择层（批量移动用） */
-  .move-sheet{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.4);padding:24px;}
+  /* 目标文件夹选择层（批量移动用）
+     20261113c 修复三处：① z-index 60 会被 .settle-view(100) 压住/穿透 → 提到 130 与新建弹窗同级；
+     ② 背景用 --card-bg 在深色主题是 rgba(...,.08)，几乎全透明能看到底下的番茄钟 → 改实底；
+     ③ 取消键 .tb-btn 只在 /settle-toolbar 与 /record-ops 下定义过，这里回落成浏览器原生白按钮 → 补基础样式。 */
+  .move-sheet{position:fixed;inset:0;z-index:130;display:none;align-items:center;justify-content:center;background:rgba(10,8,16,.62);padding:24px;}
   .move-sheet.show{display:flex;}
   .move-sheet .sheet{
-    width:100%;max-width:460px;background:var(--card-bg);border-radius:20px;padding:18px 18px 26px;
-    box-shadow:0 12px 40px rgba(0,0,0,.28);max-height:70vh;overflow-y:auto;
+    width:100%;max-width:460px;background:linear-gradient(180deg,var(--phone-grad-a),var(--phone-grad-b));
+    border:1px solid var(--line);border-radius:20px;padding:18px 18px 20px;
+    box-shadow:0 18px 50px rgba(0,0,0,.5);max-height:76vh;overflow-y:auto;
   }
   .move-sheet .sheet h4{margin:0 0 4px;font-size:16px;color:var(--ink);}
-  .move-sheet .sheet .sub{font-size:12px;color:var(--ink2);margin-bottom:12px;}
+  .move-sheet .sheet .sub{font-size:12px;color:var(--ink2);margin-bottom:12px;line-height:1.6;}
+  .move-sheet .tb-btn{
+    height:40px;padding:0 16px;border-radius:20px;border:1px solid var(--line);background:var(--card-bg);
+    color:var(--ink);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;
+    display:inline-flex;align-items:center;justify-content:center;gap:5px;
+  }
+  .move-sheet .tb-btn.primary{background:var(--main);border-color:var(--main);color:#fff;}
+  .move-sheet .move-foot{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+  .move-sheet .move-foot .tb-btn{width:100%;}
+  /* 子文件夹分组行（记录列表页） */
+  .subfolder-row{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none;}
+  .subfolder-row::-webkit-scrollbar{display:none;}
+  .subfold{
+    flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;
+    border-radius:18px;border:1px solid var(--line);background:var(--card-bg);color:var(--ink);
+    font-size:13px;font-family:inherit;cursor:pointer;max-width:190px;
+  }
+  .subfold .sf-ic{font-size:13px;opacity:.85;}
+  .subfold .sf-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .subfold .sf-c{font-size:11px;color:var(--ink2);background:var(--lav);border-radius:9px;padding:1px 6px;flex-shrink:0;}
+  .subfold:active{transform:scale(.96);}
+  .subfolder-empty{font-size:12px;color:var(--ink2);padding:2px 2px 10px;}
   /* ============ 目标文件夹选择：BounceCards 文件夹堆叠（Q弹 + hover推开 + 点击弹动） ============ */
   .bounce-cards{
     position:relative;width:100%;height:220px;margin:8px 0 4px;
@@ -731,6 +760,18 @@
     z-index:1;margin-top:8px;text-shadow:0 1px 0 rgba(0,0,0,.05);
     white-space:nowrap;overflow:visible;max-width:88%;text-align:center;
   }
+  /* 20261113c：自定义封面（玩家换的图铺满纸张，头像与标题浮在上面并加暗角保证可读） */
+  .folder .fold-cover{
+    position:absolute;inset:0;z-index:0;background-size:cover;background-position:center;
+    transform:scale(1.02);
+  }
+  .folder .fold-paper.has-cover .fold-cover::after{
+    content:'';position:absolute;inset:0;
+    background:linear-gradient(180deg,rgba(0,0,0,.04) 0%,rgba(0,0,0,.16) 46%,rgba(0,0,0,.52) 100%);
+  }
+  .folder .fold-paper.has-cover::before{z-index:4;}      /* 撕边压在封面之上，纸的质感不丢 */
+  .folder .fold-paper.has-cover .fold-avatar{z-index:3;box-shadow:0 2px 10px rgba(0,0,0,.42);}
+  .folder .fold-paper.has-cover .fold-title{z-index:3;color:#fff;text-shadow:0 1px 8px rgba(0,0,0,.72);}
   /* 复古不锈钢弹簧票据夹（参考 penco 票据夹：拱形圆头挂孔 + 宽扁夹口 + 前缘棱线，颜色跟随主题主色） */
   .folder .fold-clip{
     position:absolute;top:2%;right:6%;z-index:5;
@@ -916,44 +957,44 @@
   .ss-btn{width:100%;height:46px;border-radius:23px;border:0;margin-top:18px;background:linear-gradient(135deg,var(--btn-grad-a),var(--btn-grad-b));color:#fff;font-size:14px;font-weight:700;letter-spacing:1px;cursor:pointer;}
   .ss-done{width:100%;height:42px;border-radius:21px;border:1px solid rgba(120,110,90,.25);background:transparent;color:var(--ink,#4a4d50);font-size:14px;margin-top:10px;cursor:pointer;}
 
-  /* ============ 深色主题：纸跟着沉下去（只对 4 个深色主题生效） ============
-     20261112 用户明确：「深色主题的信纸应该是深色的，字相应改成白色；但浅色主题千万不要动」。
-     所以这里只写深色主题的覆盖，浅色主题（含绛红 red / 红浆果 berry，它们本质是浅色）一律不碰，
-     仍走上面的默认米白纸 + 深墨。纸色用「主题底 --bg + 墨 --ink」少量混合：
-     深色底 + 浅墨 12~24% = 比背景亮一档的深纸，字继续吃 --ink 就是白色。 */
-  body.theme-dark .ss-card,
-  body.theme-choco .ss-card,
-  body.theme-blackred .ss-card,
-  body.theme-gray .ss-card{
-    --paper-a:color-mix(in srgb, var(--bg) 88%, var(--ink) 12%);
-    --paper-b:color-mix(in srgb, var(--bg) 76%, var(--ink) 24%);
-    box-shadow:0 24px 60px rgba(0,0,0,.46), inset 0 0 0 1px color-mix(in srgb, var(--ink) 12%, transparent);
+  /* ============ 深色主题：结算页底色 = 主页面底色（只对 4 个深色主题生效） ============
+     20261112 用户定案：「暗色的番茄钟结算页，底色都要根据它们原本那个界面的背景颜色去设置，
+     把字都统一改成白色，一定要保证可读性」。
+     所以纸色不再自己调（原来用 --bg + --ink 混出一档「深纸」，跟主页面差一点点，看着就是不对），
+     直接照抄主页面：.phone / .settle-view 用的就是
+     linear-gradient(180deg, var(--phone-grad-a), var(--phone-grad-b))。
+     文字统一白色：主信息 #fff 纯白，次要信息白色降到 .72~.92 仍保持足够对比度
+     （深底上的白字即使 .72 也远高于 WCAG AA 4.5:1）。
+     浅色主题（含绛红 red / 红浆果 berry，它们本质是浅色）一律不碰，仍走上面的米白信纸。 */
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-card{
+    --paper-a:var(--phone-grad-a);
+    --paper-b:var(--phone-grad-b);
+    background:linear-gradient(180deg,var(--phone-grad-a) 0%,var(--phone-grad-b) 100%);
+    color:#fff;
+    box-shadow:0 24px 60px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.12);
   }
-  /* 深纸上的噪点改为柔光混合，否则 multiply 在深底上等于没效果 */
-  body.theme-dark .ss-card::before,
-  body.theme-choco .ss-card::before,
-  body.theme-blackred .ss-card::before,
-  body.theme-gray .ss-card::before{mix-blend-mode:soft-light;}
-  body.theme-dark .ss-close,
-  body.theme-choco .ss-close,
-  body.theme-blackred .ss-close,
-  body.theme-gray .ss-close{background:color-mix(in srgb, var(--ink) 12%, transparent);color:var(--ink2);}
-  body.theme-dark .ss-big,
-  body.theme-choco .ss-big,
-  body.theme-blackred .ss-big,
-  body.theme-gray .ss-big{border-bottom-color:color-mix(in srgb, var(--ink) 22%, transparent);}
-  body.theme-dark .ss-row,
-  body.theme-choco .ss-row,
-  body.theme-blackred .ss-row,
-  body.theme-gray .ss-row{border-bottom-color:color-mix(in srgb, var(--ink) 16%, transparent);}
-  body.theme-dark .ss-reply,
-  body.theme-choco .ss-reply,
-  body.theme-blackred .ss-reply,
-  body.theme-gray .ss-reply{background:color-mix(in srgb, var(--ink) 9%, transparent);}
-  body.theme-dark .ss-done,
-  body.theme-choco .ss-done,
-  body.theme-blackred .ss-done,
-  body.theme-gray .ss-done{border-color:color-mix(in srgb, var(--ink) 24%, transparent);}
+  /* 深底上的噪点改为柔光混合，否则 multiply 在深底上等于没效果 */
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-card::before{mix-blend-mode:soft-light;opacity:.6;}
+
+  /* —— 文字统一白色（主信息纯白） —— */
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-who,
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-num,
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-row .v,
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-reply .who,
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-done,
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-close{color:#fff;}
+
+  /* —— 次要文字：白色降透明度，但保底可读 —— */
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-cap{color:rgba(255,255,255,.9);opacity:1;}
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-sub{color:rgba(255,255,255,.8);opacity:1;}
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-row .k{color:rgba(255,255,255,.85);opacity:1;}
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-reply{color:rgba(255,255,255,.94);background:rgba(255,255,255,.10);}
+
+  /* —— 分隔线 / 按钮 / 关闭键：改白色低透明，深底上才看得见 —— */
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-big{border-bottom-color:rgba(255,255,255,.22);}
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-row{border-bottom-color:rgba(255,255,255,.16);}
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-close{background:rgba(255,255,255,.12);}
+  body:is(.theme-dark,.theme-choco,.theme-blackred,.theme-gray) .ss-done{border-color:rgba(255,255,255,.30);}
 
   /* ============ 成果输入框 ============ */
   .result-box{width:100%;}
@@ -1099,6 +1140,13 @@
       <div class="lab">待办<small id="todoSub">未绑定待办</small></div>
       <button class="add-char" id="todoBtn" title="选择待办">☑</button>
       <span class="switch-toggle" id="todoToggle"></span>
+    </div>
+    <!-- 20261112：专注时是否允许网页悬浮窗继续显示（测试性开关，默认关）
+         关 = 一起听歌 / 碎梦重拼 / 模拟通话小窗 在专注页全部收起，退出专注后恢复；
+         开 = 允许它们照常浮在专注页上。安卓原生系统悬浮窗不受此开关影响。 -->
+    <div class="interact-row">
+      <div class="lab">专注时显示悬浮窗<small>音乐 · 碎梦重拼 · 通话</small></div>
+      <span class="switch-toggle" id="floatGateToggle"></span>
     </div>
   </div>
 
@@ -1284,7 +1332,10 @@
     <h4>移动到文件夹</h4>
     <div class="sub" id="moveSub">选择目标文件夹</div>
     <div class="bounce-cards" id="moveList"></div>
-    <div style="text-align:center;margin-top:10px;"><button class="tb-btn" id="moveCancel" style="width:100%;">取消</button></div>
+    <div class="move-foot">
+      <button class="tb-btn primary" id="moveNewSub">＋ 新建子文件夹</button>
+      <button class="tb-btn" id="moveCancel">取消</button>
+    </div>
   </div>
 </div>
 
@@ -1636,6 +1687,17 @@ const INVITE_SOFT_POOL = [
   '好好好，{称呼}，我什么都放下了，现在就陪你。',
   '是我不好，{称呼}，这就来。',
 ];
+/* 20261114：前两次被接受时说的普通台词（第 3 次起才用上面那组「服软」）。
+   原来接受只在第 3 次以后才弹提示，前两次只是把按钮点亮 ——
+   玩家点了「陪伴我」、TA 明明答应了，界面上却一点反馈都没有，像点了没反应。 */
+const INVITE_ACCEPT_POOL = [
+  '好，{称呼}，我陪你。',
+  '{称呼}，我在呢，你专心做你的事。',
+  '行，{称呼}，我就坐这儿陪你。',
+  '陪你，{称呼}，安安静静地陪。',
+  '{称呼}，我就在旁边，不用管我。',
+  '来了，{称呼}，这一轮我陪你。',
+];
 /* 结算页那句回忆（不列次数、不做账本）：分「后来赶来了」和「一直没脱开身」两种 */
 const INVITE_STORY_JOINED = [
   '你一开始就邀我陪你，我那时正忙着没过来。后来我飞快把手上的事处理完，赶紧跑来陪你了。',
@@ -1736,12 +1798,13 @@ function inviteCompanion(){
       if(accepted){
         lastInviteRefused = false;
         selfCameCompanion = false;   // 当场答应的，不算「自己赶来」
-        // 第 3 次及以后才说一句「服软」的话；前两次只把按钮点亮
-        if(inviteCount >= 3){
-          const line = withNick(pickOne(INVITE_SOFT_POOL), nick);
-          showNotice('accept', c.name, line);
-          askInviteAi('accept', c, nick, line);
-        }
+        /* 20261114：接受一律给提示条。
+           前两次用普通答应台词，第 3 次及以后才用「服软」那句 ——
+           以前前两次静默点亮按钮，玩家完全看不到「TA 答应了」。 */
+        const pool = (inviteCount >= 3) ? INVITE_SOFT_POOL : INVITE_ACCEPT_POOL;
+        const line = withNick(pickOne(pool), nick);
+        showNotice('accept', c.name, line);
+        askInviteAi('accept', c, nick, line);
         resolve(true);
       } else {
         lastInviteRefused = true;
@@ -2826,6 +2889,19 @@ startBtn.addEventListener('click', ()=>{
   openClearView();
 });
 
+/* 20261112：专注时显示悬浮窗（测试性开关，默认关）
+   关 = 主项目给 body 挂 focus-hide-floats，把一起听歌 / 碎梦重拼 / 模拟通话小窗全部收起；
+   开 = 摘类，允许它们浮在专注页上。开关状态经 postMessage 回传主项目落库，下次进来保持一致。
+   注意：安卓原生系统悬浮窗（原生音乐条、模拟通话原生窗）由系统绘制，不受这里影响。 */
+let allowFloatInFocus = false;
+const floatGateToggle = createSwitchToggle(document.getElementById('floatGateToggle'), {
+  offLabel:'关', onLabel:'开', defaultOn:false,
+  onChange:(on)=>{
+    allowFloatInFocus = on;
+    try{ parent.postMessage({ type:'pomodoro-allow-float', on }, '*'); }catch(e){}
+  }
+});
+
 /* ============ 结算页（角色文件夹 + 每次结算） ============ */
 const settleRecords = [];  // {id, charIdx, folderId, date, time, durMin, durSec, task, events:[], results:[{text, imgs:[], reply}]}
 let settleIdSeq = 1;
@@ -2836,12 +2912,34 @@ let folderIdSeq = 1;
    iframe 与主项目同源，localStorage 可共享；每次增删改后立即落盘，启动时恢复。
    注意：记录里存的 charIdx 是相对 CHARS 索引，CHARS 由主项目动态下发，刷新后按 id 重映射。 */
 const SETTLE_LS_KEY = 'bairimeng_pomodoro_settle_v1';
+/* 20261113c：番茄钟页内的轻提示（iframe 里没有主项目的 miniToast，自己带一个跟随主题的） */
+function toast(msg){
+  if(!msg) return;
+  let el = document.getElementById('pm-toast');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'pm-toast';
+    el.style.cssText = 'position:fixed;left:50%;bottom:14%;transform:translate(-50%,8px);z-index:9999;'
+      + 'padding:10px 18px;border-radius:20px;color:var(--ink);font-size:13px;line-height:1.5;'
+      + 'border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;'
+      + 'transition:opacity .22s ease,transform .22s ease;pointer-events:none;max-width:80%;text-align:center;'
+      + 'background:linear-gradient(180deg,var(--phone-grad-a),var(--phone-grad-b));';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity = '1';
+  el.style.transform = 'translate(-50%,0)';
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>{ el.style.opacity = '0'; el.style.transform = 'translate(-50%,8px)'; }, 1800);
+}
+
 function persistSettle(){
   try {
     localStorage.setItem(SETTLE_LS_KEY, JSON.stringify({
       settleRecords, folders, settleIdSeq, folderIdSeq
     }));
-  } catch(e) {}
+    return true;
+  } catch(e) { return false; }
 }
 function restoreSettle(){
   try {
@@ -2860,19 +2958,21 @@ function makeCharFolder(charIdx){
   folders.push(f);
   return f;
 }
-function makeCustomFolder(name){
-  // 绑定当前陪伴角色（角色间结算不互通）：在哪个角色窗口建文件夹，就归该角色。
-  //   20261104 修复：改用 selectedChar（当前选中的角色）而非 currentChar（仅在 openClearView 时
-  //   从 selectedChar 同步）——用户没进专注页就直接建文件夹时 currentChar 仍是 -1，导致
-  //   charIdx 误存 null、圆形绿标显示四芒星而非角色头像。
-  const cIdx = (selectedChar !== null && selectedChar !== undefined && selectedChar >= 0)
-    ? selectedChar : (currentChar >= 0 ? currentChar : null);
+function makeCustomFolder(name, parentId){
+  // 20261113c：parentId 有值时是「子文件夹」——只装这一组的记录，不再参与顶层列表、也不再嵌套。
+  const parent = parentId ? folders.find(f=>f.id===parentId) : null;
+  const cIdx = parent
+    ? (parent.charIdx === undefined ? null : parent.charIdx)
+    : ((selectedChar !== null && selectedChar !== undefined && selectedChar >= 0)
+      ? selectedChar : (currentChar >= 0 ? currentChar : null));
   const c = cIdx !== null ? CHARS[cIdx] : null;
   const f = {
     id: folderIdSeq++, type:'custom', charIdx: cIdx, name,
-    cover:null, color: c ? c.color : null, emoji: c ? c.emoji : null, avatar: c ? (c.avatar || null) : null
+    cover:null, color: c ? c.color : null, emoji: c ? c.emoji : null, avatar: c ? (c.avatar || null) : null,
+    parentId: parent ? parent.id : null
   };
   folders.push(f);
+  persistSettle();
   return f;
 }
 /* 获取某角色对应的默认文件夹（无则建） */
@@ -2882,8 +2982,17 @@ function charFolderOf(charIdx){
   return f;
 }
 /* 某文件夹内的结算记录 */
-function recordsOfFolder(fid){
-  return settleRecords.filter(r=>r.folderId===fid);
+/* 20261113c：取某文件夹下的记录。
+   默认只取直接挂在它名下的记录；deep=true 时连同其子文件夹的记录一起取
+   （父文件夹卡片上的「N 次 · M 分」必须把子文件夹算进去，否则像丢了记录）。 */
+function recordsOfFolder(fid, deep){
+  if(!deep) return settleRecords.filter(r=>r.folderId===fid);
+  const ids = [fid].concat(folders.filter(f=>f.parentId===fid).map(f=>f.id));
+  return settleRecords.filter(r=>ids.indexOf(r.folderId)>=0);
+}
+/* 子文件夹（只允许一层：子文件夹只装记录，不再往下嵌套） */
+function subFoldersOf(fid){
+  return folders.filter(f=>f.parentId===fid);
 }
 function addSettleRecord(){
   const c = currentChar;   // 用当前专注的角色
@@ -3083,8 +3192,9 @@ function openSettleFolders(){
   }
   const list = document.createElement('div');
   list.className = 'folder-list';
-  folders.forEach(f=>{
-    const recs = recordsOfFolder(f.id);
+  // 20261113c：顶层只渲染根文件夹；子文件夹在「记录列表页」里以分组行呈现，不混进这一屏
+  folders.filter(f=>!f.parentId).forEach(f=>{
+    const recs = recordsOfFolder(f.id, true);   // 统计含子文件夹的记录
     const total = recs.reduce((a,r)=>a+r.durMin,0);
     const fEl = document.createElement('div');
     fEl.className = 'folder' + (f.id===1 || false ? '' : '');
@@ -3115,11 +3225,14 @@ function openSettleFolders(){
     const pmDots = [[50,16],[84,32],[84,68],[50,84],[16,68],[16,32],[70,20],[30,20],[70,80],[30,80]].map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="1.2" fill="${ink}"/>`).join('');
     const postmarkSvg = `<svg viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="42" stroke="${ink}" stroke-width="1.4" stroke-dasharray="1.5 3.5"/><circle cx="50" cy="50" r="34" stroke="${ink}" stroke-width=".8"/><circle cx="50" cy="50" r="26" stroke="${ink}" stroke-width=".5" stroke-dasharray="4 4"/>${pmDots}<path d="M50 34 L50 66 M34 50 L66 50" stroke="${ink}" stroke-width=".6"/><circle cx="50" cy="50" r="3" stroke="${ink}" stroke-width=".8" fill="none"/><path d="M50 30 L53 40 L50 50 L47 40 Z" fill="${ink}" opacity=".8"/></svg>`;
     // 纸张：只保留头像 + 一行分类名称（去掉副标题小字）
+    // 20261113c：玩家换过封面就把图铺在纸上（之前 f.cover 只写不读，导致「更换封面」按了没反应）
+    const coverHtml = f.cover ? `<div class="fold-cover" style="background-image:url('${f.cover}')"></div>` : '';
     fEl.innerHTML = `
       <div class="fold-check">✓</div>
       <div class="fold-inner">
         <div class="fold-back"></div>
-        <div class="fold-paper">
+        <div class="fold-paper${f.cover ? ' has-cover' : ''}">
+          ${coverHtml}
           ${avaHtml}
           <div class="fold-title">${f.name}</div>
         </div>
@@ -3173,17 +3286,49 @@ function toggleSelectFolder(fid, fEl){
   updateBulkBar();
 }
 let currentRecordsFid = null;   // 20261106：当前正在看的文件夹 id（记录列表页），批量删除后用它重渲染
+/* 20261113c：封面图压缩——localStorage 只有 ~5MB，原图 base64 直接塞会写失败。
+   「更换封面」按了没反应的根因有两层：渲染层压根没读 f.cover，超大图还会写盘失败。 */
+function _readCoverImage(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=>reject(new Error('读取失败'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=>reject(new Error('不是有效图片'));
+      img.onload = ()=>{
+        try{
+          const max = 960;
+          const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1));
+          const w = Math.max(1, Math.round((img.width || max) * scale));
+          const h = Math.max(1, Math.round((img.height || max) * scale));
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          cv.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(cv.toDataURL('image/jpeg', 0.82));
+        }catch(err){ reject(err); }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function openSettleRecords(fid){
   resetBatch();
   const f = folders.find(x=>x.id===fid);
   if(!f) return;
+  const parent = f.parentId ? folders.find(x=>x.id===f.parentId) : null;
+  const isSub = !!parent;
   currentRecordsFid = fid;
-  settleStack = [()=>openSettleFolders()];   // 记录层级：返回文件夹列表
+  // 记录层级：子文件夹返回到父文件夹，根文件夹返回到文件夹列表
+  settleStack = [ isSub ? ()=>openSettleRecords(parent.id) : ()=>openSettleFolders() ];
   settleLevel = 'records';
   batchScope = 'record';
   // 20261104：标题不再拼 ✨ emoji 占位（角色头像由文件夹卡片 fold-avatar 展示）
   document.getElementById('settleTitle').textContent = f.name;
-  document.getElementById('settleSub').textContent = '点一条查看结算详情';
+  document.getElementById('settleSub').textContent = isSub
+    ? '分组 · 归在「' + parent.name + '」下'
+    : '点一条查看结算详情';
   syncToolbar();
   const body = document.getElementById('settleBody');
   body.innerHTML = '';
@@ -3191,8 +3336,9 @@ function openSettleRecords(fid){
   const topRow = document.createElement('div');
   topRow.className = 'record-toprow';
   const back = document.createElement('button');
-  back.className = 'settle-back'; back.textContent = '‹ 返回文件夹列表';
-  back.onclick = openSettleFolders;
+  back.className = 'settle-back';
+  back.textContent = isSub ? ('‹ 返回 ' + parent.name) : '‹ 返回文件夹列表';
+  back.onclick = isSub ? ()=>openSettleRecords(parent.id) : openSettleFolders;
   topRow.appendChild(back);
   // 本行右侧放批量管理按钮（新建，onclick 复用统一 toggleBatch()，不移动顶部工具栏原按钮）
   const bmRow = document.createElement('button');
@@ -3201,29 +3347,74 @@ function openSettleRecords(fid){
   bmRow.onclick = toggleBatch;
   topRow.appendChild(bmRow);
   body.appendChild(topRow);
-  // 更换封面（前景图）+ 移入文件夹 操作行
+  // 操作行：更换封面 + 移入文件夹 + 新建子文件夹（20261113c：子文件夹只装记录，不再往下嵌套）
   const ops = document.createElement('div');
   ops.className = 'record-ops';
   ops.innerHTML = `
     <button class="tb-btn" id="chgCoverBtn">🖼 更换封面</button>
     <button class="tb-btn" id="moveSingleBtn">📂 移入文件夹</button>
+    ${isSub ? '' : '<button class="tb-btn" id="newSubBtn">＋ 新建子文件夹</button>'}
     <input type="file" id="coverFile" accept="image/*" style="display:none;">`;
   body.appendChild(ops);
   document.getElementById('chgCoverBtn').onclick = ()=> document.getElementById('coverFile').click();
-  document.getElementById('coverFile').addEventListener('change', (e)=>{
+  document.getElementById('coverFile').addEventListener('change', async (e)=>{
     const file = e.target.files && e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev)=>{ f.cover = ev.target.result; openSettleFolders(); };
-    reader.readAsDataURL(file);
     e.target.value = '';
+    if(!file) return;
+    try{
+      const url = await _readCoverImage(file);
+      f.cover = url;
+      const ok = persistSettle();
+      openSettleRecords(fid);
+      toast(ok ? '封面已更换' : '封面已更换，但存储空间不足，重启后可能丢失');
+    }catch(err){
+      toast('这张图读不出来，换一张试试');
+    }
   });
   document.getElementById('moveSingleBtn').onclick = ()=>{
     openMoveSheetForFolder(fid);
   };
+  const newSubBtn = document.getElementById('newSubBtn');
+  if(newSubBtn) newSubBtn.onclick = ()=> openNewFolderSheet(fid);
+
+  // 子文件夹分组行（根文件夹才有）：把这一组的记录再细分归档
+  if(!isSub){
+    const subs = subFoldersOf(fid);
+    const subRow = document.createElement('div');
+    if(subs.length){
+      subRow.className = 'subfolder-row';
+      subRow.innerHTML = subs.map(sf=>{
+        const n = recordsOfFolder(sf.id).length;
+        const nm = String(sf.name || '');
+        const safe = nm.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return '<button class="subfold" data-sid="' + sf.id + '">'
+          + '<span class="sf-ic">📁</span>'
+          + '<span class="sf-n">' + safe + '</span>'
+          + '<span class="sf-c">' + n + '</span>'
+          + '</button>';
+      }).join('');
+      subRow.querySelectorAll('[data-sid]').forEach(b=>{
+        b.onclick = ()=> openSettleRecords(parseInt(b.dataset.sid, 10));
+      });
+    } else {
+      subRow.className = 'subfolder-empty';
+      subRow.textContent = '还没有子文件夹 · 点上方「＋ 新建子文件夹」把记录分组';
+    }
+    body.appendChild(subRow);
+  }
+
   const recs = recordsOfFolder(fid);
   if(recs.length===0){
-    body.innerHTML += `<div style="text-align:center;color:var(--ink2);padding:30px 0;font-size:14px;">这个文件夹还没有记录</div>`;
+    const emptyText = isSub
+      ? '这个分组还没有记录'
+      : (subFoldersOf(fid).length ? '这一层没有未分类的记录 · 点上面分组查看' : '这个文件夹还没有记录');
+    /* 20261113e 修 bug：这里原来是 body.innerHTML += '...'，会把上面刚绑好事件的
+       返回 / 批量管理 / 更换封面 / 移入文件夹 / 新建子文件夹 整棵子树重新解析一遍，
+       监听器全部丢失——所以空文件夹里点这些按钮毫无反应。改成 appendChild。 */
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align:center;color:var(--ink2);padding:30px 0;font-size:14px;';
+    empty.textContent = emptyText;
+    body.appendChild(empty);
     return;
   }
   const list = document.createElement('div');
@@ -3485,9 +3676,26 @@ window.addEventListener('message', (ev) => {
 
 /* ============ 文件夹批量管理交互 ============ */
 // 新建文件夹（居中弹窗，不再用原生 prompt）
-function openNewFolderSheet(){
+// 20261113c：parentId 有值时创建的是「子文件夹」（记录列表页的「＋ 新建子文件夹」）
+let _newFolderParentId = null;
+let _newFolderAfter = null;
+function openNewFolderSheet(parentId, afterCreate){
+  _newFolderParentId = (typeof parentId === 'number') ? parentId : null;
+  _newFolderAfter = (typeof afterCreate === 'function') ? afterCreate : null;
   const sheet = document.getElementById('nfoldSheet');
   const input = document.getElementById('nfoldInput');
+  const titleEl = sheet.querySelector('h4');
+  const subEl = sheet.querySelector('.sub');
+  const parent = _newFolderParentId ? folders.find(f=>f.id===_newFolderParentId) : null;
+  if(parent){
+    if(titleEl) titleEl.textContent = '新建子文件夹';
+    if(subEl) subEl.textContent = '在「' + parent.name + '」下分组，只管这一组的记录';
+    if(input) input.placeholder = '例如：深夜 / 周末 / 番茄钟';
+  } else {
+    if(titleEl) titleEl.textContent = '新建文件夹';
+    if(subEl) subEl.textContent = '给这个文件夹起个名字';
+    if(input) input.placeholder = '例如：深夜学习 / 周末陪伴';
+  }
   input.value = '';
   sheet.classList.add('show');
   setTimeout(()=>input.focus(), 50);
@@ -3500,9 +3708,15 @@ document.getElementById('nfoldCancel').onclick = closeNewFolderSheet;
 document.getElementById('nfoldDone').onclick = ()=>{
   const name = document.getElementById('nfoldInput').value.trim();
   if(!name) return;
-  makeCustomFolder(name);
+  const pid = _newFolderParentId;
+  const after = _newFolderAfter;
+  _newFolderParentId = null;
+  _newFolderAfter = null;
+  makeCustomFolder(name, pid);
   closeNewFolderSheet();
-  openSettleFolders();
+  if(after) after();
+  else if(pid) openSettleRecords(pid);
+  else openSettleFolders();
 };
 document.getElementById('nfoldInput').addEventListener('keydown', (e)=>{
   if(e.key === 'Enter') document.getElementById('nfoldDone').click();
@@ -3562,14 +3776,17 @@ document.getElementById('bulkDelBtn').onclick = ()=>{
   selectedFolderIds.forEach(fid=>{
     const f = folders.find(x=>x.id===fid);
     if(!f) return;
+    // 20261113c：连带子文件夹——子文件夹只属于这个根，父没了会变成无处可归的孤儿
+    const ids = [fid].concat(folders.filter(x=>x.parentId===fid).map(x=>x.id));
     if(f.type==='char'){
       // 角色默认文件夹：只清空其中记录，文件夹本身保留
-      settleRecords.forEach(r=>{ if(r.folderId===fid) r.folderId = null; });
+      settleRecords.forEach(r=>{ if(ids.indexOf(r.folderId)>=0) r.folderId = null; });
+      ids.slice(1).forEach(id=>{ const i = folders.findIndex(x=>x.id===id); if(i>=0) folders.splice(i,1); });
     } else {
-      // 自定义文件夹：删除文件夹 + 其中记录
-      folders.splice(folders.indexOf(f),1);
+      // 自定义文件夹：删除文件夹 + 其中记录（含子文件夹）
+      ids.forEach(id=>{ const i = folders.findIndex(x=>x.id===id); if(i>=0) folders.splice(i,1); });
       for(let i=settleRecords.length-1;i>=0;i--){
-        if(settleRecords[i].folderId===fid) settleRecords.splice(i,1);
+        if(ids.indexOf(settleRecords[i].folderId)>=0) settleRecords.splice(i,1);
       }
     }
   });
@@ -3594,7 +3811,7 @@ document.getElementById('bulkMoveBtn').onclick = ()=>{
   moveMode = 'bulk';
   openMoveSheet();
 };
-/* 记录列表页「移入文件夹」：把当前文件夹的所有记录移到目标文件夹 */
+/* 记录列表页「移入文件夹」：把当前文件夹的这批记录移到目标文件夹 / 子文件夹 */
 function openMoveSheetForFolder(fid){
   moveMode = 'folder';
   moveFolderFid = fid;
@@ -3602,24 +3819,53 @@ function openMoveSheetForFolder(fid){
 }
 document.getElementById('moveCancel').onclick = ()=> document.getElementById('moveSheet').classList.remove('show');
 document.getElementById('moveSheet').addEventListener('click', (e)=>{ if(e.target===document.getElementById('moveSheet')) document.getElementById('moveSheet').classList.remove('show'); });
+/* 20261113c：弹层内直接建子文件夹（建完回到候选列表，不用退出去再进来） */
+document.getElementById('moveNewSub').onclick = ()=>{
+  const src = folders.find(x=>x.id===moveFolderFid);
+  const pid = src ? (src.parentId || src.id) : null;
+  openNewFolderSheet(pid, ()=>{ if(moveMode==='folder') openMoveSheetForFolder(moveFolderFid); });
+};
 
 function openMoveSheet(){
   const root = document.getElementById('moveList');
   root.innerHTML = '';
+  const newSubBtn = document.getElementById('moveNewSub');
+  if(newSubBtn) newSubBtn.style.display = (moveMode==='folder') ? '' : 'none';
   if(moveMode==='bulk'){
     document.getElementById('moveSub').textContent = `将选中的 ${selectedFolderIds.size} 个文件夹移动到…（文件夹不可移动自身）`;
   } else if(moveMode==='record'){
     document.getElementById('moveSub').textContent = `将选中的 ${selectedRecordIds.size} 条记录移动到…`;
   } else if(moveMode==='folder'){
     const src = folders.find(x=>x.id===moveFolderFid);
-    document.getElementById('moveSub').textContent = `将「${src?src.name:''}」里的记录移动到…`;
+    const n = src ? recordsOfFolder(src.id).length : 0;
+    document.getElementById('moveSub').textContent = src
+      ? `把「${src.name}」下的 ${n} 条记录整体移入…（只搬记录，文件夹本身不动）`
+      : '选择目标文件夹';
   } else {
     document.getElementById('moveSub').textContent = '选择目标文件夹';
   }
   let candidates = folders;
   if(moveMode==='bulk') candidates = folders.filter(f=> !selectedFolderIds.has(f.id));
   else if(moveMode==='record') candidates = folders.filter(f=> f.id!==currentRecordsFid);
-  else if(moveMode==='folder') candidates = folders.filter(f=> f.id!==moveFolderFid);
+  else if(moveMode==='folder'){
+    // 20261113c：允许移进自己的子文件夹（这正是「把这一组记录分组」的主要用法），
+    //   子文件夹的记录也允许搬回根文件夹（等于取消分组）。只排除自身。
+    const own = folders.filter(f=> f.parentId===moveFolderFid);
+    const others = folders.filter(f=> !f.parentId && f.id!==moveFolderFid);
+    candidates = own.concat(others);
+    if(candidates.length===0){
+      root.innerHTML = `<div style="font-size:13px;color:var(--ink2);padding:10px;line-height:1.7;">还没有可移入的目标 · 点下面「＋ 新建子文件夹」先建一个</div>`;
+      document.getElementById('moveSheet').classList.add('show');
+      return;
+    }
+  }
+  /* 20261113e：只在「同一角色」的文件夹之间移动。之前会把别的角色的文件夹也列进候选
+     （用户截图里出现了「厉言宵（Raven）」），跨角色搬记录会让结算数据串号。 */
+  const _baseFid = (moveMode==='folder') ? moveFolderFid : currentRecordsFid;
+  const _base = folders.find(f=>f.id===_baseFid);
+  if(_base && _base.charIdx!==null && _base.charIdx!==undefined){
+    candidates = candidates.filter(f=> f.charIdx===_base.charIdx);
+  }
   if(candidates.length===0){
     root.innerHTML = `<div style="font-size:13px;color:var(--ink2);padding:10px;">没有可移动到的文件夹</div>`;
     document.getElementById('moveSheet').classList.add('show');
@@ -3628,7 +3874,7 @@ function openMoveSheet(){
   // 构建 BounceCards 卡片
   const cards = candidates.map(f=>({
     id: f.id,
-    name: f.name,
+    name: f.parentId ? ('↳ ' + f.name) : f.name,
     emoji: f.type==='char' ? (f.emoji||'✨') : '📁',
     avatar: f.avatar || null,
     color: f.color || '#a78bfa'
@@ -3644,7 +3890,8 @@ function openMoveSheet(){
       });
       selectedFolderIds.forEach(fid=>{
         const src = folders.find(x=>x.id===fid);
-        if(src && src.type==='custom' && !settleRecords.some(r=>r.folderId===fid)){
+        // 有子文件夹的父级不自动清理（不然子文件夹会变成孤儿）
+        if(src && src.type==='custom' && !settleRecords.some(r=>r.folderId===fid) && !folders.some(x=>x.parentId===fid)){
           folders.splice(folders.indexOf(src),1);
         }
       });
@@ -3661,11 +3908,14 @@ function openMoveSheet(){
       if(currentRecordsFid && folders.some(x=>x.id===currentRecordsFid)) openSettleRecords(currentRecordsFid);
       else openSettleFolders();
     } else if(moveMode==='folder'){
-      settleRecords.forEach(r=>{ if(r.folderId===moveFolderFid){ r.folderId = f.id; } });
-      const src = folders.find(x=>x.id===moveFolderFid);
-      if(src && src.type==='custom') folders.splice(folders.indexOf(src),1);
+      // 20261113c：只搬记录，不再顺手删掉源文件夹——「根 → 自己的子文件夹」这种分组场景下，
+      //   删源会把整个文件夹连同封面一起弄丢。
+      let moved = 0;
+      settleRecords.forEach(r=>{ if(r.folderId===moveFolderFid){ r.folderId = f.id; moved++; } });
       document.getElementById('moveSheet').classList.remove('show');
-      openSettleFolders();
+      persistSettle();
+      openSettleRecords(moveFolderFid);
+      toast(moved ? ('已移入「' + (f.parentId ? '↳ ' + f.name : f.name) + '」') : '没有可移动的记录');
     } else {
       const r = settleRecords.find(x=>x.id===moveSingleRid);
       if(r){ r.folderId = f.id; }
@@ -3839,6 +4089,11 @@ setInterval(updateCvClock, 1000);
       if(typeof d.pomodoroBreakMin === 'number'){ breakMin = d.pomodoroBreakMin; }
       if(typeof d.pomodoroNoiseOn === 'boolean'){ defaultNoiseOn = d.pomodoroNoiseOn; }
       if(typeof d.pomodoroLockOn === 'boolean'){ defaultLockOn = d.pomodoroLockOn; }
+      // 20261112：专注时显示悬浮窗（测试开关）——回填上次保存的状态，不触发 onChange 回传
+      if(typeof d.pomodoroAllowFloat === 'boolean'){
+        allowFloatInFocus = d.pomodoroAllowFloat;
+        try{ floatGateToggle.on = allowFloatInFocus; }catch(e){}
+      }
       if(typeof d.companionInteractMin === 'number'){ compInteractMin = d.companionInteractMin; }
       if(typeof d.companionInteractMax === 'number'){ compInteractMax = d.companionInteractMax; }
       if(Array.isArray(d.companionActions)){ compActions = d.companionActions.slice(); }

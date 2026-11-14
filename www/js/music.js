@@ -9,58 +9,41 @@ window.bmMusic = (function () {
 
   /* ---------- 音源配置（多源容灾，玩家可在设置里选路径） ---------- */
   const SOURCES = [
-    // 20261104 新主源：music-api.gdstudio.xyz（网易云），搜索/播放直链/歌词三接口均稳定，
-    //   返回格式规范（id/name/artist[]/album/pic_id/url_id/lyric_id）。qijieya 搜索接口间歇性返回空数组
-    //   （"前面顺畅、现在全坏"的根因），故 gdstudio 提到最前做主源，qijieya 降为备选。
+    /* 20261113：换曲库兜底源（酷狗）。注意它不是网易云——网易云的整首能力靠下面
+       qijieya + gdstudio 两个号池源提供，这里只是网易云搜不到/取不到时的最后一道。
+       kfjie 的 Meting-API（api.kfjie.me/music），固定走**酷狗曲库**。
+       实测（20261113，逐个下载量字节）：晴天/周杰伦 4216KB、词不达意/林忆莲 4165KB、
+       孤勇者 4001KB、Running Up That Hill 2020KB —— 全部是整首；响应头 access-control-allow-origin: *。
+       注意：同站 server=netease 只给 30 秒（跟清羽一个毛病），所以这里锁死 kugou。
+       url / lrc / pic 都带 auth 签名（按曲目 hash 现算、长期有效），搜索一步返回，可直接用。 */
     {
-      key: 'gdstudio',
-      name: '镜像路径 A（网易云·已失效 20261105）',
-      search: (kw) => `https://music-api.gdstudio.xyz/api.php?types=search&source=netease&name=${encodeURIComponent(kw)}&count=20`,
-      song: (song) => `https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=${encodeURIComponent(song.id)}&br=128`,
-      lrc: (song) => `https://music-api.gdstudio.xyz/api.php?types=lyric&source=netease&id=${encodeURIComponent(song.id)}`,
-      parseSearch: (j) => Array.isArray(j) ? j.map(x => {
-        const artist = Array.isArray(x.artist) ? x.artist.join('/') : (x.artist || '');
-        return {
-          id: String(x.id || x.url_id || ''),
-          name: x.name || x.title || '',
-          artist: artist,
-          album: x.album || '',
-          pic: '',   // gdstudio 未直接给封面 url，留空，播放时可按需再取
-          url: '',   // 播放时用 types=url 单独取直链
-          lrc: '',
-        };
-      }).filter(x => x.name) : [],
-      parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' } : null,
-      parseLrc: (j) => (j && j.lyric) ? j.lyric : (typeof j === 'string' ? j : ''),
-    },
-    // 20261104 新增：清羽 Meting API（met.liiiu.cn），标准 Meting 格式（title/author/pic/url/lrc），
-    //   搜索+直链+歌词一步到位，直链 302 到 music.126.net 真实 mp3，作为新的稳定网易云镜像备选。
-    {
-      key: 'qingyu',
-      name: '镜像路径 A（网易云·清羽·默认）',
-      search: (kw) => `https://met.liiiu.cn/meting/api?server=netease&type=search&id=${encodeURIComponent(kw)}&limit=20`,
-      song: (song) => `https://met.liiiu.cn/meting/api?server=netease&type=url&id=${encodeURIComponent(song.id)}`,
-      lrc: (song) => `https://met.liiiu.cn/meting/api?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
-      parseSearch: (j) => Array.isArray(j) ? j.map(x => {
-        let id = x.id || '';
-        if (!id && x.url) { try { id = new URL(x.url, 'https://x').searchParams.get('id') || ''; } catch (e) {} }
-        return {
-          id: id,
-          name: x.title || x.name || '',
-          artist: x.author || x.artist || '',
-          album: x.album || '',
-          pic: x.pic || '',
-          url: x.url || '',
-          lrc: x.lrc || '',
-        };
-      }).filter(x => x.name) : [],
-      parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' } : (typeof j === 'string' && j ? { url: j, pic: '', lrc: '' } : null),
-      parseLrc: (j) => (j && j.lrc) ? j.lrc : (typeof j === 'string' ? j : ''),
+      key: 'kugou',
+      name: '路径 F（酷狗·整首）',
+      search: (kw) => `https://api.kfjie.me/music?server=kugou&type=search&id=${encodeURIComponent(kw)}`,
+      song: (song) => `https://api.kfjie.me/music?server=kugou&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
+      // 歌词：优先用搜索时拿到的 lrc 转发地址（带 auth），没有再按歌名重搜
+      lrc: (song) => song._lrcUrl || `https://api.kfjie.me/music?server=kugou&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
+      parseSearch: (j) => Array.isArray(j) ? j.map(x => ({
+        id: (String(x.url || '').match(/[?&]id=([^&]+)/) || [])[1] || '',
+        name: x.title || x.name || '',
+        artist: x.author || x.artist || '',
+        album: '',
+        pic: x.pic || '',
+        url: x.url || '',
+        lrc: '',
+        _lrcUrl: x.lrc || '',
+      })).filter(x => x.name) : [],
+      parseSong: (j) => { const d = Array.isArray(j) ? j[0] : null; return d ? { url: d.url || '', pic: d.pic || '', lrc: '' } : null; },
+      parseLrc: () => '',
     },
     // 主源：qijieya Meting 镜像（网易云），搜索一步返回 url/lrc/pic，带 CORS，长期稳定
     {
       key: 'qijieya',
-      name: '镜像路径 A（网易云·已失效 20261105）',
+      /* 20261113 实测（真实曲目逐个下载量字节）：
+         《Running Up That Hill》《词不达意》《富士山下》《孤勇者》《夜曲》全部返回 4–11MB 整首，
+         VIP 歌同样给整首，且响应头 Access-Control-Allow-Origin: *（WebView 里 fetch 不会被 CORS 拦）。
+         20261105 那次「返回空数组」是它临时抽风，本轮已恢复，重新提回主源。 */
+      name: '镜像路径 A（网易云·祈杰·整首）',
       search: (kw) => `https://api.qijieya.cn/meting/?type=search&id=${encodeURIComponent(kw)}&limit=20&server=netease`,
       song: (song) => `https://api.qijieya.cn/meting/?server=netease&type=url&id=${encodeURIComponent(song.id)}`,
       lrc: (song) => `https://api.qijieya.cn/meting/?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
@@ -84,6 +67,67 @@ window.bmMusic = (function () {
         if (typeof j === 'string' && j) return { url: j, pic: '', lrc: '' };
         return null;
       },
+      parseLrc: (j) => (j && j.lrc) ? j.lrc : (typeof j === 'string' ? j : ''),
+    },
+    /* ========== 网易云第二源：GD Studio（20261113 找回，能拿整首） ==========
+       20261105 曾判定它「直链恒空」并移出，本轮重新实测发现是误判——加上 Referer
+       后它返回的是带签名的 CDN 直链，逐个下载量字节：
+         孤勇者(VIP) 10002KB / 起风了 12732KB / 晴天 10578KB /
+         富士山下 10116KB / 夜曲 9142KB / Running Up That Hill 10304KB
+       —— 全部整首，VIP 歌同样给完整版；响应头 access-control-allow-origin: *。
+       已知短板（写在这里免得以后再踩）：
+         1) 偶发 503 限流，约两三成请求会失败 → 只做第二顺位，失败立即跳过、不重试；
+         2) 搜索返回的 artist 是数组，取直链要用 url_id；
+         3) 封面必须再请求 types=pic（返回 JSON，不能直接当 img src），
+            所以这里 pic 留空——自动容灾时祈杰在前、封面已有，只有祈杰挂了才会走到这里。 */
+    {
+      key: 'gdstudio',
+      // 限流严重时会挂住十秒以上，必须比默认 8s 更短，失败立刻跳到下一源而不是干等
+      timeout: 6500,
+      name: '镜像路径 B（网易云·GD Studio·整首）',
+      search: (kw) => `https://music-api.gdstudio.xyz/api.php?types=search&source=netease&name=${encodeURIComponent(kw)}&count=20&pages=1`,
+      song: (song) => `https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=${encodeURIComponent(song.id)}&br=320`,
+      lrc: (song) => `https://music-api.gdstudio.xyz/api.php?types=lyric&source=netease&id=${encodeURIComponent(song._lrcId || song.id)}`,
+      parseSearch: (j) => Array.isArray(j) ? j.map(x => ({
+        id: x.url_id || x.id || '',
+        name: x.name || x.title || '',
+        artist: Array.isArray(x.artist) ? x.artist.join(' / ') : (x.artist || ''),
+        album: x.album || '',
+        pic: '',
+        url: '',
+        lrc: '',
+        _lrcId: x.lyric_id || x.id || '',
+      })).filter(x => x.name) : [],
+      // types=url 直接给 CDN 直链（不是 302 转发），所以不需要再走 _resolveUrl
+      parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' } : null,
+      parseLrc: (j) => (j && j.lyric) ? j.lyric : (typeof j === 'string' ? j : ''),
+    },
+    /* ========== 网易云第三源：Huibq（洛雪社区维护，SVIP 号池） ==========
+       来自洛雪音乐（LX Music）社区音源 huibq/latest.js，后端 lxmusicapi.onrender.com。
+       20261113 实测（320k 直链真实下载量字节）：
+         孤勇者(VIP) 10002KB / 词不达意 10411KB / 起风了 12732KB —— 全部整首；
+         晴天 这家回退成 155KB 短链，属个别歌缺失，不影响整体。
+       它只提供「按网易云歌曲 id 取直链」，没有搜索接口，所以搜索借祈杰的（同一套网易云 id 体系），
+       取链走它自己的号池——这正是备用链接的意义：祈杰取链被限时，搜索还在，直链可以绕到这家。
+       注意：后端跑在 onrender 免费实例，冷启动可能等十几秒且有限流（返回 code 5），
+       所以给 10s 超时、只做第二顺位，失败立即跳下一源。 */
+    {
+      key: 'huibq',
+      timeout: 10000,
+      native: true,          // 只能走原生 HTTP：该后端不给 CORS 头，fetch 必被拦
+      headers: { 'X-Request-Key': 'share-v3' },
+      name: '镜像路径 C（网易云·Huibq·整首）',
+      search: (kw) => `https://api.qijieya.cn/meting/?type=search&id=${encodeURIComponent(kw)}&limit=20&server=netease`,
+      song: (song) => `https://lxmusicapi.onrender.com/url/wy/${encodeURIComponent(song.id)}/320k`,
+      lrc: (song) => `https://api.qijieya.cn/meting/?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
+      parseSearch: (j) => Array.isArray(j) ? j.map(x => {
+        let id = x.id || '';
+        if (!id && x.url) { try { id = new URL(x.url, 'https://x').searchParams.get('id') || ''; } catch (e) {} }
+        return { id, name: x.name || x.title || '', artist: x.artist || x.singer || '',
+                 album: x.album || '', pic: x.pic || '', url: '', lrc: '' };
+      }).filter(x => x.name) : [],
+      // code 0 才是成功；限流/取不到（code 2/5 等）一律当失败，交给下一个源
+      parseSong: (j) => (j && j.url && (j.code === 0 || j.code === undefined)) ? { url: j.url, pic: '', lrc: '' } : null,
       parseLrc: (j) => (j && j.lrc) ? j.lrc : (typeof j === 'string' ? j : ''),
     },
     // 副源：tang s01s（QQ 音乐开放接口），长期维护
@@ -185,6 +229,62 @@ window.bmMusic = (function () {
       parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' } : (typeof j === 'string' && j ? { url: j, pic: '', lrc: '' } : null),
       parseLrc: (j) => (j && j.lrc) ? j.lrc : (typeof j === 'string' ? j : ''),
     },
+    /* 20261113 深夜（用户要求「旧的那两个 30 秒的源也放进去」）：
+       下面两个是早前因为「只给 30 秒」被移出自动顺序的网易云镜像，现按用户要求补回，
+       但**只放在自动容灾的最后两位**——整首源（祈杰/Huibq/GD Studio）与换曲库源
+       （酷狗/酷我/QQ）全都拿不到时才轮到它们，至少有声音，不会直接「播放失败」。
+       两个实测都返回 720813 字节 = 网易云匿名 api 的 45 秒试听（玩家口语里的「30 秒」）。
+       注意：它们**不进入** _PREVIEW_SOURCES（30 秒自动换整首的候选链），
+       否则会出现「30 秒 → 换到另一个 30 秒」的白折腾。
+       两者都有 access-control-allow-origin: *，不需要走原生通道。 */
+    {
+      key: 'qingyu',
+      name: '路径 G（网易云·清羽·30秒试听）',
+      previewOnly: true,
+      // 搜索一步返回 title/author/pic/url/lrc，url 就是 type=url 转发地址（301→https、再 302→music.126.net）
+      search: (kw) => `https://met.liiiu.cn/api?server=netease&type=search&id=${encodeURIComponent(kw)}&limit=20`,
+      // 取链不再用 type=url（它直接 302 音频、不是 JSON，解析会失败），统一按「歌名+歌手」重搜取第一条转发地址
+      song: (song) => `https://met.liiiu.cn/api?server=netease&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}&limit=1`,
+      lrc: (song) => song._lrcUrl || `https://met.liiiu.cn/api?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
+      parseSearch: (j) => Array.isArray(j) ? j.map(x => ({
+        id: (String(x.url || '').match(/[?&]id=([^&]+)/) || [])[1] || '',
+        name: x.title || x.name || '',
+        artist: x.author || x.artist || '',
+        album: '',
+        // 该站返回的是 http 资源，https 页面里会被混合内容拦截，统一升级
+        pic: String(x.pic || '').replace(/^http:\/\//i, 'https://'),
+        url: String(x.url || '').replace(/^http:\/\//i, 'https://'),
+        lrc: '',
+        _lrcUrl: String(x.lrc || '').replace(/^http:\/\//i, 'https://'),
+      })).filter(x => x.name) : [],
+      parseSong: (j) => {
+        const d = Array.isArray(j) ? j[0] : (typeof j === 'string' ? { url: j } : j);
+        const u = d && d.url ? String(d.url).replace(/^http:\/\//i, 'https://') : '';
+        return u ? { url: u, pic: '', lrc: '' } : null;
+      },
+      parseLrc: () => '',
+    },
+    {
+      key: 'kfjie-wy',
+      name: '路径 H（网易云·kfjie·30秒试听）',
+      previewOnly: true,
+      // 同站 server=netease（酷狗线是 server=kugou，见数组开头）；url/lrc/pic 都带 auth 签名
+      search: (kw) => `https://api.kfjie.me/music?server=netease&type=search&id=${encodeURIComponent(kw)}`,
+      song: (song) => `https://api.kfjie.me/music?server=netease&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
+      lrc: (song) => song._lrcUrl || `https://api.kfjie.me/music?server=netease&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
+      parseSearch: (j) => Array.isArray(j) ? j.map(x => ({
+        id: (String(x.url || '').match(/[?&]id=([^&]+)/) || [])[1] || '',
+        name: x.title || x.name || '',
+        artist: x.author || x.artist || '',
+        album: '',
+        pic: x.pic || '',
+        url: x.url || '',
+        lrc: '',
+        _lrcUrl: x.lrc || '',
+      })).filter(x => x.name) : [],
+      parseSong: (j) => { const d = Array.isArray(j) ? j[0] : null; return d ? { url: d.url || '', pic: d.pic || '', lrc: '' } : null; },
+      parseLrc: () => '',
+    },
   ];
 
   /* ---------- 播放器状态 ---------- */
@@ -210,11 +310,11 @@ window.bmMusic = (function () {
   }
 
   /* ---------- 网络请求（带超时） ---------- */
-  async function _fetchJSON(url, timeout = 8000) {
+  async function _fetchJSON(url, timeout = 8000, headers = null) {
     const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     const t = ctrl ? setTimeout(() => ctrl.abort(), timeout) : null;
     try {
-      const r = await fetch(url, { signal: ctrl ? ctrl.signal : undefined });
+      const r = await fetch(url, { signal: ctrl ? ctrl.signal : undefined, headers: headers || undefined });
       if (t) clearTimeout(t);
       if (!r.ok) return null;
       return await r.json();
@@ -299,14 +399,20 @@ window.bmMusic = (function () {
       const hit = all.find(s => s.key === pick);
       if (hit) return [hit];
     }
-    // auto 容灾优先级（20261105 实测修正）：清羽(met.liiiu.cn，搜索一步返回 title/author/pic/url/lrc，稳定) 提到最前
-    //   > 酷我 > QQ。
-    // 20261105 实测失效：qijieya(api.qijieya.cn) 返回空数组 []；gdstudio(music-api.gdstudio.xyz) HTTP 000 连接失败
-    //   ——两者已移出默认容灾顺序（仍可通过手动选源使用），避免每次容灾空耗请求、且搜索不到封面。
-    // 20261104：官方 meting(api.i-meto.com) 已 401 挂掉，移出默认容灾顺序。
-    // 20261106：自动匹配优先「完整音源」渠道——iTunes 只给 30 秒试听（full:false），不参与自动容灾，
-    //   避免自动匹配到 30 秒试听导致「只能听一段」。iTunes 仅在玩家手动选源时使用。
-    const order = ['qingyu', 'kuwo', 'tang'];
+    /* auto 容灾优先级（20261113 晚复测重排）：
+       祈杰(qijieya) 网易云——给**整首**，VIP 歌也给整首，带 CORS；
+       GD Studio(gdstudio) 网易云——20261113 晚找回：上一轮判「直链恒空」是错的，
+         带 Referer 后给签名 CDN 直链，孤勇者 10002KB / 起风了 12732KB / 晴天 10578KB 全是整首，
+         短板是偶发 503 限流，所以只做第二顺位、失败即跳过；
+       酷狗(kugou/kfjie)——换曲库的兜底（不是网易云，只用来接网易云搜不到/取不到的歌）；
+       酷我(kuwo)——独立曲库，实测整首；QQ(tang) 垫最后。
+       清羽(qingyu)/kfjie 网易云线(kfjie-wy)——两个 30 秒试听源，20261113 深夜按玩家要求补回，
+         排在最后两位：前面全部拿不到时才用，保证「至少能出声」，绝不顶替整首源。
+       20261113 确认失效、不进自动顺序：amarea、meting-ve、
+       paugram(link 即官方匿名地址)、qjqq(403)、tunefree(CF 拦)、vkeys(url 为 null)、
+       nanorocky(418)、injahow、i-meto(401)。
+       20261106：iTunes 只给 30 秒试听（full:false），不参与自动容灾，仅在玩家手动选源时使用。 */
+    const order = ['qijieya', 'huibq', 'gdstudio', 'kugou', 'kuwo', 'tang', 'qingyu', 'kfjie-wy'];
     const sorted = order.map(k => all.find(s => s.key === k)).filter(Boolean);
     // 追加任何不在 order 里的源（如自定义源）；但 full:false 的 30 秒试听源(iTunes)自动模式跳过
     all.forEach(s => { if (order.indexOf(s.key) < 0 && s.full !== false) sorted.push(s); });
@@ -318,7 +424,7 @@ window.bmMusic = (function () {
     const sources = await getActiveSources();
     for (const src of sources) {
       try {
-        const j = await _fetchJSON(src.search(keyword));
+        const j = await _fetchJSON(src.search(keyword), src.timeout, src.headers);
         const list = src.parseSearch(j);
         if (list && list.length) return list;
       } catch (e) { /* 换下一个源 */ }
@@ -333,6 +439,13 @@ window.bmMusic = (function () {
      方案A：闭包2 初始化时把网易云直连函数注入到这里，闭包1 经代理调用。 */
   let _neteaseBridgeFns = null;
   function setNeteaseBridge(fns) { _neteaseBridgeFns = fns || null; }
+  /* 20261113：走原生 HTTP（Java 层，不受 CORS 限制），专门给「有号池但不给 CORS 头」的
+     第三方音源用（洛雪 Huibq 后端 lxmusicapi.onrender.com 要 X-Request-Key、无 allow-origin，
+     在 WebView 里直接 fetch 必被拦）。未注入时返回 null，调用方按失败处理、自动换下一源。 */
+  async function _nativeReq(url, headers) {
+    if (_neteaseBridgeFns && _neteaseBridgeFns._nativeReq) return _neteaseBridgeFns._nativeReq(url, headers);
+    return null;
+  }
   // 代理：优先用注入的网易云直连函数；未注入（闭包2 尚未初始化）时返回空，绝不抛 ReferenceError
   async function _netEaseReq(url) {
     if (_neteaseBridgeFns && _neteaseBridgeFns._netEaseReq) return _neteaseBridgeFns._netEaseReq(url);
@@ -407,15 +520,22 @@ window.bmMusic = (function () {
     for (const src of sources) {
       try {
         // 搜索已带 url 时（Meting 系一步返回），复用但必须解析「转发地址」拿到真实 mp3 直链 + 歌词文本
-        if (song.url && (src.key === 'qijieya' || src.key === 'meting' || src.key === 'qingyu')) {
+        // 20261113：kugou 的 url 也是「带 auth 的转发地址」，必须一起走 302 解析
+        if (song.url && (src.key === 'qijieya' || src.key === 'meting' || src.key === 'kugou' || src.key === 'qingyu' || src.key === 'kfjie-wy')) {
           // song.url 是 type=url 转发地址 → 跟随 302 拿真实 mp3 直链
           const real = await _resolveUrl(song.url);
           // 20261104 容灾：若 qijieya 转发地址解析后仍是转发地址（未跟到真实 mp3），
           // 换 injahow 镜像再试一次（injahow url 接口稳定，独立域名，互备）
+          // 20261113：injahow 已彻底失效（返回空文本），换源改用清羽的转发地址兜底
           if (real && real.indexOf('music.126.net') < 0 && real.indexOf('.mp3') < 0 && src.key === 'qijieya') {
-            const inj = await _resolveUrl(`https://api.injahow.cn/meting/?server=netease&type=url&id=${encodeURIComponent(song.id)}`);
-            if (inj && (inj.indexOf('music.126.net') >= 0 || inj.indexOf('.mp3') >= 0)) song.url = inj;
-            else song.url = real;
+            // 20261113 晚：原兜底用清羽（met.liiiu.cn），但它对约一半歌只给 30 秒；
+            // 现改为 GD Studio 按网易云歌曲 id 直接取签名直链，拿到的就是整首。
+            let bak = '';
+            try {
+              const gj = await _fetchJSON(`https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=${encodeURIComponent(song.id)}&br=320`, 6500);
+              if (gj && gj.url) bak = gj.url;
+            } catch (e) {}
+            song.url = (bak && (bak.indexOf('music.126.net') >= 0 || bak.indexOf('.mp3') >= 0)) ? bak : real;
           } else if (real) {
             song.url = real;
           }
@@ -426,11 +546,20 @@ window.bmMusic = (function () {
           }
           return song;
         }
-        const j = await _fetchJSON(src.song(song));
+        const j = src.native ? await _nativeReq(src.song(song), src.headers)
+                            : await _fetchJSON(src.song(song), src.timeout, src.headers);
         const d = src.parseSong(j);
         if (d && d.url) {
           song.url = d.url;
           if (d.pic) song.pic = d.pic;
+          // 20261113：GD Studio 的封面要单独请求 types=pic（返回 JSON，不能直接当 img src），
+          //   它按网易云歌曲 id 就能取到图，所以这里补一次；失败就算了，不影响播放
+          if (!song.pic && src.key === 'gdstudio') {
+            try {
+              const pj = await _fetchJSON(`https://music-api.gdstudio.xyz/api.php?types=pic&source=netease&id=${encodeURIComponent(song.id)}&size=300`, 5000);
+              if (pj && pj.url) song.pic = String(pj.url).replace(/^http:\/\//i, 'https://');
+            } catch (e) {}
+          }
           // 歌词单独拉（Meting 系 lrc 转发地址用文本抓取，其余用 JSON 解析）
           const lrc = await _fetchLrcText(src, song);
           if (lrc) song.lrc = lrc;
@@ -767,6 +896,49 @@ window.bmMusic = (function () {
     state.loadedId = newSong.id;
     a.play().then(() => { state.playing = true; _reloadRetry = 0; onStateChange(); }).catch(() => { _reloadRetry = 0; });
   }
+  /* 20261113：30 秒试听自动换源（逐个候选试，不用一次就放弃）
+     公开镜像（包括清羽、kfjie 的网易云线）对 VIP 歌普遍只给 30 秒。播放器拿到 metadata
+     发现时长落在 20–40 秒，就按 祈杰 → 酷狗 → 酷我 的顺序重搜同一首歌，换到整首再播；
+     每首歌每个源只试一次，全试完就停，绝不递归。 */
+  const _previewFixTried = new Map();          // 歌名 → 已试到第几个候选
+  // 30 秒试听自动换源的候选顺序：两个网易云号池源在前，酷狗（换曲库）垫最后
+  const _PREVIEW_SOURCES = ['qijieya', 'huibq', 'gdstudio', 'kugou', 'kuwo'];
+  async function _upgradeShortPreview(cur) {
+    try {
+      if (!cur || !cur.name) return;
+      const key = String(cur.id || '') + '|' + String(cur.name);
+      const step = _previewFixTried.get(key) || 0;
+      if (step >= _PREVIEW_SOURCES.length) return;
+      _previewFixTried.set(key, step + 1);
+      const src = SOURCES.find(s => s.key === _PREVIEW_SOURCES[step]);
+      if (!src) return;
+      const kw = [cur.name, cur.artist].filter(Boolean).join(' ').trim();
+      if (!kw) return;
+      const list = src.parseSearch(await _fetchJSON(src.search(kw), src.timeout, src.headers)) || [];
+      if (!list.length) return;
+      const nm = String(cur.name).trim();
+      const sameName = list.filter(x => String(x.name || '').trim() === nm);
+      const best = sameName.find(x => cur.artist && String(x.artist || '').indexOf(String(cur.artist).slice(0, 4)) >= 0)
+                || sameName[0] || null;
+      if (!best) return;
+      // 搜索已带转发地址（祈杰/酷狗）就直接解析；酷我列表不带直链，再按歌名查一次
+      let real = best.url ? await _resolveUrl(best.url) : '';
+      if (!real) {
+        const j = src.native ? await _nativeReq(src.song(best), src.headers)
+                            : await _fetchJSON(src.song(best), src.timeout, src.headers);
+        const d = src.parseSong(j);
+        real = d && d.url ? await _resolveUrl(d.url) : '';
+      }
+      if (!real || real === cur.url) return;
+      if (real.indexOf('.mp3') < 0 && real.indexOf('music.126.net') < 0
+          && real.indexOf('kuwo.cn') < 0 && real.indexOf('kugou') < 0) return;
+      if (window.miniToast) miniToast('这首只给 30 秒试听，已自动换到整首音源');
+      _swapAndReplay(cur, { id: best.id || cur.id, name: best.name || cur.name, artist: best.artist || cur.artist || '',
+                            album: cur.album || '', pic: cur.pic || best.pic || '', url: real,
+                            lrc: cur.lrc || '',   // 歌词沿用原来的（best.lrc 是转发地址，不是 LRC 文本，不能直接用）
+                            source: src.key });
+    } catch (e) {}
+  }
   function rebuildCleanAudio() {
     _teardownGain();   // 增益已禁用，确保残留的 Web Audio 图拆干净（这是唯一真正需要清理的）
     if (!state.audio) {
@@ -781,6 +953,11 @@ window.bmMusic = (function () {
         try {
           if (state.audio && isFinite(state.audio.duration) && state.audio.duration > 0) _cachedDuration = state.audio.duration;
           if (typeof window.__bmUpdateProgress === 'function') window.__bmUpdateProgress();
+        } catch (e) {}
+        // 20261113：探到 20–40 秒（30 秒试听的特征长度）就自动换整首音源
+        try {
+          const d = state.audio && state.audio.duration;
+          if (state.current && isFinite(d) && d > 20 && d < 40) _upgradeShortPreview(state.current);
         } catch (e) {}
       });
       // 20261105：durationchange 也同步缓存（某些源 metadata 分阶段就绪），挂后台回来 duration 失效时用缓存兜底
@@ -1045,6 +1222,27 @@ window.bmMusic = (function () {
     state.playIndex = (state.playIndex - 1 + state.playlist.length) % state.playlist.length;
     await playPrepared(state.playIndex);
   }
+  /* 20261112：正儿八经的「下一首」——无视随机播放模式，老老实实按列表顺序往后挪一首。
+     开发者命令「下一首」走这里（原来直接调 next()，随机模式下会乱跳，语义不对）。 */
+  async function nextSequential() {
+    if (!state.playlist.length) return;
+    if (state.playMode === 'once' && state.playIndex >= state.playlist.length - 1) {
+      state.playIndex = state.playlist.length - 1;   // 顺序播放到底了就停在最后一首
+      await playPrepared(state.playIndex);
+      return;
+    }
+    state.playIndex = (state.playIndex + 1) % state.playlist.length;
+    await playPrepared(state.playIndex);
+  }
+  /* 20261112：「换歌 / 切歌」= 随机换一首（与当前不同）。开发者命令用。 */
+  async function randomNext() {
+    if (!state.playlist.length) return;
+    if (state.playlist.length === 1) { await playPrepared(0); return; }
+    let idx;
+    do { idx = Math.floor(Math.random() * state.playlist.length); } while (idx === state.playIndex);
+    state.playIndex = idx;
+    await playPrepared(idx);
+  }
   /* 切歌前确保目标曲有播放直链（搜索列表项只有元数据）。
      20261104 关键修复「某首歌记住旧直链永远放不了」：网易云直链（music.126.net）带时间戳、
      几分钟到几小时就会过期，播放列表里缓存的是首次解析的旧直链，复用必 404 静音。
@@ -1225,6 +1423,7 @@ window.bmMusic = (function () {
     getVolume,
     setVolume,
     play, pause, resume, toggle, next, prev,
+    nextSequential, randomNext,   // 20261112：开发者命令——顺序下一首 / 随机换一首
     cyclePlayMode,
     getCustomSources,
     addCustomSource,
@@ -1722,9 +1921,53 @@ window.bmMusicUI = (function () {
     } catch (e) { return null; }
   }
 
+  /* 20261112：开发者命令「搜歌」——让角色**后台真跑一遍搜歌流程**，不是弹个假 toast。
+     用户原话：「搜索呢，就是角色会后台自动走一遍这个搜索的歌曲的流程，真的去搜一搜，
+     搜一首歌过来，然后切换那首歌，把这首歌加到播放列表里。搜什么并不固定，模拟真实的流程。」
+     · 没给关键词：走角色自己的 AI 关键词 → 网易云直连 / 内置源搜索 → 解析播放直链
+       （_searchFreshForYou，跟角色日常「专门为你搜一首」是同一个函数）
+     · 给了关键词：按玩家给的词去搜，同样真实搜索 + 解析直链，从命中里随机取一首
+     搜到后：切到这首 → addToQueue 进播放列表 → 落一条听歌历史 → 角色照常发一句（走 _sayMusicAction） */
+  async function charSearchSong(c, keyword) {
+    const nm = c ? (c.name || 'TA') : 'TA';
+    const kw = String(keyword || '').trim();
+    let song = null;
+    try {
+      if (!kw) {
+        song = await _searchFreshForYou(c);
+      } else if (_netEaseDirect) {
+        const list = await _netEaseSearch(kw);
+        if (list && list.length) {
+          const s = list[Math.floor(Math.random() * list.length)];
+          const u = await _netEaseSongUrl(s.id);
+          if (u && u.url) song = { id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' };
+        }
+      } else {
+        const res = await M.search(kw);
+        if (res && res.length) {
+          const s = res[Math.floor(Math.random() * res.length)];
+          const full = await M.fetchSongDetail(s);
+          if (full && full.url) song = full;
+        }
+      }
+    } catch (e) { song = null; }
+    if (!song) {
+      _sayMusicAction(c, `${nm} 搜了一圈，没找到合适的歌`);
+      return { ok: false };
+    }
+    M.state.current = song;
+    M.addToQueue(song);                                  // 搜到的这首进播放列表
+    try { await M.play(song); } catch (e) {}
+    try {
+      await M.addHistory({ kind: 'ear', charId: c ? c.id : '', songId: song.id, name: song.name,
+        artist: song.artist || '', album: song.album || '', pic: song.pic || '', ts: Date.now(), listenSec: 0 });
+    } catch (e) {}
+    _sayMusicAction(c, _swapPick(_searchForYouPool).replace(/\{song\}/g, song.name || ''));
+    return { ok: true, song: song };
+  }
+
   // 动作池：每项 { w: 权重, act: 执行函数 }
-  function _charMusicActions(c, nm) {
-    const say = (text) => { _sayMusicAction(c, text); };
+  function _charMusicActions(c, nm) {    const say = (text) => { _sayMusicAction(c, text); };
     const cur = M.state.current;
     const hasList = M.state.playlist && M.state.playlist.length;
     const hasCur = !!cur;
@@ -3640,6 +3883,51 @@ window.bmMusicUI = (function () {
     return (dt.getMonth() + 1) + '月' + dt.getDate() + '日';
   }
 
+  /* ============================================================
+     20261113c：播放列表的两个「行级动作」抽成公共函数
+     播放页收藏键、软件内列表 ★、原生悬浮窗列表 ★ 都走这里，避免三份实现走样。
+     ============================================================ */
+
+  /* 把某一首加入音乐库。返回 {ok, already, name} */
+  async function collectSongToLibrary(song) {
+    if (!song) return { ok: false, why: 'no-song' };
+    const full = await M.fetchSongDetail(song);
+    if (!full || !full.id) return { ok: false, why: 'no-detail' };
+    // 按当前模式选 source：存哪库，音乐库就查哪库（20261105 修过 mirror/local 错位）
+    const src = M.state.mode === 'mirror' ? 'mirror' : 'local';
+    let already = false;
+    try {
+      const lib = await M.getLocalLibrary(src);
+      already = (lib || []).some(x => String(x.id) === String(full.id));
+    } catch (e) {}
+    if (already) return { ok: true, already: true, name: full.name };
+    await M.addLocalTrack({ id: full.id, name: full.name, artist: full.artist, album: full.album, pic: full.pic, url: full.url, lrc: full.lrc, source: src });
+    return { ok: true, already: false, name: full.name };
+  }
+
+  /* 从播放列表移除第 i 首，负责 playIndex / 当前曲 / 播放态的维护。返回被删的那首 */
+  function removePlaylistAt(i) {
+    const pl = M.state.playlist || [];
+    if (!(i >= 0) || !pl[i]) return null;
+    const removed = pl[i];
+    const isCur = M.state.current && String(M.state.current.id) === String(removed.id);
+    pl.splice(i, 1);
+    if (isCur) {
+      if (pl.length) {
+        M.state.playIndex = Math.min(i, pl.length - 1);
+        try { M.playPrepared(M.state.playIndex); } catch (e) {}
+      } else {
+        M.state.playIndex = -1; M.state.current = null; M.state.playing = false;
+        try { const a = M.state.audio; if (a) { a.pause(); a.src = ''; } M.state.loadedId = null; } catch (e) {}
+      }
+    } else {
+      M.state.playIndex = pl.indexOf(M.state.current);
+      if (M.state.playIndex < 0) M.state.playIndex = pl.length ? 0 : -1;
+    }
+    try { M.saveSession(); } catch (e) {}
+    return removed;
+  }
+
   function showPlaylist() {
     let panel = document.getElementById('bm-playlist-panel');
     if (panel) { panel.remove(); setListBtnOn(false); return; }
@@ -3651,6 +3939,10 @@ window.bmMusicUI = (function () {
     panel.className = 'bm-playlist-panel';
     // 管理模式状态（本次打开期间，全选勾选集合）
     let manageMode = false;
+    /* 20261113c：编辑态（点播放列表上方导航栏进入）——只有编辑态才露出删除键，
+       常态行尾只留「加入音乐库」。用户要求：「删除的按钮必须是我点击了播放列表上方的
+       那个导航栏之后才能够删除，正常后面就只有添加到音乐库这个按钮」。 */
+    let editMode = false;
     const selected = new Set();
     // 当前 Tab：'now'（当前播放）/'history'（历史播放）
     let tab = 'now';
@@ -3671,6 +3963,7 @@ window.bmMusicUI = (function () {
             <span class="bm-playlist-tab on" data-tab="now">当前播放<span class="bm-playlist-count" id="bm-playlist-count">${list.length}</span></span>
             <span class="bm-playlist-tab" data-tab="history">历史播放</span>
           </div>
+          <span class="bm-pl-edittip" id="bm-playlist-edittip">完成</span>
           <div class="bm-playlist-headbtns">
             <button class="bm-playlist-icon" id="bm-playlist-manage" title="管理">${window.icon ? window.icon('listview', 18) : '☰'}</button>
             <button class="bm-playlist-icon" id="bm-playlist-trash" title="清空播放列表">${window.icon ? window.icon('trash', 18) : '🗑'}</button>
@@ -3707,15 +4000,18 @@ window.bmMusicUI = (function () {
         panel.remove(); setListBtnOn(false);
       }
     };
-    // 渲染当前播放 Tab 的单行（照网易云：歌名 · 歌手 + 删除× + 拖动≡）
+    // 渲染当前播放 Tab 的单行
+    // 20261113c：行尾按钮分两态——常态「★ 加入音乐库 + ≡ 下一首播放」，
+    //   编辑态（点上方导航栏进入）把这两个收起，只留一颗小号删除 ×。
     const nowRow = (s, i) => `
       <div class="bm-playlist-item ${i === M.state.playIndex ? 'on' : ''}" data-i="${i}">
         <span class="bm-pl-check" style="display:${manageMode ? 'inline-flex' : 'none'};"><input type="checkbox" data-i="${i}" ${selected.has(i) ? 'checked' : ''}></span>
         <span class="bm-pl-playing"></span>
         <span class="bm-pl-name">${esc(s.name)}</span>
         ${s.artist ? `<span class="bm-pl-sep">·</span><span class="bm-pl-artist">${esc(s.artist)}</span>` : ''}
-        <button class="bm-pl-del" data-i="${i}" title="从列表移除">${window.icon ? window.icon('close', 14) : '×'}</button>
-        <button class="bm-pl-drag" data-i="${i}" title="下一首播放">≡</button>
+        <button class="bm-pl-fav" data-i="${i}" title="加入音乐库" style="display:${editMode ? 'none' : 'inline-flex'};">${window.icon ? window.icon('star', 15) : '☆'}</button>
+        <button class="bm-pl-drag" data-i="${i}" title="下一首播放" style="display:${editMode ? 'none' : 'inline-flex'};">≡</button>
+        <button class="bm-pl-del" data-i="${i}" title="从列表移除" style="display:${editMode ? 'inline-flex' : 'none'};">${window.icon ? window.icon('close', 13) : '×'}</button>
       </div>`;
     // 渲染历史播放 Tab 的单行
     const historyRow = (h, i) => `
@@ -3792,24 +4088,33 @@ window.bmMusicUI = (function () {
           if (window.miniToast) miniToast('已排到下一首播放');
         };
       });
+      // 每行「★」按钮：把这一首加入音乐库。
+      //   存储逻辑与播放页的收藏键完全一致（按当前模式选 source，先查重再写），
+      //   保证「存哪个库、音乐库就查哪个库」，不会出现提示已收藏但库里没有。
+      body.querySelectorAll('.bm-pl-fav').forEach(btn => {
+        btn.onclick = async (e) => {
+          e.stopPropagation();
+          const i = parseInt(btn.dataset.i, 10);
+          const s = (M.state.playlist || [])[i];
+          if (!s) return;
+          try {
+            const ret = await collectSongToLibrary(s);
+            if (!ret.ok) { if (window.miniToast) miniToast(ret.why === 'no-detail' ? '加入失败：未获取到歌曲信息' : '加入音乐库失败'); return; }
+            if (ret.already) { if (window.miniToast) miniToast(`《${ret.name}》已经在音乐库了`); return; }
+            btn.classList.add('on');
+            if (window.bmFx) { try { window.bmFx.burst(btn.querySelector('svg') || btn, { color: '#f5c97b' }); } catch (e3) {} }
+            if (window.miniToast) miniToast(`《${ret.name}》已加入音乐库`);
+          } catch (err) {
+            if (window.miniToast) miniToast('加入音乐库失败');
+          }
+        };
+      });
       // 每行「删除」按钮：从播放列表移除这一首
       body.querySelectorAll('.bm-pl-del').forEach(btn => {
         btn.onclick = (e) => {
           e.stopPropagation();
-          const i = parseInt(btn.dataset.i, 10);
-          const pl = M.state.playlist;
-          if (!pl[i]) return;
-          const removed = pl[i];
-          pl.splice(i, 1);
-          const removedCurrent = M.state.current && String(M.state.current.id) === String(removed.id);
-          if (removedCurrent) {
-            if (pl.length) { M.state.playIndex = Math.min(i, pl.length - 1); M.playPrepared(M.state.playIndex); }
-            else { M.state.playIndex = -1; M.state.current = null; M.state.playing = false; try { const a = M.state.audio; if (a) { a.pause(); a.src = ''; } M.state.loadedId = null; } catch (e) {} }
-          } else {
-            M.state.playIndex = pl.indexOf(M.state.current);
-            if (M.state.playIndex < 0) M.state.playIndex = pl.length ? 0 : -1;
-          }
-          M.saveSession();
+          const removed = removePlaylistAt(parseInt(btn.dataset.i, 10));
+          if (!removed) return;
           rerender();
           if (window.miniToast) miniToast('已从列表移除');
         };
@@ -3832,6 +4137,9 @@ window.bmMusicUI = (function () {
     const switchTab = async (t) => {
       tab = t;
       manageMode = false;
+      editMode = false;   // 换 tab 一律退出编辑态，避免删除键留在历史列表上
+      const _h = panel.querySelector('.bm-playlist-head');
+      if (_h) _h.classList.remove('editing');
       selected.clear();
       panel.querySelectorAll('.bm-playlist-tab').forEach(x => x.classList.toggle('on', x.dataset.tab === t));
       panel.querySelector('#bm-playlist-foot-manage').style.display = 'none';
@@ -3843,6 +4151,16 @@ window.bmMusicUI = (function () {
     panel.querySelectorAll('.bm-playlist-tab').forEach(t => {
       t.onclick = () => switchTab(t.dataset.tab);
     });
+    // 20261113c：点播放列表上方的导航栏 → 进入编辑态（行尾才出现小号删除键），
+    //   再点一次退出。tab 与头部按钮的点击不触发（各自有独立行为）。
+    const headEl = panel.querySelector('.bm-playlist-head');
+    headEl.onclick = (e) => {
+      if (e.target.closest('.bm-playlist-tab') || e.target.closest('button')) return;
+      if (tab !== 'now') return;
+      editMode = !editMode;
+      headEl.classList.toggle('editing', editMode);
+      rerender();
+    };
     // 下拉把手：点击或向下拖动关闭
     const grip = panel.querySelector('.bm-playlist-grip');
     if (grip) {
@@ -4499,6 +4817,17 @@ window.bmMusicUI = (function () {
     const P = (window.Capacitor && window.Capacitor.Plugins) ? window.Capacitor.Plugins : null;
     return (P && P.BmRemoteControl) ? P.BmRemoteControl : null;
   };
+  /* 20261113：原生 HTTP 通道（Java 层，不受 CORS 限制），只发 URL + 自定义头。
+     不附带网易云 Cookie——Java 侧已改成「非 163/126 域名不自动带 MUSIC_U」，避免凭证外发。 */
+  async function _nativeReqJson(url, headers) {
+    const b = _neteaseBridge();
+    if (!b || typeof b.neteaseRequest !== 'function') return null;
+    try {
+      const r = await b.neteaseRequest({ url, method: 'GET', headers: headers || null });
+      if (!r || !r.ok || !r.body) return null;
+      return JSON.parse(r.body);
+    } catch (e) { return null; }
+  }
   // 是否处于「网易云直连」模式（持久化，默认 false=遥控）
   let _netEaseDirect = false;
   async function _netEaseLoadDirect() {
@@ -4543,6 +4872,47 @@ window.bmMusicUI = (function () {
     if (!b || typeof b.neteaseCookie !== 'function') return false;
     try { const r = await b.neteaseCookie(); return !!(r && r.loggedIn); } catch (e) { return false; }
   }
+  /* 20261113 新增：真实账号校验（治「假登录」）
+     20261113 真机复现：点「登录网易云」后 Activity 里的 WebView 立刻读到一条**旧的、
+     已失效的** MUSIC_U（上次登录/浏览网易云页面时留在 CookieManager 里的），
+     把它存下来并 finish()，于是「跳一下就回来」，前端显示已登录；
+     但真机实测 /api/nuser/account/get 返回 {"code":200,"account":null}，
+     也就是说这条 cookie 只是个空壳 —— 搜歌/直链/歌单全部无权限，正是玩家说的假登录。
+     所以「有没有 MUSIC_U」不能作为登录判据，必须问一次账号接口，account 非空才算真登录。 */
+  async function _netEaseAccount() {
+    const j = await _netEaseReq('https://music.163.com/api/nuser/account/get');
+    if (!j || !j.account) return null;
+    return j.profile || j.account;
+  }
+  /* 20261113 新增：登录态三态校验（玩家要求「以后再失效也要能重新登录」）
+     返回 'ok' | 'expired' | 'unknown' | 'none'
+     - ok      ：有 cookie 且账号接口能拿到 account，真登录；
+     - expired ：cookie 在但接口明确回「无账号」（或本地已无 cookie）→ 清凭证，面板回到未登录，玩家可重新登录；
+     - unknown ：网络/接口异常，无法判断 —— **绝不清 cookie**，避免把网络抖动误判成掉登录，
+                 让玩家白白重登一次（原来只要 account 拿不到就清，属于误伤）。
+     - none    ：不是真机（没有原生插件），不做任何事。 */
+  async function _netEaseVerify() {
+    const b = _neteaseBridge();
+    if (!b || typeof b.neteaseCookie !== 'function') return 'none';
+    let cookieOk = false;
+    try { const r = await b.neteaseCookie(); cookieOk = !!(r && r.loggedIn); } catch (e) { return 'unknown'; }
+    if (!cookieOk) return 'expired';
+    let j = null;
+    try { j = await _netEaseReq('https://music.163.com/api/nuser/account/get'); } catch (e) { return 'unknown'; }
+    if (!j) return 'unknown';                 // 请求失败/403/超时：判断不了，保留原状
+    if (j.account || j.profile) return 'ok';
+    if (j.code === 200) return 'expired';     // 接口正常但没账号 = cookie 真失效
+    return 'unknown';
+  }
+  /* 20261113：播放直连链路里发现「疑似掉登录」时，最多每分钟提示一次，
+     并直接告诉玩家去哪里重新登录——而不是让他面对一首放不出来的歌发呆。 */
+  let _neAuthHintAt = 0;
+  function _neAuthHintOnce() {
+    const now = Date.now();
+    if (now - _neAuthHintAt < 60000) return;
+    _neAuthHintAt = now;
+    try { if (window.miniToast) miniToast('网易云登录可能已失效，去「遥控模式」面板点「重新登录」'); } catch (e) {}
+  }
   // 直连搜歌：带 Cookie 请求网易云搜索接口，返回 [{id,name,artist,pic}] 
   async function _netEaseSearch(kw) {
     const j = await _netEaseReq('https://music.163.com/api/search/get/web?s=' + encodeURIComponent(kw) + '&type=1&offset=0&limit=30');
@@ -4560,8 +4930,14 @@ window.bmMusicUI = (function () {
   async function _netEaseSongUrl(id) {
     const j = await _netEaseReq('https://music.163.com/api/song/enhance/player/url?ids=[' + id + ']&br=320000');
     if (!j || !j.data || !j.data.length) return null;
+    // 20261113：整体 301 = 未登录，提示一次「去重新登录」（每分钟最多一次，不刷屏）
+    if (j.code === 301) { _neAuthHintOnce(); return null; }
     const d = j.data[0];
-    if (!d || !d.url) return { url: null, freeTrial: d.freeTrialInfo || null, code: d.code };
+    if (!d || !d.url) {
+      // 单曲 code 为登录/权限类错误时同样提示；d 为空也顺手兜住，不抛错
+      if (d && (d.code === -447 || d.code === -462 || d.code === 301)) _neAuthHintOnce();
+      return { url: null, freeTrial: (d && d.freeTrialInfo) || null, code: d ? d.code : null };
+    }
     return { url: d.url, freeTrial: d.freeTrialInfo || null, code: d.code };
   }
   // 直连读玩家自己的歌单列表
@@ -4973,7 +5349,22 @@ window.bmMusicUI = (function () {
     const isDirect = _netEaseDirect;
     const neBridge = _neteaseBridge();
     let neLogged = false;
-    if (neBridge) { neLogged = await _netEaseLoggedIn(); }
+    let neProfile = null;
+    if (neBridge) {
+      /* 20261113：光有 MUSIC_U 不算登录 —— 旧 cookie 会让面板显示「已登录」但所有接口 403。
+         改用三态校验：只有接口明确说「没账号」才清凭证；网络异常时保留登录态，不误伤。 */
+      const neState = await _netEaseVerify();
+      if (neState === 'ok') {
+        neLogged = true;
+        neProfile = await _netEaseAccount();
+      } else if (neState === 'expired') {
+        neLogged = false;
+        try { if (typeof neBridge.neteaseClear === 'function') await neBridge.neteaseClear(); } catch (e0) {}
+      } else if (neState === 'unknown') {
+        // 判断不了：有 cookie 就先按已登录渲染，玩家可点「重新登录」自行重置
+        neLogged = await _netEaseLoggedIn();
+      }
+    }
     // 读当前遥控目标 App（尝试持久化，无则默认网易云）
     try { const v = await getSetting('remoteTargetApp', 'netease'); if (v) _remoteTargetApp = v; } catch (e) {}
     const target = _remoteApps.find(a => a.id === _remoteTargetApp) || _remoteApps[0];
@@ -5023,7 +5414,7 @@ window.bmMusicUI = (function () {
           <div class="bm-netease-box">
             <div class="bm-netease-login-row">
               ${neLogged
-                ? `<span class="bm-netease-status on">● 已登录网易云</span><button class="bm-remote-btn" id="bm-netease-logout">退出登录</button>`
+                ? `<span class="bm-netease-status on">● 已登录网易云${neProfile && neProfile.nickname ? ' · ' + esc(neProfile.nickname) : ''}</span><button class="bm-remote-btn" id="bm-netease-relogin">重新登录</button><button class="bm-remote-btn" id="bm-netease-logout">退出登录</button>`
                 : `<span class="bm-netease-status">○ 未登录（登录后可用自己账号搜歌/读歌单/点VIP）</span><button class="bm-remote-btn bm-netease-login" id="bm-netease-login"><i data-icon="key" data-size="16"></i> 登录网易云</button>`}
             </div>
             <div class="bm-netease-import-row">
@@ -5085,19 +5476,53 @@ window.bmMusicUI = (function () {
       await _netEaseSetDirect(!_netEaseDirect);
       renderRemotePanel(box);
     };
-    // 登录网易云
-    const loginBtn = box.querySelector('#bm-netease-login');
-    if (loginBtn) loginBtn.onclick = async (e) => {
-      e.stopPropagation();
+    // 登录网易云（「登录」与「重新登录」共用同一套流程）
+    const doNeteaseLogin = async (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
       const b = _neteaseBridge();
       if (!b || typeof b.neteaseLogin !== 'function') {
         if (window.miniToast) miniToast('直连登录需真机原生插件（当前为 Web 演示）');
         return;
       }
       try { await b.neteaseLogin(); } catch (err) {}
-      if (window.miniToast) miniToast('请在打开的网易云页面登录，登录成功后自动返回');
-      // 登录页返回后刷新登录态
-      setTimeout(async () => { renderRemotePanel(box); }, 2500);
+      if (window.miniToast) miniToast('请在打开的网易云页面登录，登录成功后会自动返回');
+      /* 20261113 修复「点登录跳一下就回来、还是未登录」的前端部分：
+         原来只在 2.5 秒后重绘一次面板 —— 这个时间点玩家根本还没输完账号，
+         面板自然还是「未登录」，而且旧 cookie 会让面板误显示「已登录」。
+         改成轮询：每 1.5s 查一次（先看有没有 cookie，再问账号接口），
+         拿到真实账号才算成功；超过 90 秒给一句明确提示，不再静默。 */
+      let tries = 0;
+      const timer = setInterval(async () => {
+        tries++;
+        try {
+          if (await _netEaseLoggedIn()) {
+            const prof = await _netEaseAccount();
+            if (prof) {
+              clearInterval(timer);
+              if (window.miniToast) miniToast('网易云登录成功' + (prof.nickname ? '：' + prof.nickname : ''));
+              renderRemotePanel(box);
+              return;
+            }
+          }
+        } catch (e2) {}
+        if (tries >= 60) {
+          clearInterval(timer);
+          if (window.miniToast) miniToast('没检测到登录，请再点一次「登录 / 重新登录」重试');
+          renderRemotePanel(box);
+        }
+      }, 1500);
+    };
+    const loginBtn = box.querySelector('#bm-netease-login');
+    if (loginBtn) loginBtn.onclick = doNeteaseLogin;
+    /* 20261113 新增「重新登录」：已登录状态下也能一键重置——
+       先清掉本地旧凭证再走登录流程。玩家发现放不出歌/歌单读不出来时，
+       不用先「退出登录」再找登录按钮，一步就能重来。 */
+    const reloginBtn = box.querySelector('#bm-netease-relogin');
+    if (reloginBtn) reloginBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const b = _neteaseBridge();
+      if (b && typeof b.neteaseClear === 'function') { try { await b.neteaseClear(); } catch (err) {} }
+      await doNeteaseLogin(null);
     };
     // 退出登录
     const logoutBtn = box.querySelector('#bm-netease-logout');
@@ -5113,6 +5538,16 @@ window.bmMusicUI = (function () {
       e.stopPropagation();
       if (!neLogged) {
         if (window.miniToast) miniToast('请先登录网易云，再导入你的歌单');
+        return;
+      }
+      /* 20261113：读歌单要先拿 uid，uid 来自账号接口 —— 登录态空壳时这里会返回空数组，
+         原来统一提示「可能账号没建歌单」，把「登录已失效」误报成「你没有歌单」。
+         现在先单独确认一次账号，失效就明确让玩家重登。 */
+      const prof = await _netEaseAccount();
+      if (!prof) {
+        if (window.miniToast) miniToast('登录态已失效，请先重新登录网易云');
+        try { const bb = _neteaseBridge(); if (bb && bb.neteaseClear) await bb.neteaseClear(); } catch (e0) {}
+        renderRemotePanel(box);
         return;
       }
       const pls = await _netEaseMyPlaylists();
@@ -6122,11 +6557,14 @@ window.bmMusicUI = (function () {
     const host = page || document.body;
     const builtin = [
       { key: 'auto', name: '自动（推荐）', desc: '多源自动容灾切换' },
-      { key: 'gdstudio', name: '网易云镜像（新）', desc: '直链稳定，直接返回真实 mp3' },
-      { key: 'qijieya', name: '网易云镜像（旧）', desc: '搜索+播放+歌词一步到位' },
-      { key: 'qingyu', name: '网易云镜像（清羽）', desc: '标准 Meting 格式，新稳定源' },
+      { key: 'qijieya', name: '网易云（祈杰·整首）', desc: '号池源，VIP 歌给完整版' },
+      { key: 'huibq', name: '网易云（Huibq·整首）', desc: '洛雪社区号池，按 ID 取直链，冷启动较慢' },
+      { key: 'gdstudio', name: '网易云（GD Studio·整首）', desc: '号池源，VIP 歌给完整版，偶发限流' },
+      { key: 'kugou', name: '酷狗（整首）', desc: '换曲库兜底，不是网易云' },
       { key: 'kuwo', name: '酷我音乐', desc: '酷我曲库，多档音质' },
       { key: 'tang', name: 'QQ 音乐', desc: '开放接口' },
+      { key: 'qingyu', name: '网易云（清羽·30 秒）', desc: '旧镜像，只给试听；整首源全挂时的兜底' },
+      { key: 'kfjie-wy', name: '网易云（kfjie·30 秒）', desc: '同站网易云线，只给试听；兜底用' },
       { key: 'itunes', name: 'iTunes（国际）', desc: '英文/欧美曲库，30 秒试听' },
     ];
     const custom = M.getCustomSources();
@@ -6478,6 +6916,7 @@ window.bmMusicUI = (function () {
     const key = etitle + '|' + eartist;
     if (_extLyricFetchedFor === key) return;   // 同一首歌已拉过，跳过（避免重复请求）
     _extLyricFetchedFor = key;
+    let gotLyric = false;   // 20261113：拉失败要允许重试，不能因为「记过一次」就永远空着
     try {
       if (typeof _netEaseSearch === 'function' && M && typeof M._netEaseLyric === 'function') {
         const kw = (eartist && eartist !== '未知歌手') ? (etitle + ' ' + eartist) : etitle;
@@ -6486,6 +6925,7 @@ window.bmMusicUI = (function () {
           const hit = list[0];
           const lrc = await M._netEaseLyric(hit.id);
           if (lrc) {
+            gotLyric = true;
             M.state.lyrics = lrc;
             const lyricBox = document.getElementById('bm-music-lyric');
             if (lyricBox) {
@@ -6504,6 +6944,9 @@ window.bmMusicUI = (function () {
         }
       }
     } catch (e2) {}
+    /* 20261113：这一首没拉到歌词（未登录/接口抽风）就把去重标记清掉，
+       否则整首歌期间都不会再试一次 —— 玩家看到的就是「一直是暂无歌词」。 */
+    if (!gotLyric) _extLyricFetchedFor = '';
   }
 
   /* ============================================================
@@ -6685,7 +7128,12 @@ window.bmMusicUI = (function () {
     let _lsBox = null, _lsLines = null, _lsCount = -1, _lsLastMs = 0, _lsOnIdx = -2;
     const tick = () => {
       const a = getAudio();
-      if (a) {
+      /* 20261113 修复「后台遥控外部 App 模式没有实时滚动歌词」根因：
+         原来这里只读内置 audio.currentTime，而遥控模式下真正在播的是外部 App（网易云），
+         内置 audio 根本没在播、currentTime 恒为 0 → 歌词显示出来但永远停在第 0 秒，不滚也不高亮。
+         代码里其实早有 _exactPos()（遥控模式读外部真实进度、其余模式读 audio），只是这里没用。
+         遥控模式下即使 audio 元素还没建出来也要继续跑，所以守卫条件放宽。 */
+      if (a || _isRemoteNow()) {
         const box = (_lsBox && _lsBox.isConnected) ? _lsBox : (_lsBox = document.getElementById('bm-music-lyric'));
         if (box) {
           if (!_lsLines || _lsCount !== box.childElementCount) {
@@ -6696,7 +7144,7 @@ window.bmMusicUI = (function () {
           const nowMs = (window.performance && performance.now) ? performance.now() : Date.now();
           if (nowMs - _lsLastMs >= 100) {
             _lsLastMs = nowMs;
-            const t = a.currentTime || 0;
+            const t = _exactPos() || 0;   // 20261113：统一进度源（遥控模式取外部真实进度）
             const lines = _lsLines;
             let active = -1;
             for (let i = 0; i < lines.length; i++) {
@@ -7225,9 +7673,41 @@ window.bmMusicUI = (function () {
       try {
         if (info && typeof info.index === 'number') {
           M.state.playIndex = info.index;
-          M.playPrepared(info.index);
+          /* 20261113c：与软件内大面板的行点击对齐——遥控外部 App 模式下不能直接调内置播
+             放器（会和外部正在播的那首打架、也切不动外部），要走 bridge 的 next 语义。 */
+          if (M.state.mode === 'remote' && !_netEaseDirect) {
+            _remoteAction({ bridge: 'next', local: () => M.playPrepared(info.index) }, null);
+          } else {
+            M.playPrepared(info.index);
+          }
           refreshPlayerUI();
         }
+      } catch (e) {}
+    });
+    /* 20261113c：原生（软件外）迷你播放列表的行尾按钮
+       - onFavorite：这一首加入音乐库（与播放页收藏键、软件内列表 ★ 同一套逻辑）
+       - onRemove  ：从播放列表删除这一首（原生已先本地移除并重画，这里维护真实数据） */
+    reg('onFavorite', async (info) => {
+      try {
+        const i = info && Number(info.index);
+        const s = (M.state.playlist || [])[i];
+        if (!s) return;
+        const ret = await collectSongToLibrary(s);
+        if (window.miniToast) {
+          if (!ret.ok) miniToast(ret.why === 'no-detail' ? '加入失败：未获取到歌曲信息' : '加入音乐库失败');
+          else if (ret.already) miniToast(`《${ret.name}》已经在音乐库了`);
+          else miniToast(`《${ret.name}》已加入音乐库`);
+        }
+      } catch (e) {}
+    });
+    reg('onRemove', (info) => {
+      try {
+        const i = info && Number(info.index);
+        const removed = removePlaylistAt(i);
+        if (!removed) return;
+        try { refreshPlayerUI(); } catch (e) {}
+        try { pushNativeState(false); } catch (e) {}   // 把真实列表推回去，和原生那边的乐观移除对齐
+        if (window.miniToast) miniToast('已从列表移除');
       } catch (e) {}
     });
     reg('onEnterApp', () => {
@@ -8107,6 +8587,7 @@ window.bmMusicUI = (function () {
      跨闭包调用崩。这里初始化即注入，闭包1 经代理调用。 */
   M.setNeteaseBridge({
     _netEaseReq,
+    _nativeReq: _nativeReqJson,
     _netEaseSongUrl,
     _netEaseSearch,
     _netEaseMyPlaylists,
@@ -8124,6 +8605,8 @@ window.bmMusicUI = (function () {
   })();
 
   return { showMusicPage, refreshPlayerUI, renderFloat, closeMusicPage, backMusicPage, showMusicLib, showThemePicker, resetFloatClosed, showInviteCard, startTogether, endTogether, charAutoMusic, charInviteTogether, charPeekPlaylist, charEarListen, charCollect, charSwitchPlayMode, getTogetherTotal, setFloatScopeAndApply,
+    // 20261112 新增：角色后台真实搜歌（搜到→切歌→入播放列表），开发者命令「搜歌」用
+    charSearchSong,
     // 20261109 新增：换歌互动（玩家让角色换 / 角色问要不要换 / 角色让玩家点歌）
     playerAskSongSwap, charAskSongSwap, playPickedSong, declineSongSwap,
     charShareSong, playSongFromCard,

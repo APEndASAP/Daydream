@@ -46,6 +46,11 @@ let chatSettings = {
   allowRecall: true,             // 允许撤回消息 5.3
   charUsePlayerEmojis: false,    // 20261002cb：允许角色使用玩家的表情包库（默认关——角色只用 TA 自己的专属库；访客主页聊天设置可单独覆盖）
   charPoke: 'mid',               // 访客随机戳一戳：off 关 / mid 偶尔(10%) / often 经常(25%)
+  /* 20261113g：两个「演出事件」开关（发消息时低概率触发，默认开，玩家可关）。
+     eventYinyuan = 姻缘牵（红线戏剧）；eventGaze = 目光（大眼睛）。
+     与戳一戳一样支持角色级覆盖：未设置就继承全局。 */
+  eventYinyuan: true,
+  eventGaze: true,
   lettersEnabled: true,          // 访客随机来信总开关（书信 13）
   lettersDailyLimit: 2,          // 访客随机来信每日上限（0~5，书信 13）
   skipOverclockAnim: false,      // 超频：跳过裂隙动画（20260929ao；低端机/卡顿时建议开启）
@@ -104,6 +109,10 @@ let chatSettings = {
   pomodoroBreakMin: 5,             // 20261104：番茄钟默认休息时长（分钟）
   pomodoroNoiseOn: false,          // 20261105：番茄钟默认是否播放白噪音（改为默认关，玩家设置才播）
   pomodoroLockOn: false,           // 20261104：番茄钟默认是否开启锁机（默认关）
+  /* 20261112：专注期间是否允许「网页悬浮窗」继续显示（番茄钟设置页开关，默认关=全收起）。
+     只影响 WebView 内的三个自绘悬浮窗：一起听歌悬浮窗 / 碎梦重拼悬浮窗 / 模拟通话小窗；
+     安卓原生系统悬浮窗（原生音乐悬浮窗、模拟通话原生悬浮窗）不受此开关影响，照旧显示。 */
+  pomodoroAllowFloat: false,
   companionInteractMin: 8,         // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机间隔下限（分钟）
   companionInteractMax: 20,        // 20261104：番茄钟前台互动随机间隔上限（分钟）
   seasonCareGapMin: 30,            // 20261108：四季——角色自己照料（浇水/施肥）随机区间下限（分钟）
@@ -2710,6 +2719,15 @@ async function sendGroupMessage(text) {
   if (!currentGroupId) return;
   const trimmed = (text || '').trim();
   if (!trimmed) return;
+  // 20261113：开发者模式下，群聊页直接输入「群聊接龙」即对当前群生效（不用退回单聊下命令）
+  if (chatSettings.developerMode) {
+    const devCmd = parseDeveloperCommand(trimmed);
+    if (devCmd && devCmd.action === 'group') {
+      $('#chat-input').value = '';
+      await executeDeveloperCommand(devCmd);
+      return;
+    }
+  }
   const g = chatGroups.find(x => x.id === currentGroupId);
   const myMsg = { id: uid('msg'), groupId: currentGroupId, from: 'me', type: 'text', content: trimmed, time: Date.now() };
   // bd：群聊也支持「引用该条消息」——引用条随消息一起发出（气泡带引用块）
@@ -3991,7 +4009,13 @@ function _locInfoHTML(loc, weather, doing, marker, distKm) {
     ? `<span style="display:inline-flex;align-items:center;gap:4px;">${escapeHtml(weather.desc)} ${weather.temp != null ? weather.temp + '°C' : ''}</span>`
     : '';
   const doingHtml = doing ? `<span style="display:inline-flex;align-items:center;gap:4px;"><i data-icon="clock" data-size="16"></i> ${escapeHtml(doing)}</span>` : '';
-  const distHtml = `<span class="cl-dist" style="display:inline-flex;align-items:center;gap:4px;">↔ ${_distText(distKm)}</span>`;
+  /* 20261113：位置落在 1~11 虚构维度时，坐标本身「不可测」，也就不存在「距你多少公里」。
+     以前这里无条件渲染 distHtml，distKm 为空还会随机编一个 1~12000km，跟维度设定直接打架。
+     20261114：不显示也不行（玩家会以为卡片坏了）—— 统一填「未知」，不带 km 单位。 */
+  const inDim = dim >= 1 && dim <= 11;
+  const distHtml = inDim
+    ? `<span class="cl-dist" style="display:inline-flex;align-items:center;gap:4px;">↔ 距你 未知</span>`
+    : `<span class="cl-dist" style="display:inline-flex;align-items:center;gap:4px;">↔ ${_distText(distKm)}</span>`;
   /* 20261112：地名按「原文 / 中文 / 经纬度」三行排。
      英文地名照常显示（真实感），下面补中文翻译；两行都不许撑破卡片（见 .cl-raw 的换行规则）。 */
   const geo = _geoName(loc.city, loc.lat, loc.lng, dim);
@@ -4028,7 +4052,11 @@ document.addEventListener('click', function (e) {
 function _checkinRepliesHTML(replies) {
   if (!replies || !replies.length) return '';
   return `<div class="checkin-replies" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:flex;flex-direction:column;gap:5px;">${replies.map(r => {
-    const dist = r.dist != null ? `<span style="color:var(--purple-soft);font-size:11px;">（相距 ${r.dist} km）</span>` : '';
+    /* 20261114：维度里（dim 1~11）算不出距离 —— 和卡片主体一样填「未知」，不编数字 */
+    const rDim = (r.loc && r.loc.dim) ? Number(r.loc.dim) : 0;
+    const dist = (rDim >= 1 && rDim <= 11) || r.dimUnknown
+      ? `<span style="color:var(--purple-soft);font-size:11px;">（相距 未知）</span>`
+      : (r.dist != null ? `<span style="color:var(--purple-soft);font-size:11px;">（相距 ${r.dist} km）</span>` : '');
     const locHtml = r.loc ? _locInfoHTML(r.loc, r.weather, r.doing, r.who, r.dist) : '';
     return `<div style="font-size:12px;line-height:1.45;color:var(--text-secondary);"><span style="color:var(--text-tertiary);">${escapeHtml(r.who)}：</span>${escapeHtml(r.text)}${dist}</div>${locHtml}`;
   }).join('')}</div>`;
@@ -4151,7 +4179,7 @@ function msgBodyHtml(m, oneLine = false) {
     case 'share': {
       // 朋友圈分享卡片（玩家从朋友圈分享给角色）
       const sc = m.content || {};
-      return `<div class="msg-share-card">
+      return `<div class="msg-share-card" data-share-card="${m.id}" data-share-post="${escapeHtml(sc.postId || '')}" style="cursor:pointer;">
         <span class="msg-card-tag"><i data-icon="forward" data-size="16"></i> 朋友圈分享</span>
         <div style="margin-top:6px;font-size:13px;font-weight:600;">${escapeHtml(sc.authorName || '朋友圈')}</div>
         ${sc.text ? `<div style="margin-top:4px;font-size:13.5px;line-height:1.55;word-break:break-word;">${escapeHtml(sc.text)}</div>` : ''}
@@ -4322,17 +4350,79 @@ function msgBodyHtml(m, oneLine = false) {
       // 20260929an：卡片上显示「预计还有 X 分钟回答」倒计时（用户要求）
       const sv = m.content || {};
       const isCharAsk = m.from === 'them' || sv.charAsk;
+      const isQuick = !!sv.quick;   // 20261113：快问快答（最多 3 题，发出后马上作答）
       const answered = sv.answeredCount || 0;
       const total = sv.totalCount || (sv.questions ? sv.questions.length : 0);
       let status;
       if (sv.done) status = '已全部回答';
       else if (isCharAsk) status = '等你来答';
+      else if (isQuick) status = '马上作答…';
       else if (sv.queueAt) {
         const remain = Math.ceil((sv.queueAt - Date.now()) / 60000);
         status = remain > 0 ? ('预计还有 ' + remain + ' 分钟回答') : '正在翻问卷作答…';
       } else status = '待回答';
+      /* 20261113b：快问快答卡片——题目与选项**直接摊在聊天里**，不点开也能看见；
+         角色答完后把 TA 选中的选项高亮打勾，问答题把 TA 的话露在题下。 */
+      if ((isQuick || isCharAsk) && Array.isArray(sv.qs) && sv.qs.length) {
+        const qc = (characters || []).find(x => x.id === m.charId);
+        const qn = escapeHtml(qc ? qc.name : 'TA');
+        const rows = sv.qs.map((q, i) => {
+          const isChoice = q.ty === 'choice' && Array.isArray(q.o) && q.o.length;
+          const picks = Array.isArray(q.p) ? q.p.map(Number) : [];
+          const opts = isChoice ? q.o.map((o, oi) => {
+            const sel = picks.indexOf(oi) >= 0;
+            // 20261113d：选中项内部按 q.w[oi] 画填充（权重进度条），右上角直接标百分比
+            // 20261113e：旧快照里没有 q.w → 用题目文字做稳定哈希兜底，保证老卡片也有进度条
+            // 20261113f：**玩家自己答的题不随机**——只显示玩家亲手填的 pw，没填就不画
+            const pwArr = Array.isArray(q.pw) ? q.pw : [];
+            const wv = sel ? (sv.charAsk
+              ? (pwArr[oi] ? Number(pwArr[oi]) : 0)
+              : (Array.isArray(q.w) && q.w[oi] ? Number(q.w[oi]) : _svHashPct(String(q.t || 'q') + ':' + oi, 46, 97))) : 0;
+            return `<div style="position:relative;overflow:hidden;display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:9px;border:1.2px solid ${sel ? 'var(--purple)' : 'var(--border)'};background:${sel ? 'var(--purple-dim)' : 'transparent'};">
+              ${wv ? `<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:${wv}%;background:var(--purple);opacity:.26;pointer-events:none;"></span>` : ''}
+              <span style="position:relative;flex-shrink:0;width:16px;height:16px;border-radius:${q.m ? '5px' : '50%'};display:inline-flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;background:${sel ? 'var(--purple)' : 'var(--bg-elevated-2)'};color:${sel ? '#141019' : 'var(--text-tertiary)'};">${String.fromCharCode(65 + oi)}</span>
+              <span style="position:relative;flex:1;min-width:0;font-size:11.5px;line-height:1.4;color:${sel ? 'var(--text)' : 'var(--text-secondary)'};">${escapeHtml(o)}</span>
+              ${sel ? `<span style="position:relative;flex-shrink:0;color:${wv ? 'var(--purple-soft)' : 'var(--purple-soft)'};font-size:10.5px;font-weight:700;">${wv ? wv + '%' : '✓'}</span>` : ''}
+            </div>`;
+          }).join('') : '';
+          // 问答题：角色写的话直接露出来；选择题不再重复念一遍选项文字
+          const said = (!isChoice && q.a) ? String(q.a) : '';
+          // 旧快照没有 pct → 稳定哈希兜底；玩家自己答的（ppct）不兜底，没填就不显示
+          const saidPct = said ? (sv.charAsk
+            ? (q.ppct ? Number(q.ppct) : 0)
+            : (q.pct ? Number(q.pct) : _svHashPct(String(q.t || 'q') + ':pct', 38, 97))) : 0;
+          return `<div style="margin-top:8px;padding-top:7px;border-top:1px dashed var(--border);">
+            <div style="font-size:12px;font-weight:600;line-height:1.45;">${i + 1}. ${escapeHtml(q.t)}${q.m ? '<span style="font-size:10px;color:var(--purple-soft);margin-left:5px;font-weight:600;">多选</span>' : ''}</div>
+            ${isChoice ? `<div style="display:flex;flex-direction:column;gap:4px;margin-top:5px;">${opts}</div>` : ''}
+            ${said ? `<div style="position:relative;overflow:hidden;margin-top:5px;font-size:11.5px;line-height:1.55;color:var(--text-secondary);padding:5px ${saidPct ? '34px' : '7px'} 5px 7px;border-radius:8px;background:var(--bg-elevated-2);">
+              ${saidPct ? `<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:${saidPct}%;background:var(--purple);opacity:.22;pointer-events:none;"></span>` : ''}
+              <span style="position:relative;"><span style="color:var(--text-tertiary);">${qn}：</span>${escapeHtml(said)}</span>
+              ${saidPct ? `<span style="position:absolute;right:6px;bottom:3px;font-size:10px;font-weight:700;color:var(--purple-soft);">${saidPct}%</span>` : ''}
+            </div>` : ''}
+            ${isChoice && !picks.length && sv.done ? `<div style="margin-top:5px;font-size:11px;color:var(--text-tertiary);font-style:italic;">（这题没选）</div>` : ''}
+          </div>`;
+        }).join('');
+        // 20261113e：读后感也放进聊天卡片（用户要求：卡片里直接能看到 TA 的读后感）
+        const rb = String(sv.readBack || '').trim();
+        const cn = _svIsLegacyNote(sv.charNote) ? '' : String(sv.charNote || '').trim();
+        return `<div class="msg-card" data-survey-card="${m.id}" style="cursor:pointer;">
+          <span class="msg-card-tag" style="display:inline-flex;align-items:center;gap:4px;">${icon(isQuick ? 'timer' : 'checklist', 13)} ${isQuick ? '快问快答' : 'TA 的问卷'}</span>
+          <div style="margin-top:4px;display:flex;align-items:baseline;gap:6px;">
+            <div style="font-size:12px;color:var(--text-tertiary);flex:1;min-width:0;">共 ${total} 题 · ${status}</div>
+          </div>
+          ${rows}
+          ${cn ? `<div style="margin-top:8px;padding-top:7px;border-top:1px dashed var(--border);">
+            <div style="font-size:11.5px;font-weight:600;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">${icon('letter', 12)} ${qn} 的留言</div>
+            <div style="margin-top:3px;font-size:11.5px;line-height:1.55;color:var(--text-tertiary);">${escapeHtml(cn)}</div>
+          </div>` : ''}
+          ${rb ? `<div style="margin-top:8px;padding-top:7px;border-top:1px dashed var(--border);">
+            <div style="font-size:11.5px;font-weight:600;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">${icon('comment', 12)} ${qn} 的读后感</div>
+            <div style="margin-top:3px;font-size:11.5px;line-height:1.55;color:var(--text-tertiary);">${escapeHtml(rb)}</div>
+          </div>` : ''}
+        </div>`;
+      }
       return `<div class="msg-card" data-survey-card="${m.id}" style="cursor:pointer;">
-        <span class="msg-card-tag" style="display:inline-flex;align-items:center;gap:4px;">${icon('checklist', 13)} ${isCharAsk ? 'TA 的问卷' : '我发出的问卷'}</span>
+        <span class="msg-card-tag" style="display:inline-flex;align-items:center;gap:4px;">${icon('checklist', 13)} ${isCharAsk ? 'TA 的问卷' : (isQuick ? '快问快答' : '我发出的问卷')}</span>
         <div style="margin-top:4px;font-size:14px;font-weight:600;">${escapeHtml(sv.title || '我向你发出了一份问卷，快来回答吧！')}</div>
         <div style="margin-top:4px;font-size:12px;color:var(--text-tertiary);">共 ${total} 题 · ${status}</div>
         ${!isCharAsk && !sv.done ? `<div style="margin-top:6px;font-size:11px;color:var(--text-tertiary);">点击查看题目与回答状态</div>` : ''}
@@ -4489,7 +4579,15 @@ function appendMessage(m, scroll = true, container = null) {
     // 20261111：左边的静态小手指换成「两颗球互挤 + 冒爱心」的小动画。
     // m.from==='me' → 玩家球（右）往左扑；'them' → 角色球（左）往右扑。
     const fxDir = m.from === 'me' ? 'R' : 'L';
-    row.innerHTML = `<div class="poke-msg"><span class="poke-fx" data-dir="${fxDir}">${pokeFxHtml(fxDir)}</span><span><span class="poke-who">${escapeHtml(who)}</span> ${escapeHtml(m.content)}</span></div>`;
+    /* 20261113g：这条戳一戳用哪个动画，在发送时就定好并记在消息里（m.pokeAnim），
+       翻历史回来还是同一个动作。老消息没有这个字段 → 一律按原来的 squish。
+       side：大球在小球的哪一侧 —— dir='L' 时大球在右(+1)，dir='R' 时大球在左(-1)。 */
+    const pokeAnimId = m.pokeAnim || 'squish';
+    const pokeSide = fxDir === 'L' ? 1 : -1;
+    const fxHtml = pokeAnimId === 'squish'
+      ? `<span class="poke-fx" data-dir="${fxDir}">${pokeFxHtml(fxDir)}</span>`
+      : `<span class="poke-anim" data-anim="${pokeAnimId}" data-side="${pokeSide}"></span>`;
+    row.innerHTML = `<div class="poke-msg">${fxHtml}<span><span class="poke-who">${escapeHtml(who)}</span> ${escapeHtml(m.content)}</span></div>`;
     // 长按/右键 → 删除（戳一戳不参与引用/转发/多选/撤回）
     let pokePress = null;
     const delPoke = () => showConfirm('删除这条戳一戳吗？', async () => {
@@ -4505,15 +4603,36 @@ function appendMessage(m, scroll = true, container = null) {
     row.addEventListener('touchmove', () => clearTimeout(pokePress));
     row.addEventListener('touchcancel', () => clearTimeout(pokePress)); // 20261001ci
     mount.appendChild(row);
-    // 只有「刚发生」的戳一戳才播动画；翻历史、补载窗口里的老消息保持静止的两颗球
-    if (Date.now() - (m.time || 0) < 3000) {
-      const fx = row.querySelector('.poke-fx');
-      if (fx) {
+    /* 20261113i：垫片永远不空。
+       新增动作的容器是空的，必须靠 JS 现画 —— 原来的逻辑只在「3 秒内」才画，
+       于是翻历史 / 重进聊天补载的戳一戳就只剩下一段空白（老 squish 至少还有静态 SVG 兜底）。
+       现在先渲染一帧静止的两颗球兜底，只有「刚发生」的才从静止位开始播。
+       点一下垫片可以随时重播（squish 与新动作都支持）。 */
+    const pushPokeFrame = () => {
+      if (pokeAnimId === 'squish') {
+        const fx = row.querySelector('.poke-fx');
+        if (!fx) return;
         fx.classList.remove('play');
+        void fx.offsetWidth;              /* 强制重排，否则移除 class 再加动画不会重跑 */
         playPokeSquish(fx);
         fx.classList.add('play');
         setTimeout(() => fx.classList.remove('play'), 2400);
+      } else {
+        const fx = row.querySelector('.poke-anim');
+        if (fx && window.bmPokePlay) window.bmPokePlay(fx, pokeAnimId, pokeSide);
       }
+    };
+    if (pokeAnimId !== 'squish') {
+      const fx0 = row.querySelector('.poke-anim');
+      /* atT=0：只画第 0 帧（静止位）并停住，不启动 rAF */
+      if (fx0 && window.bmPokePlay) window.bmPokePlay(fx0, pokeAnimId, pokeSide, 0);
+    }
+    // 只有「刚发生」的戳一戳才播动画；翻历史、补载窗口里的老消息保持静止的两颗球
+    if (Date.now() - (m.time || 0) < 3000) pushPokeFrame();
+    const pokeMsgEl = row.querySelector('.poke-msg');
+    if (pokeMsgEl) {
+      pokeMsgEl.style.cursor = 'pointer';
+      pokeMsgEl.addEventListener('click', (e) => { e.stopPropagation(); pushPokeFrame(); });
     }
     if (scroll) scrollToBottom();
     return;
@@ -4651,6 +4770,17 @@ function appendMessage(m, scroll = true, container = null) {
     letterEl.onclick = (ev) => {
       ev.stopPropagation();
       openLetterOverlay(m);
+    };
+  }
+
+  // 20261113f：朋友圈分享卡片 → 点开看原动态（内容 / 谁赞过 / 评论），可直接点赞、评论、回复
+  const shareCardEl = row.querySelector('[data-share-card]');
+  if (shareCardEl) {
+    shareCardEl.onclick = (ev) => {
+      ev.stopPropagation();
+      const pid = shareCardEl.dataset.sharePost;
+      if (!pid) { miniToast('这条动态已经不在了'); return; }
+      showMomentFromShare(pid);
     };
   }
 
@@ -5107,12 +5237,74 @@ async function sendMessage(text) {
   try { maybeDetectSongSwapRequest(currentCharId, trimmed); } catch (e) {}
 
   // 角色回复
+  const _evAt = Date.now();          // 20261113g：本轮的起点，用来判断「TA 回完了没」
   await scheduleCharReply(currentCharId);
+  /* 20261113g：角色回完之后，极低概率演一段（姻缘牵 / 目光）—— 开关在聊天设置里 */
+  try { maybeStoryEventAfterReply(currentCharId, _evAt); } catch (e) {}
 }
 
 function parseDeveloperCommand(text) {
   const s = String(text || '').trim();
   if (!s) return null;
+  /* 20261113b：音乐类命令 —— 播放器动作 / 一起听歌互动。
+     这些动的是「播放器」而不是某个访客，目标不是人名，所以在访客名匹配之前单独处理，
+     且都必须整句匹配（^…$），绝不会吞掉「我在听歌」这类普通聊天。 */
+  /* 20261113h：演出事件命令 —— 整句匹配，方便直接看效果（开发者模式专用） */
+  const eventCmd = [
+    [/^(?:触发|播放|来(?:个|段|一下))?(?:目光|大眼睛)(?:事件)?$/u, 'event_gaze'],
+    [/^(?:触发|播放|来(?:个|段|一下))?(?:姻缘牵|姻缘线|红线)(?:事件)?$/u, 'event_yinyuan'],
+  ];
+  for (const [re, action] of eventCmd) {
+    if (re.test(s)) return { action, target: '当前访客', raw: s };
+  }
+  const musicGlobal = [
+    [/^(?:发|发个|发送)?(?:听歌)?邀请函?$/u, 'ltinvite'],
+    [/^(?:邀请(?:我|TA|ta|你)?一起听(?:歌)?|一起听歌|约我一起听歌)$/u, 'ltinvite'],
+    [/^(?:开始一起听(?:歌)?|直接一起听|马上一起听)$/u, 'ltstart'],
+    /* 20261112 语义拆分（用户纠正）：
+       「下一首」= 正儿八经按列表顺序切下一首 → mnext
+       「换歌 / 切歌 / 换一首」= 随机换一首 → mrandom
+       之前三者都归 mnext（内部调 next()，随机播放模式下会乱跳），语义不对。 */
+    [/^(?:下一首|下一曲|切到下一首)$/u, 'mnext'],
+    [/^(?:换歌|切歌|换一首(?:歌)?|随便换一首|随机换一首)$/u, 'mrandom'],
+    [/^(?:上一首|上一曲|回到上一首)$/u, 'mprev'],
+    [/^(?:暂停|暂停播放|先停一下)$/u, 'mpause'],
+    [/^(?:播放|继续播放|恢复播放|继续听)$/u, 'mresume'],
+    [/^(?:偷看歌单|看看歌单|看看TA的歌单)$/u, 'ltpeek'],
+    [/^(?:听我耳机|听听我在听什么|听一下我的歌)$/u, 'ltear'],
+    [/^(?:收藏这首歌|收藏这首|收藏一下)$/u, 'ltcollect'],
+    [/^(?:切换播放模式|换播放模式|换个播放模式)$/u, 'ltmode'],
+    [/^(?:听歌互动|随机听歌互动|随便动一下歌)$/u, 'ltauto'],
+    // 搜歌：角色后台真走一遍搜歌流程（不写歌名就让 TA 自己决定搜什么）
+    //   「搜歌」/「搜歌 孤勇者」/「放一首《孤勇者》」/「播放 词不达意」都进这条
+    [/^(?:搜歌|搜一首歌?|搜一下|找一首歌?|放一首|放首歌?|来一首歌?)[\s:：]*[《「“"']?(.*?)[》」”"']?$/u, 'msearch'],
+    [/^(?:播放|放|听)[\s:：]+[《「“"']?(.+?)[》」”"']?$/u, 'msearch'],
+  ];
+  for (const [re, action] of musicGlobal) {
+    const m = s.match(re);
+    if (!m) continue;
+    if (action === 'msearch') {
+      const q = String(m[1] || '').trim();
+      // 20261112：允许不写歌名——交给角色自己决定搜什么（模拟真实搜歌流程）
+      return { action, target: '当前访客', query: q, raw: s };
+    }
+    return { action, target: '当前访客', raw: s };
+  }
+  /* 20261113b：四季照料命令 —— 照料链路每个细分分支一条。
+     支持「浇水 / 让XX浇水」两种写法，靠角色名校验避免误吞普通聊天。 */
+  const SEASON_WORDS = '浇水|施肥|播种|种一株|种下一株|抽卡留言|留句话|一起照料|浇灌爱意|四季邀请|补算照料|四季补算';
+  const _seasonActionOf = (w) => /浇水/.test(w) ? 'sewater'
+    : /施肥/.test(w) ? 'sefert'
+    : /播种|种一株|种下一株/.test(w) ? 'seseed'
+    : /抽卡留言|留句话/.test(w) ? 'secard'
+    : /一起照料|浇灌爱意|四季邀请/.test(w) ? 'selove' : 'secare';
+  let sm = s.match(new RegExp('^(?:给|帮)?(?:四季)?(?:' + SEASON_WORDS + ')$', 'u'));
+  if (sm) return { action: _seasonActionOf(sm[0]), target: '当前访客', raw: s };
+  sm = s.match(new RegExp('^(?:让|叫|命令)([^\\s]{1,12}?)(?:去|来)?(' + SEASON_WORDS + ')$', 'u'));
+  if (sm) {
+    const t = String(sm[1] || '').trim();
+    if (characters.some(c => c.name === t || c.name.includes(t))) return { action: _seasonActionOf(sm[2]), target: t, raw: s };
+  }
   // 动作关键词（正则可无目标：不写角色名时默认当前访客）
   const actions = [
     // 朋友圈：让[名]发朋友圈 / 发朋友圈 / 发一条朋友圈动态
@@ -5132,6 +5324,8 @@ function parseDeveloperCommand(text) {
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:发|来)(?:一个|一次)?(?:主动)?报备$/u, 'report'],
     [/^(?:发|来)(?:一个|一次)?(?:主动)?报备$/u, 'report'],
     [/^(?:(?:主动)?报备|(?:汇报|上报)(?:一下)?(?:位置|行踪))$/u, 'report'],
+    // 20261113 补：让XX报备（名字直接接「报备」，不带「发/来」的老说法）
+    [/^(?:让|叫|命令)(.+?)(?:给我)?(?:主动)?报备$/u, 'report'],
     // 超频：让[名]触发超频 / 触发超频 / 超频礼物 / 超频惊喜
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:触发|发送|送)(?:一次)?超频(?:礼物|惊喜)?$/u, 'overclock'],
     [/^(?:触发|发送|送)(?:一次)?超频(?:礼物|惊喜)?$/u, 'overclock'],
@@ -5140,6 +5334,10 @@ function parseDeveloperCommand(text) {
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:打|发起|拨)(?:一个|一次)?视频(?:通话|电话)?$/u, 'video'],
     [/^(?:打|发起|拨)(?:一个|一次)?视频(?:通话|电话)?$/u, 'video'],
     [/^视频(?:通话|电话)$/u, 'video'],
+    // 语音通话（20261113 补全角色互动命令）：让[名]打语音通话 / 打语音电话 / 语音通话 / 打电话
+    [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:打|发起|拨)(?:一个|一次)?(?:语音|电话)(?:通话|电话)?$/u, 'voice'],
+    [/^(?:打|发起|拨)(?:一个|一次)?(?:语音|电话)(?:通话|电话)?$/u, 'voice'],
+    [/^(?:语音(?:通话|电话|来电))$/u, 'voice'],
     // 发红包/转账：让[名]发红包 / 发红包
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:发|送)(?:一个|一次|个)?(?:红包|转账)$/u, 'redpacket'],
     [/^(?:发|送)(?:一个|一次|个)?(?:红包|转账)$/u, 'redpacket'],
@@ -5152,6 +5350,16 @@ function parseDeveloperCommand(text) {
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:发|送)(?:一份|份|个)?(?:问卷|调查)$/u, 'survey'],
     [/^(?:发|送)(?:一份|份|个)?(?:问卷|调查)$/u, 'survey'],
     [/^问卷$/u, 'survey'],
+    // 主动找我（20261113 补全）：让[名]主动发消息 / 主动找我 / 让TA主动说话
+    [/^(?:让|叫|命令)?(.+?)(?:给我)?主动(?:发(?:一条|条)?消息|发(?:一)?句话|找我|说话)$/u, 'say'],
+    [/^主动(?:发(?:一条|条)?消息|发(?:一)?句话|找我|说话)$/u, 'say'],
+    // 群聊接龙（20261113 补全）：让[群名]接龙 / 群里说话 / 群聊接龙（单聊页可指定群名）
+    [/^(?:让|叫|命令)(.+?)群(?:里)?(?:说话|接龙|聊(?:一句|几句)?)$/u, 'group'],
+    [/^(?:让|叫|命令)?(.+?)(?:在)?群里(?:说话|接龙|聊(?:一句|几句)?)$/u, 'group'],
+    [/^(?:群聊接龙|群接龙|让群里说话|群里说话)$/u, 'group'],
+    // 让TA分享一首歌（20261113 补全）：走 music.js 的 charShareSong（角色搜歌 → 聊天发歌曲卡）
+    [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:分享|推荐|点)(?:一首|首)?歌(?:曲)?$/u, 'song'],
+    [/^(?:分享|推荐|点)(?:一首|首)?歌(?:曲)?$/u, 'song'],
     // 惊喜（20260929ax）：直接输入「惊喜」立即触发惊喜动画，跳过一切解锁规则（绝对命令）
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:发|来|触发)(?:一个|一次|个)?惊喜$/u, 'surprise'],
     [/^(?:发|来|触发)(?:一个|一次|个)?惊喜$/u, 'surprise'],
@@ -5165,6 +5373,8 @@ function parseDeveloperCommand(text) {
     const m = s.match(re);
     if (!m) continue;
     const target = (m[1] || '').trim();
+    // 群聊命令的目标是「群名」而不是访客名，跳过下面的访客名校验，交给执行器自己解析
+    if (action === 'group') return { action, target: target || '当前群聊', raw: s };
     // 未写目标，或目标是「我/玩家/你/角色/访客/他/她/TA」→ 当前访客
     if (!target || /^(?:我|玩家|你|角色|访客|他|她|TA|ta|当前访客)$/u.test(target)) return { action, target: '当前访客', raw: s };
     // 写了目标名：需命中某个访客名字才生效（否则视为普通消息，不拦截）
@@ -5219,6 +5429,213 @@ async function _devCommandReport(c) {
   await deliverCharMessage(c, text, 'checkin', { text, report: true, location: loc, weather, doing, marker: 'TA', distKm });
 }
 
+/* 20261113 补全：开发者命令「主动找我」——角色主动发一条消息。
+   走 deliverCharMessage 真实链路：落库 + 前台即时上屏 + 后台走原生通知，
+   和玩家平时收到的主动消息完全一致，不是假上屏。 */
+async function _devCommandSay(c) {
+  const text = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || [])
+    || drawFrom(cards.customMottos || []) || '在忙吗？突然有点想找你说话。';
+  await deliverCharMessage(c, text, 'text');
+}
+
+/* 20261113 补全：开发者命令「群聊接龙」——让某个群跑一轮接龙。
+   目标可写群名（如「让闺蜜群接龙」），也可写群成员名（找 TA 所在的群）；
+   都不写则用当前打开的群 / 第一个群。强制 rounds=1，避免测试时刷屏。 */
+async function _devCommandGroupChat(command) {
+  if (!chatGroups || !chatGroups.length) { miniToast('还没有群聊，先建一个群'); return; }
+  const raw = String(command.target || '').replace(/^(?:让|叫|命令)/u, '').trim();
+  const isEmpty = !raw || /^(?:当前群聊|群聊|当前群|TA|ta|角色|他|她)$/u.test(raw);
+  let g = null;
+  if (!isEmpty) {
+    // ① 群名精确 → ② 群名模糊 → ③ 访客名（找 TA 所在的群）
+    g = chatGroups.find(x => x.name === raw)
+      || chatGroups.find(x => x.name && (x.name.includes(raw) || raw.includes(x.name)));
+    if (!g) {
+      const m = _devResolveChar(raw);
+      if (m) g = chatGroups.find(x => (x.memberIds || []).includes(m.id));
+    }
+  }
+  if (!g) g = chatGroups.find(x => x.id === currentGroupId) || chatGroups[0];
+  if (!g) { miniToast('开发者模式：找不到对应的群聊'); return; }
+  if (_grpChains && _grpChains.has(g.id)) { miniToast('这个群正在接龙，等这一轮说完再试'); return; }
+  miniToast(`开发者模式：${g.name} 接龙一轮`);
+  startGroupChain(g, { source: 'manual', rounds: 1 });
+}
+
+/* 20261113b：开发者命令「音乐」——一起听歌的主动互动与播放器控制。
+   播放器动作（上一首/下一首/暂停/播放/搜歌）直接对 window.bmMusic 下手；
+   一起听互动（邀请函 / 开始一起听 / 偷看歌单 / 听耳机 / 收藏 / 切模式 / 随机互动）
+   走 music.js 里已有的 bmMusicUI 同款函数，和玩家平时触发的完全同一条链路。 */
+async function _devCommandMusic(c, command) {
+  const A = window.bmMusic, U = window.bmMusicUI;
+  if (!A) { miniToast('音乐模块还没加载'); return; }
+  const name = c ? (c.name || 'TA') : 'TA';
+  const act = command.action;
+  const together = !!(A.state && A.state.charId === c.id && A.state.togetherSince);
+
+  /* 20261112 语义定案（用户纠正）：
+     · 下一首 = 顺序切下一首（nextSequential，无视随机模式）
+     · 换歌 / 切歌 = 随机换一首（randomNext）
+     · 搜歌 = 角色后台真走一遍搜歌流程：搜到 → 切过去 → 加入播放列表（music.js charSearchSong） */
+  if (act === 'mnext') { await A.nextSequential(); miniToast('开发者模式：下一首（顺序）'); return; }
+  if (act === 'mrandom') { await A.randomNext(); miniToast('开发者模式：随机换了一首'); return; }
+  if (act === 'mprev') { await A.prev(); miniToast('开发者模式：上一首'); return; }
+  if (act === 'mpause') { try { await A.pause(); } catch (e) {} miniToast('开发者模式：已暂停'); return; }
+  if (act === 'mresume') { try { await A.resume(); } catch (e) {} miniToast('开发者模式：继续播放'); return; }
+  if (act === 'msearch') {
+    const kw = String(command.query || '').trim();
+    if (!U || !U.charSearchSong) { miniToast('音乐模块还没加载'); return; }
+    miniToast(kw ? ('开发者模式：' + name + ' 正在搜「' + kw + '」…') : ('开发者模式：' + name + ' 正在自己找歌…'));
+    const r = await U.charSearchSong(c, kw);
+    if (r && r.ok) miniToast('开发者模式：' + name + ' 搜到并切到《' + (r.song.name || '') + '》，已加入播放列表');
+    else miniToast('开发者模式：' + name + ' 搜了一圈，没搜到能放的歌');
+    return;
+  }
+  if (act === 'ltinvite') {
+    if (U && U.charInviteTogether) { U.charInviteTogether(c.id); miniToast('开发者模式：' + name + ' 发来听歌邀请'); }
+    return;
+  }
+  if (act === 'ltstart') {
+    if (U && U.startTogether) { U.startTogether(c.id); miniToast('开发者模式：和 ' + name + ' 开始一起听歌'); }
+    return;
+  }
+  // 下面这几个是「一起听中」的互动，没在一起听时没有意义
+  if (!together && (act === 'ltpeek' || act === 'ltear' || act === 'ltcollect' || act === 'ltmode' || act === 'ltauto')) {
+    miniToast('先输入「开始一起听」，TA 才有互动对象');
+    return;
+  }
+  if (act === 'ltpeek') { if (U && U.charPeekPlaylist) { await U.charPeekPlaylist(c.id); miniToast('开发者模式：TA 偷看了你的歌单'); } return; }
+  if (act === 'ltear') { if (U && U.charEarListen) { await U.charEarListen(c.id); miniToast('开发者模式：TA 在听你耳机里的歌'); } return; }
+  if (act === 'ltcollect') { if (U && U.charCollect) { await U.charCollect(c.id); miniToast('开发者模式：TA 收藏了这首歌'); } return; }
+  if (act === 'ltmode') { if (U && U.charSwitchPlayMode) { await U.charSwitchPlayMode(c.id); miniToast('开发者模式：TA 换了播放模式'); } return; }
+  if (act === 'ltauto') { if (U && U.charAutoMusic) { await U.charAutoMusic(c.id); miniToast('开发者模式：TA 随机做了一次听歌互动'); } return; }
+}
+
+/* 20261113b：开发者命令「四季照料」——照料链路的每个细分分支都要能单独触发。
+   数据在四季 iframe 自己的 localStorage 里，所以浇水/施肥/播种/留言必须让四季页活着，
+   用 postMessage 发 season-cmd 过去（season/index.html 里新增的接收器）。
+   邀请卡与后台补算在主项目侧就能完成，不依赖 iframe。 */
+async function _devCommandSeason(c, action) {
+  const cid = c ? c.id : currentCharId;
+  const name = c ? (c.name || 'TA') : 'TA';
+  if (!cid) { miniToast('先进入与访客的单聊'); return; }
+
+  if (action === 'selove') {
+    await _seasonSendLoveCard(cid, name, '想和你一起给它们浇点水');
+    miniToast('开发者模式：已发四季「一起照料」邀请卡');
+    return;
+  }
+  if (action === 'secare') {
+    const f = document.getElementById('season-frame');
+    if (f && f.contentWindow) { try { f.contentWindow.postMessage({ type: 'season-tick' }, '*'); } catch (e) {} }
+    else await _seasonBgTick();      // 四季没开 → 走主项目的后台补算
+    miniToast('开发者模式：四季照料已补算');
+    return;
+  }
+
+  // 浇水 / 施肥 / 播种 / 抽卡留言：要在四季页里做
+  const frameEl = document.getElementById('season-frame');
+  let alive = false;
+  try {
+    alive = !!(frameEl && frameEl.contentWindow && frameEl.contentWindow.document &&
+               frameEl.contentWindow.document.body && frameEl.contentWindow.document.body.children.length > 0);
+  } catch (e) { alive = false; }
+  openSeasonLayer(cid);
+  const frame = document.getElementById('season-frame');
+  const cmd = { sewater: 'water', sefert: 'fert', seseed: 'seed', secard: 'card' }[action] || 'water';
+  const send = () => { try { frame.contentWindow.postMessage({ type: 'season-cmd', cmd, by: name }, '*'); } catch (e) {} };
+  // 四季已经活着 → 立刻发；第一次加载（1.2MB 单文件 + 识别资源）→ 多等一会儿
+  setTimeout(send, alive ? 700 : 3200);
+  miniToast('开发者模式：让 ' + name + ' 进四季' + (cmd === 'water' ? '浇水' : cmd === 'fert' ? '施肥' : cmd === 'seed' ? '种一株' : '留一张卡'));
+}
+
+/* 20261113 新增：开发者命令清单（软件内可查）。
+   用户要求「所有角色互动都要有开发者命令」，并且命令要能直接列表看到——
+   这里按类别列出全部命令 + 效果，玩家/开发者不用翻文档。 */
+function showDevCommandList() {
+  const groups = [
+    { icon: 'chat', title: '消息互动', items: [
+      ['主动找我', '让 TA 主动发一条想到你的消息（真实落库 + 后台通知）', '主动找我 / 让XX主动找我'],
+      ['发朋友圈', 'TA 发一条朋友圈动态（自动配图 + 后续互动）', '发朋友圈 / 让XX发朋友圈'],
+      ['发个表情包', 'TA 发一张自己的专属表情包', '发个表情包 / 让XX发个表情包'],
+      ['戳一戳', 'TA 戳你一下（带戳一戳动画）', '戳一戳 / 让XX戳我'],
+    ]},
+    { icon: 'pin', title: '状态与位置', items: [
+      ['查岗', 'TA 发一张突击查岗卡片（问你在做什么）', '查岗 / 让XX发查岗'],
+      ['报备', 'TA 发带位置的报备卡片（地图取景 + 天气 + 距离）', '报备 / 让XX报备'],
+    ]},
+    { icon: 'heart', title: '礼物与书信', items: [
+      ['发红包', 'TA 发一个待领取的红包/转账（不受钱包余额限制）', '发红包 / 让XX发红包'],
+      ['写信', 'TA 写一封书信投递过来', '写信 / 让XX写信'],
+    ]},
+    { icon: 'call', title: '通话', items: [
+      ['视频通话', 'TA 发起视频来电（可接听/拒绝/未接）', '视频通话 / 让XX打视频通话'],
+      ['语音通话', 'TA 发起语音来电（可接听/拒绝/未接）', '语音通话 / 让XX打语音电话'],
+    ]},
+    { icon: 'checklist', title: '问卷', items: [
+      ['发问卷', 'TA 向你发一份问卷，你答完 TA 会回应', '发问卷 / 让XX发问卷'],
+    ]},
+    { icon: 'music', title: '音乐 · 播放控制', items: [
+      ['分享一首歌', 'TA 自己搜一首歌，在聊天里发歌曲卡（可点开一起听）', '分享歌 / 让XX分享一首歌'],
+      ['下一首', '按播放列表顺序切下一首（无视随机播放模式，老实往后挪）', '下一首 / 下一曲'],
+      ['换歌 / 切歌', '从播放列表里随机换一首（≠ 当前在播）', '换歌 / 切歌 / 换一首'],
+      ['上一首', '按列表顺序切回上一首', '上一首'],
+      ['暂停', '暂停当前播放', '暂停'],
+      ['播放', '继续播放（没在播就先起当前这首）', '播放 / 继续播放'],
+      ['搜歌', '角色后台真跑一遍搜歌流程：搜到 → 切过去 → 加入播放列表（不写歌名就让 TA 自己决定搜什么）', '搜歌 / 搜歌 孤勇者 / 放一首《词不达意》'],
+    ]},
+    { icon: 'heart', title: '音乐 · 一起听互动', items: [
+      ['发听歌邀请', 'TA 弹一张「想和你一起听歌」邀请卡（可同意/拒绝）', '邀请函 / 一起听歌 / 邀请我一起听歌'],
+      ['开始一起听', '跳过邀请，直接和 TA 进入一起听（聊天里发一起听卡片）', '开始一起听'],
+      ['偷看歌单', 'TA 偷看你在听什么，并吐槽/点评一句', '偷看歌单'],
+      ['听我耳机', 'TA 听你耳机里的歌（需要正在一起听）', '听我耳机'],
+      ['收藏这首歌', 'TA 把当前这首收进自己的收藏（需要正在一起听）', '收藏这首歌'],
+      ['换播放模式', 'TA 自己切镜像/遥控/直连/本地模式（需要正在一起听）', '切换播放模式'],
+      ['随机听歌互动', '从 TA 的所有听歌互动里随机来一个（需要正在一起听）', '听歌互动'],
+    ]},
+    { icon: 'sprout', title: '四季 · 照料', items: [
+      ['浇水', 'TA 进四季给最久没浇的那株浇水（会打开四季页）', '浇水 / 让XX浇水'],
+      ['施肥', 'TA 给最久没施的那株施肥', '施肥 / 让XX施肥'],
+      ['播种', 'TA 把种子里那颗还没下的自己种到星球上', '播种 / 种一株'],
+      ['抽卡留言', 'TA 在四季里留一张字卡留言', '抽卡留言 / 留句话'],
+      ['一起照料邀请', 'TA 发一张「一起浇灌爱意」邀请卡到聊天', '一起照料 / 浇灌爱意'],
+      ['补算照料', '把挂后台漏掉的照料一次性补回来（按株按天守额度）', '补算照料 / 四季补算'],
+    ]},
+    { icon: 'sparkle', title: '超频与动画', items: [
+      ['超频礼物', 'TA 送你一份超频礼物（绕过解锁限制）', '超频 / 触发超频'],
+      ['超频惊喜', 'TA 触发超频惊喜（完整首次动画）', '惊喜 / 触发惊喜'],
+      ['warning', '重放超频首次解锁动画（故障→裂隙→项链）', 'warning'],
+    ]},
+    { icon: 'group', title: '群聊', items: [
+      ['群聊接龙', '让某个群跑一轮接龙（rounds=1，不刷屏）', '群聊接龙 / 让闺蜜群接龙 / 让XX群里说话'],
+    ]},
+  ];
+  const rows = groups.map(g => `
+    <div style="margin-bottom:14px;">
+      <div style="font-size:12.5px;font-weight:600;color:var(--purple);margin-bottom:7px;display:flex;align-items:center;gap:6px;">${icon(g.icon, 14)} ${g.title}</div>
+      ${g.items.map(([name, desc, usage]) => `
+        <div style="background:var(--bg-elevated-2);border-radius:10px;padding:9px 11px;margin-bottom:6px;">
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:13px;font-weight:600;">${escapeHtml(name)}</span>
+            <span style="font-size:11px;color:var(--text-tertiary);">输入：${escapeHtml(usage)}</span>
+          </div>
+          <div style="font-size:11.5px;color:var(--text-secondary);margin-top:3px;line-height:1.55;">${escapeHtml(desc)}</div>
+        </div>`).join('')}
+    </div>`).join('');
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('doc', 20)} 开发者命令清单</div>
+      <button class="icon-btn" id="devcmd-close"><i data-icon="close" data-size="17"></i></button>
+    </div>
+    <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;line-height:1.6;">共 ${groups.reduce((a, g) => a + g.items.length, 0)} 条。在访客单聊输入即可；「让XX…」里的 XX 换成访客名字（不写名字 = 当前访客）。命令不会作为普通消息发送。</div>
+    <div style="max-height:58vh;overflow-y:auto;padding-right:2px;">${rows}</div>
+    <button class="btn block" style="margin-top:8px;padding:11px;" id="devcmd-ok">知道了</button>
+  `);
+  const close = () => closeModal();
+  const b1 = $('#devcmd-close'); if (b1) b1.onclick = close;
+  const b2 = $('#devcmd-ok'); if (b2) b2.onclick = close;
+}
+
 /* 开发者密码校验（20260929av）：代码只存 djb2-32/base36 哈希，不落明文——
    防止普通用户在源码里直接看穿密码；本地校验时对输入算哈希后比对。
    更换密码：node -e "let h=5381;for(const c of '新密码'){h=(((h<<5)+h)+c.charCodeAt(0))>>>0}console.log(h.toString(36))" → 替换 DEV_PWD_HASH */
@@ -5244,8 +5661,44 @@ async function executeDeveloperCommand(command) {
     } catch (e) { console.error('[开发者模式 warning]', e); miniToast('开发者命令执行失败'); }
     return true;
   }
+  /* 20261113h：两个演出事件——开发者命令直接叫出来看效果 */
+  if (command.action === 'event_yinyuan' || command.action === 'event_gaze') {
+    const cid = currentCharId;
+    if (!cid || document.body.dataset.view !== 'chat') { miniToast('先进入和某个访客的聊天，再触发演出'); return true; }
+    if (command.action === 'event_yinyuan') {
+      if (typeof window.bmYinyuanPlay !== 'function') { miniToast('姻缘牵模块没加载'); return true; }
+      miniToast('姻缘牵 · 开演');
+      /* 纯装饰：不弹回复框、不拦操作，长满后自己淡出，不需要任何回执 */
+      try { await window.bmYinyuanPlay(); } catch (e) {}
+      return true;
+    }
+    miniToast('目光 · 开演');
+    let sm = '';
+    try { sm = await buildGazeWhisper(cid); } catch (e) { sm = ''; }
+    _storyOverlay('event-gaze.html?embed=1' + (sm ? '&sm=' + encodeURIComponent(sm) : '') + '&cn=' + encodeURIComponent(charNameOf(cid)));
+    return true;
+  }
+
+  // 群聊接龙（20261113）：全局命令——目标是「群名」而非访客名，故不走 _devResolveChar
+  if (command.action === 'group') {
+    try { await _devCommandGroupChat(command); }
+    catch (e) { console.error('[开发者模式 group]', e); miniToast('开发者命令执行失败'); }
+    return true;
+  }
   const c = _devResolveChar(command.target);
   if (!c) { miniToast('开发者模式：找不到指定访客'); return true; }
+  // 音乐：播放器动作与一起听互动（20261113b）
+  if (/^(?:mnext|mprev|mpause|mresume|msearch|ltinvite|ltstart|ltpeek|ltear|ltcollect|ltmode|ltauto)$/.test(command.action)) {
+    try { await _devCommandMusic(c, command); }
+    catch (e) { console.error('[开发者模式 music]', e); miniToast('开发者命令执行失败'); }
+    return true;
+  }
+  // 四季照料：每个细分分支一条（20261113b）
+  if (/^se(?:water|fert|seed|card|love|care)$/.test(command.action)) {
+    try { await _devCommandSeason(c, command.action); }
+    catch (e) { console.error('[开发者模式 season]', e); miniToast('开发者命令执行失败'); }
+    return true;
+  }
   try {
     if (command.action === 'moment') await _devCommandMoment(c);
     else if (command.action === 'emoji') await _devCommandEmoji(c, command.raw);
@@ -5265,6 +5718,17 @@ async function executeDeveloperCommand(command) {
     } else if (command.action === 'video') {
       if (_callActive) { miniToast('当前已有通话进行中'); return true; }
       await triggerIncomingCall(c, 'video');
+    } else if (command.action === 'voice') {
+      // 20261113 补全：语音来电（原来只有视频通话命令）
+      if (_callActive) { miniToast('当前已有通话进行中'); return true; }
+      await triggerIncomingCall(c, 'voice');
+    } else if (command.action === 'say') {
+      // 20261113 补全：角色主动发一条消息（走真实主动送达链路，带通知/落库）
+      await _devCommandSay(c);
+    } else if (command.action === 'song') {
+      // 20261113 补全：让角色主动分享一首歌（真实搜歌 + 聊天歌曲卡）
+      if (!(window.bmMusicUI && window.bmMusicUI.charShareSong)) { miniToast('音乐功能还没就绪，稍后再试'); return true; }
+      await window.bmMusicUI.charShareSong(c.id);
     } else if (command.action === 'redpacket') {
       // 发红包：角色向玩家发红包（char_to_me，待领取，红包卡片）；绝对命令无视钱包余额
       await deliverCharRedPacket(c, { force: true });
@@ -6277,6 +6741,12 @@ const SOUND_PRESETS = {
 };
 function playDing() {
   if (!chatSettings.soundOn) return;
+  /* 20261113f：同一条消息常被多处同时触发（appendMessage + 通知刷新 + 列表重绘），
+     叠在一起就成了用户听到的「叮铃铃」连响。这里做 700ms 去抖：一次事件只响一声，
+     相隔较远的多条消息仍各响各的。 */
+  const _dt = Date.now();
+  if (_dt - (playDing._last || 0) < 700) return;
+  playDing._last = _dt;
   // 自定义提示音优先（玩家上传的音频文件）
   if (chatSettings.customSound) {
     try {
@@ -6608,6 +7078,8 @@ async function __proactiveScan() {
           maybeCharPoke(c);
           // 20260929al：访客随机向玩家提问（每天0~3条，搭在主动消息节奏上，不新增定时器）
           maybeCharAskPlayer(c);
+          // 20261113d：访客偶尔把朋友圈（自己的 / 有关系的人的）分享给玩家，每天最多 1 条
+          maybeCharShareMoment(c);
           // 20261002ca：本轮已触发 → 预排下一轮原生闹钟（挂后台/进程冻结也照常到点提醒）
           bmRegisterAlarm(c, 'msg', s.proactiveRandom ? _proactiveRandUntil[c.id] : (now + (s.proactiveMin || 10) * 60000));
           // 超频已从主动消息分离，固定在 15 秒 tick 每访客独立计时；此处不再触发
@@ -10850,6 +11322,224 @@ function pokeFxHtml(dir) {
     '</svg>';
 }
 
+/* ============================================================================
+   20261113g：戳一戳「小球互动」动画池的分派
+   ----------------------------------------------------------------------------
+   原来那个「两颗球挤压 + 冒爱心」的动画（squish）**保持原样，一行没改**。
+   新增的 7 个动作在 js/poke-anims.js（从预览稿原样移植，画布/半径/球心与上面
+   pokeFxHtml 完全一致：viewBox 24、大球 R5.0 圆心 16.4/7.6、小球 r3.15 静止位 4.2/19.8）。
+     · 角色侧：完全随机 —— 8 个动作等概率抽（含原来的 squish）
+     · 玩家侧：先看这次戳一戳的句子；玩家没写句子就看最近几条聊天的上下文，
+               按关键词挑最贴的一个，都不沾边就回落到原来的 squish
+   ========================================================================== */
+/* 20261113g：8 个新动作 + 原来的 squish，一共 9 个。
+   ⚠️ 之前漏了 hold（牵手）—— 预览稿里是第 8 个动作，这次补回来。 */
+const POKE_ANIM_IDS = ['squish', 'hug', 'hold', 'pat', 'lean', 'pinch', 'nestle', 'angry', 'kiss'];
+
+/* 顺序＝优先级：越具体的写法放越前（「钻进怀里」必须先于「贴贴」判掉）。 */
+const POKE_ANIM_WORDS = [
+  ['nestle', /钻(?:进|到)?(?:你|我|ta|TA)?(?:的)?怀里|窝(?:进|在)(?:你|我)?(?:的)?怀里|埋(?:进|在)(?:你|我)?(?:的)?(?:怀|胸口)/],
+  ['lean',   /贴贴|贴着(?:你|我)|依偎|靠(?:着|在)(?:你|我)|蹭着(?:你|我)/],
+  ['kiss',   /亲亲|亲昵|亲一口|亲一下|亲(?:你|我)|mua|啵啵|啵一个|嘴一个/],
+  ['hold',   /牵手|牵牵|芊芊|拉(?:拉)?手|牵(?:你|我)|十指相扣/],
+  ['hug',    /抱抱|抱住|抱一下|抱紧|拥抱|抱(?:你|我)/],
+  ['pat',    /摸摸头|摸(?:摸)?(?:你|我)?(?:的)?头|蹭蹭|rua|顺毛|拍拍头/],
+  ['pinch',  /捏脸|捏捏|掐脸|捏(?:你|我)(?:的)?脸/],
+  ['angry',  /生气|气鼓鼓|气死|好气|不理你|哼(?:！|!|$)/],
+];
+function pokeAnimFromText(txt){
+  const s = String(txt || '');
+  if (!s) return '';
+  for (let i = 0; i < POKE_ANIM_WORDS.length; i++){
+    if (POKE_ANIM_WORDS[i][1].test(s)) return POKE_ANIM_WORDS[i][0];
+  }
+  return '';
+}
+function pickCharPokeAnim(){
+  return POKE_ANIM_IDS[Math.floor(Math.random() * POKE_ANIM_IDS.length)];
+}
+/* 玩家没写戳一戳句子时的兜底：拿最近 6 条聊天当上下文，由近到远找关键词 */
+async function pokeAnimFromContext(charId){
+  try {
+    const all = await idbGetAll('messages');
+    const recent = (all || [])
+      .filter(m => m && m.charId === charId && !m.groupId && m.type === 'text' && m.content)
+      .sort((a, b) => (b.time || 0) - (a.time || 0))
+      .slice(0, 6);
+    for (let i = 0; i < recent.length; i++){
+      const hit = pokeAnimFromText(recent[i].content);
+      if (hit) return hit;
+    }
+  } catch (e) {}
+  return '';
+}
+
+/* ============================================================================
+   20261113g：两个「演出事件」—— 姻缘牵 / 目光
+   ----------------------------------------------------------------------------
+   什么时候演：玩家在单聊里发完一条消息、角色把这一轮回完之后，各自掷一次概率
+              （很低），而且每个事件有独立冷却，避免连着刷屏。
+   开关在哪：聊天设置 › 回复 › 姻缘牵 / 目光（角色级可单独覆盖，默认都开着）。
+   怎么演：全屏 iframe 载入 event-*.html?embed=1 —— 样式完全隔离，不会污染
+           主项目那一堆全局 CSS；演完自己 postMessage 回来，主项目把这一层撤掉。
+   ========================================================================== */
+const STORY_EVENTS = {
+  /* 20261113h：两个事件都不设冷却 —— 用户定案「1.2% 已经够稀有，不需要冷却」。
+     yinyuan 不走 iframe：红线必须从真实那颗头像上缠出来，直接用内联层（bmYinyuanPlay）。 */
+  yinyuan: { chance: .015, enabled: true },
+  gaze:    { chance: .012, enabled: true, page: 'event-gaze.html' },
+};
+
+function storyEventEnabled(kind, cs){
+  const v = kind === 'yinyuan' ? cs.eventYinyuan : cs.eventGaze;
+  return v !== false;
+}
+function storyEventReady(kind){
+  const cfg = STORY_EVENTS[kind];
+  return !!(cfg && cfg.enabled);
+}
+
+/* ============================================================================
+   20261113h：目光里那句留言 —— 实时生成（用户定案）
+   ----------------------------------------------------------------------------
+   · AI 模式：让模型以角色口吻写一句很短的耳语（1 句、30 字内、不要引号）
+   · 字卡模式：从回复字卡里随机抽 2~3 条，用「，」连成一句（原来的写死文案全部作废）
+   · 生成最多等 3.5 秒：AI 慢或失败就直接走字卡，绝不让演出卡在等待上
+   ========================================================================== */
+/* 角色名：一律实时取自当前角色数据，绝不写死（之前预览页写死的「沈梦」已清掉） */
+function charNameOf(charId){
+  const c = (characters || []).find(x => x.id === charId);
+  return (c && c.name) ? String(c.name) : 'TA';
+}
+
+async function buildGazeWhisper(charId){
+  const c = (characters || []).find(x => x.id === charId);
+  if (!c) return '';
+
+  /* —— 字卡兜底（也是字卡模式的主路径）—— */
+  const pickCards = () => {
+    const ban = getCharBanWords(c), rel = c.relation || null, grp = c.bannedGroups || [];
+    const n = Math.random() < .5 ? 2 : 3;
+    const out = [];
+    let tries = 0;
+    while (out.length < n && tries < 24){
+      tries++;
+      const t = String(drawReply(cards, ban, rel, grp) || '').trim();
+      if (t && out.indexOf(t) < 0) out.push(t);
+    }
+    return out.join('，');
+  };
+
+  let aiOn = false;
+  try { aiOn = await isCharAIMode(charId); } catch (e) { aiOn = false; }
+  if (!aiOn) return pickCards();
+
+  try {
+    const cfg = await loadAIConfig();
+    if (!cfg || !cfg.chatApi || !cfg.chatApi.url) return pickCards();
+    const recent = await idbGetMessagesByChar(charId, 12);
+    const ctx = await buildCharAIContext(charId, recent);
+    const sys = '你是角色扮演 AI。玩家此刻正看着你的眼睛。你只说一句耳语：'
+      + '不超过 30 个字、就一句话、不要引号、不要动作描写、不要解释为什么。'
+      + '语气要像恋人/熟人之间压低声音说的那种话。\n\n' + ctx;
+    const call = callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+      { role: 'system', content: sys },
+      { role: 'user', content: '（玩家正看着你，说一句你此刻最想说的话）' },
+    ]);
+    const r = await Promise.race([
+      call,
+      new Promise(res => setTimeout(() => res(null), 3500)),
+    ]);
+    if (r && r.ok && r.text){
+      const t = String(r.text).split('\n').map(x => x.trim()).filter(Boolean)[0] || '';
+      if (t) return t.replace(/^["'「」『』]+|["'「」『』]+$/g, '').slice(0, 60);
+    }
+  } catch (e) {}
+  return pickCards();
+}
+
+/* 等角色把这一轮回完再演 —— 不然全屏遮罩一盖，玩家自己的回复看不到 */
+function _storyWaitReply(charId, startedAt, cb){
+  let tries = 0;
+  const timer = setInterval(async () => {
+    tries++;
+    let hit = false;
+    try {
+      const all = await idbGetAll('messages');
+      hit = (all || []).some(m => m && m.charId === charId && m.from === 'them'
+        && (m.time || 0) >= startedAt && m.type !== 'poke');
+    } catch (e) {}
+    const stillHere = currentCharId === charId && document.body.dataset.view === 'chat';
+    if (hit || tries >= 24 || !stillHere){
+      clearInterval(timer);
+      if (hit && stillHere) setTimeout(cb, 1100);
+    }
+  }, 500);
+}
+
+/* 全屏演出层（iframe）：目前只有「目光」用。
+   20261113h：删掉 90 秒自动收掉 —— 用户定案，这两个事件一旦触发就锁死界面，
+   只能靠回复解锁，不许加任何兜底退出。 */
+function _storyOverlay(src){
+  if (document.getElementById('story-layer')) return;
+  const w = document.createElement('div');
+  w.id = 'story-layer';
+  w.style.cssText = 'position:fixed;inset:0;z-index:20000;background:#070509;';
+  const f = document.createElement('iframe');
+  f.src = src;
+  f.setAttribute('allow', 'autoplay');
+  f.style.cssText = 'width:100%;height:100%;border:0;display:block;background:#070509;';
+  w.appendChild(f);
+  document.body.appendChild(w);
+
+  const close = () => {
+    w.remove();
+    window.removeEventListener('message', onMsg);
+  };
+  const onMsg = (ev) => {
+    const d = ev.data || {};
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'gaze-reply' && d.text){
+      /* 玩家在「目光」里回的那句话，等这一层撤掉之后再作为一条真实消息发出去，
+         让它走正常的角色回复流程。 */
+      setTimeout(() => { try { sendMessage(String(d.text).slice(0, 600)); } catch (e) {} }, 1100);
+    }
+    if (d.type === 'gaze-done') setTimeout(close, 280);
+  };
+  window.addEventListener('message', onMsg);
+}
+
+function maybeStoryEventAfterReply(charId, startedAt){
+  const c = (characters || []).find(x => x.id === charId);
+  if (!c) return;
+  if (document.body.dataset.view !== 'chat') return;
+  const cs = getCharChatSettings(c);
+  const kinds = ['yinyuan', 'gaze'].filter(k => storyEventEnabled(k, cs) && storyEventReady(k));
+  if (!kinds.length) return;
+  /* 20261113i：两个事件各自独立掷骰子 —— 不排队、不互相扣概率。
+     各自按自己的 chance 判一次（姻缘牵 1.5% / 目光 1.2%），
+     谁先出现都行；极小概率同时命中时只演其中一个，绝不同时叠两层。 */
+  const hits = kinds.filter(k => Math.random() < STORY_EVENTS[k].chance);
+  if (!hits.length) return;
+  const picked = hits.length > 1 ? hits[Math.floor(Math.random() * hits.length)] : hits[0];
+  _storyWaitReply(charId, startedAt, async () => {
+    if (document.body.dataset.view !== 'chat' || currentCharId !== charId) return;
+
+    /* 姻缘牵：内联装饰层，红线从真实头像长出来、绕住下方的输入栏，
+       但**不挡操作、不要回复** —— 玩家照常在原输入栏发消息，线过一会儿自己散掉。 */
+    if (picked === 'yinyuan'){
+      if (typeof window.bmYinyuanPlay !== 'function') return;
+      try { await window.bmYinyuanPlay(); } catch (e) {}
+      return;
+    }
+
+    /* 目光：先实时生成那句留言，再开演 */
+    let sm = '';
+    try { sm = await buildGazeWhisper(charId); } catch (e) { sm = ''; }
+    _storyOverlay(STORY_EVENTS.gaze.page + '?embed=1' + (sm ? '&sm=' + encodeURIComponent(sm) : '') + '&cn=' + encodeURIComponent(charNameOf(charId)));
+  });
+}
+
 /* 逐帧驱动：冲过去 → 顶进去压出凹坑 → 顺轮廓上下蹭 → 蓄力 → 阻尼弹簧脱开（2000ms） */
 function playPokeSquish(host) {
   const dir = host.dataset.dir === 'L' ? 'L' : 'R';
@@ -10921,7 +11611,12 @@ function playPokeSquish(host) {
 async function sendPlayerPoke(text) {
   if (currentGroupId) { miniToast('戳一戳暂时只在单聊里玩'); return; }
   if (!currentCharId || !text) return;
-  const myMsg = { id: uid('msg'), charId: currentCharId, from: 'me', type: 'poke', content: text, time: Date.now() };
+  /* 20261113g：玩家侧的动作不是随机的 —— 先看这句话写了什么（抱抱/亲亲/贴贴…），
+     没命中就翻最近几条聊天当上下文，还挑不出来就回落到原来的挤压动画。 */
+  let animId = pokeAnimFromText(text);
+  if (!animId) animId = await pokeAnimFromContext(currentCharId);
+  if (!animId) animId = 'squish';
+  const myMsg = { id: uid('msg'), charId: currentCharId, from: 'me', type: 'poke', content: text, time: Date.now(), pokeAnim: animId };
   await idbPut('messages', myMsg);
   appendMessage(myMsg);
   renderChatList();
@@ -10935,16 +11630,23 @@ async function sendPlayerPoke(text) {
    用 document 上的事件委托，历史消息、新消息、窗口滑动复用都自动生效，
    不需要在每条消息上单独绑事件。700ms 内只认一次，避免连点刷屏。 */
 let _lastAvatarPoke = 0;
+/* 20261113f：头像「Q 弹颤抖」——双击头像时调它（含玩家自己的头像）。
+   先移除类再强制 reflow，连续触发也能重新播一遍动画。 */
+function quakeAvatar(el) {
+  if (!el || !el.classList) return;
+  el.classList.remove('poke-quake');
+  void el.offsetWidth;
+  el.classList.add('poke-quake');
+  clearTimeout(el._quakeT);
+  el._quakeT = setTimeout(() => el.classList.remove('poke-quake'), 760);
+}
 document.addEventListener('dblclick', async (e) => {
   const av = e.target && e.target.closest ? e.target.closest('.msg-avatar[data-poke-who]') : null;
   if (!av) return;
   const now = Date.now();
   if (now - _lastAvatarPoke < 700) return;
   _lastAvatarPoke = now;
-  av.classList.remove('dbl-poke');
-  void av.offsetWidth;
-  av.classList.add('dbl-poke');
-  setTimeout(() => av.classList.remove('dbl-poke'), 460);
+  quakeAvatar(av);   // 20261113f：Q 弹颤抖（原来只是一次 scale 脉冲）
 
   // 双击触发的戳一戳轻微震一下（普通触发不震，避免每次聊天都震）。
   // Android 侧需要 VIBRATE 权限，已写进 deploy/capacitor.config.json 的 android.permissions，
@@ -11021,7 +11723,11 @@ async function sendSelfPoke(from, charId) {
     if (now - _lastSelfPokeTap < SELF_POKE_TAP_GAP) return;
     _lastSelfPokeTap = now;
   }
-  const m = { id: uid('msg'), charId: cid, from: from, type: 'poke', content: '戳了戳自己', time: now };
+  /* 20261113h：角色自戳跟「角色戳玩家」同一条随机规则 —— 9 个动作等概率抽一个，
+     不再固定回落到原来的挤压动画。玩家双击自己头像那条（from='me'）保留原动画：
+     自戳是玩家自己的玩笑动作，配两球亲密动作用不上。 */
+  const anim = from === 'them' ? pickCharPokeAnim() : '';
+  const m = { id: uid('msg'), charId: cid, from: from, type: 'poke', content: '戳了戳自己', time: now, pokeAnim: anim };
   await idbPut('messages', m);
   if (currentCharId === cid && document.body.dataset.view === 'chat') {
     appendMessage(m);
@@ -11080,7 +11786,8 @@ async function sendCharPoke(c) {
     if (!use.length) return;
     text = drawFrom(use);
   }
-  const m = { id: uid('msg'), charId: c.id, from: 'them', type: 'poke', content: text, time: Date.now() };
+  /* 角色侧完全随机：8 个动作等概率抽，包含原来那个挤压动画 */
+  const m = { id: uid('msg'), charId: c.id, from: 'them', type: 'poke', content: text, time: Date.now(), pokeAnim: pickCharPokeAnim() };
   await idbPut('messages', m);
   if (currentCharId === c.id && document.body.dataset.view === 'chat') {
     appendMessage(m);
@@ -12274,18 +12981,37 @@ function openPomodoroLayer(cid) {
   // 20261104：把当前全局主题经 URL query 提前传给 iframe，让番茄钟首帧就渲染成正确主题，
   //   消除「浅色闪一下再切深色」的闪屏（iframe 在 head 内同步读 query 提前上 theme-* 类）。
   const gt = (typeof _globalThemeId !== 'undefined' && _globalThemeId) ? _globalThemeId : 'dark';
-  frame.src = 'interact_proto.html?theme=' + encodeURIComponent(gt);
+  // 20261113c：加 ?v= 缓存戳——否则 WebView 可能拿旧的 interact_proto.html，
+  //   新加的「子文件夹 / 更换封面 / 移入弹层」看起来像没生效。升 index.html 版本号时同步这里。
+  frame.src = 'interact_proto.html?v=V1.3y&theme=' + encodeURIComponent(gt);
   layer.classList.add('show');
+  // 20261112：进入番茄钟（专注/设置页）即按设置收起网页悬浮窗，退出时恢复
+  _applyFocusFloatGate();
   // 20261105：绑定原生锁机覆盖层「退出锁机」按钮事件（一次绑定，常驻）
   _bindPomodoroLockExit();
   // 番茄钟全屏层打开=离开聊天页观感——打字卡圆点/召唤悬浮窗立即收起
   try { if (window.bmTypecard && typeof window.bmTypecard.updateFloatDot === 'function') window.bmTypecard.updateFloatDot(); } catch (e) {}
   _pomodoroCurrentCharId = cid || null;
 }
+/* 20261112：专注模式悬浮窗闸门
+   用户定案：「只要是开启了专注模式，听歌悬浮窗、碎梦重拼悬浮窗、模拟通话悬浮窗都不该显示，
+   只有退出专注之后才恢复」；同时保留一个测试开关（番茄钟设置页「专注时显示悬浮窗」），
+   开了才允许它们继续出现。
+   ⚠️ 只管 WebView 里的三个自绘悬浮窗：
+      #bm-music-float（一起听歌）、.typecard-float-dot/.typecard-float-panel（碎梦重拼）、#call-float/#call-box（模拟通话小窗）
+   安卓原生系统悬浮窗（原生音乐条、模拟通话原生窗）是系统窗口，不在此列，不受影响。
+   实现方式：给 body 挂 focus-hide-floats 类走 CSS 隐藏（!important 压过浮窗自身的 display），
+   退出番茄钟/打开开关就摘类 → 浮窗按各自原逻辑自动回来，不破坏它们的显示状态机。 */
+function _applyFocusFloatGate() {
+  const allow = !!(chatSettings && chatSettings.pomodoroAllowFloat === true);
+  document.body.classList.toggle('focus-hide-floats', !allow);
+}
 function closePomodoroLayer() {
   const layer = document.getElementById('pomodoro-layer');
   if (!layer) return;
   layer.classList.remove('show');
+  // 20261112：退出专注 → 恢复网页悬浮窗
+  document.body.classList.remove('focus-hide-floats');
   // 20261104：关闭番茄钟层即停止白噪音（防止退出后 BgAudio 仍后台播）
   _pomodoroStopNoise();
   // 20261105：关闭番茄钟层兜底移除锁机覆盖层（防止残留锁死屏幕）
@@ -13085,6 +13811,8 @@ async function _pomodoroPushChars() {
     pomodoroBreakMin: (typeof cs.pomodoroBreakMin === 'number' ? cs.pomodoroBreakMin : 5),
     pomodoroNoiseOn: (cs.pomodoroNoiseOn === true),
     pomodoroLockOn: (cs.pomodoroLockOn === true),
+    // 20261112：专注时是否允许网页悬浮窗继续显示（音乐/碎梦重拼/模拟通话小窗）
+    pomodoroAllowFloat: (cs.pomodoroAllowFloat === true),
     companionInteractMin: (typeof cs.companionInteractMin === 'number' ? cs.companionInteractMin : 8),
     companionInteractMax: (typeof cs.companionInteractMax === 'number' ? cs.companionInteractMax : 20),
     companionActions: compActs,               // 字卡库「陪伴动作」预设
@@ -13175,6 +13903,11 @@ async function _pomodoroSaveSettle(data) {
     } else if (d.type === 'pomodoro-unlock') {
       // 20261105：退出锁机/退出专注——移除全屏锁机覆盖层
       _pomodoroUnlock();
+    } else if (d.type === 'pomodoro-allow-float') {
+      // 20261112：番茄钟设置页「专注时显示悬浮窗」开关 → 存设置 + 立即生效
+      chatSettings.pomodoroAllowFloat = (d.on === true);
+      setSetting('chatSettings', chatSettings);
+      _applyFocusFloatGate();
     }
   });
 })();
@@ -13943,24 +14676,80 @@ function _getPlayerLocation() {
 }
 
 /* ---------- 突击查岗（15.2 简版：卡片 + 角色抽 2~3 条字卡回复） ---------- */
+/* 20261113c：查岗 / 报备共用的一套弹窗样式（内联，不依赖外链 CSS 的加载状态）
+   设计约束：头部「图标 + 标题 + 一句说明 + 关闭键」；定位勾选做成整行可点的设置行；
+   主次按钮统一 45px 圆角胶囊（取消描边 / 发送实心）；主动报备降级为底部次级入口。 */
+const _CHECKIN_CSS = `
+<style>
+.ci-head{display:flex;align-items:flex-start;gap:11px;margin-bottom:15px;}
+.ci-ic{width:36px;height:36px;border-radius:12px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(150deg,rgba(167,139,250,.26),rgba(167,139,250,.09));
+  color:var(--purple-soft,#c4b5fd);border:1px solid rgba(167,139,250,.26);}
+.ci-tt{flex:1;min-width:0;padding-top:1px;}
+.ci-title{font-size:17px;font-weight:700;letter-spacing:.5px;line-height:1.25;color:var(--text,#eae8f2);}
+.ci-sub{font-size:11.5px;line-height:1.55;color:var(--text-tertiary,rgba(234,232,242,.55));margin-top:4px;}
+.ci-x{width:30px;height:30px;flex:0 0 auto;border:0;border-radius:50%;background:var(--bg-elevated-2,#242129);
+  color:var(--text-secondary);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.ci-x:active{transform:scale(.92);}
+.ci-label{font-size:12px;color:var(--text-tertiary,rgba(234,232,242,.55));margin:0 0 7px 2px;letter-spacing:.3px;}
+.ci-input{width:100%;box-sizing:border-box;height:46px;border-radius:13px;border:1px solid var(--border);
+  background:var(--bg-elevated-2,#242129);color:var(--text,#eae8f2);font-size:14.5px;padding:0 14px;
+  outline:none;font-family:inherit;}
+.ci-input:focus,.ci-ta:focus{border-color:rgba(167,139,250,.65);}
+.ci-ta{width:100%;box-sizing:border-box;min-height:84px;border-radius:13px;border:1px solid var(--border);
+  background:var(--bg-elevated-2,#242129);color:var(--text,#eae8f2);font-size:14.5px;line-height:1.65;
+  padding:12px 14px;outline:none;font-family:inherit;resize:none;}
+.ci-opt{display:flex;align-items:center;gap:12px;margin-top:12px;padding:11px 14px;border-radius:13px;
+  border:1px solid var(--border);background:var(--bg-elevated-2,#242129);cursor:pointer;}
+.ci-opt-l{flex:1;min-width:0;}
+.ci-opt-t{font-size:13.5px;color:var(--text,#eae8f2);}
+.ci-opt-d{display:block;font-size:11px;line-height:1.5;color:var(--text-tertiary,rgba(234,232,242,.55));margin-top:2px;}
+.ci-opt input{appearance:none;-webkit-appearance:none;width:22px;height:22px;flex:0 0 auto;margin:0;
+  border-radius:7px;border:1.5px solid var(--border);background:transparent;position:relative;
+  cursor:pointer;transition:background .15s ease,border-color .15s ease;box-sizing:border-box;}
+.ci-opt input:checked{background:var(--purple,#a78bfa);border-color:var(--purple,#a78bfa);}
+.ci-opt input:checked::after{content:'';position:absolute;left:7px;top:3.5px;width:5px;height:10px;
+  border:solid #141019;border-width:0 2px 2px 0;transform:rotate(45deg);}
+.ci-opt input:disabled{border-style:dashed;cursor:default;}
+.ci-acts{display:flex;gap:10px;margin-top:16px;}
+.ci-btn{flex:1;height:45px;border-radius:23px;border:1px solid var(--border);background:transparent;
+  color:var(--text,#eae8f2);font-size:14.5px;font-weight:600;font-family:inherit;cursor:pointer;}
+.ci-btn.main{background:var(--purple,#a78bfa);border-color:var(--purple,#a78bfa);color:#141019;font-weight:700;}
+.ci-btn:active{transform:scale(.97);}
+.ci-foot{margin-top:14px;padding-top:13px;border-top:1px dashed var(--border);text-align:center;}
+.ci-link{border:0;background:none;color:var(--text-secondary);font-size:12.5px;font-family:inherit;
+  display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:5px 10px;border-radius:10px;}
+.ci-link:active{background:var(--bg-elevated-2,#242129);}
+</style>`;
+
 function showCheckinModal() {
-  openModal(`
-    <div style="font-size:18px;font-weight:600;margin-bottom:12px;">突击查岗</div>
-    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px;">向访客发起突击查岗，TA 会回复自己此刻所在的位置（或所在维度）、天气和正在做的事。</div>
-    <div class="field">
-      <label>查岗文案（可编辑）</label>
-      <input class="input" id="checkin-text" value="突击查岗！你现在在做什么！">
+  if (openModal(_CHECKIN_CSS + `
+    <div class="ci-head">
+      <div class="ci-ic">${icon('location', 18)}</div>
+      <div class="ci-tt">
+        <div class="ci-title">突击查岗</div>
+        <div class="ci-sub">TA 会回你此刻的位置、天气和正在做的事</div>
+      </div>
+      <button class="ci-x" id="checkin-cancel-x">${icon('close', 16)}</button>
     </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-      <input type="checkbox" id="checkin-my-loc" style="width:17px;height:17px;accent-color:var(--purple);">
-      <label for="checkin-my-loc" style="font-size:13px;color:var(--text-secondary);"><i data-icon="pin" data-size="12"></i> 附带我的位置（需授权定位，可随时拒绝）</label>
+    <div class="ci-label">查岗文案</div>
+    <input class="ci-input" id="checkin-text" value="突击查岗！你现在在做什么！">
+    <label class="ci-opt" for="checkin-my-loc">
+      <span class="ci-opt-l">
+        <span class="ci-opt-t">附带我的位置</span>
+        <span class="ci-opt-d">需要定位授权，可随时拒绝</span>
+      </span>
+      <input type="checkbox" id="checkin-my-loc">
+    </label>
+    <div class="ci-acts">
+      <button class="ci-btn" id="checkin-cancel">取消</button>
+      <button class="ci-btn main" id="checkin-send">发送查岗</button>
     </div>
-    <div style="display:flex;gap:10px;">
-      <button class="btn" style="flex:1;" id="checkin-cancel">取消</button>
-      <button class="btn primary" style="flex:1;" id="checkin-send">发送查岗</button>
+    <div class="ci-foot">
+      <button class="ci-link" id="checkin-report">${icon('letter', 14)} 主动报备 · 发送我的位置</button>
     </div>
-    <button class="btn block" style="margin-top:10px;width:100%;" id="checkin-report"><i data-icon="letter" data-size="16"></i> 主动报备（发送我的位置）</button>
-  `);
+  `) === false) return;
+  $('#checkin-cancel-x').onclick = closeModal;
   $('#checkin-cancel').onclick = closeModal;
   $('#checkin-send').onclick = async () => {
     const text = $('#checkin-text').value.trim() || '突击查岗！你现在在做什么！';
@@ -14039,25 +14828,29 @@ function showCheckinModal() {
 function showReportModal() {
   const c = characters.find(x => x.id === currentCharId);
   const locOn = (getCharChatSettings(c) || {}).checkinLocation !== false;
-  openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-      <div style="font-size:18px;font-weight:600;"><i data-icon="letter" data-size="15"></i> 主动报备</div>
-      <button class="icon-btn" id="report-close"><i data-icon="close" data-size="17"></i></button>
+  if (openModal(_CHECKIN_CSS + `
+    <div class="ci-head">
+      <div class="ci-ic">${icon('letter', 18)}</div>
+      <div class="ci-tt">
+        <div class="ci-title">主动报备</div>
+        <div class="ci-sub">告诉「${escapeHtml(c ? c.name : 'TA')}」你现在在做什么，可附上位置、天气与地图</div>
+      </div>
+      <button class="ci-x" id="report-close">${icon('close', 16)}</button>
     </div>
-    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px;">告诉「${escapeHtml(c ? c.name : 'TA')}」你现在在做什么，可一并附上你的位置、天气与地图。</div>
-    <div class="field">
-      <label>我正在做什么（可编辑）</label>
-      <textarea class="textarea" id="report-text" placeholder="我现在在…" style="min-height:80px;">${escapeHtml(_drawCheckinStatus())}</textarea>
+    <div class="ci-label">我正在做什么</div>
+    <textarea class="ci-ta" id="report-text" placeholder="我现在在…">${escapeHtml(_drawCheckinStatus())}</textarea>
+    <label class="ci-opt" for="report-loc" style="${locOn ? '' : 'opacity:.55;cursor:default;'}">
+      <span class="ci-opt-l">
+        <span class="ci-opt-t">附带我的位置</span>
+        <span class="ci-opt-d">${locOn ? '需要定位授权，可随时拒绝' : '聊天设置里已关闭位置发送'}</span>
+      </span>
+      <input type="checkbox" id="report-loc" ${locOn ? 'checked' : 'disabled'}>
+    </label>
+    <div class="ci-acts">
+      <button class="ci-btn" id="report-cancel">取消</button>
+      <button class="ci-btn main" id="report-send">发送报备</button>
     </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-      <input type="checkbox" id="report-loc" style="width:17px;height:17px;accent-color:var(--purple);" ${locOn ? 'checked' : ''} ${locOn ? '' : 'disabled'}>
-      <label for="report-loc" style="font-size:13px;color:var(--text-secondary);"><i data-icon="pin" data-size="12"></i> 附带我的位置（需授权定位，可随时拒绝）</label>
-    </div>
-    <div style="display:flex;gap:10px;">
-      <button class="btn" style="flex:1;" id="report-cancel">取消</button>
-      <button class="btn primary" style="flex:1;" id="report-send">发送报备</button>
-    </div>
-  `);
+  `) === false) return;
   $('#report-close').onclick = closeModal;
   $('#report-cancel').onclick = closeModal;
   $('#report-send').onclick = async () => {
@@ -14151,7 +14944,14 @@ function openCheckinReplyModal(charId, checkinMsg = null) {
       checkinMsg.content.replies = checkinMsg.content.replies || [];
       const replyEntry = { who: playerProfile.name || '我', text };
       // 若玩家带了位置，且角色卡片有位置，则计算距离附在回复里
-      if (loc && checkinMsg.content.location && !checkinMsg.content.location.dim && !loc.denied) {
+      /* 20261114：任一端在 1~11 虚构维度 → 距离不可测，不编数字，标记成「未知」 */
+      const otherDim = (checkinMsg.content.location && checkinMsg.content.location.dim)
+        ? Number(checkinMsg.content.location.dim) : 0;
+      const myDim = (loc && loc.dim) ? Number(loc.dim) : 0;
+      const dimSide = (otherDim >= 1 && otherDim <= 11) || (myDim >= 1 && myDim <= 11);
+      if (dimSide) {
+        replyEntry.dimUnknown = true;
+      } else if (loc && checkinMsg.content.location && !loc.denied) {
         const d = _distKm(loc.lat, loc.lng, checkinMsg.content.location.lat, checkinMsg.content.location.lng);
         replyEntry.dist = d;
       }
@@ -15406,11 +16206,52 @@ function showRedPacketModal() {
       <label>祝福语（可选）</label>
       <input class="input" id="rp-note" placeholder="如：恭喜发财，大吉大利">
     </div>
+    <!-- 20261113d：自定义红包封面（上传后铺在发出去的红包卡片上） -->
+    <div class="field">
+      <label>红包封面（可选）</label>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div id="rp-cover-prev" style="width:62px;height:82px;border-radius:9px;flex-shrink:0;background:linear-gradient(180deg,#e0553f 0%,#c8382a 100%);display:flex;align-items:center;justify-content:center;color:#ffd9a0;font-size:20px;font-weight:800;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);background-size:cover;background-position:center;">¥</div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;">
+          <button class="btn" id="rp-cover-btn" style="padding:8px 12px;font-size:12.5px;">上传封面</button>
+          <button class="btn" id="rp-cover-clear" style="padding:6px 12px;font-size:12px;display:none;">恢复默认</button>
+          <div style="font-size:11px;color:var(--text-tertiary);line-height:1.5;">图片会铺满红包正面，建议竖图</div>
+        </div>
+        <input type="file" id="rp-cover-file" accept="image/*" style="display:none;">
+      </div>
+    </div>
     <div style="display:flex;gap:10px;">
       <button class="btn" style="flex:1;" id="rp-cancel">取消</button>
       <button class="btn primary" style="flex:1;" id="rp-go">塞进红包</button>
     </div>
   `);
+  /* 20261113d：封面状态（只有玩家自己发的红包带封面） */
+  let rpCover = '';
+  const prevEl = $('#rp-cover-prev');
+  const clearBtn = $('#rp-cover-clear');
+  const paintCover = () => {
+    if (!prevEl) return;
+    if (rpCover) {
+      prevEl.style.backgroundImage = `url("${rpCover}")`;
+      prevEl.textContent = '';
+      if (clearBtn) clearBtn.style.display = 'block';
+    } else {
+      prevEl.style.backgroundImage = '';
+      prevEl.textContent = '¥';
+      if (clearBtn) clearBtn.style.display = 'none';
+    }
+  };
+  $('#rp-cover-btn').onclick = () => $('#rp-cover-file').click();
+  if (clearBtn) clearBtn.onclick = () => { rpCover = ''; paintCover(); };
+  $('#rp-cover-file').onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const r = await compressImage(f, 900, 0.78);
+      rpCover = (typeof r === 'string') ? r : await blobToDataURL(r.blob);
+      paintCover();
+    } catch (err) { miniToast('这张图读不出来，换一张试试'); }
+  };
   $('#rp-cancel').onclick = closeModal;
   $('#rp-go').onclick = async () => {
     const amount = parseInt($('#rp-amount').value);
@@ -15424,7 +16265,7 @@ function showRedPacketModal() {
     closeModal();
     const myMsg = {
       id: uid('msg'), charId: currentCharId, from: 'me', type: 'redpacket',
-      content: { amount, note: note || '恭喜发财，大吉大利', direction: 'me_to_char', status: 'pending' }, time: Date.now()
+      content: { amount, note: note || '恭喜发财，大吉大利', direction: 'me_to_char', status: 'pending', cover: rpCover || undefined }, time: Date.now()
     };
     await idbPut('messages', myMsg);
     appendMessage(myMsg);
@@ -19386,6 +20227,23 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </div>
     </div>
 
+    <!-- 20261113g：两个「演出事件」——发消息时极低概率触发，各自独立开关，默认开。
+         放在「回复」面板最下面：它们属于「聊天里额外冒出来的东西」，跟回复节奏同一类。 -->
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>姻缘牵</span>
+        <input type="checkbox" id="cs-event-yinyuan" ${s.eventYinyuan !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">发消息时有很低的概率触发：一根红线从 TA 的头像绕出来，缠成一个结，线的另一头系在你手上。关掉就不再出现。</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>目光</span>
+        <input type="checkbox" id="cs-event-gaze" ${s.eventGaze !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">发消息时有很低的概率触发：屏幕暗下来，只剩一双一直看着你的眼睛，你可以回一句话再让它慢慢退开。关掉就不再出现。</div>
+    </div>
     </section>
 
     <section class="cs-panel" data-cs-panel="四季">
@@ -20979,6 +21837,11 @@ function bindChatSettings(s, onSave, tcChar) {
     if (cueEl) s.charUsePlayerEmojis = cueEl.checked; // 20261002cb：允许角色使用玩家表情包库
     const pokeEl = $('#cs-poke-mode');
     if (pokeEl) s.charPoke = pokeEl.value;
+    /* 20261113g：两个演出事件开关（全局/角色级共用这段保存） */
+    const eyEl = $('#cs-event-yinyuan');
+    if (eyEl) s.eventYinyuan = eyEl.checked;
+    const egEl = $('#cs-event-gaze');
+    if (egEl) s.eventGaze = egEl.checked;
     const muteEl = $('#cs-mute');
     if (muteEl) s.muteNotifications = muteEl.checked;
     const ocSkipEl = $('#cs-skip-oc');
@@ -21024,7 +21887,7 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicSwap','musicSwapMin','musicSwapMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','musicModeSwitch','musicModeSwitchMin','musicModeSwitchMax','musicBgAllow','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax','seasonLoveGapMin','seasonLoveGapMax']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','eventYinyuan','eventGaze','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicSwap','musicSwapMin','musicSwapMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','musicModeSwitch','musicModeSwitchMin','musicModeSwitchMax','musicBgAllow','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax','seasonLoveGapMin','seasonLoveGapMax']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
@@ -21084,9 +21947,12 @@ async function showSettingsModal() {
         <span>开发者模式</span>
         <input type="checkbox" id="gs-developer-mode" ${chatSettings.developerMode ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启需输入密码。开启后可在访客单聊输入命令，让访客发朋友圈/表情包/戳一戳/查岗/超频/视频通话/发红包/书信/问卷。命令不会作为普通消息发送，且不受任何功能解锁限制。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">开启需输入密码。开启后可在访客单聊输入命令，让访客发朋友圈/表情包/戳一戳/查岗/报备/超频/惊喜/视频通话/语音通话/主动找我/分享歌/发红包/书信/问卷，也能让群聊接龙。命令不会作为普通消息发送，且不受任何功能解锁限制。</div>
     </div>
     ${chatSettings.developerMode ? `
+    <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-dev-cmd-list">
+      开发者命令清单（全部角色互动） <span><i data-icon="doc" data-size="16"></i></span>
+    </button>
     <button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="btn-dream-fx-debug">
       入梦签节气/节日调试 <span><i data-icon="moon" data-size="16"></i></span>
     </button>` : ''}
@@ -21257,6 +22123,9 @@ async function showSettingsModal() {
     await setSetting('chatSettings', chatSettings);
     miniToast('开发者模式已关闭');
   };
+  // 20261113：开发者命令清单（仅开发者模式可见）——软件内直接查全部角色互动命令
+  const btnDevCmd = $('#btn-dev-cmd-list');
+  if (btnDevCmd) btnDevCmd.onclick = () => showDevCommandList();
   // 20261028：入梦签节气/节日调试器（仅开发者模式可见）——点开选任意节日/节气，
   // 直接预览对应的入梦签动画卡片（含动画/音效/交互），方便在软件内逐一看效果。
   const btnFxDebug = $('#btn-dream-fx-debug');
@@ -21705,8 +22574,9 @@ function showDataCatModal(id) {
       ${btn('btn-export', '导出全局数据（.ocdata）', '<i data-icon="download" data-size="15"></i>')}
       ${btn('btn-import', '导入全局数据（.ocdata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);line-height:1.85;margin:2px 0 4px;padding:10px 12px;background:var(--bg-elevated-2);border-radius:10px;">
-        <b style="color:var(--text);">全局备份包含</b>：角色卡、聊天记录、玩家表情包、<b style="color:var(--text);">字卡（自定义字卡与字卡分组）</b>、记忆宫殿、书信、世界树、记事簿、朋友圈、纪念日、问卷、超频礼物柜、美化与各项设置。<br>
-        <b style="color:var(--text);">不包含</b>（需在对应分类里单独导出）：四季（.seasondata）、音乐（.musicdata）、番茄钟结算。全局导出再导入，这三块<b style="color:var(--text);">不会跟着回来</b>。
+        <b style="color:var(--text);">全局备份包含</b>：角色卡（含每个角色的聊天背景图）、聊天记录、玩家表情包、<b style="color:var(--text);">字卡（自定义字卡与字卡分组）</b>、记忆宫殿、书信、世界树、记事簿、朋友圈、纪念日、问卷、<b style="color:var(--text);">问卷库（预存题库）</b>、超频礼物柜、<b style="color:var(--text);">经期潮汐、通话背景图、全局色彩与毛玻璃档位</b>，以及聊天气泡颜色 / 自定义 CSS 等美化与各项设置。<br>
+        <b style="color:var(--text);">不包含</b>（需在对应分类里单独导出）：四季（.seasondata）、音乐（.musicdata）、番茄钟结算（.focusdata）。全局导出再导入，这三块<b style="color:var(--text);">不会跟着回来</b>。<br>
+        另外<b style="color:var(--text);">两处按设计不备份</b>：AI 接口配置、占卜接口地址——换机或重装后需要重新填写；角色每日日程表会在次日自动重新生成。
       </div>
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">恢复：检测现有<b>自动备份</b>，选择要恢复到的那一份（无需手动找文件）</div>
@@ -22721,7 +23591,8 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
       && !(Array.isArray(data.emojis) && data.emojis.length)
       && !(Array.isArray(data.palace) && data.palace.length)
       && !(Array.isArray(data.surveys) && data.surveys.length)
-      && !(Array.isArray(data.gifts) && data.gifts.length);
+      && !(Array.isArray(data.gifts) && data.gifts.length)
+      && !(Array.isArray(data.surveyLibrary) && data.surveyLibrary.length);
     if (mode === 'overwrite' && isEmptyBackup) {
       showConfirm('⚠️ 这个备份文件是空的（没有任何角色/聊天记录/记忆宫殿数据）。\n\n覆盖导入会清空你当前的所有数据，因此已自动拦截，不会执行。\n\n请检查是否选错了文件，或先导出正确的备份再导入。', null);
       throw new Error('空备份已拦截，未执行覆盖导入');
@@ -22734,6 +23605,9 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
       await idbClear('palace'); // 记忆宫殿（20260929w）
       await idbClear('surveys'); // 问卷（20260929al）
       await idbClear('gifts'); // 超频礼物柜（20260929ao）
+      /* 20261112b：问卷库也是「覆盖导入就该被替换掉」的数据。
+         它不在 kv 里（独立 store），旧的 idbClear('kv') 清不到它，会留下上一份数据的残影。 */
+      await idbClear('surveyLibrary');
       await idbClear('kv');
     }
     // 写入导入的数据（覆盖模式直接写；合并模式按 id 合并覆盖）
@@ -22745,7 +23619,8 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
     const pals = Array.isArray(data.palace) ? data.palace : []; // 记忆宫殿条目
     const srvs = Array.isArray(data.surveys) ? data.surveys : []; // 问卷（20260929al）
     const gifts = Array.isArray(data.gifts) ? data.gifts : []; // 超频礼物柜（20260929ao）
-    const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length || 1;
+    const svls = Array.isArray(data.surveyLibrary) ? data.surveyLibrary : []; // 问卷库（20261112b）
+    const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length + svls.length || 1;
     let wDone = 0;
     _stage(3, 0, wTotal);
     const bulkWithProg = async (store, arr) => {
@@ -22762,6 +23637,7 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
     await bulkWithProg('palace', pals);
     await bulkWithProg('surveys', srvs);
     await bulkWithProg('gifts', gifts);
+    await bulkWithProg('surveyLibrary', svls);
     _stage(3, wTotal, wTotal);
     if (data.cards) {
       if (mode === 'merge') {
@@ -24098,6 +24974,10 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
     palace: await idbGetAll('palace'), // 记忆宫殿（细则十-2：全量备份必须包含）
     surveys: await idbGetAll('surveys'), // 问卷（20260929al：全量备份包含）
     gifts: await idbGetAll('gifts'), // 超频礼物柜（20260929ao：全量备份包含）
+    /* 20261112b：问卷库（surveyLibrary store）此前既不在全量备份、也没有单独入口，
+       玩家预存的题库（玩家库 + 每个角色的问卷库）换机/覆盖导入后会完全消失，且无法再生成。
+       这里补进全量备份；文件夹名（svLibFolders / svLibCharFolders）随 settings 一起走。 */
+    surveyLibrary: await idbGetAll('surveyLibrary'),
     cards: cards,
     playerProfile: await getSetting('playerProfile', null),
     chatSettings: await getSetting('chatSettings', null),
@@ -24136,6 +25016,22 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
       oc_unlocked: await getSetting('oc_unlocked', false),
       oc_surpriseUnlocked: await getSetting('oc_surpriseUnlocked', false),
       perCharMode: await getSetting('perCharMode', null),          // 20261031：角色级 AI/字卡模式覆盖（单独设置的访客）
+      /* 20261112b：补齐玩家点名要进全局、但此前两个通道都没有的几块（原样存 kv，不加密不改结构）
+         · surveyLibrary 的文件夹（条目本体走上面的 data.surveyLibrary）
+         · menstrualInfo 经期潮汐：玩家真实记录的时间线，丢了没法还原
+         · callBgImage 通话背景图（{blob,thumb}，会被 collectImagesV4 抽成图片块，不进 JSON 头）
+         · 全局色彩与毛玻璃档位：属于「美化」，之前只备份了 chatTheme，这几项漏了
+         注：仍不备份的——四季（.seasondata，图片太大单独导）、音乐（.musicdata）、
+            番茄钟结算（.focusdata）、AI 接口配置（aiConfig，换机本来就该重填）、
+            占卜接口（divinationApi，同属要重填的接口地址）、角色每日日程表（charSchedule_*，次日自动重生成）。 */
+      svLibFolders: await getSetting('svLibFolders', []),            // 玩家问卷库文件夹
+      svLibCharFolders: await getSetting('svLibCharFolders', {}),    // 角色问卷库文件夹（按 charId）
+      menstrualInfo: await getSetting('menstrualInfo', null),        // 经期潮汐记录
+      callBgImage: await getSetting('callBgImage', null),            // 通话背景图
+      globalTheme: await getSetting('globalTheme', 'dark'),          // 全局色彩主题
+      glassAutoLevel: await getSetting('glassAutoLevel', ''),        // 毛玻璃自动档位
+      glassManualLevel: await getSetting('glassManualLevel', ''),    // 毛玻璃手动档位
+      typecardFloatGlass: await getSetting('typecardFloatGlass', ''),// 字卡悬浮窗玻璃档位
       // 注：关系网存在各角色 c.relations 字段里（已随 characters 导出），占卜不记录历史，故无需单独键
     },
   };
@@ -25075,6 +25971,99 @@ async function toggleMomentLike(postId, evt) {
   renderMoments();
 }
 
+/* 20261113f：从聊天里的「朋友圈分享」卡片点开原动态——
+   能看到完整内容、谁赞过、所有评论，并且可以直接点赞 / 评论 / 回复某条评论。 */
+async function showMomentFromShare(postId) {
+  if (!postId) return;
+  let replyTo = null;
+  const whoName = (who) => who === 'player' ? (playerProfile.name || '我')
+    : ((characters.find(x => x.id === who) || {}).name || '梦角');
+
+  const paint = async () => {
+    const posts = await loadMomentPosts();
+    const post = posts.find(p => p.id === postId);
+    if (!post) { miniToast('这条动态已经不在了'); try { closeModal(); } catch (e) {} return; }
+    const author = momentAuthor(post);
+    const likes = Array.isArray(post.likes) ? post.likes : [];
+    const comments = Array.isArray(post.comments) ? post.comments : [];
+    const liked = likes.some(l => l.who === 'player');
+    const stks = (post.stickers && post.stickers.length ? post.stickers : (post.sticker ? [post.sticker] : []));
+    const imgs = post.images || [];
+    const replyName = replyTo ? whoName((comments.find(x => x.id === replyTo) || {}).who || '') : '';
+    openModal(`
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <div style="font-size:17px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('comment', 18)} 朋友圈</div>
+        <button class="icon-btn" id="msv-close"><i data-icon="close" data-size="17"></i></button>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <div class="avatar" style="width:38px;height:38px;flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;">${author.avatar ? `<img src="${imgSrcAttr(author.avatar)}" style="width:100%;height:100%;object-fit:cover;">` : escapeHtml(String(author.name || '梦').slice(0, 1))}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:600;">${escapeHtml(author.name)}</div>
+          <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:2px;">${timeAgoStr(post.createTime)}</div>
+          ${post.content ? `<div style="margin-top:8px;font-size:14px;line-height:1.65;white-space:pre-wrap;word-break:break-word;">${escapeHtml(post.content)}</div>` : ''}
+          ${stks.map(s => `<div style="margin-top:6px;">${emojiImgOf(s, 'msg-emoji') || `<span style="font-size:30px;">${escapeHtml(s)}</span>`}</div>`).join('')}
+          ${imgs.length ? `<div style="display:grid;grid-template-columns:repeat(${imgs.length === 1 ? 1 : 3},1fr);gap:6px;margin-top:10px;">${imgs.slice(0, 9).map(im => `<img src="${imgSrcAttr(im, true)}" data-full="${imgSrcAttr(im)}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;border:1px solid var(--border);">`).join('')}</div>` : ''}
+        </div>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button class="btn ${liked ? 'primary' : ''}" id="msv-like" style="padding:7px 14px;font-size:12.5px;display:inline-flex;align-items:center;gap:5px;">${icon('heart', 14)} ${liked ? '已赞' : '点赞'}</button>
+          <button class="btn" id="msv-focus" style="padding:7px 14px;font-size:12.5px;display:inline-flex;align-items:center;gap:5px;">${icon('comment', 14)} 评论</button>
+        </div>
+        <div style="margin-top:10px;font-size:12.5px;line-height:1.65;color:var(--text-secondary);">
+          ${likes.length ? `<span style="color:var(--text);">${likes.length} 人赞过</span> · ${likes.map(l => escapeHtml(whoName(l.who))).join('、')}` : '<span style="color:var(--text-tertiary);">还没有人赞</span>'}
+        </div>
+        <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px;">
+          ${comments.length ? comments.map(cm => {
+            const tgt = cm.replyTo ? comments.find(x => x.id === cm.replyTo) : null;
+            return `<div style="display:flex;align-items:flex-start;gap:8px;">
+              <div style="flex:1;min-width:0;font-size:12.5px;line-height:1.6;word-break:break-word;">
+                <b style="color:var(--purple-soft);">${escapeHtml(whoName(cm.who))}</b>${tgt ? `<span style="color:var(--text-tertiary);"> 回复 ${escapeHtml(whoName(tgt.who))}</span>` : ''}：${escapeHtml(cm.content || '')}
+              </div>
+              <button data-msv-reply="${cm.id}" style="flex-shrink:0;background:none;border:none;color:var(--text-tertiary);font-size:11.5px;padding:2px 4px;cursor:pointer;">回复</button>
+            </div>`;
+          }).join('') : '<div style="font-size:12.5px;color:var(--text-tertiary);">还没有评论</div>'}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <input class="input" id="msv-input" placeholder="${replyName ? '回复 ' + escapeHtml(replyName) + '…' : '说点什么…'}" style="flex:1;min-width:0;">
+          <button class="btn primary" id="msv-send" style="padding:0 16px;flex-shrink:0;">发送</button>
+        </div>
+      </div>
+    `);
+    $('#msv-close').onclick = closeModal;
+    $('#msv-like').onclick = async () => {
+      await toggleMomentLike(postId);
+      await paint();
+    };
+    const focusInput = () => { const i = $('#msv-input'); if (i) i.focus(); };
+    $('#msv-focus').onclick = focusInput;
+    document.querySelectorAll('[data-msv-reply]').forEach(b => {
+      b.onclick = () => { replyTo = b.dataset.msvReply; paint(); };
+    });
+    const send = async () => {
+      const input = $('#msv-input');
+      const text = input ? (input.value || '').trim() : '';
+      if (!text) { focusInput(); return; }
+      const arr = await loadMomentPosts();
+      const p = arr.find(x => x.id === postId);
+      if (!p) return;
+      p.comments = Array.isArray(p.comments) ? p.comments : [];
+      const cm = { id: uid('cm'), who: 'player', content: text, time: Date.now() };
+      if (replyTo) cm.replyTo = replyTo;
+      p.comments.push(cm);
+      await saveMomentPosts(arr);
+      replyTo = null;
+      await paint();
+      miniToast('已评论');
+    };
+    $('#msv-send').onclick = send;
+    const inp = $('#msv-input');
+    if (inp) inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(); } });
+  };
+
+  await paint();
+}
+
 /* 评论弹窗（玩家评论；replyTo=回复某条评论） */
 async function showMomentCommentModal(postId, replyTo = null) {
   const posts = await loadMomentPosts();
@@ -25528,6 +26517,75 @@ async function showMomentShareModal(postId) {
     await savePostToPalace(post);
     closeModal();
   };
+}
+
+/* 20261113d：角色把朋友圈分享给玩家。
+   可见范围：他自己的动态 + 与他「有关系」的角色的动态（charKnowsChar 判定），玩家自己的不在此列
+   （那是玩家自己的视角，不构成「他看到别人的」）。
+   形态：先发一句随口的话（字卡组合），再跟一张朋友圈分享卡，读起来像真的在聊天里转给你看。 */
+async function charShareMoment(c) {
+  if (!c) return false;
+  try {
+    const posts = await loadMomentPosts();
+    const mine = posts.filter(p => p.authorType !== 'player' && p.authorId === c.id);
+    const others = posts.filter(p => {
+      if (p.authorType === 'player' || !p.authorId || p.authorId === c.id) return false;
+      const a = characters.find(x => x.id === p.authorId);
+      return !!(a && charKnowsChar(c, a));
+    });
+    const pool = mine.concat(others);
+    if (!pool.length) return false;
+    const post = drawFrom(pool);
+    const author = momentAuthor(post);
+    // 先来一句随口的话（分享别人时更像「你看这个」；分享自己时更像自言自语）
+    const isOther = post.authorId !== c.id;
+    let lead = '';
+    try {
+      lead = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []) || '';
+    } catch (e) { lead = ''; }
+    if (!lead) lead = isOther ? '看到这条，想起你。' : '翻到自己以前发的。';
+    const leadMsg = { id: uid('msg'), charId: c.id, from: 'them', type: 'text', content: lead, time: Date.now() };
+    await idbPut('messages', leadMsg);
+    const msg = {
+      id: uid('msg'), charId: c.id, from: 'them', type: 'share',
+      content: {
+        authorName: author.name,
+        postId: post.id,
+        authorId: post.authorId || '',
+        authorType: post.authorType || 'char',
+        text: post.content || '',
+        sticker: post.sticker || null,
+        img: (post.images || [])[0] || null,
+        images: (post.images || []).slice(0, 9),
+        time: post.createTime,
+        byChar: true,
+        isOther: isOther,
+      },
+      time: Date.now(),
+    };
+    await idbPut('messages', msg);
+    if (currentCharId === c.id && document.body.dataset.view === 'chat') {
+      appendMessage(leadMsg);
+      appendMessage(msg);
+      scrollToBottom();
+    } else {
+      renderChatList();
+      refreshUnreadBadges();
+    }
+    notifyIncoming(c, '分享了一条朋友圈给你', c.name + ' 分享了朋友圈', 'share');
+    return true;
+  } catch (e) { return false; }
+}
+
+/* 每天最多分享 1 条朋友圈给玩家，搭在主动消息节奏里（低概率，不新增定时器） */
+const _shareMomentCount = {};
+async function maybeCharShareMoment(c) {
+  if (!c) return;
+  const key = c.id + '|' + todayKey();
+  if ((_shareMomentCount[key] || 0) >= 1) return;
+  if (Math.random() > 0.06) return;
+  const ok = await charShareMoment(c);
+  if (ok) _shareMomentCount[key] = (_shareMomentCount[key] || 0) + 1;
 }
 
 /* 把一条朋友圈以「分享卡片消息」写进角色聊天流（20260925i：分享后角色会自动回复，
@@ -29619,15 +30677,123 @@ const LETTER_PAPERS = [
    20261104 升级：模拟手抄原浆纸——细密短纤维 + 横向抄纸纹理（fractalNoise 高频 + 纤维拉丝），
    比单一噪点更接近「草本纸/原浆纸」的纤维手感。 */
 function letterPaperTex() {
-  return `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9 0.45' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cfilter id='fib'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.5' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23f)' opacity='0.20'/%3E%3Crect width='240' height='240' filter='url(%23fib)' opacity='0.10'/%3E%3C/svg%3E")`;
+  return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9 0.45' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cfilter id='fib'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012 0.5' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23f)' opacity='0.20'/%3E%3Crect width='240' height='240' filter='url(%23fib)' opacity='0.10'/%3E%3C/svg%3E`;
 }
 /* 浮雕压纹（feDiffuseLighting 定向光 + 凹凸映射）：纸上轻微凸起的抄纸纤维压痕。
    叠加方式：soft-light 或 overlay，制造「纸张有厚度、纹路凸起」的触感。 */
 function letterPaperEmboss() {
-  return `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='bump' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.05 0.14' numOctaves='3' seed='11' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' surfaceScale='1.4' diffuseConstant='1.1' lighting-color='%23ffffff' result='lit'%3E%3CfeDistantLight azimuth='235' elevation='60'/%3E%3C/feDiffuseLighting%3E%3CfeComposite in='lit' in2='n' operator='in'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23bump)' opacity='0.55'/%3E%3C/svg%3E")`;
+  return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='bump' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.05 0.14' numOctaves='3' seed='11' stitchTiles='stitch' result='n'/%3E%3CfeDiffuseLighting in='n' surfaceScale='1.4' diffuseConstant='1.1' lighting-color='%23ffffff' result='lit'%3E%3CfeDistantLight azimuth='235' elevation='60'/%3E%3C/feDiffuseLighting%3E%3CfeComposite in='lit' in2='n' operator='in'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23bump)' opacity='0.55'/%3E%3C/svg%3E`;
 }
 function letterPaperOf(key) {
   return LETTER_PAPERS.find(p => p.key === key) || LETTER_PAPERS[4];
+}
+/* 20261113d：五种信纸不再「只有颜色差别」，各配一套专属纹样（全部内联 SVG，离线可用）。
+   pink   → 波点（大小两档错落，像手账纸）
+   purple → 天文手稿：星球印章 + 轨道椭圆 + 十字星/星点 + 虚线星轨
+   grey   → 素描纸：双向铅笔排线 + 纸面颗粒
+   kraft  → 手绘落叶：叶片轮廓 + 叶脉 + 短枝（线条感，不做写实）
+   card   → 保持原样（黄卡纸不加纹样） */
+function _paperArtSVG(key, ink) {
+  if (key === 'pink') {
+    let dots = '';
+    for (let y = 0; y < 180; y += 26) {
+      for (let x = 0; x < 180; x += 26) {
+        const off = ((y / 26) | 0) % 2 ? 13 : 0;
+        const r = ((x + y) % 52 === 0) ? 3.6 : 1.5;
+        dots += `<circle cx='${x + off + 7}' cy='${y + 9}' r='${r}'/>`;
+      }
+    }
+    return `<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><g fill='${ink}' opacity='0.17'>${dots}</g></svg>`;
+  }
+  if (key === 'purple') {
+    // 天文手稿：带环行星 + 小行星 + 虚线星轨 + 十字星 + 圆形印章（双层环 + 星球剪影）
+    return `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'>
+      <g fill='none' stroke='${ink}' stroke-width='1.2' opacity='0.34'>
+        <ellipse cx='62' cy='54' rx='36' ry='11' transform='rotate(-20 62 54)'/>
+        <circle cx='62' cy='54' r='19'/>
+        <path d='M62 30v-8M62 78v8' stroke-width='0.8' opacity='0.8'/>
+        <ellipse cx='186' cy='142' rx='17' ry='5.5' transform='rotate(16 186 142)'/>
+        <circle cx='186' cy='142' r='8.5'/>
+      </g>
+      <g fill='none' stroke='${ink}' stroke-width='0.9' opacity='0.22' stroke-dasharray='3 5'>
+        <circle cx='54' cy='180' r='42'/>
+        <path d='M150 24c40 10 66 44 58 84' stroke-dasharray='2 6'/>
+      </g>
+      <g fill='none' stroke='${ink}' stroke-width='1.1' opacity='0.30'>
+        <circle cx='196' cy='206' r='21'/>
+        <circle cx='196' cy='206' r='16' stroke-dasharray='2 3' stroke-width='0.8'/>
+      </g>
+      <g fill='${ink}' opacity='0.30'>
+        <ellipse cx='196' cy='206' rx='8' ry='6.4'/>
+      </g>
+      <g stroke='${ink}' stroke-width='1.1' opacity='0.30' fill='none'>
+        <path d='M118 26v10M113 31h10'/>
+        <path d='M28 128v8M24 132h8'/>
+        <path d='M212 82v7M208.5 85.5h7'/>
+        <path d='M96 214v7M92.5 217.5h7'/>
+      </g>
+      <g fill='${ink}' opacity='0.24'>
+        <circle cx='40' cy='96' r='1.8'/><circle cx='104' cy='86' r='1.3'/>
+        <circle cx='150' cy='168' r='1.6'/><circle cx='222' cy='34' r='1.4'/>
+        <circle cx='14' cy='46' r='1.2'/><circle cx='78' cy='232' r='1.5'/>
+        <circle cx='170' cy='102' r='1.2'/><circle cx='232' cy='168' r='1.7'/>
+      </g>
+    </svg>`;
+  }
+  if (key === 'grey') {
+    let a = '', b = '';
+    for (let i = -220; i < 420; i += 9) a += `<path d='M${i} 0L${i + 200} 200'/>`;
+    for (let i = 0; i < 640; i += 11) b += `<path d='M${i} 200L${i - 200} 0'/>`;
+    return `<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'>
+      <g fill='none' stroke='${ink}' stroke-width='0.6' opacity='0.11'>${a}</g>
+      <g fill='none' stroke='${ink}' stroke-width='0.6' opacity='0.07'>${b}</g>
+      <g fill='${ink}' opacity='0.05'>
+        <circle cx='27' cy='61' r='1'/><circle cx='83' cy='19' r='.9'/><circle cx='141' cy='97' r='1.1'/>
+        <circle cx='53' cy='153' r='.8'/><circle cx='187' cy='41' r='.9'/><circle cx='111' cy='171' r='1'/>
+      </g>
+    </svg>`;
+  }
+  if (key === 'kraft') {
+    // 手绘线条落叶：沿一条弧线散几片叶子，叶脉交代清楚（不写实，只留线）
+    return `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'>
+      <g fill='none' stroke='${ink}' stroke-width='1.3' opacity='0.34' stroke-linecap='round' stroke-linejoin='round'>
+        <path d='M8 214c34-40 74-64 122-76' stroke-width='1'/>
+        <path d='M70 176c-22-4-40 7-45 26 20 6 40-4 45-26Z'/>
+        <path d='M70 176l-27 17M70 176l-16-7' stroke-width='0.9' opacity='0.85'/>
+        <path d='M118 152c9-23 30-35 51-31 1 20-18 36-51 31Z'/>
+        <path d='M118 152l31-14M118 152l17-4' stroke-width='0.9' opacity='0.85'/>
+        <path d='M150 104c-11-16-9-34 6-45 13 12 13 31 6 45Z'/>
+        <path d='M156 104c-2-12-1-23 4-31' stroke-width='0.9' opacity='0.85'/>
+        <path d='M214 198c-17 2-30-8-32-23 17-4 30 8 32 23Z'/>
+        <path d='M214 198l-23-16' stroke-width='0.9' opacity='0.85'/>
+        <path d='M196 62c11 7 14 21 7 31-11-4-15-18-7-31Z'/>
+        <path d='M196 62l5 27' stroke-width='0.9' opacity='0.85'/>
+        <path d='M40 44c-9 9-23 10-32 2 6-10 21-12 32-2Z'/>
+        <path d='M40 44l-25 6' stroke-width='0.9' opacity='0.85'/>
+        <path d='M92 24c8-8 21-8 28 0-6 8-19 9-28 0Z'/>
+        <path d='M92 24l20 1' stroke-width='0.9' opacity='0.85'/>
+      </g>
+    </svg>`;
+  }
+  return '';
+}
+/* 合成一整套信纸背景：专属纹样(multiply) → 纸纤维(multiply) → 纸面浮雕(soft-light) → 底色渐变。
+   CSS 里原本把渐变放在最上层且不透明，纹理其实一直没显出来——这里改成渐变垫底 + 混合模式。 */
+function letterPaperBG(pp) {
+  const layers = [], modes = [];
+  const art = _paperArtSVG(pp.key, pp.ink);
+  // 全部用双引号包 data URI（内部 SVG 用单引号）；写进 style="..." 时由调用方转成 &quot;
+  const enc = (svg) => encodeURIComponent(svg);
+  if (art) { layers.push(`url("data:image/svg+xml,${enc(art)}")`); modes.push('multiply'); }
+  layers.push(`url("${letterPaperTex()}")`); modes.push('multiply');
+  layers.push(`url("${letterPaperEmboss()}")`); modes.push('soft-light');
+  layers.push(`linear-gradient(170deg, ${pp.a} 0%, ${pp.b} 100%)`); modes.push('normal');
+  return { image: layers.join(', '), blend: modes.join(', ') };
+}
+/* 把 letterPaperBG 的结果安全写进 HTML 属性（双引号转实体，避免截断 style="..."） */
+function letterPaperBGAttr(pp) {
+  const bg = letterPaperBG(pp);
+  return { image: bg.image.replace(/"/g, '&quot;'), blend: bg.blend };
 }
 
 async function showLetterComposeModal(charId = null, opts = {}) {
@@ -29657,10 +30823,13 @@ async function showLetterComposeModal(charId = null, opts = {}) {
   // 5 张卡片：中心=0，向两侧错落偏移 + 轻微旋转（弧形排开）
   const spreadArr = [-78, -40, 0, 40, 78];
   const rotArr = [-12, -6, 0, 6, 12];
-  pickEl.innerHTML = LETTER_PAPERS.map((p, i) => `
-    <div class="lp-paper-card${i === 4 ? ' on' : ''}" data-paper="${p.key}" style="--pp-a:${p.a};--pp-b:${p.b};--pp-ink:${p.ink};--i:${i};--spread:${spreadArr[i]};--rot:${rotArr[i]}deg;">
+  pickEl.innerHTML = LETTER_PAPERS.map((p, i) => {
+    const bg = letterPaperBGAttr(p);
+    return `
+    <div class="lp-paper-card${i === 4 ? ' on' : ''}" data-paper="${p.key}" style="--pp-a:${p.a};--pp-b:${p.b};--pp-ink:${p.ink};--i:${i};--spread:${spreadArr[i]};--rot:${rotArr[i]}deg;background-image:${bg.image};background-blend-mode:${bg.blend};">
       <span class="lp-paper-txt" style="color:${p.ink};">${p.name}</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   const selectPaper = (el) => {
     pickEl.querySelectorAll('.lp-paper-card').forEach(x => x.classList.remove('on'));
     el.classList.add('on');
@@ -29673,7 +30842,9 @@ async function showLetterComposeModal(charId = null, opts = {}) {
       comp.style.setProperty('--paper-b', pp.b);
       comp.style.setProperty('--paper-ink', pp.ink);
       comp.style.setProperty('--paper-line', pp.line);
-      comp.style.backgroundImage = `linear-gradient(170deg, ${pp.a} 0%, ${pp.b} 100%), ${letterPaperEmboss()}, ${letterPaperTex()}`;
+      const _bg = letterPaperBG(pp);
+      comp.style.backgroundImage = _bg.image;
+      comp.style.backgroundBlendMode = _bg.blend;
       const ta = comp.querySelector('textarea');
       if (ta) {
         ta.style.color = pp.ink;
@@ -29723,6 +30894,10 @@ async function showLetterComposeModal(charId = null, opts = {}) {
    回信下方不再设回信按钮（线程一轮即闭合，杜绝没完没了）。
    从角色聊天页进入（写信弹窗 → 信箱）只显示与当前角色的往来。
    支持：文件夹归类（新建/删除/移动）、批量管理（多选删除/移动）。 */
+/* 20261113d：信箱弹窗开着时，读信/全部已读要能立刻重刷 pill 与列表。
+   用一个模块级钩子（打开时挂上、关闭时摘掉），避免读信逻辑反过来依赖弹窗内部变量。 */
+let _letterRecordsRefresh = null;
+
 async function showLetterRecordsModal(charId = null) {
   let folders = await getSetting('letterFolders', []);      // [{id,name}]
   let folderMap = await getSetting('letterFolderMap', {});  // { 线程id: 文件夹id（''=未分组） }
@@ -29737,7 +30912,9 @@ async function showLetterRecordsModal(charId = null) {
   const threads = buildLetterThreads(letters).sort((a, b) => letterLatest(b).time - letterLatest(a).time);
   const scopeChar = charId ? characters.find(x => x.id === charId) : null;
   const tidOf = (t) => t.root ? (t.root.threadId || t.root.id) : (t.replyMsg.replyTo || t.replyMsg.threadId || t.replyMsg.id);
-  const unreadCount = threads.reduce((n, t) =>
+  // 20261113d：未读数改成「用时再算」——原来在打开弹窗时算一次存进 const，
+  //   点「全部已读」后 pill 仍显示旧数字（用户截图里的「24 封未读」不刷新就是这个）。
+  const countUnread = () => threads.reduce((n, t) =>
     n + (((t.replyMsg && !t.replyMsg.read) || (!t.replyMsg && t.root && t.root.from === 'them' && !t.root.read)) ? 1 : 0), 0);
 
   openModal(`
@@ -29769,7 +30946,7 @@ async function showLetterRecordsModal(charId = null) {
       <button class="btn" id="lr-done">完成</button>
     </div>
   `);
-  $('#lr-close').onclick = closeModal;
+  $('#lr-close').onclick = () => { _letterRecordsRefresh = null; closeModal(); };
   // 20261105：信箱未读标识做成按钮——点击把全部未读书信标记为已读（回信 + 未回根信都处理）
   $('#lr-count').onclick = async () => {
     const unread = threads.filter(t => (t.replyMsg && !t.replyMsg.read) || (!t.replyMsg && t.root && t.root.from === 'them' && !t.root.read));
@@ -29899,12 +31076,13 @@ async function showLetterRecordsModal(charId = null) {
   function renderList() {
     const list = $('#lr-list');
     const shown = shownThreads();
-    $('#lr-count').textContent = `${shown.length} 封${unreadCount ? ` · ${unreadCount} 封未读（点击全部已读）` : ''}`;
+    const unreadNow = countUnread();
+    $('#lr-count').textContent = `${shown.length} 封${unreadNow ? ` · ${unreadNow} 封未读（点击全部已读）` : ''}`;
     // 20261105：未读标识做成按钮——有未读时高亮可点，点击全部标记已读；无未读时置灰
     const lrCountBtn = $('#lr-count');
     if (lrCountBtn) {
-      lrCountBtn.style.background = unreadCount > 0 ? 'var(--purple)' : 'var(--bg-elevated-2)';
-      lrCountBtn.style.color = unreadCount > 0 ? '#141019' : 'var(--text-secondary)';
+      lrCountBtn.style.background = unreadNow > 0 ? 'var(--purple)' : 'var(--bg-elevated-2)';
+      lrCountBtn.style.color = unreadNow > 0 ? '#141019' : 'var(--text-secondary)';
     }
     if (shown.length === 0) {
       list.innerHTML = `
@@ -30098,6 +31276,7 @@ async function showLetterRecordsModal(charId = null) {
   }
 
   function render() { renderFromTabs(); renderFolderBar(); renderList(); renderBatchBar(); }
+  _letterRecordsRefresh = render;   // 读信后由 markRead 回调重刷
 
   $('#lr-selall').onclick = () => {
     const shown = shownThreads();
@@ -30450,7 +31629,9 @@ async function openLetterOverlay(msg, c, opts = {}) {
     paper.style.setProperty('--paper-b', pp.b);
     paper.style.setProperty('--paper-ink', pp.ink);
     paper.style.setProperty('--paper-line', pp.line);
-    paper.style.backgroundImage = `linear-gradient(170deg, ${pp.a} 0%, ${pp.b} 100%), ${letterPaperEmboss()}, ${letterPaperTex()}`;
+    const _lbg = letterPaperBG(pp);
+    paper.style.backgroundImage = _lbg.image;
+    paper.style.backgroundBlendMode = _lbg.blend;
     paper.classList.add('lp-rich');
     paper.innerHTML = `
       <div class="lp-head">
@@ -30475,9 +31656,13 @@ async function openLetterOverlay(msg, c, opts = {}) {
       if (ev && ev.letters > 0) {
         ev.letters = 0;
         await _saveUnreadEvents();
-        refreshUnreadBadges();
       }
     }
+    /* 20261113d：读信后同步三处，缺一个都会「看完了红点还在」——
+       ① 加号/书信入口/信箱按钮的角标；② 聊天导航列表行的未读红点；③ 正开着的信箱弹窗计数 pill。 */
+    refreshUnreadBadges();
+    try { renderChatList(); } catch (e) {}
+    if (typeof _letterRecordsRefresh === 'function') { try { _letterRecordsRefresh(); } catch (e) {} }
   };
   if (opts.noAnim) {
     // 无动画直开：信封直接呈翻开态，信纸已展开
@@ -33523,8 +34708,13 @@ function redpacketCardHtml(m) {
   const subText = opened
     ? `已领取 ¥${pc.amount}`
     : (st === 'returned' ? '已退回' : (isOpenable ? '点击拆红包' : '恭喜发财，大吉大利'));
-  return `<div class="msg-card rp-card ${opened ? 'opened' : ''}" data-redpacket-card="${m.id}" data-redpacket-openable="${isOpenable ? '1' : ''}">
-    <div class="rp-icon ${opened ? 'rp-icon-opened' : ''}">${iconHtml}</div>
+  /* 20261113d：玩家自定义封面——铺满卡片正面，再压一层暗渐变压住文字；
+     .rp-card 在 CSS 里是 background: var(--purple) !important，所以这里必须用内联 !important 覆盖。 */
+  const coverStyle = pc.cover
+    ? `background-image:linear-gradient(180deg,rgba(0,0,0,.20) 0%,rgba(0,0,0,.46) 100%),url('${pc.cover}') !important;background-size:cover !important;background-position:center !important;min-width:190px !important;`
+    : '';
+  return `<div class="msg-card rp-card ${opened ? 'opened' : ''}" data-redpacket-card="${m.id}" data-redpacket-openable="${isOpenable ? '1' : ''}" style="${coverStyle}">
+    ${pc.cover ? '' : `<div class="rp-icon ${opened ? 'rp-icon-opened' : ''}">${iconHtml}</div>`}
     <div class="rp-body">
       <div class="rp-main">${escapeHtml(pc.note || '恭喜发财，大吉大利')}</div>
       <div class="rp-sub ${opened ? 'rp-sub-amt' : ''}">${subText}</div>
@@ -34357,6 +35547,7 @@ function _surveyDone(sv) {
 function _surveyEtaText(sv) {
   if (!sv || _surveyDone(sv)) return '';
   if (sv.from === 'them') return '待你回答';
+  if (sv.quick) return _surveyDone(sv) ? '' : '马上作答…';   // 20261113：快问快答不走分钟倒计时
   if (sv.state === 'answering') return '正在翻问卷作答…';
   const remain = Math.ceil(((sv.queueAt || 0) - Date.now()) / 60000);
   if (remain <= 0) return '正在翻问卷作答…';
@@ -34406,6 +35597,37 @@ async function surveyAnswerTick() {
 }
 
 /* 回答一份问卷（玩家发起的，角色作答）：逐条抽字卡或AI，最后一起显示 */
+/* 20261113d：角色「觉得这份问卷有意思」→ 收进自己的问卷库，之后会从库里抽题来问玩家。
+   条件：必须含选择题（有选项才值得回问）、概率 28%、同标题不重复收。
+   来源既可以是玩家发的问卷（角色答完），也可以是角色自己发出去的问卷（玩家答完后他回头觉得不错）。 */
+async function _maybeCharCollectSurvey(sv, c) {
+  try {
+    if (!sv || !sv.charId) return;
+    const qs = (sv.questions || []).filter(q => q.text && String(q.text).trim());
+    if (!qs.length) return;
+    if (!qs.some(q => q.type === 'choice' && (q.options || []).length)) return;
+    if (Math.random() > 0.28) return;
+    const title = String(sv.title || qs[0].text).slice(0, 40);
+    const lib = await _svLibGetAll('char', sv.charId);
+    if (lib.some(x => (x.title || '') === title)) return;
+    /* 20261113e：题库是单题池——收藏时把每道题**拆成独立条目**存，
+       这样库里看到的永远是单题，角色提问时也就只能抽单题（偶尔多抽几道）。 */
+    const seen = new Set(lib.map(x => String(x.title || '').trim()));
+    const now = Date.now();
+    let i = 0;
+    for (const q of qs) {
+      const text = String(q.text).trim();
+      if (seen.has(text)) continue;
+      seen.add(text);
+      await idbPut('surveyLibrary', {
+        id: uid('svl'), owner: 'char', charId: sv.charId, title: text,
+        questions: [{ text, type: q.type || 'text', options: (q.options || []).slice(), multi: !!q.multi }],
+        folderId: '', createdAt: now + (i++), fromSurvey: sv.id,
+      });
+    }
+  } catch (e) {}
+}
+
 async function _answerSurvey(sv) {
   try {
     // 重新从库读最新（可能已被删除）
@@ -34461,6 +35683,10 @@ async function _answerSurvey(sv) {
           q.picks = pickedIdx;
           q.pick = pickedIdx[0];
           q.answer = pickedIdx.map(pi => opts[pi]).join('、');
+          /* 20261113d：每个选中选项的「权重百分比」——纯模拟，用来在详情页/卡片上画填充进度条。
+             语义：单选=这个答案对该角色的分量；多选=各选项在他心里各占多少，所以逐个独立随机。
+             未选中的选项记 0（不画填充）。 */
+          q.weights = opts.map((_, oi) => pickedIdx.includes(oi) ? randInt(46, 97) : 0);
           q.answeredAt = Date.now();
           continue;
         }
@@ -34490,6 +35716,9 @@ async function _answerSurvey(sv) {
         ans = parts.join('，');
       }
       q.answer = ans;
+      /* 20261113d：问答题的「契合度百分比」——模拟「他说的话和他的本意有多接近」，完全随机。
+         渲染时把作答卡片本身画成这个百分比的填充进度条。 */
+      q.answerPct = randInt(38, 97);
       q.answeredAt = Date.now();
     }
 
@@ -34518,6 +35747,8 @@ async function _answerSurvey(sv) {
     cur.doneAt = Date.now();
     await idbPut('surveys', cur);
     _surveyQueue.shift();
+    // 20261113d：答完顺手判断「这份问卷值不值得收进他的题库」
+    await _maybeCharCollectSurvey(cur, c);
 
     // 顺延下一份：从上一份完成时刻起重新计时（细则：多份问卷顺序排队，绝不并发）
     if (_surveyQueue.length) {
@@ -34543,6 +35774,45 @@ async function _answerSurvey(sv) {
   }
 }
 
+/* 20261113b：快问快答卡片的「题目快照」——题目、选项、角色选了哪些、写了什么，
+   全部塞进消息 content 里。这样聊天卡片不用异步读 surveys 就能把题摊开渲染，
+   角色答完后由 _refreshSurveyCardMsg 覆盖一次快照，卡片当场变成「TA 选了什么」。 */
+function _surveyQsSnapshot(sv) {
+  return (sv.questions || []).map(q => ({
+    t: q.text || '',
+    ty: q.type || 'text',
+    o: Array.isArray(q.options) ? q.options : [],
+    m: !!q.multi,
+    a: q.answer || '',
+    p: Array.isArray(q.picks) ? q.picks.map(Number) : (q.pick !== undefined && q.pick !== null ? [Number(q.pick)] : []),
+    // 20261113d：选项权重 / 问答契合度（填充进度条用）
+    w: Array.isArray(q.weights) ? q.weights.map(Number) : [],
+    pct: (q.answerPct === undefined || q.answerPct === null) ? null : Number(q.answerPct),
+    // 20261113f：玩家作答时自己填的百分比（不随机）
+    pw: Array.isArray(q.playerWeights) ? q.playerWeights.map(Number) : [],
+    ppct: (q.playerPct === undefined || q.playerPct === null) ? null : Number(q.playerPct),
+  }));
+}
+
+/* 20261113d：问卷「权重 / 契合度」百分比的读取与旧数据兜底。
+   - 新作答：_answerSurvey 当场写入 q.weights（每个被选中选项一个数）与 q.answerPct（问答契合度）；
+   - 旧数据：用题目 id 做稳定哈希生成，保证同一个选项每次打开看到同一个百分比（不会刷新就变）。 */
+function _svHashPct(seed, lo, hi) {
+  let h = 7;
+  const s = String(seed || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 100003;
+  return lo + (h % Math.max(1, hi - lo + 1));
+}
+function _svOptWeight(q, oi, picked) {
+  if (!picked) return 0;
+  if (Array.isArray(q.weights) && q.weights[oi]) return Number(q.weights[oi]) || 0;
+  return _svHashPct((q.id || q.text || 'q') + ':' + oi, 46, 97);
+}
+function _svAnswerPct(q) {
+  if (q.answerPct) return Number(q.answerPct) || 0;
+  return _svHashPct((q.id || q.text || 'q') + ':pct', 38, 97);
+}
+
 /* 刷新聊天里的问卷卡片消息状态 */
 async function _refreshSurveyCardMsg(sv) {
   try {
@@ -34553,6 +35823,11 @@ async function _refreshSurveyCardMsg(sv) {
     m.content.totalCount = (sv.questions || []).length;
     m.content.done = _surveyDone(sv);
     m.content.queueAt = sv.queueAt || 0; // 20260929an：同步排队截止时间（顺延后卡片倒计时跟随）
+    if (m.content.quick || m.content.qs) {
+      m.content.qs = _surveyQsSnapshot(sv); // 20261113b：快问快答卡片同步题目与作答
+      m.content.readBack = sv.readBack || ''; // 20261113e：读后感同步进卡片
+      m.content.charNote = sv.charNote || '';   // 20261113f：角色留言同步进卡片
+    }
     await idbPut('messages', m);
   } catch (e) {}
 }
@@ -34567,12 +35842,14 @@ async function sendSurveyToChar(charId, questions, isChoice, opts = {}) {
   // 上限 10 条
   if (count > 10) { miniToast('一次问卷最多 10 条题目'); return; }
   const isMulti = count > 3; // >3 条 = "一份问卷"
-  const title = isMulti ? '我向你发出了一份问卷，快来回答吧！' : '想问你几件事';
+  const isQuick = !!opts.quick;   // 20261113：快问快答——最多 3 题，发出后十来秒就作答
+  const title = isQuick ? '快问快答' : (isMulti ? '我向你发出了一份问卷，快来回答吧！' : '想问你几件事');
 
   const sv = {
     id: uid('survey'),
     charId,
     from: 'me',
+    quick: isQuick,
     title,
     questions: questions.map(q => ({
       id: uid('q'), text: q.text, type: q.type || 'text',
@@ -34580,7 +35857,8 @@ async function sendSurveyToChar(charId, questions, isChoice, opts = {}) {
     })),
     state: 'pending',
     // 20261103：答题时间区间化——3 题内 5~10 分钟；4~10 题 10~20 分钟；10 题以上 20~40 分钟（区间内随机）
-    queueAt: Date.now() + _surveyAnswerDelayMs(count),
+    // 20261113：快问快答单独走短延迟（8~20 秒，调度器 20 秒一轮，实际 20~40 秒内答完）
+    queueAt: Date.now() + (isQuick ? randInt(8, 20) * 1000 : _surveyAnswerDelayMs(count)),
     createdAt: Date.now(),
     msgId: '',
     readBack: '',
@@ -34590,7 +35868,11 @@ async function sendSurveyToChar(charId, questions, isChoice, opts = {}) {
   // 发聊天卡片消息（content.queueAt：卡片上显示「预计还有 X 分钟回答」倒计时用）
   const m = {
     id: uid('msg'), charId, from: 'me', type: 'survey', time: Date.now(),
-    content: { surveyId: sv.id, title, totalCount: count, answeredCount: 0, done: false, queueAt: sv.queueAt },
+    content: {
+      surveyId: sv.id, title, totalCount: count, answeredCount: 0, done: false, queueAt: sv.queueAt, quick: isQuick,
+      // 20261113b：快问快答把题目/选项一起存进卡片（聊天里直接摊开，不用点开详情）
+      qs: isQuick ? _surveyQsSnapshot(sv) : undefined,
+    },
   };
   if (groupId) m.groupId = groupId;
   sv.msgId = m.id;
@@ -34607,7 +35889,7 @@ async function sendSurveyToChar(charId, questions, isChoice, opts = {}) {
     appendMessage(m);
   }
   renderChatList();
-  if (!opts.quiet) miniToast(isMulti ? '问卷已发出，TA 会在 1 小时内逐题作答' : '问卷已发出，TA 会在 20 分钟内作答');
+  if (!opts.quiet) miniToast(isQuick ? '快问快答已发出，TA 马上就答' : (isMulti ? '问卷已发出，TA 会在 1 小时内逐题作答' : '问卷已发出，TA 会在 20 分钟内作答'));
 }
 
 /* 角色向玩家提问（每天0~3条）：卡片+输入框，玩家作答 */
@@ -34617,14 +35899,39 @@ async function charAskPlayer(c) {
   const key = c.id + '|' + day;
   _surveyCharAskCount[key] = (_surveyCharAskCount[key] || 0) + 1;
 
-  // 20261028：优先从「角色问卷库」随机抽一份完整问卷提问（多题）；无库/未命中则回退单题。
-  // 角色问卷库只针对当前角色（不互通），有题时约一半概率走问卷库，一半走单题字卡/AI。
+  // 20261113e：题库是**单题池**——默认随机抽 1 道题问玩家（用户原话：随机从里面抽题目），
+  //   只有约 2 成概率连抽 2~3 道拼成一份小问卷（保留「也可以成组」的可能）。
+  //   单题条目和旧的多题条目都先摊平成单题再抽，两种数据结构都能用。
   try {
     const lib = await _svLibGetAll('char', c.id);
-    if (lib.length && Math.random() < 0.5) {
-      await charAskPlayerWithSurvey(c, drawFrom(lib));
-      return;
+    if (lib.length) {
+      const pool = [];
+      for (const it of lib) {
+        for (const q of (it.questions || [])) {
+          if (q && String(q.text || '').trim()) pool.push({ it, q });
+        }
+      }
+      if (pool.length) {
+        const groupMode = pool.length >= 2 && Math.random() < 0.2;
+        const need = groupMode ? Math.min(pool.length, randInt(2, 3)) : 1;
+        const picked = [], used = new Set();
+        while (picked.length < need && used.size < pool.length) {
+          const i = randInt(0, pool.length - 1);
+          if (used.has(i)) continue;
+          used.add(i);
+          picked.push(pool[i]);
+        }
+        if (picked.length <= 1) {
+          const one = picked[0] || pool[0];
+          await charAskPlayerWithSurvey(c, { title: one.it.title || one.q.text, questions: [one.q] });
+        } else {
+          await charAskPlayerWithSurvey(c, { title: picked[0].q.text, questions: picked.map(x => x.q) });
+        }
+        return;
+      }
     }
+    /* 库被玩家全删空 → 落到下面的字卡/拼音出题分支，题目拼出来后固定给「是/否」两个选项
+       （用户定的规则：库里没题时只支持是/否单选，不要凭空塞预设题） */
   } catch (e) {}
 
   // 从字卡库/默认问题池抽一个问题（AI 模式由 AI 出题）
@@ -34645,15 +35952,25 @@ async function charAskPlayer(c) {
   }
   if (!question) {
     const pool = (cards.customReplies || []).concat((cards.customReplyGroups || []).flatMap(g => g.items || []));
-    question = pool.length ? drawFrom(pool) : '你今天过得怎么样？';
+    question = pool.length ? drawFrom(pool) : '';
   }
+  // 字卡池为空时，用「拼音打字卡」同款字库随机拼几个字当问题（模拟他一个字一个字拼出来的）
+  if (!question) {
+    try {
+      const TD = window.bmTypecardData;
+      if (TD && TD.randomChar) question = TD.randomChar() + TD.randomChar();
+    } catch (e) {}
+  }
+  if (!question) question = '你今天过得怎么样？';
 
   const sv = {
     id: uid('survey'),
     charId: c.id,
     from: 'them',
     title: question,
-    questions: [{ id: uid('q'), text: question, type: 'text', options: [], answer: '', answeredAt: 0 }],
+    // 20261113d：单题提问默认做成「是/否」单选题——角色自己用字卡拼出来的问题没有选项，
+    //   就给它两个默认选项；题目本身仍来自回复字卡/多字卡组合/拼音字卡池。
+    questions: [{ id: uid('q'), text: question, type: 'choice', options: ['是', '否'], multi: false, answer: '', answeredAt: 0 }],
     state: 'answering', // 等待玩家作答
     queueAt: 0,
     createdAt: Date.now(),
@@ -34695,7 +36012,7 @@ async function charAskPlayerWithSurvey(c, item) {
     title,
     questions: qs.map(q => ({
       id: uid('q'), text: q.text.trim(), type: q.type || 'text',
-      options: q.options || [], answer: '', answeredAt: 0,
+      options: q.options || [], multi: !!q.multi, answer: '', answeredAt: 0,
     })),
     state: 'answering', // 等待玩家作答
     queueAt: 0,
@@ -34707,7 +36024,9 @@ async function charAskPlayerWithSurvey(c, item) {
 
   const m = {
     id: uid('msg'), charId: c.id, from: 'them', type: 'survey', time: Date.now(),
-    content: { surveyId: sv.id, title, totalCount: qs.length, answeredCount: 0, done: false, charAsk: true },
+    // 20261113f：角色发来的题（尤其单题）也把题目/选项塞进卡片，
+    //   聊天页像快问快答那样直接摊开，不用点进详情才知道问了什么
+    content: { surveyId: sv.id, title, totalCount: qs.length, answeredCount: 0, done: false, charAsk: true, qs: _surveyQsSnapshot(sv) },
   };
   sv.msgId = m.id;
   await idbPut('surveys', sv);
@@ -34744,32 +36063,90 @@ async function playerAnswerSurvey(surveyId, answer) {
 
 /* 20261028：玩家逐题回答角色发来的多题问卷（问卷库发出）。
    逐题填入 answer，全部未答完也允许提交（至少一题有答案），答完的发感想。 */
-async function playerAnswerSurveyAll(surveyId, answers, picksArr) {
+async function playerAnswerSurveyAll(surveyId, answers, picksArr, extra) {
   const sv = await idbGet('surveys', surveyId);
   if (!sv) { miniToast('问卷不存在'); return; }
   const qs = sv.questions || [];
+  const opt = extra || {};
   (answers || []).forEach((a, i) => {
-    if (qs[i] && a) {
+    if (!qs[i]) return;
+    if (a) {
       qs[i].answer = a;
       qs[i].answeredAt = Date.now();
-      // 20261103：选择题记录选中的选项索引（picks/pick），详情页高亮显示选了哪几个
-      const picks = picksArr && Array.isArray(picksArr[i]) ? picksArr[i] : null;
-      if (picks && picks.length) {
-        qs[i].picks = picks;
-        qs[i].pick = picks[0];
-      }
     }
+    // 20261103：选择题记录选中的选项索引（picks/pick），详情页高亮显示选了哪几个
+    const picks = picksArr && Array.isArray(picksArr[i]) ? picksArr[i] : null;
+    if (picks && picks.length) {
+      qs[i].picks = picks;
+      qs[i].pick = picks[0];
+    }
+    /* 20261113f：玩家作答的百分比**完全由玩家自己填**，绝不随机。
+       weights[i] = 每个选项的百分数数组；pcts[i] = 问答题的百分数。 */
+    if (Array.isArray(opt.weights) && opt.weights[i]) qs[i].playerWeights = opt.weights[i].map(n => Number(n) || 0);
+    if (Array.isArray(opt.pcts) && opt.pcts[i] !== null && opt.pcts[i] !== undefined) qs[i].playerPct = Number(opt.pcts[i]) || 0;
   });
+  if (opt.note) sv.playerNote = opt.note;
   sv.state = 'done';
   sv.doneAt = Date.now();
+  // 20261113f：角色看到玩家的答案后留一句言（随机字卡），这是「留言」不是「作答」
+  if (!sv.charNote) { try { sv.charNote = await _charNoteOnPlayerAnswer(sv); } catch (e) {} }
   await idbPut('surveys', sv);
   await _refreshSurveyCardMsg(sv);
   if (currentCharId === sv.charId && document.body.dataset.view === 'chat') renderMessages(sv.charId);
   else renderChatList();
   miniToast('已提交你的回答');
   _charReactToAnswers(sv);
+  // 20261113d：角色也可能回头觉得这份自己发出的问卷有意思 → 收进他的题库
+  _maybeCharCollectSurvey(sv, characters.find(x => x.id === sv.charId));
+}
+/* 20261113g：角色看完玩家答案后的留言——**只能从回复字卡里抽**，
+   按「多字卡组合回复」的做法取 2~3 条拼成一句（去重、不过滤关系语调）。
+   上一版临时写死的 NOTE_POOL（含「你写的那句，我看了两遍」）已删除：
+   玩家明确要求留言必须来自他自己的字卡，绝不允许 AI 或内置句子顶上。 */
+async function _charNoteOnPlayerAnswer(sv) {
+  try {
+    const c = characters.find(x => x.id === sv.charId);
+    if (!c) return '';
+    const answered = (sv.questions || []).filter(q => q.answer && q.answer.trim());
+    if (!answered.length) return '';
+    const want = 2 + Math.floor(Math.random() * 2); // 2~3 条，与多字卡组合一致
+    const used = new Set();
+    const out = [];
+    for (let i = 0; i < want; i++) {
+      let t = '';
+      let guard = 0;
+      /* drawReply 可能重复抽到同一条，或被禁词/分组过滤掉；多给几次机会再放弃 */
+      while (guard < 12) {
+        t = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
+        if (t && !used.has(t) && !_svNoteBadCard(t)) break;
+        t = '';
+        guard++;
+      }
+      if (!t) continue;
+      used.add(t);
+      out.push(t);
+    }
+    // 一条都没抽到（字卡库空 / 全被过滤）→ 不显示留言，绝不拿内置句子凑
+    return out.join('，');
+  } catch (e) { return ''; }
 }
 
+/* 留言专用过滤：字卡池里混着「稍等」「正在处理」这类状态语，拼进留言会很出戏 */
+function _svNoteBadCard(t) {
+  return /稍等|请稍候|正在处理|处理中|加载中|马上就好|发送中/.test(String(t || ''));
+}
+
+/* 20261113g：上一版临时写死的留言（不是玩家的字卡）——已存进旧问卷里，
+   显示时统一当作空，避免玩家再看到这些不属于他自己字卡的句子。 */
+const _SV_LEGACY_NOTES = [
+  '看到你选的答案，我笑了一下。', '原来你是这么想的，记下了。', '嗯，我记住了，别反悔。',
+  '你写的那句，我看了两遍。', '答得比我想的认真。', '下次换我问你更难的。',
+  '有点想抱抱你。', '好了，我知道了，早点休息。',
+];
+function _svIsLegacyNote(t) {
+  const s = String(t || '').trim();
+  return !!s && _SV_LEGACY_NOTES.indexOf(s) >= 0;
+}
 /* 角色对玩家的问卷回答逐题发感想（20260930cb）：每题一条、间隔连发。
    字卡模式：每题抽一条字卡；AI 模式：AI 结合题目+玩家回答生成感想（失败回退字卡）。 */
 async function _charReactToAnswers(sv) {
@@ -34818,6 +36195,9 @@ async function openSurveyDetail(surveyId, opts = {}) {
   const isCharAsk = sv.from === 'them';
   const done = _surveyDone(sv);
   const answered = _surveyAnswered(sv);
+  // 20261113f：玩家作答态——角色发来、还没答完。这个状态下**只有一份题目**：
+  //   选项直接可点、问答题直接在题下输入，不再在下面重复一列一模一样的题。
+  const canAnswer = isCharAsk && !done;
   // 20260930cd：进入详情前记录列表滚动位，返回查看列表时恢复（不跳回顶部）
   const prevBox = $('#modal-content');
   const prevList = $('#svl-list');
@@ -34829,6 +36209,7 @@ async function openSurveyDetail(surveyId, opts = {}) {
       <button class="icon-btn" id="svd-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:12px;">${isCharAsk ? (c ? c.name : 'TA') + ' 向你提问' : '你向 ' + (c ? c.name : 'TA') + ' 提问'} · 共 ${sv.questions.length} 题 · ${done ? '已全部回答' : (_surveyEtaText(sv) || (answered > 0 ? '回答中' : '待回答'))}</div>
+    ${canAnswer ? `<div style="font-size:11.5px;color:var(--text-tertiary);margin-bottom:8px;line-height:1.6;">直接点选项作答；右边的 % 可以自己填（这道选项在你心里占多少分量，不填就不显示）</div>` : ''}
     <div style="display:flex;flex-direction:column;gap:10px;max-height:46vh;overflow:auto;" id="svd-list">
       ${sv.questions.map((q, i) => {
         const isChoice = q.type === 'choice' && Array.isArray(q.options) && q.options.length;
@@ -34836,44 +36217,53 @@ async function openSurveyDetail(surveyId, opts = {}) {
         let picks = (q.picks || []).map(Number);
         if (!picks.length && q.pick !== undefined && q.pick !== null) picks = [Number(q.pick)];
         if (!picks.length && q.answer && q.answer.trim()) {
-          // 用 answer 文字反查选项索引（answer 是「、」连接的文字）
           const parts = q.answer.split('、').map(s => s.trim()).filter(Boolean);
           picks = parts.map(t => q.options.findIndex(o => String(o).trim() === t)).filter(x => x >= 0);
         }
+        const pws = Array.isArray(q.playerWeights) ? q.playerWeights : [];
         return `
         <div style="background:var(--bg-elevated-2);border-radius:14px;padding:12px;">
           <div style="font-size:14px;font-weight:600;margin-bottom:8px;">${i + 1}. ${escapeHtml(q.text)}${q.multi ? '<span style="font-size:11px;color:var(--purple-soft);margin-left:6px;">多选</span>' : ''}</div>
-          ${isChoice ? `<div style="display:flex;flex-direction:column;gap:6px;">${q.options.map((o, oi) => {
+          ${isChoice ? `<div style="display:flex;flex-direction:column;gap:6px;"${canAnswer ? ` data-svd-choice="${i}" data-svd-multi="${q.multi ? '1' : '0'}"` : ''}>${q.options.map((o, oi) => {
             const sel = picks.includes(oi);
-            return `<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:12px;border:1.5px solid ${sel ? 'var(--purple)' : 'var(--border)'};background:${sel ? 'var(--purple-dim)' : 'var(--bg)'};color:var(--text-primary);font-size:13px;line-height:1.45;">
-              <span style="flex-shrink:0;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:${sel ? 'var(--purple)' : 'var(--bg-elevated-2)'};color:${sel ? '#141019' : 'var(--text-secondary)'};">${String.fromCharCode(65 + oi)}</span>
-              <span style="flex:1;min-width:0;">${escapeHtml(o)}</span>
-              ${sel ? '<span style="color:var(--purple-soft);font-weight:700;flex-shrink:0;"><i data-icon="check" data-size="13"></i></span>' : ''}
+            // 20261113f：玩家自己答的题**不随机百分比**——只显示玩家亲手填的那个数；
+            //   角色答的题才用随机权重（_svOptWeight）。
+            const wv = isCharAsk ? (sel && pws[oi] ? Number(pws[oi]) || 0 : 0) : _svOptWeight(q, oi, sel);
+            return `<div class="svd-opt"${canAnswer ? ` data-svd-opt="${i}:${oi}"` : ''} style="position:relative;overflow:hidden;display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:12px;border:1.5px solid ${sel ? 'var(--purple)' : 'var(--border)'};background:${sel ? 'var(--purple-dim)' : 'var(--bg)'};color:var(--text-primary);font-size:13px;line-height:1.45;${canAnswer ? 'cursor:pointer;' : ''}">
+              ${wv ? `<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:${wv}%;background:var(--purple);opacity:.24;pointer-events:none;"></span>` : ''}
+              <span style="position:relative;flex-shrink:0;width:22px;height:22px;border-radius:${q.multi ? '7px' : '50%'};display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:${sel ? 'var(--purple)' : 'var(--bg-elevated-2)'};color:${sel ? '#141019' : 'var(--text-secondary)'};">${String.fromCharCode(65 + oi)}</span>
+              <span style="position:relative;flex:1;min-width:0;">${escapeHtml(o)}</span>
+              ${canAnswer
+                ? `<input class="svd-pct" data-svd-pct="${i}:${oi}" type="number" min="0" max="100" inputmode="numeric" value="${pws[oi] ? Number(pws[oi]) : ''}" placeholder="%" style="position:relative;flex-shrink:0;width:46px;text-align:center;font-size:11.5px;padding:4px 2px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);">`
+                : (sel ? `<span style="position:relative;color:var(--purple-soft);font-weight:700;flex-shrink:0;font-size:${wv ? '12px' : '13px'};">${wv ? wv + '%' : '<i data-icon="check" data-size="13"></i>'}</span>` : '')}
             </div>`;
-          }).join('')}</div>${q.answer && q.answer.trim() ? `<div style="font-size:13px;line-height:1.55;padding:8px 10px;background:var(--bg);border-radius:8px;margin-top:8px;"><span style="color:var(--text-tertiary);font-size:11px;">${c ? c.name : 'TA'} 的作答：</span>${escapeHtml(q.answer)}</div>` : ''}` : (q.answer && q.answer.trim() ? `<div style="font-size:13px;line-height:1.55;padding:8px 10px;background:var(--bg);border-radius:8px;">${escapeHtml(q.answer)}</div>` : `<div style="font-size:12px;color:var(--text-tertiary);font-style:italic;">（未回答）</div>`)}
+          }).join('')}</div>` : (() => {
+            if (canAnswer) {
+              return `<textarea class="textarea" data-svd-ans="${i}" placeholder="写下你的回答…" style="min-height:56px;">${escapeHtml(q.answer || '')}</textarea>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                  <span style="font-size:11.5px;color:var(--text-tertiary);">这句话和你的本意有多接近</span>
+                  <input class="svd-pct" data-svd-pct-t="${i}" type="number" min="0" max="100" inputmode="numeric" value="${q.playerPct ? Number(q.playerPct) : ''}" placeholder="%" style="width:52px;text-align:center;font-size:11.5px;padding:4px 2px;border-radius:9px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+                </div>`;
+            }
+            if (!(q.answer && q.answer.trim())) return `<div style="font-size:12px;color:var(--text-tertiary);font-style:italic;">（未回答）</div>`;
+            // 玩家答的问答题：只显示玩家自己填的百分比，没填就不画
+            const pct = isCharAsk ? (q.playerPct ? Number(q.playerPct) || 0 : 0) : _svAnswerPct(q);
+            return `<div style="position:relative;overflow:hidden;font-size:13px;line-height:1.55;padding:8px ${pct ? '48px' : '10px'} 8px 10px;border-radius:8px;background:var(--bg);">
+              ${pct ? `<span aria-hidden="true" style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:var(--purple);opacity:.20;pointer-events:none;"></span>` : ''}
+              <span style="position:relative;">${escapeHtml(q.answer)}</span>
+              ${pct ? `<span style="position:absolute;right:8px;bottom:5px;font-size:10.5px;font-weight:700;color:var(--purple-soft);">${pct}%</span>` : ''}
+            </div>`;
+          })()}
         </div>`;
       }).join('')}
+      ${sv.playerNote ? `<div style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;"><div style="font-size:13px;font-weight:600;margin-bottom:4px;"><i data-icon="comment" data-size="12"></i> 你的留言</div><div style="font-size:13px;line-height:1.55;">${escapeHtml(sv.playerNote)}</div></div>` : ''}
+      ${sv.charNote && !_svIsLegacyNote(sv.charNote) ? `<div style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;"><div style="font-size:13px;font-weight:600;margin-bottom:4px;"><i data-icon="letter" data-size="12"></i> ${c ? c.name : 'TA'} 的留言</div><div style="font-size:13px;line-height:1.55;">${escapeHtml(sv.charNote)}</div></div>` : ''}
       ${sv.readBack ? `<div style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;"><div style="font-size:13px;font-weight:600;margin-bottom:4px;"><i data-icon="comment" data-size="12"></i> ${c ? c.name : 'TA'} 的读后感</div><div style="font-size:13px;line-height:1.55;">${escapeHtml(sv.readBack)}</div></div>` : ''}
     </div>
-    ${isCharAsk && !done ? `
+    ${canAnswer ? `
       <div class="field" style="margin-top:14px;">
-        <label>你的回答</label>
-        <div style="display:flex;flex-direction:column;gap:12px;" id="svd-answer-wrap">
-          ${sv.questions.map((q, i) => {
-            const isChoice = q.type === 'choice' && Array.isArray(q.options) && q.options.length;
-            return `
-            <div style="background:var(--bg-elevated-2);border-radius:14px;padding:12px;">
-              <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:8px;font-weight:600;">第 ${i + 1} 题 · ${isChoice ? (q.multi ? '多选题（可点多个）' : '单选题') : '问答题'} · ${escapeHtml(q.text)}</div>
-              ${isChoice ? `<div style="display:flex;flex-direction:column;gap:8px;" data-svd-choice="${i}" data-svd-multi="${q.multi ? '1' : '0'}">
-                ${q.options.map((o, oi) => `
-                  <div class="svd-opt" data-svd-opt="${i}:${oi}" style="display:flex;align-items:center;gap:8px;padding:11px 12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text-primary);font-size:13.5px;line-height:1.45;cursor:pointer;transition:border-color .12s,background .12s;">
-                    <span class="svd-opt-dot" style="flex-shrink:0;width:22px;height:22px;border-radius:${q.multi ? '7px' : '50%'};display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:var(--bg-elevated-2);color:var(--text-secondary);transition:background .12s,color .12s;">${String.fromCharCode(65 + oi)}</span>
-                    <span style="flex:1;min-width:0;">${escapeHtml(o)}</span>
-                  </div>`).join('')}
-              </div>` : `<textarea class="textarea" data-svd-ans="${i}" placeholder="输入第 ${i + 1} 题的回答…" style="min-height:52px;"></textarea>`}
-            </div>`;
-          }).join('')}
-        </div>
+        <label>给 ${c ? escapeHtml(c.name) : 'TA'} 留言（可选）</label>
+        <textarea class="textarea" id="svd-note" placeholder="想对 TA 说点什么…" style="min-height:56px;">${escapeHtml(sv.playerNote || '')}</textarea>
         <button class="btn primary block" id="svd-submit" style="margin-top:10px;">提交回答</button>
       </div>
     ` : ''}
@@ -34888,30 +36278,27 @@ async function openSurveyDetail(surveyId, opts = {}) {
       if (list && snapListSt) list.scrollTop = snapListSt;
     });
   };
-  if (isCharAsk && !done) {
-    // 20261103：选择题卡片点选交互（单选点一个、多选点多个，主题色高亮）
-    const choiceSelections = {}; // { 题index: [选中的选项index] }
+  if (canAnswer) {
+    // 20261113f：选项直接在题上点选（单选点一个、多选点多个），不再有第二份题
+    const choiceSelections = {};
     document.querySelectorAll('[data-svd-choice]').forEach(wrap => {
       const qi = +wrap.dataset.svdChoice;
       const multi = wrap.dataset.svdMulti === '1';
       choiceSelections[qi] = [];
       wrap.querySelectorAll('[data-svd-opt]').forEach(opt => {
-        opt.onclick = () => {
+        opt.onclick = (ev) => {
+          if (ev.target && ev.target.classList && ev.target.classList.contains('svd-pct')) return; // 点输入框不切选中
           const oi = +opt.dataset.svdOpt.split(':')[1];
           const sel = choiceSelections[qi];
           const idx = sel.indexOf(oi);
-          if (multi) {
-            idx >= 0 ? sel.splice(idx, 1) : sel.push(oi);
-          } else {
-            sel.length = 0; sel.push(oi);
-          }
-          // 重绘该题所有选项的高亮
+          if (multi) { idx >= 0 ? sel.splice(idx, 1) : sel.push(oi); }
+          else { sel.length = 0; sel.push(oi); }
           wrap.querySelectorAll('[data-svd-opt]').forEach(o => {
             const x = +o.dataset.svdOpt.split(':')[1];
             const on = choiceSelections[qi].includes(x);
             o.style.borderColor = on ? 'var(--purple)' : 'var(--border)';
             o.style.background = on ? 'var(--purple-dim)' : 'var(--bg)';
-            const dot = o.querySelector('.svd-opt-dot');
+            const dot = o.querySelector('span');
             if (dot) {
               dot.style.background = on ? 'var(--purple)' : 'var(--bg-elevated-2)';
               dot.style.color = on ? '#141019' : 'var(--text-secondary)';
@@ -34921,44 +36308,110 @@ async function openSurveyDetail(surveyId, opts = {}) {
       });
     });
     $('#svd-submit').onclick = async () => {
-      // 20261103：逐题收集——选择题取选中的选项文字（join '、' + 写 picks），问答题取 textarea 文字
-      const answers = [];
-      const picksArr = [];
+      const answers = [], picksArr = [], weightsArr = [], pctArr = [];
       sv.questions.forEach((q, i) => {
         const isChoice = q.type === 'choice' && Array.isArray(q.options) && q.options.length;
         if (isChoice) {
           const sel = (choiceSelections[i] || []).slice().sort((a, b) => a - b);
           picksArr.push(sel);
           answers.push(sel.map(oi => q.options[oi]).join('、'));
+          // 每个选项玩家自己填的百分比（没填 = 0，不显示）
+          weightsArr.push(sv.questions[i].options.map((_, oi) => {
+            const inp = document.querySelector(`[data-svd-pct="${i}:${oi}"]`);
+            const v = inp ? parseInt(inp.value, 10) : 0;
+            return (v >= 0 && v <= 100) ? v : 0;
+          }));
+          pctArr.push(null);
         } else {
           picksArr.push(null);
           const inp = document.querySelector(`[data-svd-ans="${i}"]`);
           answers.push(inp ? (inp.value || '').trim() : '');
+          weightsArr.push(null);
+          const pin = document.querySelector(`[data-svd-pct-t="${i}"]`);
+          const pv = pin ? parseInt(pin.value, 10) : 0;
+          pctArr.push((pv >= 0 && pv <= 100) ? pv : 0);
         }
       });
+      const noteEl = document.querySelector('#svd-note');
+      const note = noteEl ? (noteEl.value || '').trim() : '';
       if (!answers.some(a => a)) { miniToast('请至少回答一题'); return; }
-      await playerAnswerSurveyAll(surveyId, answers, picksArr);
+      await playerAnswerSurveyAll(surveyId, answers, picksArr, { note, weights: weightsArr, pcts: pctArr });
       openSurveyDetail(surveyId, opts);
     };
   }
 }
 
 /* 问卷功能页（+号菜单进入）：添加问卷 / 查看问卷。关闭层级：
-   hub ✕ → 回聊天页；添加问卷/查看问卷 ✕ → 回 hub；详情 ✕ → 回查看问卷 */
+   hub ✕ → 回聊天页；添加问卷/查看问卷 ✕ → 回 hub；详情 ✕ → 回查看问卷
+   20261112 重做布局（用户：「目前有点太不好看，给它优化一下」）：
+   原来是 4 个等宽按钮竖排，现在改成 2×2 卡片栅格——图标 + 标题 + 一句说明，
+   「添加问卷」作主操作单独给紫色描边，其余三个次操作统一卡片底。 */
 function showSurveyHub() {
   const c = currentCharId ? characters.find(x => x.id === currentCharId) : null;
-  openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-      <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('checklist', 20)} 问卷</div>
-      <button class="icon-btn" id="svh-close"><i data-icon="close" data-size="17"></i></button>
+  // 20261113c：openModal 在「软件声明未同意」等门禁下会返回 false（此时什么都没插入 DOM），
+  // 必须据此提前 return——否则下面 $('#svh-close') 取到 null，绑 onclick 直接抛异常，
+  // 整个问卷入口点崩掉（同 20261001cj 修过的坑）。
+  if (openModal(`
+    <!-- 20261113c：问卷 hub 的样式**内联在弹窗里**，不再依赖 css/style.css。
+         起因：用户刷新后看到四个入口挤成一行、没有卡片——app.js 已是新版（新 DOM 生效），
+         但 style.css 命中旧缓存（index.html 版本号长期停在 ?v=V1.3q），新类名查无此规则，
+         button 退回浏览器默认的 inline-block，就成了截图那样。
+         内联后这一块样式永远跟 app.js 同版本，缓存再怎么不一致也不会再塌。
+         变量全部写 fallback：即使某个主题变量在旧 CSS 里不存在，也有兜底色。 -->
+    <style>
+      .svh-head{display:flex;align-items:center;gap:8px;}
+      .svh-title{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px;color:var(--text,#eae8f2);}
+      .svh-close{margin-left:auto;}
+      .svh-who{display:inline-flex;align-items:center;gap:6px;margin:12px 0 16px;padding:5px 12px;border-radius:999px;
+        background:var(--purple-dim,rgba(167,139,250,.14));color:var(--purple-soft,#c4b5fd);
+        font-size:12px;font-weight:600;max-width:100%;}
+      .svh-who.empty{background:rgba(255,255,255,.06);color:var(--text-tertiary,rgba(234,232,242,.55));font-weight:500;}
+      .svh-who .dot{width:6px;height:6px;border-radius:50%;background:var(--purple,#a78bfa);flex-shrink:0;}
+      .svh-who .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .svh-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+      .svh-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;
+        padding:13px 13px 14px;border-radius:16px;border:1px solid var(--border,rgba(255,255,255,.09));
+        background:var(--bg-elevated-2,#242129);cursor:pointer;text-align:left;
+        font-family:var(--font,inherit);transition:transform .16s ease,border-color .16s ease,background .16s ease;}
+      .svh-card:active{transform:scale(.97);}
+      .svh-card:disabled{opacity:.4;cursor:not-allowed;transform:none;}
+      .svh-card .ic{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+        background:var(--purple-dim,rgba(167,139,250,.14));color:var(--purple-soft,#c4b5fd);
+        margin-bottom:10px;flex-shrink:0;}
+      .svh-card .t{font-size:13.5px;font-weight:700;color:var(--text,#eae8f2);letter-spacing:.3px;}
+      .svh-card .d{font-size:11px;line-height:1.5;color:var(--text-tertiary,rgba(234,232,242,.55));margin-top:5px;}
+      .svh-card.primary{border-color:rgba(167,139,250,.45);
+        background:linear-gradient(158deg,rgba(167,139,250,.16),var(--bg-elevated-2,#242129) 62%);}
+      .svh-card.primary .ic{background:var(--purple,#a78bfa);color:#141019;}
+    </style>
+    <div class="svh-head">
+      <div class="svh-title">${icon('checklist', 20)} 问卷</div>
+      <button class="icon-btn svh-close" id="svh-close"><i data-icon="close" data-size="17"></i></button>
     </div>
-    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:14px;">${c ? '当前聊天对象：' + escapeHtml(c.name) : '请先在单聊里打开问卷'}</div>
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      <button class="btn primary block" id="svh-add" ${c ? '' : 'disabled'} style="padding:14px;display:flex;align-items:center;justify-content:center;gap:8px;">${icon('plus', 16)} 添加问卷</button>
-      <button class="btn block" id="svh-view" style="padding:14px;display:flex;align-items:center;justify-content:center;gap:8px;">${icon('listview', 16)} 查看问卷</button>
-      <button class="btn block" id="svh-library" style="padding:14px;display:flex;align-items:center;justify-content:center;gap:8px;">${icon('book', 16)} 问卷库（预存问卷，角色提问时抽取）</button>
+    <div class="svh-who ${c ? '' : 'empty'}">${c ? '<span class="dot"></span><span class="nm">当前：' + escapeHtml(c.name) + '</span>' : '请先在单聊里打开问卷'}</div>
+    <div class="svh-grid">
+      <button class="svh-card primary" id="svh-add" ${c ? '' : 'disabled'}>
+        <span class="ic">${icon('plus', 18)}</span>
+        <span class="t">添加问卷</span>
+        <span class="d">自己出题，指定谁来答</span>
+      </button>
+      <button class="svh-card" id="svh-quick" ${c ? '' : 'disabled'}>
+        <span class="ic">${icon('timer', 18)}</span>
+        <span class="t">快问快答</span>
+        <span class="d">最多 3 题，马上答</span>
+      </button>
+      <button class="svh-card" id="svh-view">
+        <span class="ic">${icon('listview', 18)}</span>
+        <span class="t">查看问卷</span>
+        <span class="d">已发出的答卷</span>
+      </button>
+      <button class="svh-card" id="svh-library">
+        <span class="ic">${icon('book', 18)}</span>
+        <span class="t">问卷库</span>
+        <span class="d">角色从这里抽题</span>
+      </button>
     </div>
-  `);
+  `) === false) return;
   $('#svh-close').onclick = closeModal;
   $('#svh-add').onclick = () => {
     if (!c) { miniToast('请先进入与访客的单聊'); return; }
@@ -34966,17 +36419,260 @@ function showSurveyHub() {
   };
   $('#svh-view').onclick = () => showSurveyList();
   $('#svh-library').onclick = () => showSurveyLibrary();
+  $('#svh-quick').onclick = () => {
+    if (!c) { miniToast('请先进入与访客的单聊'); return; }
+    showQuickAskModal(c.id);
+  };
 }
 
+/* 20261113 新增 / 20261113b 重做：快问快答（独立于正式问卷的轻量入口）
+   - 最多 3 题，可加可删，第 1 题必填；
+   - 20261113b 用户要求：**快问快答也能出选择题**，单选/多选都要有，
+     所以每题带一个题型切换（问答 / 单选 / 多选），选到选择题就长出选项编辑器；
+   - 发出后 8~20 秒进答题队列（调度器 20 秒一轮，实际半分钟内开始逐题作答）；
+   - 卡片形式：题目与选项**直接摊在聊天卡片里**（不用点开详情），角色答完把
+     TA 选中的选项高亮、问答写的话也露在题下（见 buildMessageHTML 的 survey 分支）。 */
+function showQuickAskModal(charId) {
+  const c = characters.find(x => x.id === charId);
+  if (!c) { miniToast('请先进入与访客的单聊'); return; }
+  // 每题状态：{ text, type:'text'|'choice', multi:bool, options:[] }
+  let qs = [{ text: '', type: 'text', multi: false, options: ['', ''] }];
+
+  const typeBtn = (i, t, label) => {
+    const on = (t === 'text' && qs[i].type === 'text') || (t === 'single' && qs[i].type === 'choice' && !qs[i].multi) || (t === 'multi' && qs[i].type === 'choice' && qs[i].multi);
+    return `<button class="qa-type" data-i="${i}" data-t="${t}" style="padding:4px 9px;border-radius:8px;font-size:11.5px;border:1px solid ${on ? 'var(--purple)' : 'var(--border)'};background:${on ? 'var(--purple-dim)' : 'transparent'};color:${on ? 'var(--purple-soft)' : 'var(--text-tertiary)'};font-weight:${on ? '700' : '500'};">${label}</button>`;
+  };
+
+  const renderBody = () => {
+    const blocks = qs.map((q, i) => {
+      const isChoice = q.type === 'choice';
+      const opts = (q.options || []).map((o, oi) => `
+        <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
+          <span style="flex-shrink:0;width:18px;height:18px;border-radius:${q.multi ? '5px' : '50%'};display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;background:var(--bg);color:var(--text-tertiary);">${String.fromCharCode(65 + oi)}</span>
+          <input class="input qa-opt" data-i="${i}" data-o="${oi}" value="${escapeHtml(o)}" placeholder="选项 ${String.fromCharCode(65 + oi)}" style="flex:1;padding:7px 9px;font-size:12.5px;">
+          ${q.options.length > 2 ? `<button class="icon-btn qa-opt-del" data-i="${i}" data-o="${oi}"><i data-icon="close" data-size="14"></i></button>` : ''}
+        </div>`).join('');
+      return `
+      <div style="background:var(--bg-elevated-2);border-radius:14px;padding:10px 11px;margin-bottom:9px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:7px;">
+          <span style="font-size:12px;color:var(--text-tertiary);">第${i + 1}题</span>
+          <div style="display:flex;gap:4px;margin-left:auto;">
+            ${typeBtn(i, 'text', '问答')}${typeBtn(i, 'single', '单选')}${typeBtn(i, 'multi', '多选')}
+          </div>
+          ${qs.length > 1 ? `<button class="icon-btn qa-del" data-i="${i}" style="margin-left:2px;"><i data-icon="close" data-size="15"></i></button>` : ''}
+        </div>
+        <input class="input qa-q" data-i="${i}" value="${escapeHtml(q.text)}" placeholder="${i === 0 ? '想问什么？（必填）' : '可以留空'}" style="width:100%;">
+        ${isChoice ? `<div style="margin-top:6px;">${opts}
+          <button class="qa-opt-add" data-i="${i}" style="margin-top:6px;padding:5px 9px;border-radius:8px;border:1px dashed var(--border);background:transparent;color:var(--text-tertiary);font-size:11.5px;">＋ 加选项</button>
+        </div>` : ''}
+      </div>`;
+    }).join('');
+    return `${blocks}
+      ${qs.length < 3 ? `<button class="btn block qa-add" style="padding:10px;">${icon('plus', 15)} 再加一题（最多 3 题）</button>` : ''}
+      <div style="font-size:11.5px;color:var(--text-tertiary);margin-top:10px;line-height:1.65;">快问快答和「添加问卷」是两条独立入口：最多 3 题，可以出问答，也可以出单选/多选题。发出后半分钟内 ${escapeHtml(c.name)} 就逐题作答——题目和 TA 选了什么会直接显示在聊天里那张卡片上。</div>
+      <button class="btn primary block" id="qa-send" style="padding:13px;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:8px;">${icon('send', 16)} 发给 ${escapeHtml(c.name)}</button>`;
+  };
+
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${icon('timer', 20)} 快问快答</div>
+      <button class="icon-btn" id="qa-close"><i data-icon="close" data-size="17"></i></button>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:12px;">发给 ${escapeHtml(c.name)} · 最多 3 题 · 发完就答</div>
+    <div id="qa-body"></div>
+  `);
+  // 20261113c：快问快答是问卷 hub 的子功能，✕ 必须回问卷总界面而不是直接退出弹窗
+  //（与「查看问卷 / 问卷库 / 添加问卷」的返回层级保持一致：子页面 → hub → 聊天页）。
+  $('#qa-close').onclick = () => showSurveyHub();
+
+  const body = $('#qa-body');
+  // 每次重绘前把已输入的内容收回 qs，避免加/删一题把上面写好的字清掉
+  const sync = () => {
+    body.querySelectorAll('.qa-q').forEach(el => { const i = Number(el.dataset.i); if (qs[i]) qs[i].text = el.value; });
+    body.querySelectorAll('.qa-opt').forEach(el => {
+      const i = Number(el.dataset.i), o = Number(el.dataset.o);
+      if (qs[i] && qs[i].options) qs[i].options[o] = el.value;
+    });
+  };
+  const draw = () => {
+    body.innerHTML = renderBody();
+    const add = body.querySelector('.qa-add');
+    if (add) add.onclick = () => { sync(); if (qs.length < 3) qs.push({ text: '', type: 'text', multi: false, options: ['', ''] }); draw(); };
+    body.querySelectorAll('.qa-del').forEach(btn => {
+      btn.onclick = () => { sync(); qs.splice(Number(btn.dataset.i), 1); if (!qs.length) qs = [{ text: '', type: 'text', multi: false, options: ['', ''] }]; draw(); };
+    });
+    // 题型切换：问答 ⇄ 单选 ⇄ 多选（切到选择题时保证至少两个选项框）
+    body.querySelectorAll('.qa-type').forEach(btn => {
+      btn.onclick = () => {
+        sync();
+        const i = Number(btn.dataset.i), t = btn.dataset.t;
+        if (!qs[i]) return;
+        if (t === 'text') { qs[i].type = 'text'; qs[i].multi = false; }
+        else {
+          qs[i].type = 'choice';
+          qs[i].multi = (t === 'multi');
+          if (!Array.isArray(qs[i].options) || qs[i].options.length < 2) qs[i].options = ['', ''];
+        }
+        draw();
+      };
+    });
+    body.querySelectorAll('.qa-opt-add').forEach(btn => {
+      btn.onclick = () => { sync(); const i = Number(btn.dataset.i); if (qs[i] && qs[i].options.length < 6) qs[i].options.push(''); draw(); };
+    });
+    body.querySelectorAll('.qa-opt-del').forEach(btn => {
+      btn.onclick = () => { sync(); const i = Number(btn.dataset.i), o = Number(btn.dataset.o); if (qs[i] && qs[i].options.length > 2) qs[i].options.splice(o, 1); draw(); };
+    });
+    const send = body.querySelector('#qa-send');
+    if (send) send.onclick = () => {
+      sync();
+      // 只发写了题的；选择题至少要有两个非空选项
+      const list = [];
+      for (const q of qs) {
+        const text = String(q.text || '').trim();
+        if (!text) continue;
+        if (q.type === 'choice') {
+          const opts = (q.options || []).map(o => String(o || '').trim()).filter(Boolean);
+          if (opts.length < 2) { miniToast('选择题「' + text.slice(0, 8) + '…」至少要写两个选项'); return; }
+          list.push({ text, type: 'choice', options: opts, multi: !!q.multi });
+        } else {
+          list.push({ text, type: 'text', options: [] });
+        }
+      }
+      if (!list.length) { miniToast('先写一个问题再发'); return; }
+      closeModal();
+      sendSurveyToChar(charId, list.slice(0, 3), false, { quick: true });
+    };
+  };
+  draw();
+}
+
+
 /* ============================================================
-   问卷库（20261028）：预存问卷模板，区分玩家库（全局共享）与角色库（每角色独立，不互通）
+   问卷库（20261028 / 20261113b 改名）：预存问卷模板，「你的问卷库」全局共享、「他的问卷库」每角色独立
    - 数据存 surveyLibrary store：{ id, owner:'player'|'char', charId, title, questions:[{text,type,options}], folderId, createdAt }
    - 分组存 kv：svLibFolders（玩家库）、svLibCharFolders（{charId:[{id,name}]}）
    - 角色向玩家提问（charAskPlayer）时从角色库抽取
    ============================================================ */
 
+/* 20261113b：问卷库预设题库 —— 4 份 × 5 题 = 20 题（问答 / 单选 / 多选混排）。
+   两个用途：
+     ① 「他的问卷库」空的时候，可一键载入（角色提问马上有题可抽）；
+     ② 角色想向玩家提问、但自己库是空的 → 直接从预设里抽一份，绝不出现「没题可问」。 */
+const SV_PRESET_SURVEYS = [
+  { title: '今天的一点点', questions: [
+    { text: '今天有没有哪个瞬间，你突然想起我？', type: 'text', options: [] },
+    { text: '今天的心情更接近哪一种？', type: 'choice', options: ['轻快', '平静', '有点累', '心里堵着什么'], multi: false },
+    { text: '今天吃到的最好吃的一口是什么？', type: 'text', options: [] },
+    { text: '如果今天可以删掉一件事，你会删哪件？', type: 'text', options: [] },
+    { text: '今晚想让我怎么陪你？', type: 'choice', options: ['说说话', '安静待着', '一起听歌', '别管我'], multi: true },
+  ]},
+  { title: '关于我们', questions: [
+    { text: '你觉得我最懂你的地方是哪里？', type: 'text', options: [] },
+    { text: '我们之间，你最舍不得的是？', type: 'choice', options: ['一起熬夜的夜', '没意义的废话', '吵架又和好', '什么都不做也自在'], multi: true },
+    { text: '有什么事你一直想问我，却没说出口？', type: 'text', options: [] },
+    { text: '如果给我们的关系起个名字，你会叫它什么？', type: 'text', options: [] },
+    { text: '我做什么事的时候，你会偷偷高兴？', type: 'text', options: [] },
+  ]},
+  { title: '你这个人', questions: [
+    { text: '你身上最不像自己的一面是什么？', type: 'text', options: [] },
+    { text: '一个人的时候你通常在做什么？', type: 'choice', options: ['发呆', '刷手机', '听歌', '睡觉', '干活'], multi: true },
+    { text: '你最怕被人看见的情绪是？', type: 'choice', options: ['委屈', '嫉妒', '脆弱', '生气'], multi: false },
+    { text: '有哪件事你坚持了很久，别人都不知道？', type: 'text', options: [] },
+    { text: '别人夸你什么，你会真的开心？', type: 'text', options: [] },
+  ]},
+  { title: '如果', questions: [
+    { text: '如果明天不用对任何事负责，你想去哪儿？', type: 'text', options: [] },
+    { text: '如果可以拥有一项能力，你选？', type: 'choice', options: ['读心', '时间倒回', '瞬移', '不用睡觉'], multi: false },
+    { text: '如果有天我不在了，你会怎么记住我？', type: 'text', options: [] },
+    { text: '想和我一起做的三件小事？', type: 'text', options: [] },
+    { text: '要不要和我一起把今天存下来？', type: 'choice', options: ['要', '想再想想'], multi: false },
+  ]},
+];
+
+/* 把预设题库写进某个库（owner + charId）。已存在的同名问卷不重复添加。 */
+async function _svLibLoadPresets(owner, charId) {
+  if (owner === 'char' && !charId) { miniToast('请先进入与访客的单聊'); return; }
+  let added = 0;
+  const exist = await _svLibGetAll(owner, charId);
+  const seen = new Set(exist.map(x => String(x.title || '').trim()));
+  const now = Date.now();
+  // 20261113e：同样按「单题」入库，跟自动播种保持一致
+  for (const grp of SV_PRESET_SURVEYS) {
+    for (const q of (grp.questions || [])) {
+      const text = String(q.text || '').trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      await idbPut('surveyLibrary', {
+        id: uid('svl'), owner, charId: owner === 'char' ? charId : '',
+        title: text,
+        questions: [{ text, type: q.type || 'text', options: (q.options || []).slice(), multi: !!q.multi }],
+        folderId: '', createdAt: now + added, preset: true,
+      });
+      added++;
+    }
+  }
+  const total = SV_PRESET_SURVEYS.reduce((n, s) => n + s.questions.length, 0);
+  miniToast(added ? ('已载入 ' + added + ' 道预设题（共 ' + total + ' 题）') : '预设题都已经在库里了');
+}
+
+/* 20261113d：把预设题库「真正写进」每个角色的问卷库。
+   之前预设只作为 charAskPlayer 的内存兜底（`if (!lib.length)` 直接抽 SV_PRESET_SURVEYS），
+   从不落库 → 「他的问卷库」永远是 0 份，玩家也就永远看不到、抽不到这些题（用户实测反馈）。
+   现在按角色懒加载播种一次（kv 标记防重复；玩家手动删空后不会被强行塞回来）。 */
+async function _svLibEnsurePresets(charId) {
+  if (!charId) return;
+  const all = await idbGetAll('surveyLibrary');
+  const exist = all.filter(s => s.owner === 'char' && s.charId === charId);
+  /* 20261113e：预设题库改成「单题池」——20 道题逐条入库，不再按 4 份 5 题成组。
+     角色提问是随机抽一道题，不是把整组端给玩家；题库页看到的也应该是单题列表。
+     旧版播种过的 4 份成组预设先删掉，避免和新单题重复。
+     ——下面两段迁移每次进库都跑（幂等、没东西可迁时几乎零成本），
+       这样老数据不用等播种标记重置也能自动纠正。 */
+  const grpTitles = new Set(SV_PRESET_SURVEYS.map(s => s.title));
+  for (const sv of exist) {
+    if (sv.preset && grpTitles.has(sv.title || '')) {
+      try { await idbDelete('surveyLibrary', sv.id); } catch (e) {}
+    }
+  }
+  /* 旧版「收藏整份问卷」留下的多题条目 → 也拆成单题（只拆 preset / fromSurvey 的，
+     玩家自己手动建的问卷库条目不动，避免误伤） */
+  for (const sv of exist) {
+    const qs0 = sv.questions || [];
+    if (!(sv.fromSurvey || sv.preset) || qs0.length <= 1) continue;
+    for (const q of qs0) {
+      const text = String(q.text || '').trim();
+      if (!text) continue;
+      await idbPut('surveyLibrary', {
+        id: uid('svl'), owner: 'char', charId, title: text,
+        questions: [{ text, type: q.type || 'text', options: (q.options || []).slice(), multi: !!q.multi }],
+        folderId: sv.folderId || '', createdAt: Date.now(), preset: !!sv.preset, fromSurvey: sv.fromSurvey || '',
+      });
+    }
+    try { await idbDelete('surveyLibrary', sv.id); } catch (e) {}
+  }
+  const flag = 'svPresetSeededV2_' + charId;
+  try { if (await getSetting(flag, false)) return; } catch (e) {}
+  const now = Date.now();
+  let seq = 0;
+  for (const grp of SV_PRESET_SURVEYS) {
+    for (const q of (grp.questions || [])) {
+      const text = String(q.text || '').trim();
+      if (!text) continue;
+      await idbPut('surveyLibrary', {
+        id: uid('svl'), owner: 'char', charId,
+        title: text, // 单题条目：标题就是题面
+        questions: [{ text, type: q.type || 'text', options: (q.options || []).slice(), multi: !!q.multi }],
+        folderId: '', createdAt: now + (seq++), preset: true,
+      });
+    }
+  }
+  try { await setSetting(flag, true); } catch (e) {}
+}
+
 /* 取问卷库列表（owner='player' 全量；owner='char' 按 charId） */
 async function _svLibGetAll(owner, charId) {
+  // 角色库：读之前先确保预设题库已落库（一次性，按角色）
+  if (owner === 'char' && charId) { try { await _svLibEnsurePresets(charId); } catch (e) {} }
   const all = await idbGetAll('surveyLibrary');
   return all
     .filter(s => s.owner === owner && (owner === 'player' ? true : s.charId === charId))
@@ -34998,7 +36694,9 @@ async function _svLibSaveFolders(owner, charId, folders) {
 /* 问卷库管理主界面 */
 async function showSurveyLibrary() {
   const c = currentCharId ? characters.find(x => x.id === currentCharId) : null;
-  let owner = 'player';          // 当前激活库：'player' | 'char'
+  // 20261113e：有聊天对象时默认打开「他的问卷库」——预设的 20 道单题都在这里，
+  //   玩家进来第一眼就该看到题库，而不是空空的「你的问卷库」。
+  let owner = c ? 'char' : 'player';   // 当前激活库：'player' | 'char'
   let curFolder = 'all';         // 'all' | '__none__' | 文件夹id
   let batchMode = false;
   const selected = new Set();
@@ -35011,8 +36709,8 @@ async function showSurveyLibrary() {
 
     // 顶部库 tab
     $('#svlib-owntabs').innerHTML = [
-      `<button class="btn svlib-own${owner === 'player' ? ' on' : ''}" data-own="player" style="flex:1;padding:7px 4px;font-size:12.5px;">玩家问卷库</button>`,
-      `<button class="btn svlib-own${owner === 'char' ? ' on' : ''}" data-own="char" style="flex:1;padding:7px 4px;font-size:12.5px;" ${c ? '' : 'disabled'}>角色问卷库</button>`,
+      `<button class="btn svlib-own${owner === 'player' ? ' on' : ''}" data-own="player" style="flex:1;padding:7px 4px;font-size:12.5px;${owner === 'player' ? 'background:var(--purple);color:#141019;font-weight:600;border-color:transparent;' : ''}">你的问卷库</button>`,
+      `<button class="btn svlib-own${owner === 'char' ? ' on' : ''}" data-own="char" style="flex:1;padding:7px 4px;font-size:12.5px;${owner === 'char' ? 'background:var(--purple);color:#141019;font-weight:600;border-color:transparent;' : ''}" ${c ? '' : 'disabled'}>他的问卷库</button>`,
     ].join('');
     $$('#svlib-owntabs .svlib-own').forEach(b => {
       b.onclick = () => {
@@ -35081,17 +36779,33 @@ async function showSurveyLibrary() {
     });
 
     // 列表
-    $('#svlib-count').textContent = `${owner === 'player' ? '玩家问卷库' : (c ? c.name + ' 的问卷库' : '角色问卷库')} · ${shown.length} 份${batchMode ? ' · 点选要删除的问卷' : ''}`;
+    // 20261113e：角色库是「单题池」，单位用「题」；玩家库仍是按份存的问卷，用「份」
+    const _unit = (owner === 'char' && shown.every(x => (x.questions || []).length === 1)) ? '题' : '份';
+    $('#svlib-count').textContent = `${owner === 'player' ? '你的问卷库' : (c ? c.name + ' 的问卷库' : '他的问卷库')} · ${shown.length} ${_unit}${batchMode ? ' · 点选要删除的题' : ''}`;
+    const _ab = $('#svlib-ask');
+    if (_ab) _ab.style.display = (owner === 'char' && c) ? '' : 'none';
     const list = $('#svlib-list');
     if (!shown.length) {
-      list.innerHTML = `<div style="text-align:center;color:var(--text-tertiary);font-size:13px;padding:28px;">还没有问卷，点下方「＋ 添加问卷」建立第一份</div>`;
+      // 20261113b：他的问卷库空了 → 给一个「载入预设题库」的入口（角色提问时也不会没题可抽）
+      list.innerHTML = `<div style="text-align:center;color:var(--text-tertiary);font-size:13px;padding:24px 12px;line-height:1.7;">
+        还没有问卷，点下方「＋ 添加问卷」建立第一份
+        ${owner === 'char' ? `<div style="margin-top:12px;"><button class="btn" id="svlib-preset" style="padding:9px 16px;font-size:12.5px;">${icon('sparkle', 14)} 载入预设题库（${SV_PRESET_SURVEYS.reduce((n, s) => n + s.questions.length, 0)} 题）</button></div>
+        <div style="font-size:11.5px;margin-top:8px;color:var(--text-tertiary);">预设题库是内置的常用问题，可直接抽来向玩家提问</div>` : ''}
+      </div>`;
+      const pb = $('#svlib-preset');
+      if (pb) pb.onclick = async () => { await _svLibLoadPresets('char', c ? c.id : ''); render(); };
     } else {
       list.innerHTML = shown.map(it => {
         const sel = selected.has(it.id);
+        // 单题条目：副标题直接写题型（单选/多选/问答），别显示「1 题」这种没信息量的字
+        const qs2 = it.questions || [];
+        const meta = qs2.length === 1
+          ? ((qs2[0].type === 'choice') ? (qs2[0].multi ? '多选题' : '单选题') : '问答题')
+          : (qs2.length + ' 题');
         return `<div class="svl-item" data-svlib="${it.id}" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;cursor:pointer;display:flex;align-items:center;gap:10px;${sel ? 'box-shadow:inset 0 0 0 2px var(--purple-soft);' : ''}">
           <div style="flex:1;min-width:0;">
             <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(it.title || '问卷')}</div>
-            <div style="font-size:12px;color:var(--text-tertiary);margin-top:3px;">${(it.questions || []).length} 题${it.folderId ? ' · ' + escapeHtml((folders.find(f => f.id === it.folderId) || {}).name || '') : ''}</div>
+            <div style="font-size:12px;color:var(--text-tertiary);margin-top:3px;">${meta}${it.folderId ? ' · ' + escapeHtml((folders.find(f => f.id === it.folderId) || {}).name || '') : ''}</div>
           </div>
           <div style="flex-shrink:0;display:flex;gap:8px;align-items:center;">
             ${batchMode ? (sel ? `<span style="font-size:18px;color:var(--purple-soft);"><i data-icon="check" data-size="15"></i></span>` : `<span style="font-size:11px;color:var(--text-tertiary);">${timeAgoStr(it.createdAt)}</span>`) : `<button class="btn" data-svlib-send="${it.id}" style="padding:6px 12px;font-size:12px;">发出</button>`}
@@ -35141,17 +36855,38 @@ async function showSurveyLibrary() {
         <button class="icon-btn" id="svlib-close"><i data-icon="close" data-size="17"></i></button>
       </div>
     </div>
-    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;">预存问卷：角色向玩家提问时从「角色问卷库」抽取；玩家库全局共享、可随时「发出」给任意角色</div>
+    <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.65;">「他的问卷库」是 TA 向你提问时随机抽的题，一道一道抽，不是整组端给你（每个角色各自独立；已自动放入 20 道预设单题，可自行增删）；「你的问卷库」全局共享，可随时「发出」给任意角色</div>
     <div id="svlib-owntabs" style="display:flex;gap:6px;margin-bottom:8px;"></div>
     <div class="lr-folders" id="svlib-folders"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
       <div style="font-size:12.5px;color:var(--text-tertiary);" id="svlib-count"></div>
+      <button class="btn" id="svlib-ask" style="padding:6px 12px;font-size:12px;white-space:nowrap;display:none;">让 TA 现在问我</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto;" id="svlib-list"></div>
     <button class="btn primary block" id="svlib-add" style="padding:13px;margin-top:12px;">＋ 添加问卷（可导入 Word）</button>
   `);
 
   $('#svlib-close').onclick = () => showSurveyHub();
+  // 20261113c：手动触发一次「角色向我提问」——随机提问藏在主动消息节奏里（8%→35%），
+  //   玩家想当场看到效果时可以直接点这里，走的是同一条 charAskPlayer 链路。
+  const askBtn = $('#svlib-ask');
+  const _syncAskBtn = () => { if (askBtn) askBtn.style.display = (owner === 'char' && c) ? '' : 'none'; };
+  _syncAskBtn();
+  if (askBtn) askBtn.onclick = async () => {
+    if (!c) { miniToast('请先进入与访客的单聊'); return; }
+    askBtn.disabled = true;
+    askBtn.textContent = 'TA 正在翻题…';
+    try {
+      await charAskPlayer(c);
+      closeModal();
+      miniToast('已让「' + c.name + '」向你提问，去聊天里看看');
+    } catch (e) {
+      miniToast('提问失败，稍后再试');
+    } finally {
+      askBtn.disabled = false;
+      askBtn.textContent = '让 TA 现在问我';
+    }
+  };
   $('#svlib-add').onclick = () => showSurveyLibraryCompose(owner, owner === 'char' ? (c ? c.id : '') : '');
   $('#svlib-batch').onclick = async () => {
     if (batchMode) {
@@ -35189,13 +36924,14 @@ async function openSurveyLibraryDetail(id) {
         </div>`).join('') || `<div style="text-align:center;color:var(--text-tertiary);padding:20px;">空问卷</div>`}
     </div>
   `);
-  $('#svld-close').onclick = closeModal;
+  // 20261113e：子功能 ✕ 一律退回上一级（问卷库），不能直接退出弹窗
+  $('#svld-close').onclick = () => showSurveyLibrary();
 }
 
 /* 问卷库添加/编辑界面：复用题目编辑交互（手动/Word），保存到问卷库 */
 function showSurveyLibraryCompose(owner, charId) {
   const c = owner === 'char' ? characters.find(x => x.id === charId) : null;
-  const whoLabel = owner === 'player' ? '存入「玩家问卷库」' : `存入「${c ? c.name : '该角色'}」的角色问卷库`;
+  const whoLabel = owner === 'player' ? '存入「你的问卷库」' : `存入「${c ? c.name : '他'}」的问卷库`;
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div style="font-size:17px;font-weight:600;">添加问卷到问卷库</div>
@@ -35650,7 +37386,8 @@ async function maybeCharAskPlayer(c) {
   const key = c.id + '|' + day;
   const n = _surveyCharAskCount[key] || 0;
   if (n >= 3) return; // 每天最多 3 条
-  // 低概率触发（约 8%），且仅当角色开启主动发消息时
+  // 20261113d：回滚——上一轮擅自改成 35%/20% 属于改动玩家既定机制，这里恢复成原先的固定 8%。
+  //   真正导致「从没收到过问卷」的不是概率，而是预设题库根本没进角色问卷库（见 _svLibEnsurePresets）。
   if (Math.random() > 0.08) return;
   await charAskPlayer(c);
 }
@@ -35896,40 +37633,156 @@ function _ocPlayAlarm() {
   } catch (e) {}
 }
 
-/* 隧道吸入/吐出音效（20261031）：Web Audio 合成「嗖——」的隧道感——
-   白噪声经带通滤波，频率先下行（吸入）再上行（吐出），配合裂隙吞入/吐出动画。
-   日常礼物/惊喜触发时调用，不用于首次触发（首次已有警报音）。 */
-function _ocPlayTunnelSuck() {
+/* 超频 / 惊喜漩涡音效（20261113 第十二版 · 定稿为玩家选中的「3 秒带风声」版）
+   基线 = 第三版（第十一版试听页第③个按钮「旧版原样 3.00s」）——玩家听完十一版后选定的这一版：
+     ① 三根低频柱 30 / 45 / 62Hz 缓慢推起来 —— 管风琴踩住最低几个键（重量）
+     ② 和声 C3-G3-C4-G4-C5 空五度，微失谐 + 缓慢上滑 6% + 5.2Hz 颤音 —— 绵长、庄严
+     ③ 气流风声：高通 420Hz 切掉「噗」，带通上扫 + Q 收紧 → 「哗咻」
+     ④ 很远的一声叮，落在混响里，像某颗星灭了
+
+   为什么不用第九版（八度音栓堆叠）：那一版是单基频的管风琴音色，干净但没有「风声」，
+   玩家明确说「还是旧版带风声的那个好听」。故回退到第三版的构成，参数一个都没动。
+
+   opt.tone：'organ'（3.00s，默认·定稿）| 'organLong'（1.60s）| 'organShort'（1.20s） */
+function _ocPlayTunnelSuck(opt) {
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
+    const o = opt || {};
+    const TONES = {
+      // organ：定稿版，3.00s，第三版原样参数
+      organ:      { dur: 3.00, verb: 0.52, verbLen: 3.40, hp: 420, f0: 340, f1: 2400, f2: 6400,
+                    q0: 0.9, q1: 5.0, atk: 0.020, noise: 0.17,
+                    sub: [30, 45, 62], subG: 0.150,
+                    choir: [130.81, 196.00, 261.63, 392.00, 523.25], choirG: 0.070,
+                    choirTail: 0.93, choirRev: 0,
+                    bell: 1046.5, bellAt: 0.74, bellHold: 1.02 },
+      // organLong：同一套东西拉长，想更绵长时用
+      organLong:  { dur: 1.60, verb: 0.54, verbLen: 2.80, hp: 420, f0: 340, f1: 2400, f2: 6400,
+                    q0: 0.9, q1: 5.0, atk: 0.018, noise: 0.18,
+                    sub: [30, 45, 62], subG: 0.180,
+                    choir: [130.81, 196.00, 261.63, 392.00, 523.25], choirG: 0.074,
+                    choirTail: 1.05, choirRev: 0.30,
+                    bell: 1046.5, bellAt: 0.70, bellHold: 0.55 },
+      // organShort：更短，留给后续别的触发点用
+      organShort: { dur: 1.20, verb: 0.52, verbLen: 2.40, hp: 420, f0: 340, f1: 2400, f2: 6400,
+                    q0: 0.9, q1: 5.0, atk: 0.018, noise: 0.17,
+                    sub: [30, 45, 62], subG: 0.180,
+                    choir: [130.81, 196.00, 261.63, 392.00, 523.25], choirG: 0.072,
+                    choirTail: 1.12, choirRev: 0.30,
+                    bell: 1046.5, bellAt: 0.72, bellHold: 0.55 },
+    };
+    const C = TONES[o.tone] || TONES.organ;
+    const dur = Math.max(0.6, Number(o.dur) || C.dur);
+
     const ctx = new AC();
     if (ctx.state === 'suspended') { ctx.resume().catch(() => {}); }
     const t0 = ctx.currentTime + 0.02;
-    // 噪声源
-    const len = Math.floor(ctx.sampleRate * 0.55);
+
+    // 总线：低频柱 + 和声 + 混响叠起来很容易过载，先软限幅（只压峰，不做持续压缩，避免「喘气」感）
+    const master = ctx.createGain();
+    master.gain.value = 0.90;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -20; comp.knee.value = 14; comp.ratio.value = 5;
+    comp.attack.value = 0.008; comp.release.value = 0.25;
+    master.connect(comp); comp.connect(ctx.destination);
+
+    // ① 空间：程序生成混响脉冲响应。单声道省算力，20ms 淡入避免起音爆点
+    const irLen = Math.floor(ctx.sampleRate * C.verbLen);
+    const irBuf = ctx.createBuffer(1, irLen, ctx.sampleRate);
+    const ird = irBuf.getChannelData(0);
+    const fadeIn = ctx.sampleRate * 0.02;
+    for (let i = 0; i < irLen; i++) {
+      const tt = i / irLen;
+      ird[i] = (Math.random() * 2 - 1) * Math.pow(1 - tt, 2.4) * Math.min(1, i / fadeIn);
+    }
+    const conv = ctx.createConvolver();
+    conv.buffer = irBuf;
+    const wet = ctx.createGain(); wet.gain.value = C.verb;
+    const verbPre = ctx.createBiquadFilter();       // 混响前切低频，防糊
+    verbPre.type = 'highpass'; verbPre.frequency.value = 240; verbPre.Q.value = 0.6;
+    master.connect(verbPre); verbPre.connect(conv); conv.connect(wet); wet.connect(comp);
+
+    // ② 质量：低频柱，缓慢增强——黑洞的重量（管风琴的最低位）
+    C.sub.forEach((f, i) => {
+      const s = ctx.createOscillator(), g = ctx.createGain();
+      s.type = 'sine'; s.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(C.subG / (i + 1), t0 + dur * 0.40);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 0.98);
+      s.connect(g); g.connect(master);
+      s.start(t0); s.stop(t0 + dur);
+    });
+
+    /* ③ 和声：空五度，缓慢上滑 + 颤音。
+       释音落在 dur × choirTail（定稿版 0.93，比本体略早收；短版超过 1 倍，让余音比本体长）。 */
+    const choirEnd = dur * C.choirTail;
+    const vib = ctx.createOscillator();
+    vib.type = 'sine'; vib.frequency.value = 5.2;
+    vib.start(t0); vib.stop(t0 + choirEnd + 0.05);
+    const choirRev = ctx.createGain(); choirRev.gain.value = C.choirRev;   // 短版多送一点空间，把尾拉长
+    choirRev.connect(conv);
+    C.choir.forEach((f, i) => {
+      const osc = ctx.createOscillator(), env = ctx.createGain();
+      osc.type = 'sine';
+      osc.detune.value = (i % 2 ? 4 : -4) + i * 1.5;        // 微失谐 → 大量缓慢拍频
+      osc.frequency.setValueAtTime(f, t0);
+      osc.frequency.exponentialRampToValueAtTime(f * 1.06, t0 + dur * 0.90); // 整体上滑 6%
+      const vibAmt = ctx.createGain();
+      vibAmt.gain.value = f * 0.007;                        // 颤音深度随音高走
+      vib.connect(vibAmt); vibAmt.connect(osc.frequency);
+      env.gain.setValueAtTime(0.0001, t0);
+      env.gain.exponentialRampToValueAtTime(C.choirG / (1 + i * 0.55), t0 + dur * 0.44);
+      env.gain.exponentialRampToValueAtTime(0.0001, t0 + choirEnd);
+      osc.connect(env); env.connect(master); env.connect(choirRev);
+      osc.start(t0); osc.stop(t0 + choirEnd + 0.05);
+    });
+
+    // ④ 气流：高通切掉「噗」→ 带通上扫做「咻」，音量压低只当质感
+    const len = Math.ceil(ctx.sampleRate * (dur + 0.1));
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    // 带通滤波，中心频率扫变：中→低（吸入）再低→中（吐出）
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource(); src.buffer = buf;
+
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = C.hp; hp.Q.value = 0.7;
+
     const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.Q.value = 1.4;
-    bp.frequency.setValueAtTime(1200, t0);
-    bp.frequency.exponentialRampToValueAtTime(280, t0 + 0.28);   // 吸入：音调下行
-    bp.frequency.exponentialRampToValueAtTime(1400, t0 + 0.52);  // 吐出：音调上行
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(0.22, t0 + 0.08);
-    g.gain.setValueAtTime(0.22, t0 + 0.28);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.54);
-    src.connect(bp); bp.connect(g); g.connect(ctx.destination);
-    src.start(t0); src.stop(t0 + 0.56);
-    setTimeout(() => { try { ctx.close(); } catch (e) {} }, 700);
+    bp.type = 'bandpass'; bp.Q.value = C.q0;
+    bp.frequency.setValueAtTime(C.f0, t0);
+    bp.frequency.exponentialRampToValueAtTime(C.f1, t0 + dur * 0.55);
+    bp.frequency.exponentialRampToValueAtTime(C.f2, t0 + dur * 0.86);
+    bp.Q.setValueAtTime(C.q0, t0);
+    bp.Q.linearRampToValueAtTime(C.q1, t0 + dur * 0.86);   // 越吸越细
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, t0);
+    noiseGain.gain.exponentialRampToValueAtTime(C.noise, t0 + C.atk);
+    noiseGain.gain.linearRampToValueAtTime(C.noise * 0.92, t0 + dur * 0.62);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur * 0.94);
+    src.connect(hp); hp.connect(bp); bp.connect(noiseGain); noiseGain.connect(master);
+    src.start(t0); src.stop(t0 + dur);
+
+    // ⑤ 很远的一声「叮」——落在混响里，像某颗星灭了
+    const bell = ctx.createOscillator(), bellG = ctx.createGain();
+    bell.type = 'sine'; bell.frequency.value = C.bell;
+    const bt = t0 + dur * C.bellAt;
+    const bellEnd = bt + C.bellHold;                       // 叮自带一条尾巴，别被 dur 掐掉
+    bellG.gain.setValueAtTime(0.0001, bt);
+    bellG.gain.exponentialRampToValueAtTime(0.055, bt + 0.025);
+    bellG.gain.exponentialRampToValueAtTime(0.0001, bellEnd);
+    const bellSend = ctx.createGain(); bellSend.gain.value = 0.78;   // 大部分送进空间
+    bell.connect(bellG); bellG.connect(master); bellG.connect(bellSend); bellSend.connect(conv);
+    bell.start(bt); bell.stop(bellEnd + 0.02);
+
+    // 混响尾巴要留够，提前 close 会「咔」一声截断
+    setTimeout(() => { try { ctx.close(); } catch (e) {} }, (dur + C.verbLen + 0.8) * 1000);
   } catch (e) {}
 }
+
+
+
 
 /* 惊喜红字震动音效（20260929bc）：低频震动感 + 短促上行警示音，配合大字 shake 动画 */
 function _ocPlaySurpriseBuzz() {
@@ -35963,36 +37816,53 @@ function _ocPlaySurpriseBuzz() {
   } catch (e) {}
 }
 function _ocVortexSvg(size, dense) {
-  const n = dense ? 26 : 16;
+  /* 20261113：按音效试听页那版重做。旧版只有「一个正向组 + 一个反向组」两层，
+     所有椭圆挤在同一个组里同速转（26s / 40s），肉眼看到的就是整团缓慢平移、没有旋起来。
+     现在改成三层：层内轨道由内向外铺开，三层各自速度（快→慢）与方向交替，
+     层与层之间产生相对旋转，才有「越靠里转得越快」的吸积盘感。 */
   const cx = size / 2;
+  const LAYERS = dense
+    ? [{ n: 13, dur: 14, dir: 1, spread: 0.030 }, { n: 16, dur: 20, dir: -1, spread: 0.026 }, { n: 20, dur: 28, dir: 1, spread: 0.022 }]
+    : [{ n: 9, dur: 17, dir: 1, spread: 0.034 }, { n: 11, dur: 24, dir: -1, spread: 0.030 }, { n: 14, dur: 34, dir: 1, spread: 0.026 }];
+
   let orbits = '';
-  for (let i = 0; i < n; i++) {
-    const rx = size * (0.16 + 0.34 * (i / n) + Math.random() * 0.05);
-    const ry = rx * (0.28 + Math.random() * 0.42);
-    const rot = Math.round(Math.random() * 180);
-    const op = (0.22 + Math.random() * 0.5).toFixed(2);
-    const dash = Math.random() < 0.35 ? ` stroke-dasharray="${(2 + Math.random() * 5).toFixed(1)} ${(3 + Math.random() * 6).toFixed(1)}"` : '';
-    orbits += `<ellipse cx="${cx}" cy="${cx}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" transform="rotate(${rot} ${cx} ${cx})" fill="none" stroke="rgba(255,255,255,${op})" stroke-width="${(0.7 + Math.random() * 1.4).toFixed(1)}"${dash}/>`;
-  }
+  LAYERS.forEach((L, li) => {
+    let inner = '';
+    for (let i = 0; i < L.n; i++) {
+      // 半径从 0.09 起，层内逐条外扩；三层起点相近但步长/随机不同 → 轨道互相穿插
+      const rx = size * (0.09 + L.spread * i + Math.random() * 0.035);
+      const ry = rx * (0.22 + Math.random() * 0.46);
+      const rot = Math.round(Math.random() * 180);
+      const op = (0.10 + Math.random() * 0.34).toFixed(2);
+      const sw = (0.7 + Math.random() * (li === 0 ? 1.0 : 1.5)).toFixed(1);
+      const dash = Math.random() < 0.32
+        ? ` stroke-dasharray="${(2 + Math.random() * 6).toFixed(1)} ${(3 + Math.random() * 9).toFixed(1)}"`
+        : '';
+      inner += `<ellipse cx="${cx}" cy="${cx}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" transform="rotate(${rot} ${cx} ${cx})" fill="none" stroke="rgba(255,255,255,${op})" stroke-width="${sw}"${dash}/>`;
+    }
+    orbits += `<g class="oc-vx-spin" style="animation-duration:${L.dur}s;animation-direction:${L.dir > 0 ? 'normal' : 'reverse'}">${inner}</g>`;
+  });
+
   let stars = '';
-  for (let i = 0; i < (dense ? 46 : 26); i++) {
+  for (let i = 0; i < (dense ? 54 : 32); i++) {
     const a = Math.random() * Math.PI * 2;
-    const r = size * (0.1 + Math.random() * 0.42);
-    const x = (cx + Math.cos(a) * r).toFixed(1), y = (cx + Math.sin(a) * r * 0.72).toFixed(1);
-    stars += `<circle class="oc-vx-star" cx="${x}" cy="${y}" r="${(0.6 + Math.random() * 1.5).toFixed(1)}" fill="#fff" style="animation-delay:${(Math.random() * 2).toFixed(2)}s"/>`;
+    const r = size * (0.08 + Math.random() * 0.40);
+    const x = (cx + Math.cos(a) * r).toFixed(1), y = (cx + Math.sin(a) * r * 0.74).toFixed(1);
+    stars += `<circle class="oc-vx-star" cx="${x}" cy="${y}" r="${(0.6 + Math.random() * 1.6).toFixed(1)}" fill="#fff" style="animation-delay:${(Math.random() * 2).toFixed(2)}s"/>`;
   }
-  return `<svg viewBox="0 0 ${size} ${size}" style="width:min(88vmin,${dense ? 560 : 420}px);height:auto;overflow:visible;">
+
+  return `<svg viewBox="0 0 ${size} ${size}" style="width:min(96vmin,${dense ? 620 : 460}px);height:auto;overflow:visible;">
     <defs>
       <radialGradient id="ocvx-g" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="rgba(255,255,255,0.95)"/>
-        <stop offset="28%" stop-color="rgba(196,168,255,0.55)"/>
-        <stop offset="100%" stop-color="rgba(124,92,224,0)"/>
+        <stop offset="0%" stop-color="rgba(255,255,255,0.98)"/>
+        <stop offset="30%" stop-color="rgba(214,196,255,0.60)"/>
+        <stop offset="72%" stop-color="rgba(140,110,230,0)"/>
       </radialGradient>
     </defs>
-    <circle cx="${cx}" cy="${cx}" r="${size * 0.34}" fill="url(#ocvx-g)" class="oc-vx-glow"/>
-    <g class="oc-vx-spin" style="animation-duration:${dense ? 26 : 34}s">${orbits}</g>
-    <g class="oc-vx-spin-rev" style="animation-duration:${dense ? 40 : 52}s">${stars}</g>
-    <circle cx="${cx}" cy="${cx}" r="${(size * 0.016).toFixed(1)}" fill="#ffffff" class="oc-vx-core"/>
+    <circle cx="${cx}" cy="${cx}" r="${size * 0.40}" fill="url(#ocvx-g)" class="oc-vx-glow"/>
+    ${orbits}
+    <g class="oc-vx-spin" style="animation-duration:${dense ? 70 : 96}s">${stars}</g>
+    <circle cx="${cx}" cy="${cx}" r="${(size * 0.018).toFixed(1)}" fill="#ffffff" class="oc-vx-core"/>
   </svg>`;
 }
 

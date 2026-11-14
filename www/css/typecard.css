@@ -216,6 +216,42 @@ body.theme-light.tcf-low .typecard-float-panel {
   display: flex;
   justify-content: center;
   margin-top: 7px;
+  /* 20261114：右侧要放「收起（×）」，左右留出等宽内边距，按钮仍然视觉居中 */
+  position: relative;
+  padding: 0 30px;
+}
+/* 20261114 新增：召唤面板自带的收起按钮。
+   以前只能点悬浮球收起，生成消息期间球被面板压住/被拖走就点不到 =「收不起来」。
+   这个 × 挂在面板自己身上，待机态、演出态都在，点击走 toggleSummonPanel。 */
+.tc-summon-close {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  background: rgba(139, 116, 232, 0.22);
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+.tc-summon-close:hover { background: rgba(139, 116, 232, 0.34); }
+.tc-summon-close:active { transform: translateY(-50%) scale(0.92); }
+body.theme-light .tc-summon-close {
+  color: #453a70;
+  border-color: rgba(70, 50, 120, 0.26);
+  background: rgba(139, 116, 232, 0.14);
 }
 .tc-summon-btn {
   display: inline-flex;

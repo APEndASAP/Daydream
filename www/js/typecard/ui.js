@@ -345,8 +345,24 @@
           if (typeof ui._onSummonTap === 'function') { try { ui._onSummonTap(); } catch (e) {} }
         });
         btnRow.appendChild(btn);
+        /* 20261114：给召唤面板一个明确的「收起」入口。
+           以前只能点悬浮球收起，而生成消息期间球容易被面板压住/拖走，
+           玩家点不到 = 「生成过程中收不起」。这里放一个面板自己的 ×，
+           点击走 engine.toggleSummonPanel（演出中=折叠、待机=销毁并记住收起）。 */
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'tc-summon-close';
+        closeBtn.setAttribute('aria-label', '收起');
+        closeBtn.innerHTML = '✕';
+        closeBtn.addEventListener('pointerdown', function (e) { e.stopPropagation(); e.preventDefault(); });
+        closeBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (typeof ui._onSummonClose === 'function') { try { ui._onSummonClose(); } catch (err) {} }
+        });
+        btnRow.appendChild(closeBtn);
         panel.appendChild(btnRow);
         panel._summonBtn = btn;
+        panel._summonClose = closeBtn;
       }
 
       panel._shadow = shadow;

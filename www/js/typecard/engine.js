@@ -260,6 +260,7 @@
     _summonPanel: null,  // 20261008 晚（碎梦重拼召唤）：常驻待机悬浮窗（带「生成一条消息」按钮）
     _summonBusy: false,  // 召唤流程进行中标志（防连点）
     _summonDismissed: false, // 用户点球主动收起召唤悬浮窗（true 时 _ensureSummonPanel 不自动重建）
+    _summonHidden: false,    // 20261113h：演出中「折叠」了演出面板（只藏起来，不销毁、不中断拼字）
     _summonCid: null,    // 召唤面板对应的角色 id（换角色时复位 dismissed）
     _summonDismissedMap: {}, // 20261020：召唤「点球收起」按角色持久化缓存（{charId:bool}，启动预读 kv typecardSummonDismissed）
     _floatExpanded: false,      // 20261020：形态 B（打字卡+float）悬浮窗「点击圆点展开的待机面板」是否处于展开态（记忆上次，进聊天页恢复）
@@ -368,6 +369,9 @@
       this._summonPanel = panel;
       // 按钮点击 → 触发召唤（engine.summon）
       ui._onSummonTap = function () { engine.summon(); };
+      /* 20261114：面板右上角 × —— 与点球同一个入口，但不会被面板压住，
+         生成过程中（演出态）点它就是折叠 + 记住收起。 */
+      ui._onSummonClose = function () { engine.toggleSummonPanel(); };
     },
 
     _destroySummonPanel: function () {
@@ -545,7 +549,19 @@
           return;
         }
       } catch (e) {}
-      if (this._state === STATE.PLAYING) return;
+      /* 20261113f：生成一条消息的过程中**也允许**收起/展开（用户要求）。
+         这里只把正在演出的 ghost 隐藏/显示，不打断打字动画与状态机；
+         收起时确保圆点还在，点圆点就能再展开。 */
+      if (this._state === STATE.PLAYING) {
+        const g = this._active && this._active.ghost;
+        if (!g) return;
+        const hidden = g.style.display === 'none';
+        g.style.display = hidden ? '' : 'none';
+        this._floatCollapsedMid = !hidden;
+        try { if (typeof global.setSetting === 'function') global.setSetting('typecardFloatCollapsedMid', !hidden); } catch (e) {}
+        try { ui.ensureFloatDot(); } catch (e) {}
+        return;
+      }
       if (this._idlePanel) {
         ui.destroyGhost(this._idlePanel);
         this._idlePanel = null;
@@ -617,7 +633,30 @@
           return;
         }
       } catch (e) {}
-      if (this._state !== STATE.IDLE) return;
+      /* 20261113h：演出中（正在拼字）也要能收起。
+         以前这里直接 `return`，玩家在生成过程中点球没有任何反应；而且 _summonDismissed
+         永远是 false，演出结束 _finish 必定重建待机面板 —— 玩家看到的就是
+         「收不起来，而且它一直都在」。
+         演出中的收起只做「折叠」不做「销毁」：销毁会中断演出，折叠只是把演出面板藏起来，
+         拼字在后台照常跑完；同时把 dismissed 置上，结束后面板按玩家意愿保持收起。 */
+      if (this._state !== STATE.IDLE) {
+        const g = this._active && this._active.ghost;
+        if (!g) {
+          /* 20261114：演出态却拿不到 ghost（异常销毁 / 状态错位）——
+             以前这里直接 return，玩家点球和 × 全都「点了没反应」。
+             兜底把待机面板收掉并记住收起，保证任何情况下点一下都有反馈。 */
+          if (this._summonPanel) { try { ui.destroyGhost(this._summonPanel); } catch (e) {} this._summonPanel = null; }
+          this._summonHidden = true;
+          this._summonDismissed = true;
+          this._persistSummonDismissed(true);
+          return;
+        }
+        this._summonHidden = !this._summonHidden;
+        try { g.style.display = this._summonHidden ? 'none' : ''; } catch (e) {}
+        this._summonDismissed = !!this._summonHidden;
+        this._persistSummonDismissed(this._summonDismissed);
+        return;
+      }
       if (this._summonPanel) {
         try { ui.destroyGhost(this._summonPanel); } catch (e) {}
         this._summonPanel = null;
@@ -705,6 +744,8 @@
 
         // 1) 保存 replyMsg 引用
         self._active = { msg, ghost: null, observer: null };
+        /* 20261113h：新一场演出开始，折叠状态复位 —— 面板要重新露面（上一场折叠过也不影响这一场） */
+        self._summonHidden = false;
 
         // 2) 创建演出节点：float 用独立悬浮面板（挂 body），bubble 用占位气泡（挂 chat-scroll）。
         //    召唤开启时 float 演出面板也带「生成一条消息」按钮（演出中禁用）。

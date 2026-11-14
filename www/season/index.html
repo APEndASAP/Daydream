@@ -9674,6 +9674,11 @@ function seasonFocusChar(id){
     if (d.type === 'season-hide'){
       try { if (typeof stopCam === 'function') stopCam(); } catch(e){}
     }
+    /* 20261113b：主项目「开发者模式 · 四季照料」命令 → 在这里执行一次照料 */
+    if (d.type === 'season-cmd'){
+      try { if (typeof seasonDevCmd === 'function') seasonDevCmd(d.cmd, d.by); } catch(e){}
+      return;
+    }
     // 20261108：主 App 主动扫描（__proactiveScan，前台 15s / 后台 60s）每次给这里发 season-tick，
     // 让「TA 自己把种子种下去」即使四季层没开、玩家不在四季页面，也能按时结算（taSeedTick）。
     // 种下后回发 season-taplant 给主项目，主项目据此弹通知提醒玩家。
@@ -15385,6 +15390,74 @@ function waterPlanet(){
   if (flat) parts.push(flat + ' 株你的额度已经浇满（白浇，等 TA 来浇）');
   if (over) parts.push(over + ' 株浇超了，叶子上挂着水');
   toast('浇了一遍水 · ' + (parts.length ? parts.join('；') : '都浇过了'));
+}
+
+/* 20261113b：开发者命令接收器 —— 主项目「开发者模式 · 四季照料」命令打到这里。
+   走的是和四季页面自己完全相同的函数（waterOnePlant / feedOnePlant / taSeedTick / nxPush），
+   所以额度、分账、进长、存档都跟玩家手动做的一致，不是假动画。 */
+function seasonDevCmd(cmd, by){
+  const who = by || 'TA';
+  const now = Date.now();
+  const list = (PLANET && PLANET.plants) ? PLANET.plants : [];
+  const alive = list.filter(function(pl){ return pl && !pl.dead; });
+  const flash = function(msg, sub){ try { toast(msg, sub); } catch(e){} };
+  const refresh = function(){
+    try { seasonSave(); } catch(e){}
+    try {
+      if (typeof drawPlanetFrame === 'function') drawPlanetFrame();
+      if (typeof renderPlanetList === 'function') renderPlanetList();
+      if (typeof sheetPlant !== 'undefined' && sheetPlant && typeof renderPlantSheet === 'function') renderPlantSheet();
+      if (typeof updateCareBtns === 'function') updateCareBtns();
+    } catch(e){}
+  };
+
+  if (cmd === 'water' || cmd === 'fert'){
+    if (!alive.length){ flash('星球上还没有能照料的株'); return; }
+    /* 挑最久没被浇水 / 施肥的那株（和后台补算同一套挑选规则） */
+    let pick = alive[0], pickAt = Infinity;
+    alive.forEach(function(pl){
+      const t = (cmd === 'water')
+        ? (typeof lastWaterAtOf === 'function' ? lastWaterAtOf(pl) : 0)
+        : (typeof lastFertAtOf === 'function' ? lastFertAtOf(pl) : 0);
+      const v = t || 0;
+      if (v < pickAt){ pickAt = v; pick = pl; }
+    });
+    const r = (cmd === 'water') ? waterOnePlant(pick, now, who) : feedOnePlant(pick, now, who);
+    refresh();
+    const cnt = (r && r.myN) ? (' · TA 今天第 ' + r.myN + ' 次') : '';
+    flash(who + ' 给「' + (pick.name || '那株') + '」' + (cmd === 'water' ? '浇了水' : '施了肥') + cnt);
+    return;
+  }
+
+  if (cmd === 'seed'){
+    if (!PLANET.ownerId){ flash('先选一个角色再种'); return; }
+    /* 把「TA 还没下的那颗种子」的到点时间清零 → taSeedTick 立刻把它种下去 */
+    let hit = null;
+    (SEEDS || []).forEach(function(s){
+      if (!s || s.ownerId !== PLANET.ownerId) return;
+      if (s.planetKey || s.plantedAt) return;
+      if (PLANET.plants.some(function(pl){ return pl && pl.fromSeed === s.sid; })) return;
+      if (!hit || (s.taAt || 0) < (hit.taAt || 0)) hit = s;
+    });
+    if (!hit){ flash('没有待种的种子', 'TA 要种的那颗已经种下了'); return; }
+    hit.taAt = 0;
+    try { taSeedTick(); } catch(e){}
+    refresh();
+    flash(who + ' 把「' + (hit.name || '那颗种子') + '」种下了');
+    return;
+  }
+
+  if (cmd === 'card'){
+    const ch = (CHARS || []).filter(function(c){ return c.id === PLANET.ownerId; })[0];
+    if (!ch){ flash('先选一个角色再留卡'); return; }
+    let text = '';
+    try { text = seasonDrawCard(ch, alive[0] || null, 'planet'); } catch(e){}
+    if (!text){ flash('这次没抽出话来'); return; }
+    try { nxPush(ch.id, 'card', text); } catch(e){}
+    refresh();
+    flash((ch.name || 'TA') + ' 留下了一张卡', text);
+    return;
+  }
 }
 
 /* ============================================================

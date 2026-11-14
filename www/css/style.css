@@ -2355,6 +2355,38 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
 .poke-fx.play .hp { animation: pokePartFly .7s cubic-bezier(.2,.7,.35,1) forwards; }
 .poke-fx.play .chStar { animation: pokeStarPop 1.15s ease-out both; }
 
+/* ================= 20261113g：戳一戳 · 小球互动动画池（新增 7 个动作） =================
+   与上面 .poke-fx 那套并存，互不影响：容器同为 30px，里面也是 viewBox 0 0 24 24 的 SVG，
+   大球 R=5.0 / 小球 r=3.15、球心位置跟 pokeFxHtml 一模一样。
+   颜色不跟 currentColor —— 角色球紫、玩家球粉（沿用预览稿），
+   紫色胶囊里也能一眼分清谁是谁；线宽按 30px 的可视度补偿过（比预览稿粗一档）。 */
+.poke-anim {
+  position: relative;
+  display: block;
+  width: 30px;
+  height: 30px;
+  margin: -6px 0;
+  flex-shrink: 0;
+}
+.poke-anim > svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.poke-anim .big, .poke-anim .small { stroke: none; }
+.poke-anim .shade { fill: #000; filter: blur(.9px); pointer-events: none; }
+.poke-anim .nestLip { fill: none; stroke: rgba(255,255,255,.62); stroke-width: .56; pointer-events: none; }
+.poke-anim .pout { stroke: none; pointer-events: none; }
+.poke-anim .poutseam { fill: none; stroke: rgba(38,20,42,.24); stroke-width: .13; stroke-linecap: round; pointer-events: none; }
+.poke-anim .pout-hi { fill: #fff; stroke: none; pointer-events: none; }
+.poke-anim .cheek { stroke: none; }
+.poke-anim .arm { fill: none; stroke-width: .85; stroke-linecap: round; stroke-linejoin: round; }
+.poke-anim .arm.purple { stroke: #ddd2ff; }
+.poke-anim .arm.pink { stroke: #e79cbb; }
+.poke-anim .hand { stroke: none; }
+.poke-anim .hand.purple { fill: #ddd2ff; }
+.poke-anim .hand.pink { fill: #e79cbb; }
+.poke-anim .hrt { fill: #ff5d7d; stroke: none; filter: drop-shadow(0 0 .7px rgba(255, 90, 140, .85)); }
+.poke-anim .star { fill: #cfc2ff; stroke: none; }
+.poke-anim .puff { fill: #f6eef8; stroke: none; }
+.poke-anim .anger { fill: none; stroke: #ff4d6d; stroke-width: .22; stroke-linecap: round; }
+
 /* 气泡感：0→12% 急速鼓起（不是线性放大），之后边升边继续胀，最后淡掉 */
 @keyframes pokeHeartBubble {
   0%   { opacity: 0; transform: translate(0, 4px) scale(.05); }
@@ -5641,6 +5673,8 @@ body.low-end .oc-star-field,
 body.low-end .oc-star-blob {
   animation: none !important;
 }
+/* 20261113：漩涡改成三层各自旋转后，低配机一次要跑 40+ 条轨道的旋转，直接停掉——只留静态构图 */
+body.low-end .oc-vx-wrap .oc-vx-spin { animation: none !important; }
 body.low-end .oc-crack-main,
 body.low-end .oc-crack-glow,
 body.low-end .oc-crack-branch { stroke-dashoffset: 0; }
@@ -7836,6 +7870,32 @@ body.theme-light .bm-float-minilist { --bm-paper: #f5f1e6; --bm-ink: #2a2a28; --
 .bm-pl-del:hover { background: rgba(192,106,90,.16); color: #c06a5a; }
 .bm-pl-drag { cursor: grab; }
 .bm-pl-drag:hover { background: var(--bm-accent-glow, rgba(167,139,250,.2)); color: var(--bm-accent, #a78bfa); }
+/* ============================================================
+   20261113c：播放列表行尾「两态」按钮
+   - 常态：★ 加入音乐库 + ≡ 下一首播放；
+   - 编辑态（点播放列表上方导航栏进入）：只留一颗小号删除 ×。
+   用户原话：「我希望它能够有收藏音乐和删除音乐的两个按钮……删除的按钮做的小一点点，
+   删除的按钮必须是我点击了播放列表上方的那个导航栏之后才能够删除的，
+   正常后面就只有添加到音乐库这个按钮」。
+   ============================================================ */
+.bm-pl-fav {
+  width: 28px; height: 28px; flex-shrink: 0; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--bm-ink-dim, #7b84a0); cursor: pointer;
+  transition: background .15s ease, color .15s ease, transform .15s ease;
+}
+.bm-pl-fav:hover { background: rgba(245,201,123,.16); color: #f5c97b; }
+.bm-pl-fav:active { transform: scale(.9); }
+.bm-pl-fav.on { color: #f5c97b; }
+/* 删除键单独做小一圈：22px 圆点，视觉重量低于收藏键，不容易误触 */
+.bm-pl-del { width: 22px; height: 22px; border-radius: 50%; font-size: 13px; }
+/* 编辑态提示：只在 editing 时出现，兼作「完成」出口 */
+.bm-pl-edittip {
+  display: none; margin-left: auto; margin-right: 6px; font-size: 12px; font-weight: 500;
+  color: var(--bm-accent, #a78bfa); cursor: pointer;
+}
+.bm-playlist-head.editing .bm-pl-edittip { display: inline-flex; }
+.bm-playlist-head.editing { border-radius: 12px; background: var(--bm-accent-glow, rgba(167,139,250,.10)); }
 /* 底部推荐提示 + 胶囊按钮 */
 .bm-playlist-tip {
   text-align: center; font-size: 11px; color: var(--bm-ink-faint, #3c4458); padding: 4px 16px; flex-shrink: 0;
@@ -9217,3 +9277,104 @@ body .bm-music-float.fbg-dark .bm-float-card {
 
 /* —— 切页过渡（底部导航切换时 view 淡入上移） —— */
 .view { transition: opacity .26s ease, transform .26s cubic-bezier(.16,1,.3,1); }
+
+/* ============================================================
+   20261112：全局不显示滚动条
+   用户：「为什么要在信纸侧边做一个这么长的拖动条？不要这个拖动条，
+   手机端当然是可以往下滚动的，网页端也能识别鼠标的滚动，
+   只要它能正常滚动就可以了，这拖动条好丑。」
+   —— 这里不锁滚动能力，只去掉视觉拖动条：触摸滑动、鼠标滚轮、触控板双指、
+   键盘 PageUp/PageDown 全部照常；::-webkit-scrollbar 宽高归零后 Chromium 不再绘制轨道。
+   ============================================================ */
+*{ scrollbar-width:none; -ms-overflow-style:none; }
+*::-webkit-scrollbar{ width:0; height:0; display:none; }
+
+/* ============================================================
+   20261112：专注模式悬浮窗闸门（用户定案）
+   「只要是开启了专注模式，听歌悬浮窗、碎梦重拼悬浮窗、模拟通话悬浮窗都不该在这个页面显示，
+   只有退出专注之后才恢复。番茄钟设置里加个开关，开了才允许它们继续出现。」
+   - 命中范围：只在 WebView 内自绘的三个浮窗
+       #bm-music-float            一起听歌悬浮窗
+       .typecard-float-dot       碎梦重拼（收起的圆点）
+       .typecard-float-panel     碎梦重拼（展开的面板）
+       #call-float               模拟通话小窗（通话最小化后的悬浮窗）
+   - 不命中：安卓原生系统悬浮窗（原生音乐条 BmOverlay / 模拟通话原生窗）——那是系统窗口，
+     不在页面 DOM 里，本规则天然不影响，照旧显示。
+   - body.focus-hide-floats 由 app.js 的 _applyFocusFloatGate() 挂/摘：
+     开番茄钟且开关=关 才挂；退出番茄钟或打开「专注时显示悬浮窗」即摘掉，
+     浮窗回归各自原有的显示状态机（不会把它们的内部状态改坏）。
+   ============================================================ */
+body.focus-hide-floats #bm-music-float,
+body.focus-hide-floats .typecard-float-dot,
+body.focus-hide-floats .typecard-float-panel,
+body.focus-hide-floats #call-float{ display:none !important; }
+
+/* ============================================================
+   20261112：问卷功能页（+ 号菜单 → 问卷 hub）重做
+   用户反馈：「这个问卷的布局目前有点太不好看，给它优化一下这些布局」。
+   原来 = 4 个等宽 block 按钮竖着排，像设置项清单，没有层级、没有说明；
+   改成 2×2 卡片栅格：图标 + 标题 + 一句说明，主次分明，一屏看完不用滚。
+   20261113c：真源已移到 app.js showSurveyHub() 里的内联 <style>——因为出现过一次
+   「新 DOM 配旧 CSS」：style.css 命中旧缓存、app.js 已更新，四个入口塌成一行。
+   这里保留一份同内容副本，供非弹窗场景/内联被移除时兜底；两处改动请保持一致。
+   ============================================================ */
+.svh-head{display:flex;align-items:center;gap:8px;}
+.svh-title{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px;color:var(--text);}
+.svh-close{margin-left:auto;}
+/* 当前聊天对象：小胶囊，比原来一行灰字更醒目也更省空间 */
+.svh-who{display:inline-flex;align-items:center;gap:6px;margin:12px 0 16px;padding:5px 12px;border-radius:999px;
+  background:var(--purple-dim);color:var(--purple-soft);font-size:12px;font-weight:600;max-width:100%;}
+.svh-who.empty{background:var(--card);color:var(--text-tertiary);font-weight:500;}
+.svh-who .dot{width:6px;height:6px;border-radius:50%;background:var(--purple);flex-shrink:0;}
+.svh-who .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.svh-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.svh-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;
+  padding:13px 13px 14px;border-radius:16px;border:1px solid var(--border);background:var(--bg-elevated-2);
+  cursor:pointer;text-align:left;font-family:var(--font);
+  transition:transform .16s ease,border-color .16s ease,background .16s ease;}
+.svh-card:active{transform:scale(.97);}
+.svh-card:disabled{opacity:.4;cursor:not-allowed;transform:none;}
+.svh-card .ic{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+  background:var(--purple-dim);color:var(--purple-soft);margin-bottom:10px;flex-shrink:0;}
+.svh-card .t{font-size:13.5px;font-weight:700;color:var(--text);letter-spacing:.3px;}
+.svh-card .d{font-size:11px;line-height:1.5;color:var(--text-tertiary);margin-top:5px;}
+/* 主操作（添加问卷）：换一条紫色边 + 更亮的图标底，视线第一落点 */
+.svh-card.primary{border-color:rgba(167,139,250,.45);background:linear-gradient(158deg,var(--purple-dim),var(--bg-elevated-2) 62%);}
+.svh-card.primary .ic{background:var(--purple);color:#141019;}
+
+
+/* ============================================================
+   20261113f：表情消息居中
+   用户截图反馈「圆形表情里的表情没居中」——图片默认贴左、且受气泡内边距影响，
+   这里统一 block + 居中 + object-position 居中，保证在任何气泡里都摆正。
+   ============================================================ */
+.msg-img.msg-emoji{
+  display:block;
+  margin-left:auto;
+  margin-right:auto;
+  object-fit:contain;
+  object-position:center center;
+}
+
+
+/* ============================================================
+   20261113f：戳一戳时头像的「Q 弹颤抖」
+   原来只有一次 scale 脉冲（avatarPoke），看着像被戳了一下就没了。
+   这里用 squash & stretch + 微小旋转做连续回弹，收尾自然停住。
+   ============================================================ */
+@keyframes avatarQuake {
+  0%   { transform: scale(1, 1) rotate(0deg); }
+  12%  { transform: scale(1.18, .86) rotate(-3deg); }
+  24%  { transform: scale(.90, 1.12) rotate(3deg); }
+  36%  { transform: scale(1.10, .94) rotate(-2.2deg); }
+  48%  { transform: scale(.95, 1.05) rotate(2deg); }
+  60%  { transform: scale(1.05, .97) rotate(-1.2deg); }
+  74%  { transform: scale(.98, 1.02) rotate(.6deg); }
+  88%  { transform: scale(1.01, .99) rotate(-.3deg); }
+  100% { transform: scale(1, 1) rotate(0deg); }
+}
+.msg-avatar.poke-quake {
+  animation: avatarQuake .72s cubic-bezier(.36, .8, .3, 1);
+  transform-origin: center 62%;
+  will-change: transform;
+}
