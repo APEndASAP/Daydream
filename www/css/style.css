@@ -637,6 +637,104 @@ select.input option:checked { color: #fff; }
    让河流完整露在按钮下方，其余节气/节日不受影响。 */
 .festival-card.fx-flag .dream-fx-btn { margin-top: 96px; }
 
+/* ============ 20261115：三张「可玩」入梦签（万圣节 / 平安夜 / 圣诞节）============
+   这三张卡里有小游戏：文字固定在上半张，动画主体放中下部，
+   「我收到啦」钉在最底。所以不能沿用通用的「文字居中 + 按钮上方留 52px 装饰带」排法，
+   否则正文会压住南瓜灯/派盘/圣诞树，按钮也会浮在动画中间。
+   加 fx-game 类即可；其余节日/节气卡完全不受影响。 */
+/* 20261115 修正：原来这里改了 5 条覆盖（inner 贴顶 + 按钮 margin-top:auto 钉底），
+   结果「寄语」被按钮压住、按钮浮在卡片中间，和别的节日卡完全不是一个版式。
+   现在的做法：卡片撑高（做动画空间），内层铺满整卡，头像/标题/正文留在上方，
+   「寄语 + 按钮」用 margin-top:auto 一起压到底部，按钮距寄语留 8vh 呼吸带、
+   距卡底留 4vh —— 与清明/中秋那张卡（图 4）的落点一致。 */
+.festival-card.fx-game { min-height: 78vh; touch-action: none; }   /* touch-action:none：手指在卡上划动只用来切苹果，不会带着页面滚 */
+.festival-card.fx-game .dream-fx-inner {
+  position: absolute;          /* 铺满整卡：不然 min-height 撑出来的高度里，内容会全部贴顶 */
+  inset: 0;
+  justify-content: flex-start;
+  padding: 40px 26px 3vh;
+}
+.festival-card.fx-game .dream-fx-from {
+  margin-top: auto;                 /* 寄语与按钮作为一组压到底 */
+  color: rgba(255,255,255,.88);     /* 这三张卡底部常是雪地/台面，淡紫不够读 */
+  text-shadow: 0 1px 4px rgba(8,6,20,.95), 0 0 14px rgba(8,6,20,.75);
+}
+.festival-card.fx-game .dream-fx-btn { margin-top: 9vh; }     /* 与寄语之间的呼吸带 */
+
+/* 20261115：小游戏「结算」态。画布要在底部写结果标题 + 各项评分，
+   那一段正好是寄语的落点，两边一起写就叠字（平安夜截图里那行糊掉的字）。
+   结算时把寄语收掉、位置让给画布；按钮不动，「我收到啦」照样能点掉这张卡。 */
+.festival-card.fx-game.fx-result .dream-fx-from { opacity: 0; visibility: hidden; }
+
+/* 20261116：苹果派做好以后，多出一个「送给 TA」的按钮。
+   · 平时 display:none —— 只有画布进入结算态（.fx-done）才出现；重播回到切苹果就消失
+   · 出现时与「我收到啦」并排各占半宽（绝对定位在底部同一行），不再额外占垂直空间，
+     否则会把画布上的结果标题挤掉 */
+.festival-card.fx-game .dream-fx-gift { display: none; }
+.festival-card.fx-game.fx-done .dream-fx-gift,
+.festival-card.fx-game.fx-done .dream-fx-btn {
+  position: absolute; bottom: 3vh; width: calc(50% - 31px); margin: 0;
+}
+.festival-card.fx-game.fx-done .dream-fx-gift {
+  left: 26px;
+  display: inline-flex; align-items: center; justify-content: center;   /* 抵掉上面的 display:none */
+  background: rgba(167, 139, 250, .18);
+  border: 1px solid rgba(167, 139, 250, .55);
+  color: #ece3ff;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.festival-card.fx-game.fx-done .dream-fx-btn { right: 26px; }
+/* 送出后按钮置灰，避免重复点 */
+.festival-card.fx-game.fx-done .dream-fx-gift.given {
+  opacity: .55; pointer-events: none; filter: grayscale(.25);
+}
+
+/* 送给 TA 的选人弹窗（独立浮层，盖在入梦签之上；不能用 #modal 容器，否则卡片会被换掉） */
+.apg-mask {
+  position: fixed; inset: 0; z-index: 800;
+  background: rgba(6, 4, 10, 0.62);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  opacity: 0; transition: opacity .22s ease;
+}
+.apg-mask.show { opacity: 1; }
+.apg-sheet {
+  /* 用 100vw 兜底：整页若有横向溢出（比如底下的阶段条），width:100% 会被撑开、
+     弹窗右边缘被裁掉——100vw 减去左右留白才是稳定的 */
+  width: 100%; max-width: 380px; border-radius: 24px; padding: 22px 20px 18px;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .62);
+  transform: translateY(12px) scale(.99); transition: transform .26s cubic-bezier(.22,.9,.3,1);
+}
+.apg-mask.show .apg-sheet { transform: none; }
+.apg-sheet h3 { font-size: 16.5px; font-weight: 650; margin: 0 0 16px; color: var(--text); }
+.apg-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.apg-pick {
+  flex: 0 0 auto; width: 42px; height: 42px; border-radius: 14px; cursor: pointer;
+  display: grid; place-items: center; font-size: 20px; line-height: 1;
+  color: var(--purple-soft); background: var(--purple-dim);
+  border: 1px dashed rgba(167,139,250,.45);
+}
+.apg-pick:active { transform: scale(.94); }
+.apg-cur {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 16px;
+  background: linear-gradient(135deg, rgba(167,139,250,.16), rgba(244,114,182,.10));
+  border: 1px solid var(--purple-dim);
+}
+.apg-cur .apg-txt { min-width: 0; }
+.apg-cur b { display: block; font-size: 14.5px; font-weight: 650; }
+.apg-cur small { display: block; font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+.apg-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 4px 0 16px; }
+.apg-cell {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 4px; border-radius: 14px; cursor: pointer;
+  border: 1px solid var(--border); background: rgba(255,255,255,.03);
+}
+.apg-cell.on { border-color: var(--purple); background: rgba(167,139,250,.16); }
+.apg-cell span { font-size: 11px; color: var(--text-secondary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apg-tip { font-size: 12px; color: var(--text-tertiary); margin-top: 8px; line-height: 1.6; }
+
 /* 20261028：入梦签节气/节日调试器（开发者模式专属）选择器 */
 .fx-debug-scroll { max-height: 52vh; overflow-y: auto; padding-right: 4px; }
 .fx-debug-group { margin-bottom: 14px; }
@@ -659,6 +757,134 @@ select.input option:checked { color: #fff; }
 .btn.dt-tab.on { background: var(--purple); color: #141019; font-weight: 600; }
 /* 20261028：查看问卷发出方 tab 激活态 */
 .btn.svl-ftab.on { background: var(--purple); color: #141019; font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════
+   20261114：聊天设置整体排版梳理（针对「看着很乱」的反馈）
+   ----------------------------------------------------------------
+   原来：① tab 栏是 flex + 各按钮 flex:1 + min-width:64px，13 个挤成三行、
+            每行宽度还不一样；② 每个功能块都没有边界，块与块之间只靠 16px
+            空白分隔，一眼看不出「哪几行是一组的」；③ 说明小字有的是 12px、
+            有的 11.5px，行高不统一，长句糊成一片。
+   现在：① tab 用 4 列等宽网格（每行整齐，行数固定）；② 每个功能块包成一张
+            卡片（浅底 + 描边 + 14px 圆角），卡与卡之间 10px —— 卡边界就是分组线；
+            ③ 说明小字统一 11.5px / 1.62 行高 / 统一 7px 上间距、统一三级灰；
+            ④ 数字框统一 80px 宽、居中、同一高度。
+   作用域全部限定在 #modal-content 内的 .cs-panel，不碰其它表单。
+   ══════════════════════════════════════════════════════════════ */
+#modal-content .cs-tabs {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+  margin-bottom: 12px !important;
+}
+#modal-content .cs-tabs .cs-tab {
+  flex: none !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  padding: 8px 2px !important;
+  font-size: 12.5px !important;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#modal-content .cs-panel { padding-bottom: 2px; }
+
+/* ① 一个功能块 = 一张卡：抬升底色 + 描边 + 轻投影，卡与卡之间 12px，边界即分组线 */
+#modal-content .cs-panel > .field {
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 13px 14px 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .10);
+}
+body.theme-light #modal-content .cs-panel > .field { box-shadow: 0 3px 12px rgba(30, 24, 44, .06); }
+#modal-content .cs-panel > .field:last-child { margin-bottom: 2px; }
+
+/* ② 标题行 = 这张卡的主标题：左侧一根紫色竖条 + 粗一号的字 + 与正文之间一条实线，
+      开关固定在右端。主次一眼分得开（之前标题、说明、控件全是同一档灰）。 */
+#modal-content .cs-panel > .field > label:first-child {
+  display: flex !important;
+  align-items: center;
+  gap: 9px;
+  margin: 0 !important;
+  font-size: 13.5px !important;
+  font-weight: 650 !important;
+  line-height: 1.4;
+  color: var(--text) !important;
+  letter-spacing: .2px;
+}
+#modal-content .cs-panel > .field > label:first-child::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--purple);
+  box-shadow: 0 0 8px var(--purple-glow);
+}
+#modal-content .cs-panel > .field > label:first-child > span:first-child { flex: 1 1 auto; min-width: 0; }
+#modal-content .cs-panel > .field > label:first-child input[type="checkbox"] { flex: 0 0 auto; accent-color: var(--purple); }
+/* 标题下面还有内容时，补一条分隔线；只有标题 + 开关的卡不画线 */
+#modal-content .cs-panel > .field > label:first-child:not(:last-child) { padding-bottom: 9px; border-bottom: 1px solid var(--border); }
+
+/* ③ 说明小字 = 注释层：退一档灰、缩进 + 左侧细线，读起来是「补充说明」而不是正文
+      内容一个字都不删，只把层次压出来。 */
+#modal-content .cs-panel > .field > div[style*="font-size:12px"],
+#modal-content .cs-panel > .field > div[style*="font-size: 12px"] {
+  margin-top: 9px !important;
+  padding-left: 10px !important;
+  border-left: 2px solid var(--border);
+  font-size: 11.5px !important;
+  line-height: 1.78 !important;
+  color: var(--text-tertiary) !important;
+  letter-spacing: .1px;
+}
+#modal-content .cs-panel > .field > div[style*="font-size:12px"]:last-child { margin-bottom: 0 !important; }
+
+/* ④ 操作行 = 控件层：虚线与上面隔开；行内的「组合字卡条数」这类小标题独占一行，
+      不再和数字框挤在一起换行（那就是截图里「～」被挤到下一行的原因）。 */
+#modal-content .cs-panel > .field > div[style*="display:flex"] {
+  margin-top: 11px !important;
+  padding-top: 11px !important;
+  border-top: 1px dashed var(--border);
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+#modal-content .cs-panel > .field > div[style*="display:flex"] > span[style*="white-space:nowrap"] {
+  flex: 0 0 100% !important;
+  font-size: 12px !important;
+  font-weight: 600;
+  color: var(--text-secondary) !important;
+  letter-spacing: .2px;
+}
+
+/* ⑤ 数字框：小凹槽 + 居中数字，统一宽度与高度，跟卡片底色拉开一档 */
+#modal-content .cs-panel .field input[type="number"] {
+  width: 72px !important;
+  flex: 0 0 72px;
+  height: 34px;
+  padding: 0 6px !important;
+  text-align: center;
+  font-size: 14px !important;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text) !important;
+  background: var(--bg) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 9px !important;
+  -moz-appearance: textfield;
+}
+#modal-content .cs-panel .field input[type="number"]:focus {
+  border-color: var(--purple) !important;
+  box-shadow: 0 0 0 3px var(--purple-dim);
+  outline: none;
+}
+#modal-content .cs-panel .field input[type="range"] { accent-color: var(--purple); }
+/* 操作行里夹着的单位 / 波浪号：等宽、留白一致，不再忽宽忽窄 */
+#modal-content .cs-panel > .field > div[style*="display:flex"] > span { line-height: 34px; }
 
 
 /* 闪烁星光（轻微魔法元素）：垫在页面背景图之上、UI 卡片之下——
@@ -2152,20 +2378,29 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
   0%   { transform: rotateY(0deg) translateY(0); }
   100% { transform: rotateY(360deg) translateY(0); }
 }
-/* 只弹一次：上升 → 落地 → 定格（无二次弹跳；落地瞬间轻微压缩定格） */
-.coin3d.landing {
-  animation: coinToss 1.05s cubic-bezier(0.3, 0.75, 0.4, 1);
-}
+/* 只弹一次：上升 → 落地 → 定格（无二次弹跳；落地瞬间轻微压缩定格）
+   20261114 修 bug：原来只有一条 coinToss，终帧固定 1080°（= 正面 YES）。
+   动画里的 transform 会盖掉 .face-back 的 180°，结果不管抽到什么都先落在 YES 面上，
+   1.15s 后界面重绘才翻成 NO —— 看起来就是「明明 YES 要落地，落地后变 NO」。
+   现在按结果分两条：正面停 1080°（3 整圈），反面停 1260°（3 圈半 = 背面朝上）。 */
+.coin3d.landing-front { animation: coinTossFront 1.05s cubic-bezier(0.3, 0.75, 0.4, 1) forwards; }
+.coin3d.landing-back  { animation: coinTossBack  1.05s cubic-bezier(0.3, 0.75, 0.4, 1) forwards; }
 .coin3d.landed {
   animation: none;
 }
 .coin3d.face-front { transform: rotateY(0deg); }
 .coin3d.face-back  { transform: rotateY(180deg); }
-@keyframes coinToss {
+@keyframes coinTossFront {
   0%   { transform: rotateY(0deg) translateY(0) scale(1); }
   46%  { transform: rotateY(720deg) translateY(-104px) scale(0.97); }
   86%  { transform: rotateY(1080deg) translateY(0) scale(1.07); }
   100% { transform: rotateY(1080deg) translateY(0) scale(1); }
+}
+@keyframes coinTossBack {
+  0%   { transform: rotateY(0deg) translateY(0) scale(1); }
+  46%  { transform: rotateY(900deg) translateY(-104px) scale(0.97); }
+  86%  { transform: rotateY(1260deg) translateY(0) scale(1.07); }
+  100% { transform: rotateY(1260deg) translateY(0) scale(1); }
 }
 
 /* ============================================================

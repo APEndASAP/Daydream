@@ -174,6 +174,15 @@ const FX_AUDIO = {
   wheat:['bsb_wind_grass_908.mp3', 1.6], swallows:'bsb_forest_stream2.mp3', sprout:'bsb_birds_waking4_1906.mp3', lotus:['__LAYER__',['leaves_breeze_2427.ogg', 0.35],['water_flowing_ambience.ogg', 0.6]],  // 小满/劳动节 → 麦浪风（原始电平低，音量调大 1.6）；立春 → 春天清晨鸟鸣；春分 → 森林流水 #2；小暑 → 风声 + 流水潺潺（双音叠加）
   plum:'bsb_soft_wind.mp3', hearth:'fire_campfire_crackles.ogg', warmwindow:'fire_campfire_crackles.ogg',// 冬至红梅 → 柔风（20261102 补音，原静音）；小寒 → 篝火；立冬 → 燃烧
   balloon:null, choco:'bsb_chime_dream1.mp3', peony:'rain_splashing.ogg',              // 六一 → 静音；白色情人节 → 梦幻铃 #1（20261031 用户拍板）
+  /* 20261115：冬季三节日（可玩小游戏场景）。
+     圣诞节要「下雪 + 篝火噼啪」两种声音叠在一起；平安夜是炉火 + 窗外风雪；
+     万圣节是夜风 + 一点虫鸣，别太吵。
+     20261115 补：用户反馈这两个场景的白噪音「盖过人声、太吵」——
+     这两段素材原始电平很高，0.85/0.9 的设定等于开满，所以整体压到三分之一左右：
+     风雪只留「远处有风的底噪」，篝火只留「偶尔噼啪」，不再抢台词。 */
+  christmas:['__LAYER__',['snow_winter_wind.ogg', 0.30],['fire_campfire_crackles.ogg', 0.26]],
+  christmasEve:['__LAYER__',['fire_campfire_crackles.ogg', 0.30],['snow_winter_wind.ogg', 0.16]],
+  halloween:['__LAYER__',['bsb_soft_wind.mp3', 0.85],['night_crickets_loop.ogg', 0.45]],
   default:'leaves_breeze_2427.ogg',
 };
 let _raf = null, _fxTimer = null;
@@ -1350,6 +1359,8 @@ const DREAM_FX_MAP = {
   chunjie:'firework', yuanxiao:'lantern', qingming:'apricot', duanwu:'wave',
   qixi:'stars', zhongqiu:'moon', chongyang:'chrysanth', chuxi:'candle',
   ertong:'balloon', baise:'choco', guoqing:'flag', laodong:'wheat',
+  /* 20261115：冬季三节日 → 独立小游戏场景（festival-fx-special.js） */
+  wansheng:'halloween', pinganye:'christmasEve', shengdan:'christmas',
   /* 节气 */
   lichun:'sprout', yushui:'rainripple', jingzhe:'thunder', chunfen:'swallows',
   guyu:'tea', lixia:'firefly', xiaoman:'wheat', mangzhong:'plumrain',

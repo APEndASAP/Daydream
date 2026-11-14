@@ -1066,8 +1066,13 @@ function buildFestivalCardHtml(d, btnId, fx) {
   const displayName = noChar ? '访客' : (d.charName || '梦角');
   const fallbackLetter = noChar ? '梦' : ((d.charName || '梦')[0]);
   const hasBadges = !!(d.annivText || d.careText);
+  /* 20261115：万圣/平安夜/圣诞这三张是可玩的小游戏，动画占据卡片中下部，
+     排版要换成「文字在上、按钮钉底」（css 里的 .fx-game），否则正文会压住南瓜灯/派盘/圣诞树。 */
+  const isGameCard = (fx === 'halloween' || fx === 'christmasEve' || fx === 'christmas');
+  // 20261115：这三张卡自带贴题意的预设寄语（FESTIVAL_CARDS[key].mottos），优先于 AI/字卡寄语
+  const fromText = (d.festival && d.festival.motto) || d.motto || '';
   return `
-    <div class="daily-card festival-card fx-${fx} fade-in" style="position:relative;overflow:hidden;padding:0;">
+    <div class="daily-card festival-card fx-${fx}${isGameCard ? ' fx-game' : ''} fade-in" style="position:relative;overflow:hidden;padding:0;">
       <canvas class="dream-fx-canvas" id="dream-fx-canvas"></canvas>
       <div class="dream-fx-inner">
         <div class="dream-fx-head">
@@ -1086,7 +1091,8 @@ function buildFestivalCardHtml(d, btnId, fx) {
         <div class="dream-fx-term">${escapeHtml(d.festival.name)}</div>
         <div class="dream-fx-title">${escapeHtml(d.festival.title)}</div>
         <div class="dream-fx-msg">${escapeHtml(d.festival.line)}</div>
-        <div class="dream-fx-from">${escapeHtml(d.motto || '')}</div>
+        <div class="dream-fx-from">${escapeHtml(fromText)}</div>
+        ${fx === 'christmasEve' ? `<button class="btn block dream-fx-gift" id="${btnId}-gift">送给 TA 尝尝</button>` : ''}
         <button class="btn primary block dream-fx-btn" id="${btnId}">我收到啦</button>
       </div>
     </div>
@@ -1100,8 +1106,172 @@ async function openDailyCardModal(d, onReceive) {
   if (fx) _playDreamFxAudio(fx);
   openModal(buildDailyCardHtml(d, 'btn-daily-receive'));
   $('#btn-daily-receive').onclick = onReceive;
+  // 20261116：苹果派做好后出现的「送给 TA」按钮（只有平安夜这张卡有）
+  const _giftBtn = document.getElementById('btn-daily-receive-gift');
+  if (_giftBtn) _giftBtn.onclick = () => openApplePieGiftModal(d, _giftBtn);
   // 20261028：节气动画版 → 启动动画 + 绑定风场/烟花交互；关闭时统一清理
   mountDreamCardFx(d);
+}
+
+/* ============================================================
+   20261116：把烤好的苹果派送给访客
+   ------------------------------------------------------------
+   · 只有平安夜这张卡、且真的烤出来了（画布进入 .fx-done）才有这个按钮；
+     重播回到切苹果，按钮跟着消失（class 由 festival-fx-special.js 收放）。
+   · 默认收礼人 = 这张入梦签上的访客；左侧那个「＋」可以换成任意别的访客。
+   · 只做最轻的一步：往那位访客的会话里写两条消息（我送的 + TA 回一句），
+     不接 AI、不改档案、不动超频礼物柜，也不消耗任何额度。
+   ============================================================ */
+
+/* 这一炉的结论：由 festival-fx-special.js 在结算时写进卡片的 data-pie */
+function _pieInfoOf(card) {
+  try { return JSON.parse((card && card.dataset && card.dataset.pie) || '{}') || {}; } catch (e) { return {}; }
+}
+
+/* 我送出去时说的话：按火候/片数换口气，别每一炉都同一句 */
+function _piePlayerLine(pie) {
+  if (pie.perfect) return '给你做了个苹果派。这次是真的成了——皮是金的，边上一点都没糊。趁热。';
+  if (pie.cook === 'caramel') return '给你做了个苹果派，焦糖色那种。闻着比上次香。';
+  if (pie.cook === 'raw') return '给你做了个苹果派。火候好像没够，皮还有点软，你先尝尝再说。';
+  if (pie.cook === 'burnt') return '给你做了个苹果派，边上有点苦，那一圈别吃。';
+  if (pie.cook === 'carbon') return '给你做了个苹果派。……算了，你看看就行，别真吃。';
+  if ((pie.slices || 0) > 13) return '给你做了个苹果派，苹果塞得太满，切的时候可能会掉。';
+  if ((pie.slices || 0) > 0 && pie.slices < 5) return '给你做了个苹果派，苹果放少了点，皮比馅多。';
+  if ((pie.sweet || 0) > 0.72) return '给你做了个苹果派，糖好像撒多了，甜得有点凶。';
+  if ((pie.sweet || 0) > 0 && pie.sweet < 0.40) return '给你做了个苹果派，糖撒得少，偏淡。';
+  return '给你做了个苹果派，刚出炉，趁热尝尝。';
+}
+
+/* TA 收到之后回一句：预设短句，随机取一条（不走 AI，不占额度） */
+function _pieReplyLine(pie) {
+  let pool;
+  if (pie.perfect) {
+    pool = ['……你居然真的做出来了。', '第一口给你留着。', '皮是脆的，我听见了。', '这个我记住了。'];
+  } else if (pie.cook === 'caramel') {
+    pool = ['焦糖边最好吃，你不知道？', '闻着就甜。', '明天还想吃。'];
+  } else if (pie.cook === 'raw' || pie.cook === 'burnt' || pie.cook === 'carbon') {
+    pool = ['……我勉强吃两口。', '下次我陪你一起做。', '心意收下了，派就先放着吧。'];
+  } else if ((pie.sweet || 0) > 0.72) {
+    pool = ['甜得有点过分，但我没说不好吃。', '配茶刚好。', '你是把整罐糖都倒进去了吗。'];
+  } else if ((pie.slices || 0) > 0 && pie.slices < 5) {
+    pool = ['苹果呢？', '皮挺好吃的，真的。', '下次多放两片，好不好。'];
+  } else {
+    pool = ['刚出炉的？我闻到了。', '谢谢。我会慢慢吃。', '你手上是不是还沾着面粉。'];
+  }
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/* 往某位访客的会话里写两条消息；正开着他/她的聊天页就即时上屏 */
+async function _sendApplePieTo(charId, playerLine, replyLine) {
+  const now = Date.now();
+  const mine = { id: uid('msg'), charId, from: 'me', type: 'text', content: playerLine, time: now };
+  await idbPut('messages', mine);
+  let onThisChat = false;
+  try {
+    onThisChat = (typeof currentCharId !== 'undefined') && currentCharId === charId &&
+      !(typeof currentGroupId !== 'undefined' && currentGroupId) &&
+      document.body.dataset.view === 'chat';
+  } catch (e) { onThisChat = false; }
+  if (onThisChat) { try { appendMessage(mine); } catch (e) {} }
+  // 隔一会儿再回，像真的在读那句话
+  setTimeout(async () => {
+    const m2 = { id: uid('msg'), charId, from: 'them', type: 'text', content: replyLine, time: Date.now() };
+    try { await idbPut('messages', m2); } catch (e) {}
+    if (onThisChat) { try { appendMessage(m2); } catch (e) {} }
+  }, 1300);
+}
+
+/* 选人弹窗：默认入梦签访客，左侧「＋」换人。
+   注意：不能用 openModal —— 那会把整个弹窗内容换掉，入梦签卡片（和刚烤好的派）就没了。
+   所以这里自己挂一层浮层，盖在入梦签之上，关掉后卡片原样还在。 */
+function openApplePieGiftModal(d, giftBtn) {
+  const list = (typeof characters !== 'undefined' ? characters : []).filter(c => c && c.id);
+  if (!list.length) { miniToast('还没有访客，先去添加一位'); return; }
+  const card = giftBtn && giftBtn.closest ? giftBtn.closest('.festival-card') : null;
+  const pie = _pieInfoOf(card);
+  // 默认：这张入梦签上的访客；他不在列表里（已删除等）就退回第一位
+  let picked = list.find(c => c.id === d.charId) ||
+    (d.charId ? { id: d.charId, name: d.charName || '访客', avatar: d.charAvatar || '', _ghost: true } : list[0]);
+
+  const avaHtml = (c) => c.avatar
+    ? `<div class="avatar sm"><img src="${imgSrcAttr(c.avatar)}"></div>`
+    : `<div class="avatar sm">${escapeHtml((c.name || '?')[0])}</div>`;
+
+  const layer = document.createElement('div');
+  layer.className = 'apg-mask';
+  layer.innerHTML = `
+    <div class="apg-sheet">
+      <h3>把这个苹果派送给谁</h3>
+      <div class="apg-row">
+        <button class="apg-pick" id="apg-pick" title="换一位访客">＋</button>
+        <div class="apg-cur">
+          <div id="apg-ava">${avaHtml(picked)}</div>
+          <div class="apg-txt">
+            <b id="apg-name">${escapeHtml(picked.name || '访客')}</b>
+            <small id="apg-note">${picked.id === d.charId ? '这张入梦签上的访客' : '已更换收礼人'}</small>
+          </div>
+        </div>
+      </div>
+      <div class="apg-grid" id="apg-grid" style="display:none;"></div>
+      <button class="btn primary block" id="apg-send">送出</button>
+      <div class="apg-tip" id="apg-tip">送出去之后，TA 会在自己的聊天里回你一句。</div>
+    </div>
+  `;
+  document.body.appendChild(layer);
+  requestAnimationFrame(() => layer.classList.add('show'));
+
+  const close = () => {
+    layer.classList.remove('show');
+    setTimeout(() => { try { layer.remove(); } catch (e) {} }, 220);
+  };
+  layer.addEventListener('click', (e) => { if (e.target === layer) close(); });
+
+  const grid = layer.querySelector('#apg-grid');
+  layer.querySelector('#apg-pick').onclick = () => {
+    const open = grid.style.display === 'none';
+    if (!open) { grid.style.display = 'none'; return; }
+    // 每次展开都重建：角色可能在别处新增/改名
+    grid.innerHTML = list.map(c => `
+      <div class="apg-cell${c.id === picked.id ? ' on' : ''}" data-id="${c.id}">
+        ${avaHtml(c)}
+        <span>${escapeHtml(c.name || '访客')}</span>
+      </div>
+    `).join('');
+    grid.style.display = 'grid';
+    grid.querySelectorAll('.apg-cell').forEach(cell => {
+      cell.onclick = () => {
+        const c = list.find(x => x.id === cell.dataset.id);
+        if (!c) return;
+        picked = c;
+        layer.querySelector('#apg-ava').innerHTML = avaHtml(c);
+        layer.querySelector('#apg-name').textContent = c.name || '访客';
+        layer.querySelector('#apg-note').textContent =
+          c.id === d.charId ? '这张入梦签上的访客' : '已更换收礼人';
+        grid.querySelectorAll('.apg-cell').forEach(x => x.classList.toggle('on', x === cell));
+        grid.style.display = 'none';
+      };
+    });
+  };
+
+  layer.querySelector('#apg-send').onclick = async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = '送出中…';
+    try {
+      await _sendApplePieTo(picked.id, _piePlayerLine(pie), _pieReplyLine(pie));
+      close();
+      miniToast('苹果派送给 ' + (picked.name || 'TA') + ' 了');
+      if (giftBtn) {
+        giftBtn.classList.add('given');
+        giftBtn.textContent = '已送给 ' + (picked.name || 'TA');
+      }
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = '送出';
+      miniToast('送失败了，再试一次');
+    }
+  };
 }
 
 /* 20261028：入梦签节气/节日调试器（开发者模式专属）。
@@ -1296,11 +1466,23 @@ function _playDreamFxAudio(fx) {
   try { window.BgAudio.play(file, vol); } catch (e) {}
 }
 /* 启动动画 + 绑定交互（仅节气动画版入梦签） */
+/* 20261115：三张「可玩」入梦签（万圣/平安夜/圣诞）走独立的小游戏模块，
+   它们自带状态机与指针交互，不套通用的粒子表 + 卡片级风场/烟花。 */
+const DREAM_SPECIAL_FX = { halloween: 1, christmasEve: 1, christmas: 1 };
 function mountDreamCardFx(d) {
   const cv = document.getElementById('dream-fx-canvas');
   if (!cv) return;   // 非节气版，无 canvas
   const fx = resolveDreamFx(d);
-  if (!fx || typeof window.runFx !== 'function') return;
+  if (!fx) return;
+  if (DREAM_SPECIAL_FX[fx] && window.BMFX_SPECIAL && window.BMFX_SPECIAL[fx]) {
+    _dreamFxKind = fx;
+    _dreamFxCanvas = cv;
+    window.stopFx && window.stopFx();
+    try { window.BMFX_SPECIAL.stopAll(); } catch (e) {}
+    window.BMFX_SPECIAL[fx].start(cv);
+    return;
+  }
+  if (typeof window.runFx !== 'function') return;
   _dreamFxKind = fx;
   _dreamFxCanvas = cv;
   _dreamFxLastPt = null; _dreamFxDown = null;
@@ -1403,6 +1585,8 @@ function mountDreamCardFx(d) {
 /* 清理动画 + 解绑交互（关闭弹窗时调用；下次打开重新 mount 恢复） */
 function unmountDreamCardFx() {
   window.stopFx && window.stopFx();
+  // 20261115：小游戏场景（万圣/平安夜/圣诞）也要一起停，否则 rAF 与指针监听会留到下一张卡
+  try { window.BMFX_SPECIAL && window.BMFX_SPECIAL.stopAll(); } catch (e) {}
   window.BgAudio && window.BgAudio.stop();
   if (_dreamFxCanvas) {
     const card = _dreamFxCanvas.closest('.festival-card');
@@ -2028,6 +2212,7 @@ async function renderChatList() {
       else if (lastMsg.type === 'topic') brief = '💬 话题：' + (lastMsg.content && lastMsg.content.text || '');
       else if (lastMsg.type === 'vote') brief = '📊 投票：' + (lastMsg.content && lastMsg.content.question || '');
       else if (lastMsg.type === 'letter') brief = lastMsg.from === 'me' ? '[寄出的书信]' : '[书信]';
+      else if (lastMsg.type === 'selfAdjust') brief = (lastMsg.content && lastMsg.content.done) ? '[改好了] 数值修改' : '[数值修改申请]';
       else if (lastMsg.type === 'call') brief = (lastMsg.content && lastMsg.content.group) ? `[群${lastMsg.content.kind === 'video' ? '视频' : '语音'}通话]` : '[通话]';
       else if (typeof lastMsg.content === 'string') brief = speakerName + '：' + lastMsg.content;
       else brief = speakerName + '：[卡片消息]';
@@ -4123,6 +4308,13 @@ function msgBodyHtml(m, oneLine = false) {
       return `${quoteHtml(m.quote)}<img class="msg-img msg-emoji" src="${imgSrcAttr(m.content)}" data-msgid="${m.id}">`;
     case 'coin':
       return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag"><i data-icon="coin" data-size="16"></i> 决策币</span><div>${escapeHtml(m.content.question)}</div><div style="margin-top:6px;font-size:20px;font-weight:700;color:var(--purple-soft);">${escapeHtml(m.content.result)}</div></div>`;
+    /* 20261114：角色自调数值的申请卡 / 完成卡 —— 作为一条真实消息待在聊天流里，
+       点它才弹同意窗 / 清单（和别的卡片一样可翻历史，不会像浮层那样自己消失）。 */
+    case 'selfAdjust':
+      if (typeof window.bmSelfAdjustCardHtml === 'function') {
+        return quoteHtml(m.quote) + window.bmSelfAdjustCardHtml(m.content || {});
+      }
+      return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">数值修改申请</span><div>TA 想动一动你的设置</div></div>`;
     case 'checkin': {
       return _checkinCardHTML(m);
     }
@@ -4732,6 +4924,18 @@ function appendMessage(m, scroll = true, container = null) {
     row.innerHTML = `${avatarHtml(c && c.avatar, c && c.name, 'them')}<div class="msg-body">${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>${checkHtml}`;
   }
   mount.appendChild(row);
+  /* 20261114：角色自调数值的申请卡 / 完成卡 —— 点开才进同意窗 / 清单。
+     卡片的观感由 self-adjust.js 注入的样式控制，这里只负责把点击转过去。 */
+  const saCardEl = row.querySelector('[data-sa-card]');
+  if (saCardEl) {
+    saCardEl.onclick = (ev) => {
+      ev.stopPropagation();
+      if (multiSelectMode) return;
+      const saId = saCardEl.getAttribute('data-sa-card') || '';
+      const saDone = saCardEl.getAttribute('data-sa-done') === '1';
+      if (typeof window.bmSelfAdjustOpenCard === 'function') window.bmSelfAdjustOpenCard(saId, saDone);
+    };
+  }
   fixOnelineBubble(row); // 20261001cr：颜文字单行气泡超宽时缩字号/换行兜底，杜绝截断
 
   // 事件：撤回消息点击查看原文 / 图片点击放大 / 右键或长按操作菜单
@@ -5360,6 +5564,14 @@ function parseDeveloperCommand(text) {
     // 让TA分享一首歌（20261113 补全）：走 music.js 的 charShareSong（角色搜歌 → 聊天发歌曲卡）
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:分享|推荐|点)(?:一首|首)?歌(?:曲)?$/u, 'song'],
     [/^(?:分享|推荐|点)(?:一首|首)?歌(?:曲)?$/u, 'song'],
+    /* 20261114：数值修改申请（开发者看演出用）。
+       写法：改设置 / 调设置 / 自调数值 / 改几处数值 / 让XX改设置。
+       必须整句匹配——「我改设置去了」这类普通聊天不能被吞。 */
+    [/^(?:让|叫|命令)(.+?)(?:改|调)(?:一下)?(?:聊天)?设置$/u, 'selfadjust'],
+    [/^(?:改|调)(?:一下)?(?:聊天)?设置$/u, 'selfadjust'],
+    [/^(?:自调|自改)(?:一下)?(?:数值|设置)$/u, 'selfadjust'],
+    [/^(?:改|调)(?:几|一|上)?(?:处|个)?数值$/u, 'selfadjust'],
+    [/^(?:数值修改申请|修改申请|申请改数值)$/u, 'selfadjust'],
     // 惊喜（20260929ax）：直接输入「惊喜」立即触发惊喜动画，跳过一切解锁规则（绝对命令）
     [/^(?:让|叫|命令)?(.+?)(?:给我)?(?:发|来|触发)(?:一个|一次|个)?惊喜$/u, 'surprise'],
     [/^(?:发|来|触发)(?:一个|一次|个)?惊喜$/u, 'surprise'],
@@ -5559,6 +5771,7 @@ function showDevCommandList() {
       ['发朋友圈', 'TA 发一条朋友圈动态（自动配图 + 后续互动）', '发朋友圈 / 让XX发朋友圈'],
       ['发个表情包', 'TA 发一张自己的专属表情包', '发个表情包 / 让XX发个表情包'],
       ['戳一戳', 'TA 戳你一下（带戳一戳动画）', '戳一戳 / 让XX戳我'],
+      ['改设置', 'TA 发一张「想改 N 处数值」的申请卡：你同意后，TA 会真的走进主页 → 聊天设置逐项改给你看，改完可清单撤回', '改设置 / 让XX改设置 / 自调数值'],
     ]},
     { icon: 'pin', title: '状态与位置', items: [
       ['查岗', 'TA 发一张突击查岗卡片（问你在做什么）', '查岗 / 让XX发查岗'],
@@ -5687,6 +5900,13 @@ async function executeDeveloperCommand(command) {
   }
   const c = _devResolveChar(command.target);
   if (!c) { miniToast('开发者模式：找不到指定访客'); return true; }
+  /* 20261114：数值修改申请 —— 不看概率，直接让 TA 发一张「想改 N 处数值」的卡。
+     后续与隐藏卡抽中完全同一条链路（同意 → 主页 → 聊天设置逐项演 → 完成卡 → 清单）。 */
+  if (command.action === 'selfadjust') {
+    try { await window.bmSelfAdjustDev(c); }
+    catch (e) { console.error('[开发者模式 selfadjust]', e); miniToast('开发者命令执行失败'); }
+    return true;
+  }
   // 音乐：播放器动作与一起听互动（20261113b）
   if (/^(?:mnext|mprev|mpause|mresume|msearch|ltinvite|ltstart|ltpeek|ltear|ltcollect|ltmode|ltauto)$/.test(command.action)) {
     try { await _devCommandMusic(c, command); }
@@ -6381,6 +6601,209 @@ async function compressForExport(blob, mime) {
   } catch (e) {
     return null; // 压缩失败 → 调用方回退原图
   }
+}
+
+/* ============ 20261114 导出图标压缩：并发 + 免 base64 中转 + WebP ============
+   用户反馈「导出一次要 20 多分钟，卡在 67% 特别久」。67% 正好是三阶段进度里
+   「图片转码」刚起步的位置 —— 瓶颈不在写盘（写盘早已按 3MB 合块，约 35 秒），
+   而是这里：旧实现 for 循环【逐张串行】做 compressForExport，每张都要
+   ① blobToDataURL 编 base64（几 MB 图要几百 ms） ② new Image() 解 dataURL
+   ③ canvas 缩放 ④ toBlob 编码。几千张图串起来就是十几分钟。
+
+   现在三件事一起改（容器格式、offset/len、导入端一行不动）：
+   1) 3 路并发：解码/编码由浏览器内核线程做，主线程只调度，真机能拿到接近线性的加速；
+   2) 走 URL.createObjectURL，不再 base64 中转 —— 省掉最大的一块开销（base64 比二进制大 33%）；
+   3) 输出优先 WebP(q=0.78)：同观感比 JPEG(q=0.7) 小 25~35%，还能保留透明通道；
+      不支持 WebP 编码的 WebView 自动退回 JPEG/PNG，不影响兼容性。
+      另外 ≤160KB 的小图（表情包、头像、缩略图）直接原样通过，连解码都不做。 */
+const BM_EXPORT_WEBP_QUALITY = 0.78;
+const BM_EXPORT_SKIP_BYTES = 160 * 1024;
+const BM_EXPORT_CONCURRENCY = 3;
+
+/* 取一张图的原始二进制：blob / APP 端文件系统图片 / 老格式 dataURL 都归一成 Uint8Array */
+async function bmRawBytesOf(im, readFsFile) {
+  try {
+    if (im._raw && im._raw.byteLength) return im._raw;
+    if (im.src === 'blob' && im.blob) return new Uint8Array(await im.blob.arrayBuffer());
+    if (im.src === 'fs' && im.fsRef && readFsFile) {
+      const b = await readFsFile(im.fsRef);
+      return b || new Uint8Array(0);
+    }
+    if (im.dataURL) {
+      const bin = atob(im.dataURL);
+      const out = new Uint8Array(bin.length);
+      for (let k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k);
+      return out;
+    }
+  } catch (e) {}
+  return new Uint8Array(0);
+}
+
+/* 20261114：判断「绝对不能被 canvas 重编码」的图 —— 命中就整份原样保留。
+   ① GIF / 动图 GIF：canvas 只会留下首帧，动图直接变静图；
+   ② 动图 WebP：文件里有 ANIM chunk（我们导出输出 WebP，如果不认出来，
+      会把玩家存的动图表情拍成一张静图）；
+   ③ APNG：文件里有 acTL chunk，同理只能留首帧。
+   只按 mime 判断不够 —— 从相册/文件选择器进来的图 blob.type 可能是空串，
+   所以同时按文件头魔数判断，两道都过不了才算安全可压。 */
+function bmIsAnimatedImage(raw, mime) {
+  const t = String(mime || '').toLowerCase();
+  if (t.indexOf('gif') !== -1) return true;
+  if (!raw || raw.byteLength < 12) return false;
+  // GIF87a / GIF89a
+  if (raw[0] === 0x47 && raw[1] === 0x49 && raw[2] === 0x46 && raw[3] === 0x38) return true;
+  const isWebp = raw[0] === 0x52 && raw[1] === 0x49 && raw[2] === 0x46 && raw[3] === 0x46 &&
+                 raw[8] === 0x57 && raw[9] === 0x45 && raw[10] === 0x42 && raw[11] === 0x50;
+  const isPng = raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4E && raw[3] === 0x47;
+  // chunk 一般都在文件前部，扫前 64KB 足够；再往后只会是像素数据
+  const limit = Math.min(raw.byteLength - 4, 65536);
+  if (isWebp) {
+    for (let i = 12; i < limit; i++) {
+      if (raw[i] === 0x41 && raw[i + 1] === 0x4E && raw[i + 2] === 0x49 && raw[i + 3] === 0x4D) return true; // 'ANIM'
+    }
+  }
+  if (isPng) {
+    for (let i = 8; i < limit; i++) {
+      if (raw[i] === 0x61 && raw[i + 1] === 0x63 && raw[i + 2] === 0x54 && raw[i + 3] === 0x4C) return true; // 'acTL'
+    }
+  }
+  return false;
+}
+
+/* 按文件头补 mime：blob.type 为空时，别把 GIF 存成 image/jpeg（导入端会按错类型还原） */
+function bmSniffImageMime(raw, mime) {
+  const t = String(mime || '').toLowerCase();
+  if (t) return t;
+  if (!raw || raw.byteLength < 12) return 'image/jpeg';
+  if (raw[0] === 0x47 && raw[1] === 0x49 && raw[2] === 0x46 && raw[3] === 0x38) return 'image/gif';
+  if (raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4E && raw[3] === 0x47) return 'image/png';
+  if (raw[0] === 0x52 && raw[1] === 0x49 && raw[2] === 0x46 && raw[3] === 0x46 &&
+      raw[8] === 0x57 && raw[9] === 0x45 && raw[10] === 0x42 && raw[11] === 0x50) return 'image/webp';
+  return 'image/jpeg';
+}
+
+/* 单张转码：成功返回 {bytes, mime}，失败/不该压返回 null */
+async function bmEncodeExportImage(raw, mime) {
+  const t = String(mime || 'image/jpeg').toLowerCase();
+  // 动图一律不碰（GIF / 动图 WebP / APNG）：canvas 重编码只会留下首帧
+  if (bmIsAnimatedImage(raw, t)) return null;
+  const srcBlob = new Blob([raw], { type: t || 'image/jpeg' });
+  const url = URL.createObjectURL(srcBlob);
+  try {
+    const img = await new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => rej(new Error('图片解码失败'));
+      im.src = url;
+    });
+    let w = img.naturalWidth || img.width;
+    let h = img.naturalHeight || img.height;
+    if (!w || !h) return null;
+    const edge = Math.max(w, h);
+    if (edge > BM_EXPORT_MAX_EDGE) {
+      const r = BM_EXPORT_MAX_EDGE / edge;
+      w = Math.max(1, Math.round(w * r));
+      h = Math.max(1, Math.round(h * r));
+    }
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    // 先试 WebP（带透明也能保通道）；浏览器不支持时 toBlob 会返回 PNG，下面的 type 判断兜住
+    let outBlob = await canvasToBlob(cv, 'image/webp', BM_EXPORT_WEBP_QUALITY);
+    if (!outBlob || (outBlob.type && outBlob.type !== 'image/webp')) {
+      const fallback = (t.indexOf('png') !== -1) ? 'image/png' : 'image/jpeg';
+      outBlob = await canvasToBlob(cv, fallback, fallback === 'image/jpeg' ? BM_EXPORT_QUALITY : undefined);
+    }
+    cv.width = cv.height = 0; // 立刻释放位图
+    if (!outBlob) return null;
+    const bytes = new Uint8Array(await outBlob.arrayBuffer());
+    return { bytes, mime: outBlob.type || 'image/webp' };
+  } catch (e) {
+    return null;
+  } finally {
+    try { URL.revokeObjectURL(url); } catch (e) {}
+  }
+}
+
+/* 单张：读 → 判断要不要压 → 压 → 回填 im.compressed / im.byteLen / im.mime */
+async function bmCompressOneExportImage(im, readFsFile) {
+  const raw = await bmRawBytesOf(im, readFsFile);
+  const release = () => { im.blob = null; im.dataURL = null; im._raw = null; };
+  if (!raw || !raw.byteLength) {
+    im.compressed = new Uint8Array(0);
+    im.byteLen = 0;
+    release();
+    return;
+  }
+  // 动图（GIF / 动图 WebP / APNG）整份原样保留：不压、不转码、不截帧，保证动图还能动
+  im.mime = bmSniffImageMime(raw, im.mime);
+  const isAnimated = bmIsAnimatedImage(raw, im.mime);
+  if (isAnimated) {
+    im.compressed = raw;
+    im.byteLen = raw.byteLength;
+    release();
+    return;
+  }
+  // 小图直通：160KB 以下的图压缩收益极小，省掉一次完整解码+编码
+  if (raw.byteLength <= BM_EXPORT_SKIP_BYTES) {
+    im.compressed = raw;
+    im.byteLen = raw.byteLength;
+    release();
+    return;
+  }
+  const out = await bmEncodeExportImage(raw, im.mime);
+  // 只保留「确实变小」的结果，避免压缩反而变大
+  if (out && out.bytes && out.bytes.byteLength && out.bytes.byteLength < raw.byteLength) {
+    im.compressed = out.bytes;
+    im.byteLen = out.bytes.byteLength;
+    im.mime = out.mime || im.mime;
+  } else {
+    im.compressed = raw;
+    im.byteLen = raw.byteLength;
+  }
+  release();
+}
+
+/* 并发压缩全部图片。onProgress(done, total) 每张都回调（进度条持续可见地推进）。
+   readFsFile(ref) 由 APP 端传入（FS.readFile → Uint8Array），网页端传 null。 */
+async function bmCompressExportImages(images, onProgress, readFsFile) {
+  const total = images.length;
+  if (!total) return;
+  let cursor = 0;
+  let done = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= total) return;
+      const im = images[i];
+      if (!im) { done++; continue; }
+      try {
+        await bmCompressOneExportImage(im, readFsFile);
+      } catch (e) {
+        // 兜底：任何异常都不允许丢图，退回原始字节
+        try {
+          const raw = await bmRawBytesOf(im, readFsFile);
+          im.compressed = raw;
+          im.byteLen = raw.byteLength;
+        } catch (e2) {
+          im.compressed = new Uint8Array(0);
+          im.byteLen = 0;
+        }
+      }
+      done++;
+      if (onProgress) { try { onProgress(done, total); } catch (e) {} }
+    }
+  };
+  let conc = BM_EXPORT_CONCURRENCY;
+  try {
+    // 低配机（内存 ≤4GB）降到 2 路：并发压缩是大图内存峰值的主要来源，
+    //   宁可慢一点也不能在导出这种「只此一次」的操作上把应用顶崩。
+    const mem = navigator.deviceMemory || 0;
+    if (mem && mem <= 4) conc = 2;
+  } catch (e) {}
+  await Promise.all(Array.from({ length: Math.min(conc, total) }, worker));
 }
 
 /* ============ 20261101 图片文件系统存储层（APP 端专用，网页端零影响）============
@@ -11384,11 +11807,26 @@ async function pokeAnimFromContext(charId){
            主项目那一堆全局 CSS；演完自己 postMessage 回来，主项目把这一层撤掉。
    ========================================================================== */
 const STORY_EVENTS = {
-  /* 20261113h：两个事件都不设冷却 —— 用户定案「1.2% 已经够稀有，不需要冷却」。
+  /* 20261113h：两个事件都不设冷却 —— 用户定案「已经够稀有，不需要冷却」。
      yinyuan 不走 iframe：红线必须从真实那颗头像上缠出来，直接用内联层（bmYinyuanPlay）。 */
   yinyuan: { chance: .015, enabled: true },
   gaze:    { chance: .012, enabled: true, page: 'event-gaze.html' },
 };
+
+/* 20261114：两个事件的概率允许玩家在聊天设置里自己调（角色级，存百分数如 1.5）。
+   硬约束：必须始终比「角色回复后概率撤回」的 0.12 更稀有 —— 上限锁死 6%（用户定案），
+   玩家填再大也只会被夹到 6%，保证演出事件永远盖不过撤回这种日常行为。 */
+const STORY_EVENT_CHANCE_MAX = 0.06;  // 6%，严格小于角色撤回的 0.12
+const STORY_EVENT_CHANCE_MIN = 0.001; // 0.1%
+
+/* 取生效概率：优先玩家设定；未设置/非法/<=0 时回落到默认（1.5% / 1.2%）。 */
+function storyEventChance(kind, cs){
+  const dflt = (STORY_EVENTS[kind] && STORY_EVENTS[kind].chance) || 0;
+  const raw = cs ? (kind === 'yinyuan' ? cs.eventYinyuanChance : cs.eventGazeChance) : null;
+  const pct = Number(raw);
+  if (!isFinite(pct) || pct <= 0) return dflt;
+  return Math.max(STORY_EVENT_CHANCE_MIN, Math.min(STORY_EVENT_CHANCE_MAX, pct / 100));
+}
 
 function storyEventEnabled(kind, cs){
   const v = kind === 'yinyuan' ? cs.eventYinyuan : cs.eventGaze;
@@ -11517,9 +11955,9 @@ function maybeStoryEventAfterReply(charId, startedAt){
   const kinds = ['yinyuan', 'gaze'].filter(k => storyEventEnabled(k, cs) && storyEventReady(k));
   if (!kinds.length) return;
   /* 20261113i：两个事件各自独立掷骰子 —— 不排队、不互相扣概率。
-     各自按自己的 chance 判一次（姻缘牵 1.5% / 目光 1.2%），
+     各自按自己的概率判一次（默认 姻缘牵 1.5% / 目光 1.2%，玩家可在聊天设置里调，上限 10%），
      谁先出现都行；极小概率同时命中时只演其中一个，绝不同时叠两层。 */
-  const hits = kinds.filter(k => Math.random() < STORY_EVENTS[k].chance);
+  const hits = kinds.filter(k => Math.random() < storyEventChance(k, cs));
   if (!hits.length) return;
   const picked = hits.length > 1 ? hits[Math.floor(Math.random() * hits.length)] : hits[0];
   _storyWaitReply(charId, startedAt, async () => {
@@ -12983,7 +13421,7 @@ function openPomodoroLayer(cid) {
   const gt = (typeof _globalThemeId !== 'undefined' && _globalThemeId) ? _globalThemeId : 'dark';
   // 20261113c：加 ?v= 缓存戳——否则 WebView 可能拿旧的 interact_proto.html，
   //   新加的「子文件夹 / 更换封面 / 移入弹层」看起来像没生效。升 index.html 版本号时同步这里。
-  frame.src = 'interact_proto.html?v=V1.3y&theme=' + encodeURIComponent(gt);
+  frame.src = 'interact_proto.html?v=V1.4i&theme=' + encodeURIComponent(gt);
   layer.classList.add('show');
   // 20261112：进入番茄钟（专注/设置页）即按设置收起网页悬浮窗，退出时恢复
   _applyFocusFloatGate();
@@ -14386,26 +14824,30 @@ function showCoinModal() {
           <div class="coin-face coin-front"><img src="img/coin-yes.jpg" alt="YES" draggable="false"></div>
           <div class="coin-face coin-back"><img src="img/coin-no.jpg" alt="NO" draggable="false"></div>
         </div>
-      </div>`;
+      </div>
+      <div id="coin-result"></div>`;
     // 第一阶段：旋转翻转（coinSpin 无限旋转）
     setTimeout(() => {
       const result = Math.random() < 0.5 ? '是' : '否';
       const coin = $('#coin-coin');
       if (coin) {
-        // 第二阶段：弹起 → 落地（coinToss 动画，只弹一次），定格在结果面
-        coin.classList.add('landing', result === '是' ? 'face-front' : 'face-back');
-        // 落地音效：对准动画落地瞬间（coinToss 1.05s，落地在 ~0.9s 处）
+        /* 第二阶段：弹起 → 落地（只弹一次），并按结果停在对的那一面。
+           20261114 修 bug：原来统一用 coinToss（终帧 1080°=正面），
+           动画盖掉了 face-back 的 180°，导致不管抽到什么都先落成 YES。 */
+        coin.classList.add(result === '是' ? 'landing-front' : 'landing-back');
+        // 落地音效：对准动画落地瞬间（1.05s，落地在 ~0.9s 处）
         setTimeout(() => playCoinLandSound(), 880);
       }
-      // 动画播完（约 1.15s）后替换为结果 UI
+      // 动画播完（约 1.15s）后：硬币原地定格，只在下方补结果与按钮。
+      // 不再重建整枚硬币 —— 之前那一下重绘会让「已经落地的面」突然翻面。
       setTimeout(() => {
-        $('#coin-stage').innerHTML = `
-          <div class="coin-scene">
-            <div class="coin3d landed ${result === '是' ? 'face-front' : 'face-back'}">
-              <div class="coin-face coin-front"><img src="img/coin-yes.jpg" alt="YES" draggable="false"></div>
-              <div class="coin-face coin-back"><img src="img/coin-no.jpg" alt="NO" draggable="false"></div>
-            </div>
-          </div>
+        if (coin) {
+          coin.classList.remove('landing-front', 'landing-back');
+          coin.classList.add('landed', result === '是' ? 'face-front' : 'face-back');
+        }
+        const box = $('#coin-result');
+        if (!box) return;
+        box.innerHTML = `
           <div style="text-align:center;color:var(--text-secondary);font-size:13px;margin-bottom:12px;">「${escapeHtml(q)}」→ ${result}</div>
           <div style="display:flex;gap:10px;">
             <button class="btn" style="flex:1;" id="coin-cancel2">取消</button>
@@ -19943,9 +20385,20 @@ function applyChatTheme() {
   /* 20261110：气泡字号（织梦点 → 气泡 tab 的滑条）——
      0/非数字 = 不挂类、不写变量，沿用默认 15px；12~22 = 生效。 */
   applyBubbleFontSize(chatTheme.bubbleFontSize);
-  /* 20261110：进了「单行优先」档才需要按最长行收宽度（scheduleBubbleFit 内部
-     会自行判断当前档位，切回默认/居中以外时会清掉所有内联宽度）。 */
-  if (_bLine) scheduleBubbleFit();
+  /* 20261114 修「切回默认档气泡还是又宽又空」：
+     原来这里是 `if (_bLine) scheduleBubbleFit();` —— 只有进「单行优先」才调，
+     而 scheduleBubbleFit() 里「非单行优先 → 清掉所有内联 width」那段恰好被这个 if 挡掉了。
+     结果：选过「单行优先/居中」再点回「默认（原样）」，类被 toggle 掉了，
+     但上一档用 JS 量出来写死在气泡上的 px 宽度还留着 ——
+     短句「我一直在」会被撑成上次那条长消息的宽度，文字贴左、右边一大片空，
+     看起来就像「气泡被居中了」。现在无条件调用：进档时量宽度，退档时清宽度。 */
+  scheduleBubbleFit();
+  /* 20261114：自定义字体是异步 FontFace 注册的，量宽度时字体可能还没就位 ——
+     量出来的 px 宽度会偏大/偏小，写死之后文字在气泡里就顶到一边。
+     字体加载完成后再量一遍（非单行优先档下这个调用只是清宽度，代价可忽略）。 */
+  if (document.fonts && document.fonts.ready) {
+    try { document.fonts.ready.then(() => scheduleBubbleFit()); } catch (e) {}
+  }
   // 10：三处全局背景（聊天导航页 / 个人主页美化背景 / 朋友圈）
   root.setProperty('--nav-bg', chatTheme.navBg ? `url("${imgSrc(chatTheme.navBg)}")` : 'none');
   root.setProperty('--home-page-bg', chatTheme.homeBg ? `url("${imgSrc(chatTheme.homeBg)}")` : 'none');
@@ -20033,6 +20486,15 @@ function applyGlobalThemeNow() {
 
 /* ---------- 聊天设置（5.3：回复节奏/主动消息/提示音/撤回）
    全局（玩家主页）与访客级（访客主页）共用一套 UI，只是保存目标不同 ---------- */
+// 20261114：玩家专属开关「显示角色修改过程」——只存在本机 localStorage，
+// 不进角色设置字段表，角色永远动不了它；默认开。
+function saShowProcessOn() {
+  try { return localStorage.getItem('sa_show_process') !== '0'; } catch (e) { return true; }
+}
+function saSetShowProcess(on) {
+  try { localStorage.setItem('sa_show_process', on ? '1' : '0'); } catch (e) {}
+}
+
 function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
   // 20261028：聊天设置按功能 tab 分类——点每个 tab，下方显示该功能相关的设置项，
   // 便于逐功能切换、单独设置，避免单页从上到下全部平铺（过长、难找）。
@@ -20131,6 +20593,36 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <input class="input" type="number" min="0" max="5" value="${s.groupRounds ?? 2}" id="cs-group-rounds" style="width:100px;">
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">1 轮 = 群内每个成员各发言一次；到轮立即停止，防刷屏防卡死。可在每个群的群聊设置里单独覆盖。此项只与群聊相关，访客个人主页的聊天设置里不再显示</div>
     </div>` : ''}
+
+    <!-- 20261114：两个「演出事件」放在「回复」面板最下面（用户定案：它们属于「回复之后额外冒出来的演出」，
+         不归「主动」）。概率改成玩家可调，范围 0.1%～6% —— 上限必须始终低于角色撤回的 12%。 -->
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>姻缘牵</span>
+        <input type="checkbox" id="cs-event-yinyuan" ${s.eventYinyuan !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+        <span style="font-size:13px;color:var(--text-secondary);white-space:nowrap;">触发概率</span>
+        <input class="input" type="number" min="0.1" max="6" step="0.1" value="${s.eventYinyuanChance ?? 1.5}" id="cs-event-yinyuan-pct" style="width:84px;">
+        <span style="font-size:13px;color:var(--text-tertiary);">%</span>
+        <span style="font-size:11.5px;color:var(--text-tertiary);">每次 TA 回完话后掷一次</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">一根红线从 TA 的头像绕出来、缠成一个结，另一头系在你手上；不挡操作、不用回复，过一会儿自己散掉。可调 0.1%～6%（上限始终低于「允许撤回消息」的 12%）。关掉就不再出现。</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>目光</span>
+        <input type="checkbox" id="cs-event-gaze" ${s.eventGaze !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+        <span style="font-size:13px;color:var(--text-secondary);white-space:nowrap;">触发概率</span>
+        <input class="input" type="number" min="0.1" max="6" step="0.1" value="${s.eventGazeChance ?? 1.2}" id="cs-event-gaze-pct" style="width:84px;">
+        <span style="font-size:13px;color:var(--text-tertiary);">%</span>
+        <span style="font-size:11.5px;color:var(--text-tertiary);">每次 TA 回完话后掷一次</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">屏幕暗下来，只剩一双一直看着你的眼睛，你要回一句话它才慢慢退开。可调 0.1%～6%（上限始终低于「允许撤回消息」的 12%）。关掉就不再出现。</div>
+    </div>
     </section>
 
     <section class="cs-panel" data-cs-panel="主动">
@@ -20160,6 +20652,14 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;" id="cs-rand-hint">TA 只会在最小～最大分钟之间的随机时刻发</div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">两个勾选互斥：勾选其中一个，另一个自动取消</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>显示角色修改过程</span>
+        <input type="checkbox" id="cs-sa-show-process" ${saShowProcessOn() ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开着：TA 提了修改申请、你同意之后，会走一遍你的角色主页 → 聊天设置，把每一项改给你看；关掉：不演，改完直接告诉你动了哪几处。这一项只由你决定，角色不会动它。</div>
     </div>
 
     <div class="field">
@@ -20227,23 +20727,6 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       </div>
     </div>
 
-    <!-- 20261113g：两个「演出事件」——发消息时极低概率触发，各自独立开关，默认开。
-         放在「回复」面板最下面：它们属于「聊天里额外冒出来的东西」，跟回复节奏同一类。 -->
-    <div class="field">
-      <label style="display:flex;align-items:center;justify-content:space-between;">
-        <span>姻缘牵</span>
-        <input type="checkbox" id="cs-event-yinyuan" ${s.eventYinyuan !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
-      </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">发消息时有很低的概率触发：一根红线从 TA 的头像绕出来，缠成一个结，线的另一头系在你手上。关掉就不再出现。</div>
-    </div>
-
-    <div class="field">
-      <label style="display:flex;align-items:center;justify-content:space-between;">
-        <span>目光</span>
-        <input type="checkbox" id="cs-event-gaze" ${s.eventGaze !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
-      </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">发消息时有很低的概率触发：屏幕暗下来，只剩一双一直看着你的眼睛，你可以回一句话再让它慢慢退开。关掉就不再出现。</div>
-    </div>
     </section>
 
     <section class="cs-panel" data-cs-panel="四季">
@@ -20796,6 +21279,16 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">进入专注后自动开启锁机（锁住屏幕专注，退出专注自动解除）。需要系统「使用情况访问」权限才能锁住屏幕。</div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:8px;line-height:1.7;">使用情况访问（锁机权限）：<span id="cs-usage-status" style="color:var(--purple-soft);">检测中…</span> <button class="btn" id="cs-usage-ask" style="padding:4px 12px;font-size:12px;margin-left:6px;">申请锁机权限</button></div>
     </div>
+    <!-- 20261114：这个开关原来在番茄钟（专注）设置页里，用户要求统一收到聊天设置 › 番茄钟，
+         专注页那份 UI 已删除（interact_proto.html），这里成为唯一入口。
+         存 chatSettings.pomodoroAllowFloat，默认关（专注时把网页悬浮窗收起）。 -->
+    <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
+      <label style="display:flex;align-items:center;justify-content:space-between;font-weight:600;">
+        <span><i data-icon="expand" data-size="16"></i> 专注时显示悬浮窗</span>
+        <input type="checkbox" id="cs-pomodoro-float" ${(s.pomodoroAllowFloat === true) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:7px;line-height:1.6;">关着的时候，进入专注会把「一起听歌 · 碎梦重拼 · 模拟通话小窗」这三个网页悬浮窗暂时收起，退出专注自动恢复；打开则让它们照常浮在专注页上。安卓原生系统悬浮窗不受此设置影响。</div>
+    </div>
     <div class="field" style="background:var(--bg-elevated-2);border-radius:12px;padding:12px;">
       <label style="font-size:13.5px;font-weight:600;display:block;margin-bottom:8px;"><i data-icon="comment" data-size="12"></i> 前台互动（陪伴动作 / 陪伴回复）</label>
       <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px;line-height:1.6;">专注过程中，角色会随机「找你说句话」或「做一个陪伴小动作」，内容从字卡库的「陪伴动作」「陪伴回复」里抽。这里填的是<b>专注陪伴</b>档的触发间隔，每次到点后在这个区间里重新随机取一次。</div>
@@ -20867,6 +21360,13 @@ function bindChatSettings(s, onSave, tcChar) {
     if (tagAddBtn) tagAddBtn.onclick = doAdd;
     if (tagInput) tagInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } };
   }
+  // 20261114：玩家专属「显示角色修改过程」开关（只写本机 localStorage，不进角色设置）
+  const saShowEl = $('#cs-sa-show-process');
+  if (saShowEl) saShowEl.onchange = () => {
+    saSetShowProcess(saShowEl.checked);
+    miniToast(saShowEl.checked ? '会显示角色修改过程' : '不再播放修改过程，改完直接告诉你');
+  };
+
   // 20261031：多字卡组合回复开关（独立新功能；立即落库生效，走 tcPersist 差异语义）
   const mcOnEl = $('#cs-multicard-on');
   if (mcOnEl) mcOnEl.onchange = () => {
@@ -21374,6 +21874,21 @@ function bindChatSettings(s, onSave, tcChar) {
     setSetting('chatSettings', chatSettings).catch(() => {});
     miniToast(plCb.checked ? '番茄钟默认开启锁机' : '番茄钟默认关闭锁机');
   };
+  /* 20261114：「专注时显示悬浮窗」——入口从番茄钟（专注）设置页搬到聊天设置 › 番茄钟。
+     存的还是 chatSettings.pomodoroAllowFloat，主项目那边 _applyFocusFloatGate() 照旧生效。 */
+  const pfCb = $('#cs-pomodoro-float');
+  if (pfCb) pfCb.onchange = () => {
+    const on = pfCb.checked;
+    s.pomodoroAllowFloat = on;
+    chatSettings.pomodoroAllowFloat = on;
+    setSetting('chatSettings', chatSettings).catch(() => {});
+    /* focus-hide-floats 是挂在 body 上的全局类，会直接隐藏三个网页浮窗 ——
+       只有在番茄钟层正显示时才立即重算；否则等下次进专注再自然生效，
+       免得玩家在别的页面拨一下开关，浮窗就凭空消失了。 */
+    const layer = document.getElementById('pomodoro-layer');
+    if (layer && layer.classList.contains('show')) _applyFocusFloatGate();
+    miniToast(on ? '专注时显示悬浮窗：开' : '专注时隐藏悬浮窗：关');
+  };
   // 20261104：番茄钟前台互动（陪伴动作/陪伴回复）随机固定间隔——全局与访客级都渲染
   const ciMinEl = $('#cs-companion-interact-min');
   const ciMaxEl = $('#cs-companion-interact-max');
@@ -21842,6 +22357,18 @@ function bindChatSettings(s, onSave, tcChar) {
     if (eyEl) s.eventYinyuan = eyEl.checked;
     const egEl = $('#cs-event-gaze');
     if (egEl) s.eventGaze = egEl.checked;
+    /* 20261114：两事件的触发概率（存百分数）。上限 6%（用户定案，严小于角色撤回的 12%），
+       前端输入框已限 max=6，这里再夹一次，防手输/粘贴绕过。0 或非法 → 回默认值。 */
+    const eypEl = $('#cs-event-yinyuan-pct');
+    if (eypEl) {
+      const v = parseFloat(eypEl.value);
+      s.eventYinyuanChance = (isFinite(v) && v > 0) ? Math.min(6, Math.max(0.1, v)) : 1.5;
+    }
+    const egpEl = $('#cs-event-gaze-pct');
+    if (egpEl) {
+      const v = parseFloat(egpEl.value);
+      s.eventGazeChance = (isFinite(v) && v > 0) ? Math.min(6, Math.max(0.1, v)) : 1.2;
+    }
     const muteEl = $('#cs-mute');
     if (muteEl) s.muteNotifications = muteEl.checked;
     const ocSkipEl = $('#cs-skip-oc');
@@ -21887,7 +22414,7 @@ async function showCharChatSettingsModal(c) {
   bindChatSettings(s, async () => {
     // 把与全局不同的字段写回角色，继承的字段从全局取
     c.chatSettings = c.chatSettings || {};
-    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','eventYinyuan','eventGaze','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicSwap','musicSwapMin','musicSwapMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','musicModeSwitch','musicModeSwitchMin','musicModeSwitchMax','musicBgAllow','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax','seasonLoveGapMin','seasonLoveGapMax']) {
+    for (const k of ['minDelay','maxDelay','proactive','proactiveMin','proactiveRandMin','proactiveRandMax','proactiveRandom','proactiveCheckin','checkinDailyLimit','randomCall','callDailyLimit','callIntervalMin','callIntervalMax','callAutoHangup','callHangupMin','callHangupMax','randomPacket','overclockProactive','skipOverclockAnim','soundOn','soundName','customSound','allowRecall','muteNotifications','charPoke','lettersEnabled','lettersDailyLimit','eventYinyuan','eventGaze','eventYinyuanChance','eventGazeChance','allowFloat2','float2Mode','charUsePlayerEmojis','typecardOn','typecardMode','typecardSpeed','typecardCoherence','typecardCards','typecardSummon','multiCardOn','multiCardCountMin','multiCardCountMax','multiCardIntervalMin','multiCardIntervalMax','musicFloatOn','musicAuto','musicAutoMin','musicAutoMax','musicInvite','musicInviteMin','musicInviteMax','musicSwap','musicSwapMin','musicSwapMax','musicPeek','musicPeekMin','musicPeekMax','earListenMin','earListenMax','charCollectMin','charCollectMax','videoAuto','videoAutoMin','videoAutoMax','musicActionStyle','musicModeSwitch','musicModeSwitchMin','musicModeSwitchMax','musicBgAllow','seasonCareGapMin','seasonCareGapMax','seasonCardGapMin','seasonCardGapMax','seasonAiGapMin','seasonAiGapMax','seasonLoveGapMin','seasonLoveGapMax']) {
       if (s[k] !== chatSettings[k]) c.chatSettings[k] = s[k];
       else delete c.chatSettings[k];
     }
@@ -23690,12 +24217,14 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
 }
 
 /* ---------- 20261101/02：恢复自动备份（数据安全兜底） ----------
-   20261102 改造：不再「系统自动选最近/最完整的一份」，改为扫描「文档/白日梦备份/auto-*」
-   全部备份，逐个读 manifest.json 统计【时间 + 角色数 + 消息数 + 图片数】，弹一个选择列表
-   让玩家自己勾选要恢复到哪一份（覆盖导入）。恢复走 doImport 3.0 路径，图片经 restoreImagesV3
-   （已改 APP 端写文件转 {__img:5}）正确还原。只做「恢复」，不改自动备份的写入流程。 */
+   20261102 改造：不再「系统自动选最近/最完整的一份」，改为扫描全部备份，列出来让玩家自己勾选
+   要恢复到哪一份（覆盖导入）。恢复走 doImport，图片正确还原。
+   20261115：自动备份写入已改为「单个容器文件 .ocdata」（见 autoBackup 注释），本入口同步改造：
+   · 新格式：读「白日梦自动备份索引.json」拿 时间/角色数/消息数/图片数，不需要为统计整读容器；
+   · 旧格式：仍扫描 auto-* 目录 + manifest.json（老用户的备份不会突然用不了）；
+   · 恢复时新格式走「读文件 → 内存 File → 与全局导入完全相同的容器解析链」。 */
 
-/* 扫描所有 auto-* 备份，逐个读 manifest 统计信息，弹选择列表。 */
+/* 扫描所有自动备份（新单文件 + 旧目录式），弹选择列表。 */
 async function restoreAutoBackup() {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!FS || typeof FS.readdir !== 'function') {
@@ -23703,45 +24232,76 @@ async function restoreAutoBackup() {
     return;
   }
   try {
-    const r = await FS.readdir({ path: '白日梦备份', directory: 'DOCUMENTS' });
-    const names = (r.files || []).map(f => f.name).filter(n => n && n.indexOf('auto-') === 0);
-    if (!names.length) {
-      showConfirm('还没有任何自动备份。\n\n自动备份会在每次使用 App 后自动生成，等你用一段时间后再来恢复即可。', null);
-      return;
-    }
-    // 逐个读 manifest 统计信息（时间/角色数/消息数/图片数）
+    const r = await FS.readdir({ path: BM_AUTO_BACKUP_DIR, directory: 'DOCUMENTS' });
+    const names = (r.files || []).map(f => f.name).filter(Boolean);
+    const containerNames = names.filter(n => /^白日梦自动备份.*\.ocdata$/.test(n)); // 新：单文件容器
+    const dirNames = names.filter(n => n.indexOf('auto-') === 0);                    // 旧：目录式备份集合
+
+    // 索引尽力而为：不存在 / 与目录不同步都不影响恢复，只是统计可能显示「—」
+    let idxMap = new Map();
+    try {
+      const idx = await bmReadJsonFile(FS, BM_AUTO_BACKUP_INDEX);
+      if (idx && Array.isArray(idx.items)) {
+        idxMap = new Map(idx.items.filter(x => x && x.file).map(x => [x.file, x]));
+      }
+    } catch (e) {}
+
     const list = [];
-    for (const n of names) {
+
+    // ① 新格式：单文件容器（.ocdata）
+    for (const n of containerNames) {
+      const meta = idxMap.get(n);
+      let stamp = (meta && meta.ts) ? Number(meta.ts) : 0;
+      if (!stamp) {
+        // 索引缺失时兜底：从文件名「白日梦自动备份_YYYYMMDD-HHMM.ocdata」解析时间
+        const m = /(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/.exec(n);
+        if (m) {
+          const dt = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+          if (!isNaN(dt.getTime())) stamp = dt.getTime();
+        }
+      }
+      list.push({
+        kind: 'container',
+        set: n,
+        stamp,
+        time: stamp ? fmtBackupTime(stamp) : '未知时间',
+        // -1 = 「索引里没有，暂无统计」，列表显示为「—」，不假装是 0
+        charCount: (meta && typeof meta.charCount === 'number') ? meta.charCount : -1,
+        msgCount: (meta && typeof meta.msgCount === 'number') ? meta.msgCount : -1,
+        imgCount: (meta && typeof meta.imgCount === 'number') ? meta.imgCount : -1,
+        bytes: (meta && Number(meta.bytes)) || 0,
+      });
+    }
+
+    // ② 旧格式：目录式 backup-set（manifest.json + images/），保持可恢复
+    for (const n of dirNames) {
       const stamp = parseInt(n.slice(5), 10) || 0;
       try {
-        const mr = await FS.readFile({ path: '白日梦备份/' + n + '/manifest.json', directory: 'DOCUMENTS' });
-        const b64 = String(mr.data).replace(/[\r\n]/g, '');
-        const bin = atob(b64);
-        const u8 = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-        const d = JSON.parse(new TextDecoder('utf-8').decode(u8));
+        const d = await bmReadJsonFile(FS, BM_AUTO_BACKUP_DIR + '/' + n + '/manifest.json');
         if (!d || d.app !== 'bairimeng') continue;
         let imgCount = 0;
         try {
-          const imgR = await FS.readdir({ path: '白日梦备份/' + n + '/images', directory: 'DOCUMENTS' });
+          const imgR = await FS.readdir({ path: BM_AUTO_BACKUP_DIR + '/' + n + '/images', directory: 'DOCUMENTS' });
           imgCount = (imgR.files || []).length;
         } catch (e) { imgCount = 0; }
         list.push({
+          kind: 'dir',
           set: n,
           stamp,
           time: stamp ? fmtBackupTime(stamp) : '未知时间',
           charCount: Array.isArray(d.characters) ? d.characters.length : 0,
           msgCount: Array.isArray(d.messages) ? d.messages.length : 0,
           imgCount,
+          bytes: 0,
         });
       } catch (e) { /* 该目录 manifest 读失败/损坏，跳过 */ }
     }
+
     if (!list.length) {
-      showConfirm('没有找到可用的自动备份（可能都损坏或不完整）。', null);
+      showConfirm('还没有任何自动备份。\n\n自动备份会在每天使用 App 后自动生成一份（单文件 .ocdata），等你用一段时间后再来恢复即可。', null);
       return;
     }
-    // 按时间倒序（最新在前）
-    list.sort((a, b) => b.stamp - a.stamp);
+    list.sort((a, b) => b.stamp - a.stamp); // 按时间倒序（最新在前）
     showRestoreAutoModal(list);
   } catch (e) {
     miniToast('扫描自动备份失败：' + (e && e.message ? e.message : '未知错误'));
@@ -23758,16 +24318,24 @@ function fmtBackupTime(stamp) {
   } catch (e) { return ''; }
 }
 
-/* 备份选择列表弹窗：玩家勾选要恢复到的那一份。 */
+/* 备份选择列表弹窗：玩家勾选要恢复到的那一份。
+   统计里 -1 表示「索引里没记录」→ 显示「—」；旧目录式备份额外打个「旧格式」标记。 */
 function showRestoreAutoModal(list) {
-  const rows = list.map((it, i) => `
+  const fmtN = v => (typeof v === 'number' && v >= 0) ? String(v) : '—';
+  const rows = list.map((it, i) => {
+    const sizeTxt = it.bytes > 0 ? ' · ' + bmFmtBytes(it.bytes) : '';
+    const tag = it.kind === 'dir'
+      ? '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--bg-elevated-2);color:var(--text-tertiary);font-size:10.5px;font-weight:500;vertical-align:1px;">旧格式</span>'
+      : '';
+    return `
     <label class="bm-restore-item" data-idx="${i}" style="display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;margin-bottom:8px;">
       <input type="radio" name="bm-restore-pick" value="${i}" style="accent-color:var(--purple);width:16px;height:16px;" ${i === 0 ? 'checked' : ''}>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:14px;font-weight:600;color:var(--text-primary);">${escapeHtml(it.time)}</div>
-        <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;line-height:1.5;">角色 ${it.charCount} 个 · 消息 ${it.msgCount} 条 · 图片 ${it.imgCount} 张</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text-primary);">${escapeHtml(it.time)}${tag}</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;line-height:1.5;">角色 ${fmtN(it.charCount)} 个 · 消息 ${fmtN(it.msgCount)} 条 · 图片 ${fmtN(it.imgCount)} 张${sizeTxt}</div>
       </div>
-    </label>`).join('');
+    </label>`;
+  }).join('');
 
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
@@ -23795,28 +24363,89 @@ function showRestoreAutoModal(list) {
   };
 }
 
-/* 执行恢复：读所选备份的 manifest → doImport 3.0 路径（图片正确还原）。 */
+/* 执行恢复。两条路径：
+   · 新格式（单文件容器 .ocdata）→ 整读成内存 File，走与「全局导入」完全相同的解析链：
+     probeContainerHead 找分隔符 → JSON 头 → bmCreateStreamReader 顺序读图 → doImport；
+   · 旧格式（目录式 manifest.json + images/）→ 保持原逻辑（restoreAutoImagesV3 逐张读图 → doImport）。 */
 async function doRestoreAutoBackup(it) {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
-  const setDir = '白日梦备份/' + it.set;
+  const setDir = BM_AUTO_BACKUP_DIR + '/' + it.set;
   let prog = null;
   try {
     prog = startProgressPanel([
       { label: '读取备份' },
+      { label: '解析数据' },
       { label: '还原图片' },
       { label: '写入数据库' },
     ], 0, 'import');
     setProgressPanelMode(true);
-
     setStageProgress(0, 1, 1);
-    let data;
-    try {
-      const mr = await FS.readFile({ path: setDir + '/manifest.json', directory: 'DOCUMENTS' });
-      const b64 = String(mr.data).replace(/[\r\n]/g, '');
-      const bin = atob(b64);
+
+    /* ===================== 新格式：单文件容器 ===================== */
+    if (it.kind === 'container') {
+      // 体积保护：Capacitor 的 readFile 没有「分段读」能力，容器恢复必须整读成 base64 再转字节，
+      //   内存峰值 ≈ 文件大小 × 3.7（base64 1.33 + 解码串 1.33 + 字节数组 1.0）。
+      //   80MB 的文件峰值约 300MB，WebView 堆还能撑；再大就有 OOM 闪退风险，
+      //   这时提示改用「导入全局备份」手动选同一个文件（格式完全通用，效果一样）。
+      let size = it.bytes || 0;
+      try { const st = await FS.stat({ path: setDir, directory: 'DOCUMENTS' }); size = (st && st.size) || size; } catch (e) {}
+      if (size > BM_AUTO_RESTORE_MAX_BYTES) {
+        closeProgressPanel();
+        showConfirm('这份自动备份有 ' + bmFmtBytes(size) + '，超过了 App 内直接恢复的上限（' + bmFmtBytes(BM_AUTO_RESTORE_MAX_BYTES) + '），整读进内存有崩溃风险。\n\n请改用「导入全局备份」→ 手动选择这个文件：\n文档/白日梦备份/' + it.set + '\n\n格式完全通用，导入效果一样。', null);
+        return;
+      }
+      let b64 = '';
+      try {
+        const r = await FS.readFile({ path: setDir, directory: 'DOCUMENTS' });
+        b64 = String(r.data).replace(/[\r\n]/g, '');
+      } catch (e) {
+        closeProgressPanel();
+        showConfirm('读取自动备份失败，可能文件已被移动或删除。', null);
+        return;
+      }
+      let bin = atob(b64);
+      b64 = ''; // 及早丢掉 base64 大字符串，降低峰值内存
       const u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      data = JSON.parse(new TextDecoder('utf-8').decode(u8));
+      bin = '';
+      // 包成内存 File：probeContainerHead / bmCreateStreamReader 都是按 File(slice/arrayBuffer) 工作的，
+      //   这样恢复端直接复用全局导入那一套解析代码，不再维护第二份实现。
+      const file = new File([u8], it.set, { type: 'application/octet-stream' });
+      setStageProgress(0, 1, 1);
+
+      const probed = await probeContainerHead(file);
+      let data;
+      try {
+        data = JSON.parse(probed.headStr);
+      } catch (e) {
+        closeProgressPanel();
+        showConfirm('自动备份文件解析失败，可能不完整。', null);
+        return;
+      }
+      if (!data || data.app !== 'bairimeng') {
+        closeProgressPanel();
+        showConfirm('自动备份文件异常，无法恢复。', null);
+        return;
+      }
+      setStageProgress(1, 1, 1);
+
+      const streamReader = probed.sepFound ? bmCreateStreamReader(file, probed.containerStart) : null;
+      const readImageV4 = streamReader
+        ? async (offset, len, mime) => {
+            const u = await streamReader.readAt(offset || 0, len || 0);
+            if ((len || 0) > 0 && u.byteLength === 0) throw new Error('empty-blob');
+            return new Blob([u], { type: (mime || 'image/png') });
+          }
+        : null;
+      await doImport(data, 'overwrite', (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), readImageV4);
+      closeProgressPanel();
+      return;
+    }
+
+    /* ===================== 旧格式：目录式备份集合 ===================== */
+    let data;
+    try {
+      data = await bmReadJsonFile(FS, setDir + '/manifest.json');
     } catch (e) {
       closeProgressPanel();
       showConfirm('读取自动备份失败，可能备份不完整。', null);
@@ -23839,7 +24468,7 @@ async function doRestoreAutoBackup(it) {
       const r = await FS.readFile({ path: data.imagesDir + '/' + ref, directory: 'DOCUMENTS' });
       return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + r.data);
     };
-    data = await restoreAutoImagesV3(data, readImage, (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total));
+    data = await restoreAutoImagesV3(data, readImage, (done, total) => setStageProgress(2, done, total));
 
     await doImport(data, 'overwrite', (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), null);
     closeProgressPanel();
@@ -24225,6 +24854,17 @@ async function collectImagesV4(node, onProgress = null) {
   if (!node || typeof node !== 'object') return { data: node, images: [] };
   const images = [];
   let seq = 0;
+  /* 20261114 图片去重（备份体积爆炸的根因修复）：
+     同一张图在消息数据里会被引用很多次（真机实测：4317 次引用 → 去重后只有 290 张）。
+     旧逻辑「每次引用都新建 ref 并 push 进 images」→ 同一份图片字节在容器里被重复写入 N 遍，
+     实测备份文件 898.6MB，而真实素材只有 26.2MB；导出时还要把每份重复都重新压一遍，
+     这就是「20 分钟 / 卡 67%」的直接原因。
+     现在按「素材身份」建立 ref 复用表，同一个素材只进 images 一次、只写一份字节：
+       · APP 端文件引用 {__img:5}  → 用文件名 ref（同一文件名 = 同一文件，精确）
+       · Blob 描述符 {blob:Blob}   → 用 Blob 对象本身（对象同一 = 同一张图，精确）
+       · 老格式 {__img:1,data}     → 用 dataURL 字符串（内容相同 = 同一张图）
+     命中去重时直接复用已分配的 ref / thumbRef，数据侧的 {__img:4} 引用照常各拿各的 w/h。 */
+  const refCache = new Map(); // key: Blob 对象 或 'd:'/'f:'/'ft:' + 字符串 → { ref, mime, thumbRef, thumbMime }
   const total = 0; // 占位（进度在下方按 found 计）
   // 深拷贝：图片描述符抽离成 {__img:4}，其余结构原样复制；Blob 保留引用（不可变，共享安全）。
   function clone(n, seen) {
@@ -24239,20 +24879,36 @@ async function collectImagesV4(node, onProgress = null) {
     }
     // 图片描述符 {blob:Blob}
     if (n.blob instanceof Blob) {
+      const hit = refCache.get(n.blob);
+      if (hit) {
+        const out = { __img: 4, ref: hit.ref, mime: hit.mime, w: n.w || 0, h: n.h || 0 };
+        if (hit.thumbRef) { out.thumbRef = hit.thumbRef; out.thumbMime = hit.thumbMime; }
+        return out;
+      }
       const mime = (n.blob.type) || 'image/png';
       const ref = 'img-' + String(++seq).padStart(6, '0');
       const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
       images.push({ ref, mime, src: 'blob', blob: n.blob, dataURL: '', byteLen: n.blob.size });
+      let thumbRef = '', thumbMime = '';
       if (n.thumb instanceof Blob) {
         const tref = 'thm-' + String(seq).padStart(6, '0');
         out.thumbRef = tref;
         out.thumbMime = (n.thumb.type) || 'image/jpeg';
+        thumbRef = tref; thumbMime = out.thumbMime;
         images.push({ ref: tref, mime: out.thumbMime, src: 'blob', blob: n.thumb, dataURL: '', byteLen: n.thumb.size });
       }
+      refCache.set(n.blob, { ref, mime, thumbRef, thumbMime });
       return out;
     }
     // 老格式 {__img:1, data:dataURL}
     if (n.__img === 1 && typeof n.data === 'string') {
+      const ck = 'd:' + n.data;
+      const hit = refCache.get(ck);
+      if (hit) {
+        const out = { __img: 4, ref: hit.ref, mime: hit.mime, w: n.w || 0, h: n.h || 0 };
+        if (hit.thumbRef) { out.thumbRef = hit.thumbRef; out.thumbMime = hit.thumbMime; }
+        return out;
+      }
       const dm = /^data:([^;,]+)?(;base64)?,/.exec(n.data || '');
       const mime = (dm && dm[1]) || 'image/png';
       const cIdx = (n.data || '').indexOf(',');
@@ -24260,31 +24916,52 @@ async function collectImagesV4(node, onProgress = null) {
       const ref = 'img-' + String(++seq).padStart(6, '0');
       const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
       images.push({ ref, mime, src: 'dataURL', blob: null, dataURL: mainDataURL, byteLen: b64ToByteLen(mainDataURL) });
+      let thumbRef = '', thumbMime = '';
       if (typeof n.thumb === 'string' && n.thumb) {
         const tdm = /^data:([^;,]+)?(;base64)?,/.exec(n.thumb);
-        const thumbMime = (tdm && tdm[1]) || 'image/jpeg';
+        const tm = (tdm && tdm[1]) || 'image/jpeg';
         const tIdx = n.thumb.indexOf(',');
         const thumbDataURL = (tIdx !== -1 ? n.thumb.slice(tIdx + 1) : n.thumb);
         const tref = 'thm-' + String(seq).padStart(6, '0');
         out.thumbRef = tref;
-        out.thumbMime = thumbMime;
-        images.push({ ref: tref, mime: thumbMime, src: 'dataURL', blob: null, dataURL: thumbDataURL, byteLen: b64ToByteLen(thumbDataURL) });
+        out.thumbMime = tm;
+        thumbRef = tref; thumbMime = tm;
+        images.push({ ref: tref, mime: tm, src: 'dataURL', blob: null, dataURL: thumbDataURL, byteLen: b64ToByteLen(thumbDataURL) });
       }
+      refCache.set(ck, { ref, mime, thumbRef, thumbMime });
       return out;
     }
     // 20261101 APP 端文件系统引用 {__img:5, ref, mime, thumbRef?}：转回 {__img:4} 引用参与容器打包。
     //   src='fs' 标记：writeContainerFile 阶段用 FS.readFile 从图片目录读回二进制，不占内存。
     if (n.__img === 5 && typeof n.ref === 'string') {
+      const ck = 'f:' + n.ref;
+      const hit = refCache.get(ck);
+      if (hit) {
+        const out = { __img: 4, ref: hit.ref, mime: hit.mime, w: n.w || 0, h: n.h || 0 };
+        if (hit.thumbRef) { out.thumbRef = hit.thumbRef; out.thumbMime = hit.thumbMime; }
+        return out;
+      }
       const mime = n.mime || 'image/png';
       const ref = 'fs-' + String(++seq).padStart(6, '0');
       const out = { __img: 4, ref, mime, w: n.w || 0, h: n.h || 0 };
       images.push({ ref, mime, src: 'fs', fsRef: n.ref, blob: null, dataURL: '', byteLen: 0 });
+      let thumbRef = '', thumbMime = '';
       if (typeof n.thumbRef === 'string' && n.thumbRef) {
-        const tref = 'fs-' + String(seq).padStart(6, '0');
-        out.thumbRef = tref;
-        out.thumbMime = n.thumbMime || 'image/jpeg';
-        images.push({ ref: tref, mime: out.thumbMime, src: 'fs', fsRef: n.thumbRef, blob: null, dataURL: '', byteLen: 0 });
+        const tck = 'ft:' + n.thumbRef;
+        const thit = refCache.get(tck);
+        if (thit) {
+          thumbRef = thit.ref; thumbMime = thit.mime;
+        } else {
+          const tref = 'fst-' + String(seq).padStart(6, '0');
+          thumbMime = n.thumbMime || 'image/jpeg';
+          images.push({ ref: tref, mime: thumbMime, src: 'fs', fsRef: n.thumbRef, blob: null, dataURL: '', byteLen: 0 });
+          refCache.set(tck, { ref: tref, mime: thumbMime, thumbRef: '', thumbMime: '' });
+          thumbRef = tref;
+        }
+        out.thumbRef = thumbRef;
+        out.thumbMime = thumbMime;
       }
+      refCache.set(ck, { ref, mime, thumbRef, thumbMime });
       return out;
     }
     // 普通对象：浅拷贝键值 + 递归
@@ -24294,10 +24971,22 @@ async function collectImagesV4(node, onProgress = null) {
     return obj;
   }
   const data = clone(node, new WeakMap());
+  /* 20261114 兜底：确保 images 里 ref 全局唯一。
+     packContainerFile 按 ref 建 offset 表、writeContainerFile 按 images 顺序逐条写字节，
+     两者必须严格同序同长；一旦有重复 ref，pack 会跳过重复项（cursor 不推进）而 write 照写，
+     文件就会比 imgMap 认为的长，后面所有图的 offset 全部错位（真机实测表现为花屏/图文不符）。
+     正常路径上各分支前缀已互斥（img- / thm- / fs- / fst-），这里只拦历史数据里的异常。 */
+  const _seenRef = new Set();
+  const uniqImages = [];
+  for (const im of images) {
+    if (!im || !im.ref || _seenRef.has(im.ref)) continue;
+    _seenRef.add(im.ref);
+    uniqImages.push(im);
+  }
   // 20261101：src='fs' 图片的 byteLen 在 writeContainerFile 阶段用 FS.stat 回填（stat 轻量不读内容，
   //   避免在这里提前 readFile 把 754MB 图全读进内存 → OOM）。这里只保证 images 已含 fsRef 标记。
-  if (onProgress) onProgress(images.length, images.length);
-  return { data, images };
+  if (onProgress) onProgress(uniqImages.length, uniqImages.length);
+  return { data, images: uniqImages };
 }
 
 /* 计算每张图在图片块里的 offset/len，并回填到 data 里的 {__img:4} 引用；返回 JSON 头字符串
@@ -24305,7 +24994,15 @@ async function collectImagesV4(node, onProgress = null) {
 function packContainerFile(data, images) {
   const imgMap = {};
   let cursor = 0;
-  for (const im of images) { imgMap[im.ref] = { offset: cursor, len: im.byteLen, mime: im.mime }; cursor += im.byteLen; }
+  for (const im of images) {
+    // 20261114 兜底：同一 ref 只允许推进一次 cursor。若上游漏了去重（同一 ref 出现多次），
+    //   旧写法会用「较后的 cursor」覆盖 imgMap 里的 offset，导致前面所有引用全部指向错误位置
+    //   （表现为图片错位/花屏），同时文件里还会多写一份同样的字节（备份体积翻倍）。
+    //   这里直接跳过重复项，保证 offset/len 与 writeContainerFile 的写入顺序严格一致。
+    if (imgMap[im.ref]) continue;
+    imgMap[im.ref] = { offset: cursor, len: im.byteLen, mime: im.mime };
+    cursor += im.byteLen;
+  }
   // 回填 offset/len 到 data 里的 {__img:4} 引用（含 thumbOffset/thumbLen）
   const seen = new WeakSet();
   (function walk(n) {
@@ -24339,87 +25036,26 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
       } catch (e) { im.byteLen = 0; }
     }));
   }
-  // ② 20261101 导出压缩：逐张读二进制 → compressForExport 压缩 → 存 im.compressed + 回填 byteLen。
-  //   压缩只改图片内容不改容器格式，导入端按 offset/len 读天然兼容（零改动）。
-  //   在 packContainerFile 之前统一压缩，offset 按压缩后 byteLen 累加，天然正确。
-  // 20261103 性能修复：① 读文件（src='fs'）改 6 路并发，缩短桥接串行等待；② 压缩预扫描
-  //   也按完成张数上报进度（onProgress），让「卡 67% 假死」变成可见的推进——此前这段
-  //   逐张串行读+压缩、且不报任何进度，几千张图要静默跑几分钟，进度条纹丝不动像卡死。
-  const READ_CONCURRENCY = 6;
-  let compressDone = 0;
+  // ② 20261114 导出压缩（并发版）：读二进制 → 转码 → 回填 im.compressed / byteLen。
+  //   压缩只改图片内容、不改容器格式，导入端按 offset/len 读天然兼容（零改动）。
+  //   旧实现是逐张串行的 for 循环（每张一次 base64 编解码 + canvas 重编码），
+  //   几千张图在真机上要十几分钟，进度条停在「图片转码」开头像卡死 —— 这就是用户
+  //   说的「卡在 67%」。现在交给 bmCompressExportImages：3 路并发 + 免 base64 中转
+  //   + WebP 输出 + 小图直通，同一批图通常能压到原来的 1/3 时间以内。
+  //   APP 端图片的实际字节在「文档/白日梦备份/白日梦图片数据」，按需读（readFsFile）。
   const compressTotal = images.length;
   // 统一进度口径：阶段2 = 压缩预扫描（前 50%）+ 写盘（后 50%），分母统一用 compressTotal*2，
   //   压缩上报 0~compressTotal，写盘上报 compressTotal~compressTotal*2，进度条不会「走满又回退」。
-  const reportCompress = () => { if (onProgress) { try { onProgress(compressDone, compressTotal * 2); } catch (e) {} } };
-  // 先把所有 src='fs' 的图并发读成二进制（Uint8Array），避免在压缩循环里串行 await 读文件。
-  const fsReadTasks = [];
-  for (let i = 0; i < images.length; i++) {
-    const im = images[i];
-    if (im.src === 'fs' && im.fsRef) {
-      fsReadTasks.push({ im, idx: i });
-    }
-  }
-  if (fsReadTasks.length) {
-    let fi = 0;
-    const fsWorker = async () => {
-      while (fi < fsReadTasks.length) {
-        const j = fi++;
-        const { im } = fsReadTasks[j];
-        try {
-          const r = await FS.readFile({ path: BM_IMG_FS_DIR + '/' + im.fsRef, directory: 'DOCUMENTS' });
-          const bin = atob(r.data);
-          const raw = new Uint8Array(bin.length);
-          for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k);
-          im._raw = raw;
-        } catch (e) { im._raw = new Uint8Array(0); }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, fsReadTasks.length) }, fsWorker));
-  }
-  for (let i = 0; i < images.length; i++) {
-    const im = images[i];
-    let raw;
-    if (im.src === 'blob' && im.blob) {
-      raw = new Uint8Array(await im.blob.arrayBuffer());
-    } else if (im.src === 'fs' && im.fsRef) {
-      raw = im._raw || new Uint8Array(0);
-    } else if (im.dataURL) {
-      const bin = atob(im.dataURL);
-      raw = new Uint8Array(bin.length);
-      for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k);
-    } else {
-      raw = new Uint8Array(0);
-    }
-    if (raw.byteLength > 0) {
-      try {
-        const res = await compressForExport(new Blob([raw], { type: im.mime || 'image/jpeg' }), im.mime);
-        if (res && res.blob) {
-          const cbytes = new Uint8Array(await res.blob.arrayBuffer());
-          // 只保留「确实变小」的压缩结果，避免压缩反而变大
-          im.compressed = (cbytes.byteLength < raw.byteLength) ? cbytes : raw;
-          im.byteLen = im.compressed.byteLength;
-          im.mime = res.mime || im.mime;
-        } else {
-          im.compressed = raw;
-          im.byteLen = raw.byteLength;
-        }
-      } catch (e) {
-        im.compressed = raw;
-        im.byteLen = raw.byteLength;
-      }
-    } else {
-      im.compressed = new Uint8Array(0);
-      im.byteLen = 0;
-    }
-    im.blob = null;      // 释放原始 Blob 引用，帮助 GC
-    im.dataURL = null;
-    im._raw = null;
-    compressDone++;
-    // 20261107 导出进度条修复：原来每 4 张才上报一次，大图库时中间长时间进度条纹丝不动，
-    //   玩家误以为卡死在 67%。改为【每张都上报】，让「写入文件」的压缩子进度持续可见推进。
-    reportCompress();
-  }
-  if (compressTotal > 0) reportCompress();
+  const reportCompress = (done) => { if (onProgress) { try { onProgress(done, compressTotal * 2); } catch (e) {} } };
+  const readFsFile = async (ref) => {
+    const r = await FS.readFile({ path: BM_IMG_FS_DIR + '/' + ref, directory: 'DOCUMENTS' });
+    const bin = atob(r.data);
+    const out = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k);
+    return out;
+  };
+  await bmCompressExportImages(images, (done) => reportCompress(done), readFsFile);
+  if (compressTotal > 0) reportCompress(compressTotal);
   // ② 写 JSON 头（含分隔符）
   const head = packContainerFile(data, images);
   const headB64 = await new Promise((res, rej) => {
@@ -25138,44 +25774,14 @@ async function exportAll() {
     });
     headData.version = '2.2';
     setStageProgress(1, 1, 1);
-    // 20261101 网页端导出压缩（补漏）：网页端无 Capacitor，走的是本 fallback 分支，之前漏了压缩，
-    //   导致网页端导出的 .ocdata 仍是 700MB+ 原图。这里与 APK 端 writeContainerFile 一致地
-    //   逐张 compressForExport 压缩 → 回填 im.compressed + im.byteLen，再 packContainerFile
-    //   用压缩后 byteLen 累加 offset，保证 offset/len 与实际写入的压缩字节严格一致。
-    let webCompressDone = 0;
+    // 20261114 网页端导出压缩：与 APP 端共用同一套并发转码（bmCompressExportImages），
+    //   不再逐张串行 base64 往返。回填 im.compressed + im.byteLen，之后 packContainerFile
+    //   按压缩后 byteLen 累加 offset，保证 offset/len 与实际写入字节严格一致。
     const webCompressTotal = images.length;
-    for (const im of images) {
-      let raw;
-      if (im.src === 'blob' && im.blob) {
-        raw = new Uint8Array(await im.blob.arrayBuffer());
-      } else if (im.dataURL) {
-        const bin = atob(im.dataURL);
-        raw = new Uint8Array(bin.length);
-        for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k);
-      } else {
-        raw = new Uint8Array(0);
-      }
-      if (raw.byteLength > 0) {
-        try {
-          const res = await compressForExport(new Blob([raw], { type: im.mime || 'image/jpeg' }), im.mime);
-          if (res && res.blob) {
-            const cbytes = new Uint8Array(await res.blob.arrayBuffer());
-            im.compressed = (cbytes.byteLength < raw.byteLength) ? cbytes : raw; // 只保留确实变小的
-            im.byteLen = im.compressed.byteLength;
-          } else {
-            im.compressed = raw; im.byteLen = raw.byteLength;
-          }
-        } catch (e) {
-          im.compressed = raw; im.byteLen = raw.byteLength;
-        }
-      } else {
-        im.compressed = new Uint8Array(0); im.byteLen = 0;
-      }
-      im.blob = null; im.dataURL = null; // 释放原始引用，帮助 GC
-      webCompressDone++;
-      // 20261107 导出进度条修复：与 APK 端一致，每张都上报，避免「写入文件」长时间卡在 0% 像卡死。
-      setStageProgress(2, webCompressDone, webCompressTotal);
-    }
+    await bmCompressExportImages(images, (done) => {
+      // 每张都上报，避免「写入文件」长时间停在 0% 像卡死
+      setStageProgress(2, done, webCompressTotal);
+    }, null);
     setStageProgress(2, 1, 1);
     const headStr = packContainerFile(headData, images); // JSON 头 + 分隔符（小，offset/len 已按压缩后字节算）
     const headBytes = new TextEncoder().encode(headStr);
@@ -25207,12 +25813,57 @@ async function exportAll() {
 
 /* ---------- 20261002ce：自动备份（防丢失兜底） ----------
    用户此前因卸载/数据目录重置丢失过全部数据（无备份），故新增静默自动备份：
-   · APK 端：把全量数据直接写到公共「文档/白日梦备份/白日梦自动备份.ocdata」（Capacitor Filesystem，
-     卸载应用不会被删除），无需用户手动点导出；
+   · APK 端：把全量数据写成公共「文档/白日梦备份/白日梦自动备份_<时间戳>.ocdata」单个容器文件
+     （Capacitor Filesystem，卸载应用不会被删除），无需用户手动点导出；
    · 网页端：Filesystem 不可用 → 静默跳过（网页版数据在浏览器，用户仍可手动导出）。
-   触发：应用启动后延迟 40s 首备（避开启动加载高峰）；之后每次切后台（appStateChange）补备一次。
-   全程静默、不弹窗、不打断；失败静默忽略（不打扰用户）。 */
-let _autoBackupRunning = false; // 20261006：防重入锁——写 518 图约 20s，期间切后台补备+40s首备可能并发触发，防重复写/重复清理
+   触发：应用启动后延迟 40s 首备（避开启动加载高峰）；之后每次切后台（appStateChange）补备一次；
+   同一天最多一次（20261005dz 限频，防反复打包图片）。全程静默、不弹窗、不打断。
+
+   20261115 改造（用户定案的「方案 A」）：写入格式由「目录式 auto-时间戳/manifest.json + images/」
+   改为「单文件容器 .ocdata」，与「手动导出全量备份」完全同构。
+   为什么必须改：旧实现调的是 collectImagesV3，它只认 {blob:Blob} 这种 20261101 之前的老格式；
+   而 20261101 起图片改存「文档/白日梦备份/白日梦图片数据」+ 消息里只留 {__img:5, ref} 引用，
+   于是自动备份**一张图都收不到**（等于只有文字的假备份），且对老格式也不去重。
+   现在改用导出侧同一套 collectImagesV4（按素材身份去重）+ writeContainerFile（并发 WebP 压缩、
+   流式写盘），自动备份与手动导出同格式、同去重、同压缩：体积从数百 MB 降到几十 MB，
+   恢复时可直接走导入端同一条容器解析链，也能把这个 .ocdata 拿去「导入全局备份」手动导入。 */
+const BM_AUTO_BACKUP_DIR = '白日梦备份';                            // 自动备份所在目录（公共文档目录下）
+const BM_AUTO_BACKUP_INDEX = '白日梦备份/白日梦自动备份索引.json';  // 列表用索引（只存统计，几十字节/条）
+const BM_AUTO_BACKUP_KEEP = 1;                                      // 只保留最近 N 份单文件备份（省空间，旧的删掉）
+const BM_AUTO_RESTORE_MAX_BYTES = 80 * 1024 * 1024;                 // 直接恢复的体积上限（原因见 doRestoreAutoBackup）
+
+/* 字节数 → 人类可读（恢复列表 / 体积提示用） */
+function bmFmtBytes(n) {
+  const v = Number(n) || 0;
+  if (v < 1024) return v + ' B';
+  if (v < 1024 * 1024) return (v / 1024).toFixed(0) + ' KB';
+  if (v < 1024 * 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB';
+  return (v / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+/* 把一段 JSON 以 base64 形式写进「文档」目录。
+   Capacitor 的 writeFile 在没有 encoding 参数时按 base64 解码写入，所以必须先转成 base64 正文。 */
+async function bmWriteJsonAsFile(FS, path, obj) {
+  const b64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
+    r.onerror = () => rej(new Error('读取失败'));
+    r.readAsDataURL(new Blob([JSON.stringify(obj)], { type: 'application/json' }));
+  });
+  await FS.writeFile({ path, data: b64, directory: 'DOCUMENTS', recursive: true });
+}
+
+/* 读「文档」目录下的文本文件并 JSON.parse（索引 / 清单用；都是小文件，直接整读） */
+async function bmReadJsonFile(FS, path) {
+  const r = await FS.readFile({ path, directory: 'DOCUMENTS' });
+  const b64 = String(r.data).replace(/[\r\n]/g, '');
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return JSON.parse(new TextDecoder('utf-8').decode(u8));
+}
+
+let _autoBackupRunning = false; // 20261006：防重入锁——写几百张图要几十秒，期间切后台补备+40s首备可能并发触发，防重复写/重复清理
 async function autoBackup() {
   if (_autoBackupRunning) return; // 已有备份在执行，直接跳过（不创建第二个 backup-set）
   _autoBackupRunning = true;
@@ -25232,49 +25883,60 @@ async function autoBackup() {
         return; // 今天已成功自动备份过，跳过
       }
     }
-    const safeData = await buildBackupPayload('3.0'); // 20261005ea：3.0 图片独立文件，返回含 {blob,thumb} 的原始 data
-    const { data, images } = await collectImagesV3(safeData); // 图片替换为 {__img:3, ref}，收集 dataUrl
+    const rawData = await buildBackupPayload('3.0'); // 读出全量原始数据（图片还是 {blob,thumb} / {__img:5} 引用）
+    // 20261115：改走导出侧同一套「去重 + 抽图」——同一张图被多处引用时只进容器一次。
+    const { data, images } = await collectImagesV4(rawData);
+    data.version = '2.2'; // 容器格式统一标 2.2（导入端靠分隔符识别，不看 version）
 
-    // 独立 backup-set 目录（每次自动备份一个完整集合，互不污染；不覆盖旧备份）
-    const setDir = '白日梦备份/auto-' + Date.now();
-    const imagesRelDir = setDir + '/images';
+    // 文件名带「到分钟」的时间戳：既是备份时间标识，也让新旧两份天然不同名 ——
+    // 写入是先写新文件、成功后才删旧的，所以任何时刻磁盘上都至少有一份完整可用的备份。
+    const pad2 = n => String(n).padStart(2, '0');
+    const now = new Date();
+    const stamp = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}-${pad2(now.getHours())}${pad2(now.getMinutes())}`;
+    const fname = '白日梦自动备份_' + stamp + '.ocdata';
+    const relPath = BM_AUTO_BACKUP_DIR + '/' + fname;
+    // 复用导出写盘：并发 WebP 压缩（小图直通、GIF/APNG 原样保护）+ JSON 头首块 + 图片分块 append，
+    // 全程流式、单张图驻留内存，不会出现「几百 MB 全塞进 JS 堆」的 OOM。
+    await writeContainerFile(relPath, data, images, 'DOCUMENTS', null);
 
-    // 逐张写图片（每张独立 writeFile，单次 bridge payload = 单张图大小，不再全量 98MB）
-    // 20261009：6 路并发提速（保持静默不弹进度——自动备份是后台兜底，不打扰用户）
-    const totalImg = images.length;
-    let wi = 0;
-    const writeWorker = async () => {
-      while (wi < totalImg) {
-        const img = images[wi++];
-        const b64 = img.dataUrl.slice(img.dataUrl.indexOf(',') + 1); // 去 data: 前缀 → 纯 base64
-        await FS.writeFile({ path: imagesRelDir + '/' + img.ref, data: b64, directory: 'DOCUMENTS', recursive: true });
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(6, totalImg) }, writeWorker));
+    // 实际落盘字节数（stat 只读元数据，不读内容）
+    let bytes = 0;
+    try { const st = await FS.stat({ path: relPath, directory: 'DOCUMENTS' }); bytes = (st && st.size) || 0; } catch (e) {}
 
-    // 写 manifest（全部图片写成功后才写——manifest 是「本次备份完成」的提交标记）
-    data.imagesDir = imagesRelDir; // 恢复端据此 FS.readFile 定位图片
-    const manifestJson = JSON.stringify(data);
-    const manifestB64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => { const s = String(r.result); res(s.slice(s.indexOf(',') + 1)); };
-      r.onerror = () => rej(new Error('读取失败'));
-      r.readAsDataURL(new Blob([manifestJson], { type: 'application/json' }));
-    });
-    await FS.writeFile({ path: setDir + '/manifest.json', data: manifestB64, directory: 'DOCUMENTS', recursive: true });
-
-    // 全部成功 → 才更新 lastAutoBackupAt（失败走 catch，不标记，下次可重试）
-    try { await setSetting('lastAutoBackupAt', Date.now()); } catch (e) {}
-
-    // 清理旧 backup-set（新备份完整成功后才清理；失败静默忽略，不影响本次成功）
+    // 写索引（= 「本次备份完成」的提交标记）。列表页只读它，绝不为了统计去整读几十 MB 的容器。
+    let idx = { v: 1, items: [] };
     try {
-      const oldSet = await getSetting('lastAutoBackupSet', '');
-      if (oldSet && oldSet !== setDir && FS.rmdir) {
-        try { await FS.rmdir({ path: oldSet, directory: 'DOCUMENTS', recursive: true }); } catch (e) {}
-      }
-    } catch (e) {}
-    try { await setSetting('lastAutoBackupSet', setDir); } catch (e) {}
-  } catch (e) { /* 静默失败，不打扰 */ }
+      const oldIdx = await bmReadJsonFile(FS, BM_AUTO_BACKUP_INDEX);
+      if (oldIdx && Array.isArray(oldIdx.items)) idx = oldIdx;
+    } catch (e) { /* 索引不存在/损坏 → 用空索引重建，不影响本次备份 */ }
+    idx.v = 1;
+    idx.items = (idx.items || []).filter(x => x && x.file && x.file !== fname);
+    idx.items.unshift({
+      file: fname,
+      ts: now.getTime(),
+      charCount: Array.isArray(data.characters) ? data.characters.length : 0,
+      msgCount: Array.isArray(data.messages) ? data.messages.length : 0,
+      imgCount: Array.isArray(images) ? images.length : 0, // 去重后的素材数（不是引用次数）
+      bytes,
+    });
+    const keep = idx.items.slice(0, BM_AUTO_BACKUP_KEEP);
+    const drop = idx.items.slice(BM_AUTO_BACKUP_KEEP);
+    idx.items = keep;
+    await bmWriteJsonAsFile(FS, BM_AUTO_BACKUP_INDEX, idx);
+
+    // 索引写成功才算本次备份完成 → 才更新 lastAutoBackupAt（失败走 catch，不标记，下次可重试）
+    try { await setSetting('lastAutoBackupAt', now.getTime()); } catch (e) {}
+    try { await setSetting('lastAutoBackupFile', fname); } catch (e) {}
+
+    // 清掉超出保留数的旧单文件备份（新备份已完整落盘，删旧的不会造成空档；失败静默忽略）
+    for (const it of drop) {
+      try { await FS.deleteFile({ path: BM_AUTO_BACKUP_DIR + '/' + it.file, directory: 'DOCUMENTS' }); } catch (e) {}
+    }
+  } catch (e) {
+    /* 静默失败，不打扰用户；只留一条最近错误（截断 200 字）供排查用，
+       例如「没有所有文件访问权限」导致一直写不进去时，能从这里看出原因。 */
+    try { await setSetting('lastAutoBackupError', String(e && e.message ? e.message : e).slice(0, 200)); } catch (e2) {}
+  }
   finally { _autoBackupRunning = false; } // 无论成功/异常都释放锁，避免一次失败永久锁死
 }
 
@@ -25976,6 +26638,10 @@ async function toggleMomentLike(postId, evt) {
 async function showMomentFromShare(postId) {
   if (!postId) return;
   let replyTo = null;
+  /* 20261115：补上评论的图片/表情包能力（与朋友圈正常评论弹窗一致）。
+     svImgs/svStks 放在 paint 外层，因为 paint 会被反复重建 DOM，附件必须活在重建之外。 */
+  let svImgs = [];
+  let svStks = [];
   const whoName = (who) => who === 'player' ? (playerProfile.name || '我')
     : ((characters.find(x => x.id === who) || {}).name || '梦角');
 
@@ -26016,14 +26682,29 @@ async function showMomentFromShare(postId) {
         <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px;">
           ${comments.length ? comments.map(cm => {
             const tgt = cm.replyTo ? comments.find(x => x.id === cm.replyTo) : null;
+            /* 20261115：评论里带的图/表情也要显示（以前只渲染文字，图片评论在这里是隐形的） */
+            const cImgs = (cm.imgs && cm.imgs.length) ? cm.imgs : (cm.img ? [cm.img] : []);
+            const cStks = (cm.stickers && cm.stickers.length) ? cm.stickers : (cm.sticker ? [cm.sticker] : []);
+            const attach = (cImgs.length || cStks.length) ? `<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
+                ${cImgs.map(im => `<img src="${imgSrcAttr(im, true)}" data-full="${imgSrcAttr(im)}" style="max-width:92px;max-height:92px;border-radius:8px;border:1px solid var(--border);object-fit:cover;">`).join('')}
+                ${cStks.map(s => `<span style="font-size:30px;line-height:1;">${emojiImgOf(s, 'msg-emoji') || escapeHtml(s)}</span>`).join('')}
+              </div>` : '';
             return `<div style="display:flex;align-items:flex-start;gap:8px;">
               <div style="flex:1;min-width:0;font-size:12.5px;line-height:1.6;word-break:break-word;">
-                <b style="color:var(--purple-soft);">${escapeHtml(whoName(cm.who))}</b>${tgt ? `<span style="color:var(--text-tertiary);"> 回复 ${escapeHtml(whoName(tgt.who))}</span>` : ''}：${escapeHtml(cm.content || '')}
+                <b style="color:var(--purple-soft);">${escapeHtml(whoName(cm.who))}</b>${tgt ? `<span style="color:var(--text-tertiary);"> 回复 ${escapeHtml(whoName(tgt.who))}</span>` : ''}：${escapeHtml(cm.content || '')}${attach}
               </div>
               <button data-msv-reply="${cm.id}" style="flex-shrink:0;background:none;border:none;color:var(--text-tertiary);font-size:11.5px;padding:2px 4px;cursor:pointer;">回复</button>
             </div>`;
           }).join('') : '<div style="font-size:12.5px;color:var(--text-tertiary);">还没有评论</div>'}
         </div>
+        <!-- 20261115：评论附件区（图片/表情包），与朋友圈正常评论弹窗同款能力 -->
+        <div id="msv-attach" style="margin-top:10px;"></div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn" id="msv-img" style="padding:7px 14px;font-size:12.5px;">${icon('image', 15)} 图片</button>
+          <button class="btn" id="msv-emoji" style="padding:7px 14px;font-size:12.5px;">${icon('emoji', 15)} 表情包</button>
+        </div>
+        <div id="msv-emoji-panel" style="display:none;margin-top:10px;border:1px solid var(--border);border-radius:14px;padding:12px;background:var(--bg-elevated-2);"></div>
+        <input type="file" id="msv-img-file" accept="image/*" style="display:none;">
         <div style="display:flex;gap:8px;margin-top:12px;">
           <input class="input" id="msv-input" placeholder="${replyName ? '回复 ' + escapeHtml(replyName) + '…' : '说点什么…'}" style="flex:1;min-width:0;">
           <button class="btn primary" id="msv-send" style="padding:0 16px;flex-shrink:0;">发送</button>
@@ -26040,19 +26721,60 @@ async function showMomentFromShare(postId) {
     document.querySelectorAll('[data-msv-reply]').forEach(b => {
       b.onclick = () => { replyTo = b.dataset.msvReply; paint(); };
     });
+
+    /* 20261115：附件预览区——与朋友圈评论弹窗同款交互，点右上角 × 移除 */
+    const renderSvAttach = () => {
+      const box = $('#msv-attach');
+      if (!box) return;
+      if (!svImgs.length && !svStks.length) { box.innerHTML = ''; return; }
+      box.innerHTML = `
+        ${svImgs.map((im, i) => `<div style="position:relative;display:inline-block;margin:2px 6px 2px 0;"><img src="${imgSrcAttr(im, true)}" style="max-width:110px;max-height:110px;border-radius:10px;border:1px solid var(--border);object-fit:cover;"><button data-svimgrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;line-height:18px;cursor:pointer;">${icon('close', 11)}</button></div>`).join('')}
+        ${svStks.map((s, i) => `<div style="position:relative;display:inline-block;font-size:40px;line-height:1;margin:2px 6px 2px 0;">${emojiImgOf(s, 'msg-emoji') || escapeHtml(s)}<button data-svstkrm="${i}" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;border:none;line-height:18px;cursor:pointer;">${icon('close', 11)}</button></div>`).join('')}`;
+      box.querySelectorAll('[data-svimgrm]').forEach(b => { b.onclick = () => { svImgs.splice(parseInt(b.dataset.svimgrm, 10), 1); renderSvAttach(); }; });
+      box.querySelectorAll('[data-svstkrm]').forEach(b => { b.onclick = () => { svStks.splice(parseInt(b.dataset.svstkrm, 10), 1); renderSvAttach(); }; });
+    };
+    renderSvAttach();
+    // 选图：复用全局 compressImage，长边 900、质量 0.68，与朋友圈评论保持同一处理
+    const svFile = $('#msv-img-file');
+    $('#msv-img').onclick = () => { if (svFile) svFile.click(); };
+    if (svFile) svFile.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      try { if (svImgs.length < 9) svImgs.push(await compressImage(f, 900, 0.68)); else miniToast('最多 9 张图片'); } catch (err) {}
+      e.target.value = '';
+      renderSvAttach();
+    };
+    // 表情包：复用全局 mountStickerPicker（图片表情与 Emoji 库两个 tab，可连续多选）
+    $('#msv-emoji').onclick = async () => {
+      const box = $('#msv-emoji-panel');
+      if (!box) return;
+      if (box.dataset.ready === '1') { box.style.display = box.style.display === 'none' ? '' : 'none'; return; }
+      box.dataset.ready = '1';
+      await mountStickerPicker(box, (st) => {
+        if (st.img) { if (svImgs.length < 9) svImgs.push(st.img); else { miniToast('最多 9 张图片'); return; } }
+        else if (svStks.length < 20) svStks.push(st.sticker);
+        renderSvAttach();
+      });
+    };
+
     const send = async () => {
       const input = $('#msv-input');
       const text = input ? (input.value || '').trim() : '';
-      if (!text) { focusInput(); return; }
+      // 20261115：允许只发图片/只发表情包（与朋友圈正常评论一致）
+      if (!text && !svImgs.length && !svStks.length) { focusInput(); return; }
       const arr = await loadMomentPosts();
       const p = arr.find(x => x.id === postId);
       if (!p) return;
       p.comments = Array.isArray(p.comments) ? p.comments : [];
       const cm = { id: uid('cm'), who: 'player', content: text, time: Date.now() };
       if (replyTo) cm.replyTo = replyTo;
+      // 字段名与朋友圈评论区完全一致（imgs/img、stickers/sticker），两边互相看得见
+      if (svImgs.length) { cm.imgs = [...svImgs]; cm.img = svImgs[0]; }
+      if (svStks.length) { cm.stickers = [...svStks]; cm.sticker = svStks[0]; }
       p.comments.push(cm);
       await saveMomentPosts(arr);
       replyTo = null;
+      svImgs = []; svStks = [];
       await paint();
       miniToast('已评论');
     };
@@ -29425,6 +30147,9 @@ function renderDivinationMeaning(pick) {
     scrollLast(loading);
 
     let data = null;
+    /* 20261114：把真实失败原因接住并显示 —— 以前 catch 里直接丢掉异常，
+       玩家永远只看到「可能是接口或额度问题」，无法判断是超时、截断还是 Key 错。 */
+    let errMsg = '';
     try {
       data = await divinationAIInterpret(st.question, st.pick, {
         brief: st.brief,
@@ -29433,14 +30158,15 @@ function renderDivinationMeaning(pick) {
         skipAsk: !!opts.skipAsk,
         askAgain: !!opts.askAgain,
       });
-    } catch (e) { data = null; }
+    } catch (e) { data = null; errMsg = (e && e.message) || ''; }
     st.busy = false;
     loading.remove();
 
     if (!data) {
       const err = document.createElement('div');
       err.className = 'divi-round divi-err';
-      err.textContent = 'AI 解牌没有返回内容（可能是接口或额度问题）。点「AI 解牌设置」检查一下，或者再发一次。';
+      err.textContent = 'AI 解牌没有返回内容' + (errMsg ? '：' + errMsg : '') +
+        '。点「AI 解牌设置」检查一下，或者再发一次。';
       host.appendChild(err);
       if (follow) follow.style.display = '';
       return;
@@ -33087,11 +33813,23 @@ async function callAI(url, key, model, messages, opts = {}) {
       return { ok: false, error: `${statusHint}${detail ? '：' + detail : ''}` };
     }
     const data = await res.json();
-    const text = data && data.choices && data.choices[0] && data.choices[0].message
-      ? (data.choices[0].message.content || '')
-      : '';
-    if (!text) return { ok: false, error: '返回内容为空' };
-    return { ok: true, text: text.trim() };
+    const choice = data && data.choices && data.choices[0];
+    const text = choice && choice.message ? (choice.message.content || '') : '';
+    /* 20261114：把 finish_reason 一起带出去（只加字段，不改其它调用方的行为）。
+       推理型模型（如 deepseek-flash）会先花 reasoning tokens 再写正文，
+       输出上限被思考吃满时 finish_reason 就是 'length'、正文可能一字不剩。
+       以前这里统一报「返回内容为空」，看不出真实原因。 */
+    const finish = choice ? (choice.finish_reason || '') : '';
+    if (!text) {
+      return {
+        ok: false,
+        finish,
+        error: finish === 'length'
+          ? '模型思考占满了输出上限，正文被截断（max_tokens 太小）'
+          : '返回内容为空',
+      };
+    }
+    return { ok: true, text: text.trim(), finish };
   } catch (e) {
     const msg = (e && e.name === 'AbortError') ? '请求超时（网络慢或服务无响应）'
       : ((e && e.message) || '网络错误');
@@ -34122,6 +34860,19 @@ const _bmMeetPending = {};
 /* 给 scheduleCharReply / scheduleGroupReply 用：按当前模式决定回复内容。
    返回 { type:'card'|'ai', text }。AI 失败时返回 { type:'card', text, fallback:true }。 */
 async function generateCharReply(charId, opts = {}) {
+  /* 20261114：角色自调数值（隐藏卡）。
+     机制：回复字卡池里多一张看不见的「修改数值」卡，抽中就把这一条回复换成
+     「开场话 + 申请小卡」，由 self-adjust.js 接管后续（同意 → 改 → 结果卡 → 可撤回清单）。
+     这里只是一个前置判定：命中就直接返回，下面所有原有逻辑一行没动。
+     · 群聊不触发（currentGroupId 有值就跳过）
+     · 字卡模式 / AI 模式都走这里，所以两种模式手感一致
+     · 没有冷却时间，也没有「拒绝后锁死」 */
+  try {
+    if (typeof bmSelfAdjustMaybe === 'function' && !currentGroupId) {
+      const _sa = await bmSelfAdjustMaybe(charId);
+      if (_sa) return _sa;
+    }
+  } catch (e) {}
   const aiOn = await isCharAIMode(charId);
   if (!aiOn) {
     const c = characters.find(x => x.id === charId);
@@ -34472,8 +35223,43 @@ async function divinationAIInterpret(question, pick, opts = {}) {
   if (opts.userNote) userTurn += `\n\n玩家的补充：${opts.userNote}`;
   messages.push({ role: 'user', content: userTurn });
 
-  const r = await callAI(url, key, model, messages, { temperature: 0.75, maxTokens: 1800, timeout: 90000 });
-  if (!r.ok) return null;
+  /* 20261114：修「补充信息后 AI 解牌没有返回内容」。
+     真机实测（同一配置、同一接口）：
+       · 首轮 reasoning_tokens 1262 + 正文 400，合计 1668，只剩 132 的余量；
+       · 补充一轮 reasoning 852、再补一轮 762 —— 思考的 token 波动极大；
+       · 把上限压到 400 时 finish_reason=length，正文只剩 40 字半截断句。
+     结论：旧的 maxTokens=1800 对推理型模型太紧，思考一波动就把正文挤光，
+     content 为空 → 玩家看到「AI 解牌没有返回内容」，与额度无关。
+     故：① 上限提到 6000（模型按需生成，不会真的写满，只是不再被思考挤死）；
+         ② 超时 90s → 120s（带历史后更慢）；
+         ③ 截断（finish=length）也算失败，半句解读比没有更糟；
+         ④ 失败兜底：把多轮历史压平成一条「前情提要」重发一次 ——
+            兼容对 assistant 多轮支持差的中转，且顺带把上下文收紧。 */
+  const CALL_OPTS = { temperature: 0.75, maxTokens: 6000, timeout: 120000 };
+  let r = await callAI(url, key, model, messages, CALL_OPTS);
+  let truncated = r.ok && r.finish === 'length';
+
+  if ((!r.ok || truncated) && (opts.history || []).length) {
+    const prev = (opts.history || [])
+      .filter(h => h && h.text)
+      .map(h => (h.role === 'user' ? '玩家当时说的：' : '你上一版给出的解读：') + h.text)
+      .join('\n\n');
+    const flatMessages = [
+      { role: 'system', content: diviSystemPrompt(brief, opts) },
+      {
+        role: 'user',
+        content: `【前情】\n${prev}\n\n【这一次】\n${userTurn}\n\n（请结合前情和这次的补充，直接给出更新后的完整解读，不要重复上一版的原话。）`,
+      },
+    ];
+    r = await callAI(url, key, model, flatMessages, CALL_OPTS);
+    truncated = r.ok && r.finish === 'length';
+  }
+
+  /* 失败要把真实原因抛给界面 —— 以前这里 return null，调用方只能显示一句
+     「可能是接口或额度问题」，真正的 HTTP 错误/截断/超时全被丢掉。 */
+  if (!r.ok) throw new Error(r.error || '接口没有返回内容');
+  if (truncated) throw new Error('解读被输出上限截断，请再发一次');
+
   const data = diviParse(r.text);
   data.brief = brief;
   return data;
