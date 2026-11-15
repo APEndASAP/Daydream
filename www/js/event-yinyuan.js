@@ -18,7 +18,7 @@
 /* 样式跟着层走，注进 #yy-root，不污染主项目全局 CSS */
 const CSS_TEXT = '\n#yy-root{position:fixed;inset:0;z-index:2147483020;pointer-events:none;}\n#yy-root .rl-layer{position:absolute;inset:0;z-index:2;pointer-events:none;overflow:visible;\n  transition:opacity .65s ease;}\n#yy-root .rl-layer .shadow{fill:none;stroke:#2a0710;stroke-width:3.4;opacity:.5;filter:blur(2.4px);}\n#yy-root .rl-layer .sheen{fill:none;stroke:#ffd2e4;stroke-width:.60;opacity:.09;}\n#yy-root .rl-layer .s1{fill:none;stroke:url(#rlGrad);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;\n  filter:drop-shadow(0 1px 2px rgba(40,0,10,.6));}\n#yy-root .rl-layer .s2{fill:none;stroke:#ff3d80;stroke-width:1.05;opacity:.46;stroke-linecap:round;\n  stroke-dasharray:11 13;filter:drop-shadow(0 0 2px rgba(255,60,120,.26));}\n#yy-root .rl-tp{fill:rgba(10,4,9,.70);}\n#yy-root .rl-t{font-family:"Songti SC","STSong","Noto Serif SC",serif;font-size:14.5px;font-weight:700;\n  fill:#ffa3bd;opacity:0;text-anchor:middle;dominant-baseline:middle;\n  paint-order:stroke;stroke:#1a0308;stroke-width:2.6;stroke-linejoin:round;\n  filter:drop-shadow(0 0 5px rgba(255,60,110,.40));}\n\n';
 /* 演出层的 SVG 骨架（跟预览稿完全一致，只是 id 收在 #yy-root 里） */
-const SVG_TPL = '<svg class="rl-layer" xmlns="http://www.w3.org/2000/svg">\n  <defs>\n    <linearGradient id="rlGrad" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#a81242"/><stop offset=".18" stop-color="#c41750"/>\n      <stop offset=".36" stop-color="#e0538c"/><stop offset=".54" stop-color="#b5134a"/>\n      <stop offset=".72" stop-color="#d94a80"/><stop offset=".88" stop-color="#a81242"/>\n      <stop offset="1" stop-color="#c41750"/>\n    </linearGradient>\n    <filter id="softOcc" x="-20%" y="-20%" width="140%" height="140%">\n      <feGaussianBlur stdDeviation=".7"/>\n    </filter>\n    <mask id="occl" maskUnits="userSpaceOnUse" x="0" y="0" width="360" height="740">\n      <rect class="occl-bg" x="0" y="0" width="360" height="740" fill="#fff"/>\n    </mask>\n    <path id="tp1" fill="none"/>\n  </defs>\n  <g id="maskTarget">\n    <path class="shadow"/><path class="s1"/><path class="sheen"/><path class="s2"/>\n  </g>\n  <g class="txt-layer"></g>\n</svg>';
+const SVG_TPL = '<svg class="rl-layer" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">\n  <defs>\n    <linearGradient id="rlGrad" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#a81242"/><stop offset=".18" stop-color="#c41750"/>\n      <stop offset=".36" stop-color="#e0538c"/><stop offset=".54" stop-color="#b5134a"/>\n      <stop offset=".72" stop-color="#d94a80"/><stop offset=".88" stop-color="#a81242"/>\n      <stop offset="1" stop-color="#c41750"/>\n    </linearGradient>\n    <filter id="softOcc" x="-20%" y="-20%" width="140%" height="140%">\n      <feGaussianBlur stdDeviation=".7"/>\n    </filter>\n    <mask id="occl" maskUnits="userSpaceOnUse" x="0" y="0" width="360" height="740">\n      <rect class="occl-bg" x="0" y="0" width="360" height="740" fill="#fff"/>\n    </mask>\n    <path id="tp1" fill="none"/>\n  </defs>\n  <g id="maskTarget">\n    <path class="shadow"/><path class="s1"/><path class="sheen"/><path class="s2"/>\n  </g>\n  <g class="txt-layer"></g>\n</svg>';
 
 const NS = 'http://www.w3.org/2000/svg';
 const DUR = 12400;          /* 整条线长满的时间 */
@@ -29,6 +29,7 @@ let TOPL = 96, BOTL = 652;      /* 文字禁区上下界（动态：头像下方
 let SAFE_T = 44;                /* 打结时的顶部安全区 */
 let nodes = [], totalS = 1, pxPerNode = 1;
 let knotZones = [], knotS = [], wrapFrom = 0, wrapTo = 0, wrapS = 0;
+let avUsed = null;              /* 本次建线时用到的头像矩形，用来发现「头部晚一步重排」 */
 let txtIdx = 0;
 let growT = 0;
 let root = null, rlLayer = null, txtLayer = null;
@@ -225,6 +226,7 @@ function buildBase(){
   SAFE_T = Math.min(64, H * .075);
   const ccx = av.cx, ccy = av.cy;
   const arx = av.w / 2 + 3.6, ary = av.h / 2 + 4.0;
+  avUsed = { cx: ccx, cy: ccy, w: av.w || 38, h: av.h || 38 };
 
   /* ① 从画面上方垂下来，落到头像顶上 */
   for (let i = 0; i <= 10; i++){
@@ -635,8 +637,14 @@ function buildDom() {
 
 /* 量尺寸：每次开演都重新量（横竖屏、键盘弹出、不同机型都吃得下） */
 function measure() {
-  W = Math.max(280, window.innerWidth || 360);
-  H = Math.max(420, window.innerHeight || 740);
+  /* 20261115d：以**装饰层自己的像素尺寸**为准。
+     原来用 innerWidth/innerHeight，且 H 被 Math.max(420, ...) 夹着 ——
+     键盘弹出时 innerHeight 会掉到 500 以下，一夹就和图层对不上，
+     SVG 按 preserveAspectRatio 缩放+居中，缠头像那一圈整体偏位（玩家看到的「裹不住」）。 */
+  let lw = 0, lh = 0;
+  try { const r = rlLayer.getBoundingClientRect(); lw = r.width; lh = r.height; } catch (e) {}
+  W = Math.max(280, Math.round(lw || window.innerWidth || 360));
+  H = Math.max(280, Math.round(lh || window.innerHeight || 740));
   rlLayer.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   const mb = root.querySelector('.occl-bg');
   if (mb) { mb.setAttribute('width', W); mb.setAttribute('height', H); }
@@ -688,7 +696,30 @@ window.bmYinyuanPlay = function () {
       measure();
       rebuild();
       run();
+      watchHead();
     };
+
+    /* 头部会「晚一步」重排：状态行/称号行到位、群名换行、返回键动画结束……
+       线是一条静止路径，头像一挪位，那一圈就裹不住了（玩家反馈「有时候裹不住」）。
+       开演后 6 秒内盯着头像矩形，只要挪了超过 1px 就按新位置重算一次。 */
+    function watchHead() {
+      const t0 = performance.now();
+      const iv = setInterval(function () {
+        if (!root || performance.now() - t0 > 6000) { clearInterval(iv); return; }
+        const el = document.getElementById('chat-avatar') ||
+                   document.querySelector('#view-chat .topbar .avatar');
+        if (!el || !el.getBoundingClientRect || !avUsed) return;
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        const dx = (r.left + r.width / 2) - avUsed.cx;
+        const dy = (r.top + r.height / 2) - avUsed.cy;
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1 ||
+            Math.abs(r.width - avUsed.w) > 1 || Math.abs(r.height - avUsed.h) > 1) {
+          measure();
+          rebuild();
+        }
+      }, 150);
+    }
     if (settling()) setTimeout(start, 340);
     else requestAnimationFrame(function () { requestAnimationFrame(start); });
 

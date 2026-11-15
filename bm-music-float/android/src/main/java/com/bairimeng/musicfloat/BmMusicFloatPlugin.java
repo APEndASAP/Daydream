@@ -144,6 +144,10 @@ public class BmMusicFloatPlugin extends Plugin {
 
     /* 迷你播放列表视图（20261109：改成独立系统悬浮窗，自己的 window + 可拖动 + 可关闭） */
     private View miniListPanel;
+    /* 20261113c：迷你播放列表的「编辑态」——默认 false，行尾只有 ★ 加入音乐库；
+       轻点列表标题栏进入编辑态后，行尾换成小号 ✕ 删除（用户要求删除键必须多一步才出现）。
+       与软件内 .bm-playlist-head 点击进入编辑态的行为保持一致。 */
+    private boolean miniListEditMode = false;
     private WindowManager.LayoutParams miniListParams;
     /* 20261109：记住玩家把迷你列表拖到的位置（关掉再开 / 选歌重建时沿用，不跳回默认位） */
     private int miniListX = Integer.MIN_VALUE, miniListY = Integer.MIN_VALUE;
@@ -913,6 +917,8 @@ public class BmMusicFloatPlugin extends Plugin {
     private static final String ICONS_REPEAT = "M17 2.5l3 3-3 3M20 5.5H8a4 4 0 0 0-4 4v1M7 21.5l-3-3 3-3M4 18.5h12a4 4 0 0 0 4-4v-1";
     private static final String ICONS_LIST = "M8.5 6.2h12M8.5 12h12M8.5 17.8h12";
     private static final String ICONS_CLOSE = "M18 6L6 18M6 6l12 12";
+    /* 20261113c：迷你播放列表行尾「加入音乐库」星标（描边风格，与其它图标一致） */
+    private static final String ICONS_STAR = "M12 3.6l2.55 5.2 5.75.83-4.16 4.06.98 5.72L12 16.7l-5.12 2.71.98-5.72L3.7 9.63l5.75-.83z";
     private static final String ICONS_EXPAND = "M15 3h6v6M9 21H3v-6M21 3l-7.5 7.5M3 21l7.5-7.5";
 
     /** 自绘图标 View：用 Path 绘制 SVG 线条图标，stroke 1.8/24 比例、圆角端点（与 icons.js 一致） */
@@ -1053,6 +1059,13 @@ public class BmMusicFloatPlugin extends Plugin {
             TextView headTitle = makeText(11, inkColor, true);
             headTitle.setText("播放列表（" + miniPlaylist.size() + "）");
             head.addView(headTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            /* 20261113c：编辑态在标题右侧显示「完成」，点了标题栏即可退出（与软件内一致） */
+            if (miniListEditMode) {
+                TextView doneTip = makeText(10, accentColor, true);
+                doneTip.setText("完成");
+                doneTip.setPadding(0, 0, dp(6), 0);
+                head.addView(doneTip, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
             IconBtn closeBtn = new IconBtn(getContext(), ICONS_CLOSE, dimColor, dp(20), dp(8), 0x00000000);
             closeBtn.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { dismissMiniList(); }
@@ -1137,6 +1150,38 @@ public class BmMusicFloatPlugin extends Plugin {
                     ar.setEllipsize(android.text.TextUtils.TruncateAt.END);
                     inf.addView(ar);
                     row.addView(inf, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+                    /* 20261113c：行尾按钮（两态）
+                       常态 = ★ 加入音乐库；编辑态（轻点标题栏进入）= 小号 ✕ 从列表移除。
+                       用户原话：「正常后面就只有添加到音乐库这个按钮」「删除的按钮必须是我
+                       点击了播放列表上方的那个导航栏之后才能够删除」「做的小一点点」。 */
+                    IconBtn actBtn = new IconBtn(getContext(),
+                            miniListEditMode ? ICONS_CLOSE : ICONS_STAR,
+                            miniListEditMode ? 0xFFC06A5A : dimColor,
+                            dp(miniListEditMode ? 18 : 20),
+                            miniListEditMode ? 5.2f : 6.4f,
+                            0x00000000);
+                    actBtn.setContentDescription(miniListEditMode ? "从列表移除" : "加入音乐库");
+                    actBtn.setOnClickListener(new View.OnClickListener() {
+                        @Override public void onClick(View v) {
+                            JSObject d = new JSObject();
+                            d.put("index", idx);
+                            if (miniListEditMode) {
+                                fireJsEvent("onRemove", d);
+                                /* 本地先移除并重画，不等 JS 回调（外部悬浮窗下 App 可能在后台，
+                                   来回一趟会明显迟滞）；JS 侧收到 onRemove 后会做真正的列表维护。 */
+                                try { if (idx >= 0 && idx < miniPlaylist.size()) miniPlaylist.remove(idx); } catch (Throwable t) {}
+                                if (miniPlayIndex >= miniPlaylist.size()) miniPlayIndex = miniPlaylist.size() - 1;
+                                dismissMiniList();
+                                try { showMiniList(); } catch (Throwable t) {}
+                            } else {
+                                fireJsEvent("onFavorite", d);
+                                // 乐观反馈：图标立刻变暗一点表示已加入，JS 写入音乐库
+                                try { actBtn.setAlpha(0.5f); } catch (Throwable t) {}
+                            }
+                        }
+                    });
+                    row.addView(actBtn, new LinearLayout.LayoutParams(dp(26), dp(26)));
 
                     row.setOnClickListener(new View.OnClickListener() {
                         @Override public void onClick(View v) {
@@ -1250,6 +1295,17 @@ public class BmMusicFloatPlugin extends Plugin {
                             if (dragging && miniListParams != null) {
                                 miniListX = miniListParams.x;
                                 miniListY = miniListParams.y;   // 记住位置，下次打开沿用
+                            }
+                            /* 20261113c：轻点标题栏（没有拖动）→ 切换编辑态，
+                               行尾由 ★ 换成小号 ✕；再点一次回常态。软件内那张大面板同款逻辑。 */
+                            if (!dragging && e.getActionMasked() == android.view.MotionEvent.ACTION_UP) {
+                                try {
+                                    if (miniListParams != null) { miniListX = miniListParams.x; miniListY = miniListParams.y; }
+                                    miniListEditMode = !miniListEditMode;
+                                    dismissMiniList();
+                                    showMiniList();
+                                } catch (Throwable t) {}
+                                return true;
                             }
                             dragging = false;
                             return false;
