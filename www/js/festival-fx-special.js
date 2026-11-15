@@ -37,7 +37,11 @@
   const TAU = Math.PI * 2;
   const rand = (a, b) => a + Math.random() * (b - a);
   const lerp = (a, b, t) => a + (b - a) * t;
-  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  /* 20261114：NaN 防御。真机上 TouchEvent 取不到坐标时（见 localPt 注释）会算出 NaN，
+     NaN 会被 clamp 原样传出去（`NaN < a` 和 `NaN > b` 都是 false），于是南瓜坐标、
+     拖动累计距离全被污染成 NaN —— 这正是「苹果只颤动切不动」「南瓜点亮后消失」的病根。
+     这里统一让非法值落到下限，宁可不动也不要画到坐标外。 */
+  const clamp = (v, a, b) => (!Number.isFinite(v) ? a : (v < a ? a : (v > b ? b : v)));
   // 指数趋近：每帧把 v 拉向 target，k 越大越快（与帧率无关）
   const approach = (v, target, k, dt) => v + (target - v) * (1 - Math.exp(-k * dt));
 
@@ -60,34 +64,133 @@
       canvas.width = W;
       canvas.height = H;
       S = W / 380; // 相对尺度基准
+      st._W = W; st._H = H; st._S = S;  // 首帧之前也要能给 down/up 用（点空白跳关靠它）
     };
 
+    /* 20261114 真机修复（苹果切不动 / 南瓜点亮后消失的根因）：
+       TouchEvent 对象本身**没有** clientX/clientY —— 直接在 touchstart/touchmove 上读
+       `e.clientX` 得到的是 undefined，减 rect.left 之后是 NaN。NaN 一路传下去：
+         · 万圣节：down 里 hypot(NaN) 恒为 false → 判定不到「点在南瓜上」；
+                   已经浮起时 clamp(NaN) 让 pcyT 变 NaN → 南瓜画到画布外，整只消失；
+         · 平安夜：move 里 hypot(NaN) 恒为 false → 永远攒不满拖动距离 → 只颤动、切不下片。
+       同时 pointerdown 与 touchstart 会**各触发一次 down**，一次点击等于点两下
+       （南瓜一下就「点亮 + 浮起」）。所以这里同时做两件事：坐标从 touches 里取、
+       并把事件源锁成「先到的那个」（pointer 优先，只发 touch 的 WebView 自动走 touch）。 */
     const localPt = (e) => {
       const r = canvas.getBoundingClientRect();
+      const tp = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || null;
+      const cx = tp ? tp.clientX : e.clientX;
+      const cy = tp ? tp.clientY : e.clientY;
       return {
-        x: (e.clientX - r.left) * (W / Math.max(1, r.width)),
-        y: (e.clientY - r.top) * (H / Math.max(1, r.height)),
+        x: (cx - r.left) * (W / Math.max(1, r.width)),
+        y: (cy - r.top) * (H / Math.max(1, r.height)),
       };
+    };
+    /* 坐标必须是有限数，否则直接丢弃这一帧（宁可少一次操作，也不让 NaN 污染状态机） */
+    const okPt = (p) => Number.isFinite(p.x) && Number.isFinite(p.y);
+    // '' = 还没确定；'pointer' / 'touch' = 已锁定的事件源
+    let src = '';
+
+    /* 20261116 手势加固（玩家点名：手势识别特别重要）
+       ① 手指绑定：只认「按下那一根」。旧实现任何一根手指的 move/up 都驱动游戏 ——
+          长按时第二根手指蹭到屏幕，摇树摆幅会突然反向、拖着的果子会瞬移；
+          多指时先抬起的那根还会提前结算。
+       ② 打断兜底：Android/WebView 长按会发 pointercancel / touchcancel（系统接管成
+          长按选择、或边缘返回手势），旧实现只监听 up —— cancel 一来手指状态就永远
+          停在「按下」：挑果的果子粘在手上、摇树的树一直摇、切完苹果随便划一下还在出片。
+          现在把 cancel 当成「原位放弃」：不结算成投放，把果子放回手里再清状态。
+       ③ 坐标复位：按下时同步 _mx/_my，避免上一轮残留的上一帧坐标让首帧算出巨大位移
+          （摇树一下掉三颗、切苹果一刀出十几片）。 */
+    let activeId = null;                 // 当前操作那根手指的 id（pointerId / touch identifier）
+    const ptId = (e, isTouch) => {
+      if (isTouch) {
+        const tp = (e.changedTouches && e.changedTouches[0])
+          || (e.touches && e.touches[0]) || null;
+        return tp && tp.identifier != null ? tp.identifier : null;
+      }
+      return typeof e.pointerId === 'number' ? e.pointerId : null;
     };
 
     const onDown = (e) => {
+      const isTouch = e.type.indexOf('touch') === 0;
+      if (!src) src = isTouch ? 'touch' : 'pointer';
+      if ((src === 'touch') !== isTouch) return; // 另一条链路的事件一律放掉，避免一次触摸算两下
       // 20261115：正式入梦签里 canvas 是 pointer-events:none，事件挂在整张卡片上；
       // 所以点「我收到啦」这类按钮时不能当成游戏操作，直接放过。
       if (e.target && e.target.closest && e.target.closest('button')) return;
+      if (activeId !== null) return;       // 已经有一根手指在操作，后来的手指不接管
       if (e.cancelable) e.preventDefault();
       const p = localPt(e);
+      if (!okPt(p)) return;
+      const id = ptId(e, isTouch);
+      activeId = (id == null) ? 'any' : id;
       st._ptrDown = true;
       st._px = p.x; st._py = p.y;
+      st._mx = p.x; st._my = p.y;
+      /* 记下这一下的落点：抬手时若几乎没移动，就算一次「点空白」（用来清屏） */
+      st._tapX = p.x; st._tapY = p.y; st._tapMoved = false;
       if (hooks.down) hooks.down(st, p.x, p.y, t, W, H, S);
     };
     const onMove = (e) => {
+      const isTouch = e.type.indexOf('touch') === 0;
+      if (src && (src === 'touch') !== isTouch) return;
+      if (activeId === null) return;       // 没按住 → 悬停不驱动任何操作
+      const id = ptId(e, isTouch);
+      if (activeId !== 'any' && id !== null && id !== activeId) return; // 别的手指，忽略
+      // 只有真的走 touch 链路时才拦滚动（pointer 链路下 touchstart 已被放掉，
+      //   这里再 preventDefault 会连带影响卡片的正常点击）
+      if (isTouch && e.cancelable && src === 'touch') e.preventDefault();
       const p = localPt(e);
+      if (!okPt(p)) return;
       const prevX = st._mx == null ? p.x : st._mx;
       const prevY = st._my == null ? p.y : st._my;
       st._mx = p.x; st._my = p.y;
+      /* 只要真的划过一段（约 14 CSS px），这一下就不再算「点空白」 */
+      if (st._tapX != null && Math.hypot(p.x - st._tapX, p.y - st._tapY) > 14 * S) st._tapMoved = true;
       if (hooks.move) hooks.move(st, p.x, p.y, prevX, prevY, t, W, H, S);
     };
-    const onUp = () => { st._ptrDown = false; if (hooks.up) hooks.up(st); };
+    /* 抬手（正常松手）：只认当前那根手指，别的手指抬起不结算 */
+    const onUp = (e) => {
+      if (activeId === null) return;
+      if (e) {
+        const isTouch = e.type.indexOf('touch') === 0;
+        if (src && (src === 'touch') !== isTouch) return;
+        const id = ptId(e, isTouch);
+        if (activeId !== 'any' && id !== null && id !== activeId) return;
+      }
+      /* 20261116：抬手前先判定「这一下是不是纯点击」—— 是的话把文字清屏。
+         放在 hooks.up 之前：清屏和这一下的原意（进下一阶段）互不干扰，
+         推进照常走，字照样收起来。拖动（挑果/切苹果）永远不算点击。 */
+      const pureTap = st._tapX != null && !st._tapMoved;
+      st._tapX = null; st._tapY = null; st._tapMoved = false;
+      activeId = null;
+      st._ptrDown = false;
+      if (pureTap) clearChrome();
+      if (hooks.up) hooks.up(st);
+    };
+    /* 被系统打断（pointercancel / touchcancel）：不放进容器，不触发结算 */
+    const onCancel = () => {
+      if (st.grab && st.grab.state === 'drag') {
+        const a = st.grab;
+        a.state = 'in'; a.x = a.hx; a.y = a.hy;
+        a.rot = a.homeRot || a.rot; a.lift = 0;
+        st.grab = null;
+      }
+      st.shakeOn = false;
+      st.washHold = false;
+      // 切苹果：丢弃这次按下的半截拖动，避免下次按下从旧距离继续累加
+      st.dragAcc = 0;
+      // 撒糖：被打断就当松手定格（已经倒下去的糖不会消失）
+      if (st.sugarPour) { st.sugarPour = false; st.sugarDone = true; st.sugarEndT = st.phaseT; }
+      activeId = null;
+      st._ptrDown = false;
+      st._tapX = null; st._tapY = null; st._tapMoved = false;
+      /* 刻意不调 hooks.up：up 在切苹果阶段代表「点空白送片」，系统打断不等于玩家
+         主动收手 —— 调了会把半截的片直接送进派里，属于替玩家做了决定。 */
+    };
+    /* 长按保护：卡片上禁止选中文本、禁止系统长按菜单（否则按住做游戏会弹菜单/选中文字） */
+    const onCtxMenu = (e) => { e.preventDefault(); return false; };
+    const onSelectStart = (e) => { e.preventDefault(); return false; };
 
     const frame = (now) => {
       if (!running) return;
@@ -105,6 +208,15 @@
     /* 20261115：事件目标——预览页里 canvas 自己接事件；正式入梦签里 canvas 是
        pointer-events:none 的背景层，必须把监听挂到外层卡片上（坐标仍按 canvas 的 rect 换算）。 */
     const host = (canvas.closest && canvas.closest('.festival-card')) || canvas;
+    /* 20261116（玩家要求）：小游戏里「第一次点空白」就把周边文字清屏 ——
+       头像行、节气名、标题、寄语一起淡出，画布拿到整张卡，手指怎么划都不压字。
+       只在 .fx-game（万圣节 / 平安夜 / 圣诞节这三张可玩卡）生效，
+       普通节日/节气卡的文字一个字都不动。按钮保留，玩家随时能关掉这张卡。 */
+    const isGameCard = !!(host.classList && host.classList.contains('fx-game'));
+    const clearChrome = () => {
+      if (!isGameCard || host.classList.contains('fx-cleared')) return;
+      host.classList.add('fx-cleared');
+    };
     /* 20261115：把宿主卡片挂到状态上 —— 小游戏进入「结算」时要给卡片加个 class，
        让底部的寄语淡出，把位置让给画布上的结果文字（不然两行字会叠在一起）。
        重做时再把 class 摘掉。 */
@@ -116,6 +228,8 @@
         resize();
         running = true;
         last = 0;
+        /* 重新开始一局 → 文字先回来（上一局点空白清掉的屏，这一局重新给玩家看） */
+        if (host.classList) host.classList.remove('fx-cleared');
         host.addEventListener('pointerdown', onDown);
         host.addEventListener('pointermove', onMove);
         // 触屏：部分 WebView 只发 touch 不发 pointer，补一条链路（与 app.js 里风场的处理一致）
@@ -125,6 +239,23 @@
         host.addEventListener('touchstart', onDown, { passive: false });
         window.addEventListener('pointerup', onUp);
         window.addEventListener('touchend', onUp);
+        /* 20261116 手势加固：系统打断 + 长按保护。
+           · cancel：长按/边缘手势被系统接管时 WebView 发这个事件，必须兜住，
+             否则状态机永远停在「按下」（见上面 onCancel 注释）。
+           · contextmenu / selectstart：长按弹出「选择文字/保存图片」菜单，
+             看起来就像页面被系统踢出去了 —— 卡片上手势区内一律禁掉。 */
+        host.addEventListener('pointercancel', onCancel);
+        host.addEventListener('touchcancel', onCancel, { passive: true });
+        window.addEventListener('pointercancel', onCancel);
+        window.addEventListener('touchcancel', onCancel, { passive: true });
+        host.addEventListener('contextmenu', onCtxMenu);
+        host.addEventListener('selectstart', onSelectStart);
+        /* 手势区不吃滚动/缩放：三张可玩卡都是定高布局，手指划动全部交给游戏。
+           旧样式下纵向划会带着卡片滚，手指一离开再回来坐标就错位。 */
+        host.style.touchAction = 'none';
+        host.style.webkitUserSelect = 'none';
+        host.style.userSelect = 'none';
+        host.style.webkitTouchCallout = 'none';
         raf = requestAnimationFrame(frame);
         if (hooks.resume) hooks.resume();
       },
@@ -136,8 +267,20 @@
         host.removeEventListener('pointermove', onMove);
         host.removeEventListener('touchmove', onMove);
         host.removeEventListener('touchstart', onDown);
+        host.removeEventListener('pointercancel', onCancel);
+        host.removeEventListener('touchcancel', onCancel);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('touchend', onUp);
+        window.removeEventListener('pointercancel', onCancel);
+        window.removeEventListener('touchcancel', onCancel);
+        host.removeEventListener('contextmenu', onCtxMenu);
+        host.removeEventListener('selectstart', onSelectStart);
+        host.style.touchAction = '';
+        host.style.webkitUserSelect = '';
+        host.style.userSelect = '';
+        host.style.webkitTouchCallout = '';
+        activeId = null;
+        st._ptrDown = false;
         if (hooks.pause) hooks.pause();
       },
       get running() { return running; },
@@ -412,6 +555,28 @@
     ctx.restore();
   }
 
+  /* 场景顶部的计数（已摇下 N 颗 / 新鲜 N / 已洗净 N）——
+     垫一层半透明药丸，压到窗户/树冠/水柱上也能读清，不靠背景。 */
+  function drawCountTag(ctx, text, cx, cy, S, color) {
+    const fs = 10.5 * S;
+    ctx.save();
+    ctx.font = '600 ' + fs + 'px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(text).width;
+    const ph = fs * 1.95, pw = tw + fs * 2.1;
+    ctx.globalAlpha = 0.66;
+    ctx.fillStyle = 'rgba(12,8,22,0.72)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(cx - pw / 2, cy - ph / 2, pw, ph, ph / 2);
+    else ctx.rect(cx - pw / 2, cy - ph / 2, pw, ph);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color || 'rgba(255,232,200,0.94)';
+    ctx.fillText(text, cx, cy);
+    ctx.restore();
+  }
+
   const halloweenHooks = {
     init() {
       return {
@@ -451,6 +616,14 @@
          速度用来算倾斜角，飞的时候会明显"侧身"，停稳后自动回正。 */
       if (st.pcx == null) { st.pcx = W * 0.5; st.pcxT = W * 0.5; }
       if (st.pcy == null) { st.pcy = H * 0.62; st.pcyT = H * 0.62; }
+      /* 20261114：NaN 自愈。approach() 对 NaN 是「永远 NaN」，一旦被污染，
+         南瓜会永远画在画布外（玩家看到的就是「点亮后整只南瓜消失、只剩一个圈」）。
+         这里每帧检查一次，非有限数就复位到默认位置，不需要玩家重进卡片。 */
+      if (!Number.isFinite(st.pcx) || !Number.isFinite(st.pcy)) { st.pcx = W * 0.5; st.pcy = H * 0.62; }
+      if (!Number.isFinite(st.pcxT) || !Number.isFinite(st.pcyT)) { st.pcxT = st.pcx; st.pcyT = st.pcy; }
+      if (!Number.isFinite(st.lit)) st.lit = 0;
+      if (!Number.isFinite(st.float)) st.float = 0;
+      if (!Number.isFinite(st.pressT)) st.pressT = 0;
       const prevPcx = st.pcx;
       st.pcx = approach(st.pcx, st.pcxT, 4.6, dt);
       st.pcy = approach(st.pcy, st.pcyT, 4.0, dt);
@@ -1091,18 +1264,31 @@
      n = 已经码进去的片数（0~10）。装盘时每落一片 n 加一，所以「落下来」和
      「最后成品的馅」是同一份位置、同一份画法 —— 片不会落到别处，也不会跳。
      画在网格皮下面：网格条之间的空隙就是透过派皮看到的苹果馅。 */
-  function drawAppleFilling(ctx, cx, cy, r, ry, n, k, sugared) {
+  function drawAppleFilling(ctx, cx, cy, r, ry, n, k, sugared, dim) {
     const cnt = Math.max(0, Math.min(EVE_FILL_SLOTS.length, Math.round(n)));
     if (cnt <= 0) return;
     const baked = clamp(k / 4, 0, 1);          // 烤的程度：片从奶白慢慢烤成琥珀
 
     // ① 馅底色：熬过的苹果酱（焦糖化），中心受光、边缘压暗
-    const fg = ctx.createRadialGradient(cx - r * 0.14, cy - ry * 0.34, r * 0.05, cx, cy, r * 1.00);
-    fg.addColorStop(0, mixC('#b3711f', '#77400c', baked * 0.55));
-    fg.addColorStop(0.60, mixC('#8f5013', '#4f2406', baked * 0.55));
-    fg.addColorStop(1, mixC('#68360c', '#2e1403', baked * 0.55));
+    /* 20261116 第七轮（玩家）：「几乎没馅」「皮比馅多」两炉看起来像一坑泥 ——
+       因为馅底不分多少都把整个派面铺满了深棕。现在覆盖半径跟着片数缩：
+       片少 → 只在中间熬出一小圈馅，四周是烤得金黄的派皮；
+       塞满 → 铺到边沿，靠卷边收住。边缘加一段透明过渡，不留下硬圆边。 */
+    const cov = 0.44 + 0.56 * clamp(cnt / EVE_FILL_SLOTS.length, 0, 1);
+    /* 片特别少的时候（几乎没馅），底下不该是一汪深褐色的酱 ——
+       那看起来像糊了一坑焦糖。少馅时改成「烤干的派皮内壁」色，
+       这样读起来是「皮多馅少」，不是「酱烧糊了」。 */
+    const dryPan = cnt <= 5;
+    const cIn = dryPan ? mixC('#c8a068', '#a37b3e', baked) : mixC('#b3711f', '#77400c', baked * 0.55);
+    const cMid = dryPan ? mixC('#a87f45', '#7d5628', baked) : mixC('#8f5013', '#4f2406', baked * 0.55);
+    const cOut = dryPan ? mixC('#8a6733', '#5c3d18', baked) : mixC('#68360c', '#2e1403', baked * 0.55);
+    const fg = ctx.createRadialGradient(cx - r * 0.14, cy - ry * 0.34, r * 0.05, cx, cy, r * cov);
+    fg.addColorStop(0, cIn);
+    fg.addColorStop(0.55, cMid);
+    fg.addColorStop(0.86, cOut);
+    fg.addColorStop(1, 'rgba(46,20,3,0)');
     ctx.beginPath();
-    ctx.ellipse(cx, cy, r * 0.955, ry * 0.955, 0, 0, TAU);
+    ctx.ellipse(cx, cy, r * 0.955 * cov, ry * 0.955 * cov, 0, 0, TAU);
     ctx.fillStyle = fg;
     ctx.fill();
 
@@ -1123,9 +1309,13 @@
       ctx.fillStyle = 'rgba(62,28,4,0.34)';   // 片身下的接触阴影（片与片之间那道缝靠它撑出层次）
       ctx.fill();
       // 果肉：没烤透时奶白，烤过转琥珀；外弧那道边是削皮后烤上的焦糖色
+      /* dim：成品阶段顶部已经有一圈整齐的苹果片，馅层这十几片如果还那么清楚，
+         两层片叠在一起就成了「撒了一把杏仁」。这里把它们压成底纹。 */
+      const dk = dim || 0;
+      ctx.globalAlpha = 1 - 0.62 * dk;
       const flesh = baked <= 0.04 ? '#f8ebc9' : mixC('#f8ebc9', '#e0a457', baked);
       const edge = baked <= 0.04 ? '#e5cd9a' : mixC('#e5cd9a', '#b06b26', baked);
-      drawWedge(ctx, sr, s.rot, flesh, edge);
+      drawWedge(ctx, sr, s.rot, mixC(flesh, '#96561a', 0.45 * dk), mixC(edge, '#7a4410', 0.45 * dk));
       ctx.restore();
     }
 
@@ -1156,6 +1346,123 @@
       sg.addColorStop(1, 'rgba(255,190,90,0)');
       ctx.fillStyle = sg;
       ctx.fillRect(cx - r, cy - ry, r * 2, ry * 2);
+      ctx.restore();
+    }
+  }
+
+  /* ---------- 顶部那一圈苹果片（20261116 第七轮） ----------
+     玩家原话：「苹果应该是最上面也会很规整的摆一圈，码得很整齐」。
+     这一圈不参与「馅够不够」的判定，只是成品该有的样子：沿卷边内侧等距排开，
+     片的长轴一律走切线方向（一圈片层层压着，才是码上去的，不是撒上去的）。
+     片数由 opt.fill 换算 —— 馅少的派只码几片，不会凭空变满。 */
+  function drawAppleRing(ctx, cx, cy, r, ry, n, k, bright) {
+    const baked = clamp(k / 4, 0, 1);
+    const br = bright || 0;
+    /* 20261116 第八轮（玩家）：试过「弧形瓦」——一片片连起来像切好的八块点心；
+       又试过「斜切口弯瓦」——像贴上去的纸片。都不对。
+       回到「一圈统一的椭圆苹果片」，但把三件事调好：
+         ① 片沿半径方向、朝心，一圈看起来才是「码上去的」；
+         ② 片够宽够厚（不再是细杏仁），相邻两片之间的空隙很窄；
+         ③ 描边改成软阴影，不要硬亮边 —— 硬边一出现就像贴纸。 */
+    const ringR = 0.655;
+    const sr = r * 0.315;
+    const flesh = mixC(mixC('#f5dc9f', '#dda45a', baked), '#fdeac2', 0.55 * br);
+    const edge = mixC(mixC('#cd8c39', '#96510f', baked), '#dd9c48', 0.45 * br);
+    const list = [];
+    for (let i = 0; i < n; i++) list.push(-Math.PI / 2 + (i / n) * TAU);
+    /* 从远到近画：靠下的片压住靠上的片，这一圈才有厚度 */
+    list.sort((p, q) => Math.sin(p) - Math.sin(q));
+    for (let idx = 0; idx < list.length; idx++) {
+      const a = list[idx];
+      const px = cx + Math.cos(a) * r * ringR;
+      const py = cy + Math.sin(a) * ry * ringR;
+      ctx.save();
+      ctx.translate(px, py);
+      // 接触阴影：片与派面之间那道缝
+      ctx.beginPath();
+      ctx.ellipse(sr * 0.06, sr * 0.22, sr * 0.78, sr * 0.32, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(58,26,4,0.24)';
+      ctx.fill();
+      ctx.scale(1, 0.70);
+      ctx.rotate(a);
+      /* 每片亮度只差一点点（±4%）：差多了就是「一堆不同材质的贴纸」 */
+      const jit = (pieHash(idx * 4.7 + 2.2) - 0.5) * 0.08;
+      const fl = mixC(flesh, jit > 0 ? '#fff3d6' : '#cfa05c', Math.abs(jit));
+      const eg = mixC(edge, jit > 0 ? '#e6ae60' : '#8a4a10', Math.abs(jit));
+      const pg = ctx.createRadialGradient(-sr * 0.16, -sr * 0.10, sr * 0.02, 0, 0, sr * 0.66);
+      pg.addColorStop(0, mixC(fl, '#fffdf4', 0.62));
+      pg.addColorStop(0.55, fl);
+      pg.addColorStop(1, eg);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, sr * 0.615, sr * 0.315, 0, 0, TAU);
+      ctx.fillStyle = pg;
+      ctx.fill();
+      // 软描边：只是把片和派面分开，不抢眼
+      ctx.strokeStyle = 'rgba(140,82,26,0.30)';
+      ctx.lineWidth = Math.max(0.7, sr * 0.045);
+      ctx.stroke();
+      /* 不再画那条「种子上的一道白高光」——它就是让片看起来像瓜子的元凶。
+         受光改由上面的径向渐变承担，片身只留极淡的一点湿润感。 */
+      ctx.beginPath();
+      ctx.ellipse(-sr * 0.10, -sr * 0.075, sr * 0.30, sr * 0.14, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.06 + 0.08 * br).toFixed(3) + ')';
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* 「几乎没馅」那一炉：整张派皮上只有中间孤零零两片苹果。
+     玩家要的是「苹果只在最中间留了个影子」—— 片要看得清，
+     但只有两片、挤在中心，四周全是烤得干爽的派皮。 */
+  function pieFewSlices(ctx, cx, cy, r, S, e) {
+    const ry = r * 0.40;
+    const POS = [
+      { u: -0.13, v: -0.03, rot: -0.58 },
+      { u: 0.14, v: 0.04, rot: 0.54 },
+    ];
+    ctx.save();
+    ctx.globalAlpha = e;
+    for (const p of POS) {
+      const px = cx + p.u * r;
+      const py = cy + p.v * ry * 2.0;
+      const sr = r * 0.235;
+      // 先压一层浅影：片是嵌在派皮里的，不是摆在上面
+      ctx.beginPath();
+      ctx.ellipse(px, py + sr * 0.18, sr * 0.92, sr * 0.44, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(60,28,6,0.26)';
+      ctx.fill();
+      ctx.save();
+      ctx.translate(px, py);
+      drawWedge(ctx, sr, p.rot, '#f9ecca', '#d9b979');
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /* ---------- 夹心层（塞满/流心那几炉） ----------
+     玩家要的是「中间有夹心、顶上这层也有区别」：
+     在中心再码一小圈紧凑的苹果片、底下垫一层发亮的糖心，
+     这样透过密网格看下去能读成「两层馅」，而不是糊成一团。 */
+  function drawPieCore(ctx, cx, cy, r, ry, k) {
+    const baked = clamp(k / 4, 0, 1);
+    const cg = ctx.createRadialGradient(cx, cy - ry * 0.12, r * 0.02, cx, cy, r * 0.44);
+    cg.addColorStop(0, 'rgba(255,232,168,' + (0.95 - 0.22 * baked).toFixed(3) + ')');
+    cg.addColorStop(0.50, 'rgba(246,178,84,' + (0.74 - 0.16 * baked).toFixed(3) + ')');
+    cg.addColorStop(1, 'rgba(214,130,44,0)');
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.52, ry * 0.52, 0, 0, TAU);
+    ctx.fillStyle = cg;
+    ctx.fill();
+    // 中心四小片：紧凑地围住圆心，让「夹心」有实体
+    const flesh = baked <= 0.04 ? '#f9eecd' : mixC('#f9eecd', '#e3a95e', baked);
+    const edge = baked <= 0.04 ? '#e7d09e' : mixC('#e7d09e', '#b4702a', baked);
+    for (let i = 0; i < 4; i++) {
+      const a = -Math.PI / 2 + (i / 4) * TAU + 0.4;
+      const px = cx + Math.cos(a) * r * 0.27;
+      const py = cy + Math.sin(a) * ry * 0.27;
+      ctx.save();
+      ctx.translate(px, py);
+      drawWedge(ctx, r * 0.155, a + Math.PI / 2, flesh, edge);
       ctx.restore();
     }
   }
@@ -1242,7 +1549,18 @@
       ctx.ellipse(cx, cy, r * 0.955, ry * 0.955, 0, 0, TAU);   // 收一点，给卷边留位置
       ctx.clip();
       drawAppleFilling(ctx, cx, cy, r, ry,
-        clamp(opt.fill, 0, 1) * EVE_FILL_SLOTS.length, k, !!opt.sugared);
+        clamp(opt.fill, 0, 1) * EVE_FILL_SLOTS.length, k, !!opt.sugared,
+        opt.topRing > 0 ? clamp(opt.lattice || 0, 0, 1) * 0.95 : 0);
+      ctx.restore();
+    }
+
+    // ⑥-b 夹心层：塞满的那几炉，中心多一层（画在网格之下，透过缝看得到两层）
+    if (opt.core && opt.fill > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, r * 0.955, ry * 0.955, 0, 0, TAU);
+      ctx.clip();
+      drawPieCore(ctx, cx, cy, r, ry, k);
       ctx.restore();
     }
 
@@ -1259,16 +1577,21 @@
          于是成品只剩下一个光板深棕色 —— 玩家看到的就是「派上没有苹果片」。
          网格皮之间的空隙本来就应该透出馅，所以这里只压一层很淡的暗色
          （模拟派内部的阴影），不再用实色整块覆盖。 */
-      ctx.fillStyle = 'rgba(52,22,4,' + (0.20 + 0.12 * clamp(k / 4, 0, 1)).toFixed(3) + ')';
+      /* 20261116 第七轮：网格加密后条数翻倍，原来那层压暗如果照旧会叠成一片黑，
+         于是馅和苹果片全糊掉。压暗降到 0.10~0.20，片才亮得起来。 */
+      ctx.fillStyle = 'rgba(52,22,4,' + (0.10 + 0.10 * clamp(k / 4, 0, 1)).toFixed(3) + ')';
       ctx.fillRect(cx - r, cy - ry, r * 2, ry * 2);
       // 卷边内侧再压一圈内阴影：格子里才有「凹下去」的深度，不像贴纸
       const ig = ctx.createRadialGradient(cx, cy, r * 0.52, cx, cy, r * 0.99);
       ig.addColorStop(0, 'rgba(40,16,2,0)');
-      ig.addColorStop(1, 'rgba(40,16,2,' + (0.28 * lat).toFixed(3) + ')');
+      ig.addColorStop(1, 'rgba(40,16,2,' + (0.20 * lat).toFixed(3) + ')');
       ctx.fillStyle = ig;
       ctx.fillRect(cx - r, cy - ry, r * 2, ry * 2);
-      const stripW = Math.max(2.2, r * 0.098);
-      const step = r * 0.46;
+      const stripW = Math.max(2.0, r * 0.055);
+      /* 20261116 第七轮（玩家）：饼皮条原来 step 0.46r、只铺 ±3 条，
+         裁进派里只剩四根，看着像敷衍。现在 0.245r、铺 ±7 条 ——
+         每个方向都有七八根，编得密、折叠多，才像折叠过的派皮。 */
+      const step = r * 0.245;
       // 第 1 组（压在下面，偏暗）
       ctx.save();
       ctx.translate(cx, cy);
@@ -1276,7 +1599,7 @@
       ctx.strokeStyle = mixC(bakeColor(k), '#5c3008', 0.30);
       ctx.lineWidth = stripW;
       ctx.lineCap = 'butt';
-      for (let i = -3; i <= 3; i++) {
+      for (let i = -7; i <= 7; i++) {
         const yy = i * step;
         ctx.beginPath(); ctx.moveTo(-r * 1.15, yy); ctx.lineTo(r * 1.15, yy); ctx.stroke();
       }
@@ -1285,7 +1608,7 @@
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(-0.52);
-      for (let i = -3; i <= 3; i++) {
+      for (let i = -7; i <= 7; i++) {
         const yy = i * step;
         ctx.strokeStyle = mixC(bakeColor(k), '#3f2204', 0.32);
         ctx.lineWidth = stripW * 1.18;
@@ -1301,6 +1624,7 @@
       ctx.globalAlpha = 1;
       ctx.restore();
     }
+
 
     // ⑧ 卷边（最上层）：粗环 + 褶皱。派皮卷起来那圈才是它"成形"的样子
     const rimC = mixC(bakeColor(k), '#7d4a12', 0.26);
@@ -1350,6 +1674,17 @@
         ctx.ellipse(ox, oy, r * 0.16, ry * 0.20, -0.5, Math.PI * 1.05, Math.PI * 1.72);
         ctx.stroke();
       }
+      ctx.restore();
+    }
+
+
+    // ⑦-b 顶部那一圈苹果片：**画在卷边和蛋液之后**，才压得住卷边的内阴影
+    if (opt.topRing > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, r * 0.99, ry * 0.99, 0, 0, TAU);
+      ctx.clip();
+      drawAppleRing(ctx, cx, cy, r, ry, opt.topRing, k, opt.ringBright || 0);
       ctx.restore();
     }
 
@@ -1630,9 +1965,50 @@
     ctx.fillText(title, W * 0.5, y);
     ctx.shadowBlur = 0;
     if (sub) {
-      ctx.font = (10.5 * S) + 'px system-ui, -apple-system, sans-serif';
+      /* 判定语现在是每一档一句完整的话（最长 40 字左右）。
+         旧做法只缩字号：缩到 8S 就停，长句仍会顶出画布、还会小到看不清。
+         现在分两步：能缩就缩（缩到 9.2S 为止），仍放不下就按标点折成两行。 */
+      const maxW = W * 0.88;
+      /* 20261116 第七轮（玩家）：判定语跟标题贴太紧，且字偏小。
+         基准 10.5S → 11.6S，最小 9.2S → 10S；与标题的间距 19S → 27S。 */
+      const baseFs = 11.6 * S;
+      ctx.font = baseFs + 'px system-ui, -apple-system, sans-serif';
+      const tw = ctx.measureText(sub).width;
+      let lines = [sub];
+      let fs = baseFs;
+      if (tw > maxW) {
+        const fit = Math.max(10 * S, baseFs * maxW / tw);
+        ctx.font = fit + 'px system-ui, -apple-system, sans-serif';
+        if (ctx.measureText(sub).width <= maxW) {
+          fs = fit;
+        } else {
+          // 折两行：优先在标点后断，没有标点就取中点
+          const half = sub.length / 2;
+          let cut = -1, bestD = 1e9;
+          const marks = '，。！？；：、—…';
+          for (let i = 1; i < sub.length - 1; i++) {
+            if (marks.indexOf(sub[i]) >= 0) {
+              const d = Math.abs(i - half);
+              if (d < bestD) { bestD = d; cut = i; }
+            }
+          }
+          if (cut < 0 || bestD > sub.length * 0.30) cut = Math.ceil(half) - 1;
+          lines = [sub.slice(0, cut + 1), sub.slice(cut + 1)];
+          // 两行各占一半宽，字号可以回到接近原尺寸
+          fs = 11 * S;
+          ctx.font = fs + 'px system-ui, -apple-system, sans-serif';
+          const wMax = Math.max(ctx.measureText(lines[0]).width, ctx.measureText(lines[1]).width);
+          if (wMax > maxW) fs = Math.max(9.6 * S, fs * maxW / wMax);
+          ctx.font = fs + 'px system-ui, -apple-system, sans-serif';
+        }
+      }
       ctx.fillStyle = 'rgba(246,232,214,0.80)';
-      ctx.fillText(sub, W * 0.5, y + 19 * S);
+      const lh = fs * 1.28;
+      /* 两行时以原位为中心上下对称展开：整块不往下长，免得压住「点一下重做」 */
+      const y0 = y + 27 * S - (lines.length - 1) * lh * 0.5;
+      lines.forEach((ln, i) => {
+        ctx.fillText(ln, W * 0.5, y0 + i * lh);
+      });
     }
     ctx.restore();
   }
@@ -1649,10 +2025,38 @@
   const eveHooks = {
     init() {
       return {
-        phase: 'board',       // 见文件头注释的 7 个阶段
+        /* 20261116：前置三个流程（玩家点名要的「从树上到案板」）——
+           ⓪ shake 摇树摘果 → ⓪-2 pick 挑出新鲜果 → ⓪-3 wash 洗净 → ① board 切苹果。
+           后面 ②~⑦ 一字未动，所以「切/撒糖/装盘/刷蛋液/烤/出炉」的手感与上一版完全一致。 */
+        phase: 'shake',       // 起点从切苹果前移到摇苹果树
         phaseT: 0,            // 本阶段已经过的时间（过场动画靠它推进）
         fade: 1,              // 场景淡入
         doneK: 0,             // 出炉后的成品升起进度
+        // —— ⓪ 摇树摘果
+        treeReady: false,     // 树/篮/枝头苹果是否已按当前画布尺寸摆好
+        treeApples: [],       // 还挂在枝头的苹果 [{x,y,r,rot,no}]
+        dropApples: [],       // 正在下落的苹果（抛物线）
+        basket: [],           // 已落进篮子的苹果
+        shakeAmp: 0,          // 树的摆幅 0~1（拖动时涨、松手衰减）
+        shakeAcc: 0,          // 本次按住累计的横向位移（够一格就掉一颗）
+        shakeDir: 0,          // 上一次的拖动方向（±1，反转时额外加摆幅）
+        shakeOn: false,       // 这一按是不是按在树上
+        shakeCount: 0,        // 已摇下来的颗数
+        // —— ⓪-2 挑果（篮子里 4 好 2 坏，好果挑进木台，坏果拨进废料筐）
+        pickReady: false,
+        pick: [],             // [{bad,state:'in'|'fly'|'ok'|'out',x,y,tx,ty,r,rot,vr}]
+        pickOut: 0,           // 已挑出的好果数
+        pickBadOut: 0,        // 已拨走的坏果数
+        pickBadIn: 0,         // 20261116：混进木盘的坏果数（结算按它降级）
+        pickGoodOut: 0,       // 20261116：被丢进废料筐的好果数（少一份馅）
+        badRatio: 0,          // 20261116：进案板时算好的坏果率（结算与台词共用）
+        pickAllAt: -1,        // 旧字段：原来「分完自动去洗果」用的，已改成点空白才走，保留只为老存档/调试兼容
+        // —— ⓪-3 洗果
+        washReady: false,
+        wash: [],             // [{x,y,r,clean,wet,ph}]
+        washHold: false,
+        washDoneAt: -1,
+        washProgress: 0,      // 平均洗净度 0~1
         // —— ① 切苹果
         cuts: 0,              // 已切下的片数（含碎渣）
         goodCuts: 0,          // 其中「完整片」数（划得太短只能算碎渣）
@@ -1718,6 +2122,75 @@
         s.y = approach(s.y, s.ty, 11, dt);
         s.rot = approach(s.rot, s.trot, 9, dt);
         if (Math.hypot(s.x - s.tx, s.y - s.ty) < 1.6 * S) { s.flying = false; s.x = s.tx; s.y = s.ty; s.rot = s.trot; }
+      }
+
+      /* ===== ⓪ 摇树摘果（20261116 新增）=====
+         按住树干左右摇 → 摆幅越大幅度越高 → 每摇够一段距离掉一颗苹果 →
+         苹果抛物线落进右下角的木篮 → 枝头空了再停 0.9 秒，自动进「挑果」。 */
+      if (st.phase === 'shake') {
+        if (!st.treeReady && W) eveOrchardLayout(st, W, H);
+        st.shakeAmp = approach(st.shakeAmp, 0, 2.0, dt);   // 松手后自己停下来
+        for (let i = st.dropApples.length - 1; i >= 0; i--) {
+          const a = st.dropApples[i];
+          a.vy += 1500 * S * dt;
+          a.x += a.vx * dt; a.y += a.vy * dt; a.rot += a.vr * dt;
+          if (a.y >= a.ty) {
+            st.dropApples.splice(i, 1);
+            st.basket.push({ x: a.x, y: a.ty, r: a.r, rot: rand(-0.5, 0.5), bad: a.bad, no: a.no, bounce: 1 });
+          }
+        }
+        // 落进篮子后轻轻弹一下（纯视觉，不影响落点）
+        for (const b of st.basket) if (b.bounce > 0) b.bounce = Math.max(0, b.bounce - dt * 2.2);
+        if (!st.treeApples.length && !st.dropApples.length && st.phaseT > 0.9) eveStartPick(st, W, H, S);
+      }
+
+      /* ===== ⓪-2 挑果：点好果 → 飞进左边木台；点坏果 → 拨进右下废料筐 ===== */
+      if (st.phase === 'pick') {
+        if (!st.pickReady && W) evePickLayout(st, W, H);
+        if (st.pickHintT > 0) st.pickHintT = Math.max(0, st.pickHintT - dt);
+        for (const a of st.pick) {
+          if (a.state === 'drag') { a.lift = Math.min(1, (a.lift || 0) + dt * 5); continue; }
+          if (a.state === 'back') {                     // 放错了：飘回原位
+            a.lift = Math.max(0, (a.lift || 0) - dt * 4);
+            a.x = approach(a.x, a.tx, 8, dt);
+            a.y = approach(a.y, a.ty, 8, dt);
+            a.rot = approach(a.rot, a.trot || 0, 7, dt);
+            if (Math.hypot(a.x - a.tx, a.y - a.ty) < 1.4 * S) {
+              a.x = a.tx; a.y = a.ty; a.rot = a.trot || 0;
+              a.state = 'in'; a.lift = 0;
+            }
+            continue;
+          }
+          if (a.state !== 'fly') continue;
+          a.x = approach(a.x, a.tx, 9, dt);
+          a.y = approach(a.y, a.ty, 9, dt);
+          a.rot = approach(a.rot, a.trot || 0, 8, dt);
+          a.lift = Math.max(0, (a.lift || 0) - dt * 4);
+          if (Math.hypot(a.x - a.tx, a.y - a.ty) < 1.4 * S) {
+            a.x = a.tx; a.y = a.ty; a.rot = a.trot || 0;
+            // 20261116：落位后的状态看「进了哪个容器」，不再看好坏 ——
+            //   坏果进木盘也要算「已挑好」，它后面会被切进派里。
+            a.state = a.inTray ? 'ok' : 'out';
+          }
+        }
+        /* ★ 20261116（玩家要求）：**不再自动推进**。
+           以前「全部分拣完 → 停 0.8 秒自动去洗」，导致刚放好的果子没机会改 ——
+           玩家要的是：只要还没点空白进下一步，盘里/筐里的果子都能再拖出来重放。
+           所以这里只保留松手落位，进水洗完全交给「点空白」那个动作。 */
+      }
+
+      /* ===== ⓪-3 洗果：按住在水龙头下左右抹，四颗都洗到发亮才放上案板 ===== */
+      if (st.phase === 'wash') {
+        if (!st.washReady && W) eveWashLayout(st, W, H);
+        let sum = 0;
+        for (const a of st.wash) {
+          if (a.clean < 1) a.clean = clamp(a.clean, 0, 1);
+          if (a.wet > 0) a.wet = Math.max(0, a.wet - dt * 0.22);
+          sum += a.clean;
+        }
+        st.washProgress = st.wash.length ? sum / st.wash.length : 0;
+        if (st.washProgress >= 0.999 && st.washDoneAt < 0) st.washDoneAt = st.phaseT;
+        if (st.washDoneAt >= 0 && st.phaseT - st.washDoneAt > 0.75) eveStartBoard(st);
       }
 
       /* ===== ① 切苹果 =====
@@ -1885,6 +2358,54 @@
     move(st, x, y, px, py, t, W, H, S) {
       // 刷蛋液阶段：按住移动就是刷
       if (st.phase === 'glaze' && st._ptrDown) { eveGlazeAt(st, x, y, W, H, S); return; }
+      /* ⓪-2 挑果：拖着走。手指有偏移也算，苹果始终在指腹上方一点，不被手指挡住 */
+      if (st.phase === 'pick') {
+        const a = st.grab;
+        if (!a || a.state !== 'drag' || !st._ptrDown) {
+          // 空手划过空白 → 这一次就不算「点空白跳关」了（玩家的本意是拖，不是点）
+          /* 20261116 真机：阈值原来 10*S，手机上 S≈2.8 只剩 9~10 CSS px，
+             手指点按时正常抖动就能超过去 → 玩家觉得「点了没反应」。
+             空手划动在挑果阶段没有别的用途，放宽到 16*S（≈15 CSS px）不影响判断。 */
+          if (st._pickTap && Math.hypot(x - st._pickTapX, y - st._pickTapY) > 16 * S) st._pickTapMoved = true;
+          return;
+        }
+        a.x = clamp(x + st.grabDX, W * 0.05, W * 0.95);
+        a.y = clamp(y + st.grabDY - W * 0.035, H * 0.36, H * 0.80);
+        a.lift = Math.min(1, (a.lift || 0) + 0.20);
+        return;
+      }
+      /* ⓪ 摇树：横向拖动累积摆幅；左右换向额外加一把劲（真摇树就是来回晃） */
+      if (st.phase === 'shake') {
+        if (!st.shakeOn || !st._ptrDown) return;
+        const dx = x - px;
+        if (!dx) return;
+        const ad = Math.abs(dx);
+        st.shakeAmp = clamp(st.shakeAmp + ad / (W * 0.16), 0, 1);
+        const dir = dx > 0 ? 1 : -1;
+        if (st.shakeDir && dir !== st.shakeDir) st.shakeAmp = clamp(st.shakeAmp + 0.10, 0, 1);
+        st.shakeDir = dir;
+        st.shakeAcc += ad;
+        if (st.shakeAcc >= W * 0.13 && st.treeApples.length) {
+          st.shakeAcc = 0;
+          eveDropOne(st, W, H, S);
+        }
+        return;
+      }
+      /* ⓪-3 洗果：按住在苹果上左右抹，抹的长度换算成洗净度 */
+      if (st.phase === 'wash') {
+        if (!st.washHold || !st._ptrDown) {
+          if (st._washTap && Math.hypot(x - st._washTapX, y - st._washTapY) > 16 * S) st._washTapMoved = true;
+          return;
+        }
+        const ad = Math.abs(x - px) + Math.abs(y - py);
+        for (const a of st.wash) {
+          if (a.clean >= 1) continue;
+          if (Math.hypot(x - a.x, y - a.y) > a.r * 1.55) continue;
+          a.clean = clamp(a.clean + ad / (W * 0.30) * 0.55, 0, 1);
+          a.wet = 1;
+        }
+        return;
+      }
       if (st.phase !== 'board') return;
       if (!st._ptrDown) return;
       st._moved = true;                    // 有过拖动 → 抬手时就不算「点空白」
@@ -1917,6 +2438,32 @@
     /* 抬手 */
     up(st) {
       st.dragAcc = 0;
+      st.shakeOn = false;      // ⓪ 松手 → 树自己停下来
+      st.washHold = false;     // ⓪-3 松手 → 停止擦洗
+      /* ⓪-2 挑果：松手结算——落在木盘/废料筐才算放下，放错弹回 */
+      if (st.phase === 'pick') {
+        if (st.grab) { evePickRelease(st); return; }
+        /* 20261116（玩家要求）：哪怕没分完，只要在空白处「单纯点一下」就进洗果。
+           这里刻意要求那一下没有滑动（_pickTapMoved）—— 拖着果子划过空白抬手，
+           不算点击，不能把玩家正在分拣的那一局提前结束。 */
+        const tap = st._pickTap && !st._pickTapMoved;
+        st._pickTap = false; st._pickTapMoved = false;
+        if (tap) {
+          const W = st._W, H = st._H, S = st._S;
+          if (!W) return;
+          // 盘里一颗都没有就不放行：空盘去洗、再切，出来只能是个没有馅的派皮
+          if (!(st.pickOut > 0)) { evePickSay(st, '先挑一颗放进木盘，再点空白去洗', true); return; }
+          eveStartWash(st, W, H, S);
+        }
+        return;
+      }
+      /* ⓪-3 洗果：没洗完也能点空白直接上案板（洗到什么程度算什么程度，结算按洗净度算） */
+      if (st.phase === 'wash') {
+        const tap = st._washTap && !st._washTapMoved;
+        st._washTap = false; st._washTapMoved = false;
+        if (tap && st._W) eveStartBoard(st);
+        return;
+      }
       /* ② 撒糖：松手就定格，糖量不再变（再按住也没用） */
       if (st.phase === 'sugar') {
         if (st.sugarPour) { st.sugarPour = false; st.sugarDone = true; st.sugarEndT = st.phaseT; }
@@ -1934,6 +2481,52 @@
     },
 
     down(st, x, y, t, W, H, S) {
+      /* ⓪ 摇树：按在树干/树冠上才算「抓住树」，按空白不摇 */
+      if (st.phase === 'shake') {
+        const g = eveTreeGeom(W, H);
+        const onTree = Math.abs(x - g.trunkX) < W * 0.16 && y > H * 0.44 && y < H * 0.86;
+        st.shakeOn = onTree;
+        st.shakeAcc = 0;
+        st._ptrDown = true;
+        return;
+      }
+      /* ⓪-2 挑果：按住哪颗就「拎起」哪颗，全程玩家自己拖。
+         20261116：这里不判好坏 —— 好坏只在松手那一刻记账（坏果混进木盘会被切进派里）。 */
+      if (st.phase === 'pick') {
+        st._ptrDown = true;
+        st.grab = null;
+        st._pickTap = false; st._pickTapMoved = false;
+        /* ★ 20261116：篮子里（in）、木盘里（ok）、废料筐里（out）都能重新拎起来。
+           拎出一颗已分好的，就先把它的账撤掉（place 清空 + 重算 + 重排），
+           松手时再按落点重新记 —— 全程不点空白，就可以一直改。 */
+        for (const a of st.pick) {
+          if (a.state !== 'in' && a.state !== 'ok' && a.state !== 'out') continue;
+          if (Math.hypot(x - a.x, y - a.y) <= a.r * 1.7) {
+            st.grab = a;
+            st.grabDX = a.x - x; st.grabDY = a.y - y;
+            if (a.place) { a.place = ''; evePickRecount(st); }
+            a.state = 'drag'; a.lift = 0;
+            st.pickHint = ''; st.pickHintT = 0;
+            break;
+          }
+        }
+        /* 20261116（玩家要求）：没抓着果的那一下先记下来 —— 抬手时若「没滑动过」，
+           就是一次明确的「点空白」，直接去洗果；拖动经过空白不算。 */
+        if (!st.grab) { st._pickTap = true; st._pickTapX = x; st._pickTapY = y; }
+        return;
+      }
+      /* ⓪-3 洗果：按在任意一颗上就算开始擦 */
+      if (st.phase === 'wash') {
+        st._ptrDown = true;
+        st.washHold = false;
+        st._washTap = false; st._washTapMoved = false;
+        for (const a of st.wash) {
+          if (Math.hypot(x - a.x, y - a.y) <= a.r * 1.6) { st.washHold = true; a.wet = 1; break; }
+        }
+        // 同上：按在苹果之外的地方，抬手没滑动就算一次「点空白」→ 直接上案板
+        if (!st.washHold) { st._washTap = true; st._washTapX = x; st._washTapY = y; }
+        return;
+      }
       /* ① 切苹果：记下这一下是落在苹果上还是空白上。
          空白要不要「送片」不在这里决定 —— 等抬手时确认没拖过，才算一次点击。 */
       if (st.phase === 'board') {
@@ -1986,9 +2579,15 @@
         st.sliceScore = sliceScore;
         st.bakeScore = bakeScore;
         st.coatScore = Math.round(clamp(st.coat, 0, 1) * 20);
-        st.total = clamp(sliceScore + st.sugarScore + st.coatScore + bakeScore, 0, 100);
+        /* 20261116：没洗干净要真的扣分，否则「点空白跳过洗果」就是白赚时间。
+           四档：干净 0 / 略脏 -4 / 没洗净 -9 / 带泥 -15。 */
+        const washPenalty = [0, 4, 9, 15][clamp(st.dirty || 0, 0, 3)];
+        st.washPenalty = washPenalty;
+        st.total = clamp(sliceScore + st.sugarScore + st.coatScore + bakeScore - washPenalty, 0, 100);
+        /* 20261116：有坏果、或没洗干净，都绝不可能是「最完美的苹果派」。 */
         st.isPerfect = (st.cookResult === 'perfect' && inGold && n === EVE_FULL_SLICES &&
-          st.trash === 0 && st.sugarScore >= 20 && st.coatScore >= 20);
+          st.trash === 0 && st.sugarScore >= 20 && st.coatScore >= 20 &&
+          (st.badRatio || 0) <= 0 && (st.dirty || 0) === 0);
         st.phase = 'done'; st.phaseT = 0; st.doneK = 0; st.fade = 0;
         // 结算：底部的寄语淡出，把这块地方让给画布上的结果文字
         if (st.__host && st.__host.classList) st.__host.classList.add('fx-result');
@@ -1999,6 +2598,10 @@
           st.__host.dataset.pie = JSON.stringify({
             perfect: !!st.isPerfect, cook: st.cookResult || '',
             slices: st.plated || 0, sweet: st.sugar || 0,
+            // 20261116：坏果率一并带给卡片，送出时的台词要按它换口气
+            badRatio: Number((st.badRatio || 0).toFixed(3)), badN: st.pickBadIn || 0,
+            // 20261116：洗净档也带出去 —— 送派那句话要和结算页说的是同一件事
+            dirty: clamp(st.dirty || 0, 0, 3), washP: Number((st.washP || 0).toFixed(3)),
           });
         }
         return;
@@ -2053,6 +2656,251 @@
     return { x: g.cx + u * g.r, y: g.cy + rand(-1, 1) * chord * g.r * 0.40 * 0.94 };
   }
   /* 案板阶段（切苹果）的几何：苹果、砧板、旁边的木托，判定和绘制都用这一份 */
+  /* ============================================================
+   * 20261116 新增：苹果派的前三个流程
+   *   ⓪ 摇树摘果 → ⓪-2 挑出新鲜果 → ⓪-3 洗净 → ① 切苹果（原有）
+   * 三段共用同一套「暖色厨房 + 木器」配色，和后面的案板/派盘接得上。
+   * 所有坐标都按 W/H 归一化，卡片多宽都适配（与其余场景一致）。
+   * ============================================================ */
+
+  /* 苹果树的几何：树干在左，木篮在右下 —— 摇下来的果子才有「飞过去」的距离感。
+     20261116 排版修正：整组元素必须收在 0.79H 以内 —— 卡片底部还有一句寄语（约 0.80H）
+     和操作提示条（0.845H），上一版把地面画到 0.85H，篮子和提示条直接压住了文字。 */
+  function eveTreeGeom(W, H) {
+    return {
+      trunkX: W * 0.300,
+      trunkW: W * 0.055,
+      trunkTop: H * 0.500,
+      groundY: H * 0.760,
+      crownX: W * 0.300,
+      crownY: H * 0.515,
+      crownR: W * 0.195,
+      basketX: W * 0.755,
+      basketY: H * 0.700,
+      basketRx: W * 0.105,
+      basketRy: W * 0.055,
+    };
+  }
+
+  /* 摆树：6 颗苹果按「固定相对位」挂在树冠上。
+     固定而不是随机 —— 玩家每次重玩看到的是同一棵树，才好比较手感；
+     其中第 3、第 6 颗是坏果（摇树阶段外观一样，挑果阶段才露馅）。 */
+  function eveOrchardLayout(st, W, H) {
+    const g = eveTreeGeom(W, H);
+    const rel = [[-0.55, -0.28], [0.12, -0.52], [0.58, -0.20], [-0.34, 0.26], [0.38, 0.30], [-0.02, 0.02]];
+    st.treeApples = rel.map((p, i) => ({
+      x: g.crownX + p[0] * g.crownR * 0.80,
+      y: g.crownY + p[1] * g.crownR * 0.80,
+      r: W * 0.032,
+      rot: rand(-0.3, 0.3),
+      no: i,
+      bad: (i === 2 || i === 5),
+    }));
+    st.basket = [];
+    st.dropApples = [];
+    st.treeReady = true;
+  }
+
+  /* 摇下来一颗：从枝头脱落 → 抛物线对准篮子 */
+  function eveDropOne(st, W, H, S) {
+    if (!st.treeApples.length) return;
+    const idx = Math.floor(Math.random() * st.treeApples.length);
+    const a = st.treeApples.splice(idx, 1)[0];
+    const g = eveTreeGeom(W, H);
+    const tx = g.basketX + rand(-0.045, 0.045) * W;
+    const ty = g.basketY - g.basketRy * 0.10;   // 落点在篮口内侧，不会浮在篮沿上
+    const vx = (tx - a.x) / 0.46;      // 按 ~0.46s 的下落时间预先配平水平速度
+    st.dropApples.push({
+      x: a.x, y: a.y, vx, vy: 40 * S, ty,
+      rot: a.rot, vr: rand(-5, 5), r: a.r, bad: a.bad, no: a.no,
+    });
+    st.shakeCount = (st.shakeCount || 0) + 1;
+  }
+
+  /* 进挑果：把篮子里的 6 颗摆进篮口（3 列 × 2 行） */
+  function evePickLayout(st, W, H) {
+    const cols = [-0.55, 0, 0.55], rows = [-0.45, 0.45];
+    const cx = W * 0.580, cy = H * 0.672, rx = W * 0.225, ry = W * 0.092;
+    // 兜底：万一篮子里没有记录（调试跳阶段、或摇树被跳过），也要凑够 6 颗
+    const src = (st.basket && st.basket.length) ? st.basket : [
+      { bad: false, no: 0 }, { bad: false, no: 1 }, { bad: true, no: 2 },
+      { bad: false, no: 3 }, { bad: false, no: 4 }, { bad: true, no: 5 },
+    ];
+    st.pick = src.map((b, i) => {
+      const c = i % 3, r = Math.floor(i / 3) % 2;
+      const px2 = cx + cols[c] * rx;
+      const py2 = cy + rows[r] * ry;
+      const hrot = rand(-0.4, 0.4);
+      return {
+        bad: !!b.bad, no: b.no == null ? i : b.no,
+        state: 'in',
+        place: '',                         // 还没分拣（进木盘 / 废料筐后才记）
+        x: px2, y: py2,
+        hx: px2, hy: py2, homeRot: hrot,   // 原点：放错了要弹回这里
+        tx: 0, ty: 0, lift: 0,
+        r: W * 0.040, rot: hrot, trot: 0,
+      };
+    });
+    st.pickReady = true;
+  }
+
+  /* 挑果的两个投放点。判定用椭圆，偏大一圈，手指粗也放得进去。 */
+  function evePickZone(x, y, W, H) {
+    const tx = W * 0.160, ty = H * 0.598, trx = W * 0.150, try_ = W * 0.088;
+    if (Math.pow((x - tx) / trx, 2) + Math.pow((y - ty) / try_, 2) <= 1) return 'tray';
+    const wx = W * 0.130, wy = H * 0.712, wrx = W * 0.108, wry = W * 0.074;
+    if (Math.pow((x - wx) / wrx, 2) + Math.pow((y - wy) / wry, 2) <= 1) return 'bin';
+    return '';
+  }
+
+  function evePickSay(st, text, bad) {
+    st.pickHint = text || '';
+    st.pickHintT = text ? 1.7 : 0;
+    st.pickHintBad = !!bad;
+  }
+
+  /* ★ 20261116（玩家要求）：已经分好的果子必须能**再拖出来重放** ——
+     只要还没点空白进下一步，就一直在分拣这一局里。
+     这就带来一个问题：旧代码是松手时 pickOut+1、只增不减，
+     把盘里的果子再拖出来重放，计数只会越数越多（盘里显示 5 颗、其实只摆了 3 颗）。
+     所以「账」改成从每颗果子自己的 place 重算一遍（tray / bin / 空），
+     顺便把两个容器里的位置紧凑重排 —— 拖走一颗，后面的会自己补上来。
+     place：'' 未分拣 / 'tray' 木盘（要切的）/ 'bin' 废料筐（丢的）。 */
+  function evePickRecount(st) {
+    let out = 0, badIn = 0, bin = 0, goodOut = 0;
+    for (const a of st.pick) {
+      if (a.place === 'tray') { out++; if (a.bad) badIn++; }
+      else if (a.place === 'bin') { bin++; if (!a.bad) goodOut++; }
+    }
+    st.pickOut = out; st.pickBadIn = badIn;
+    st.pickBadOut = bin; st.pickGoodOut = goodOut;
+
+    const W = st._W, H = st._H;
+    if (!W || !H) return;
+    /* 木盘 4 个位一循环、废料筐 2 列一循环 —— 和原来松手时的排法一致，
+       只是现在每次重算都会重排，位子永远紧凑、不会留空洞。 */
+    const dxAll = [-0.048, 0.048, -0.048, 0.048];
+    const dyAll = [-0.021, -0.021, 0.021, 0.021];
+    let ti = 0, bi = 0;
+    for (const a of st.pick) {
+      let tx = a.tx, ty = a.ty;
+      if (a.place === 'tray') {
+        const k = ti++ % 4;
+        tx = W * 0.155 + dxAll[k] * W;
+        ty = H * 0.598 + dyAll[k] * H;
+      } else if (a.place === 'bin') {
+        const n = bi++;
+        tx = W * 0.130 + ((n % 2) ? 0.020 : -0.020) * W;
+        ty = H * 0.706 - Math.floor(n / 2) * H * 0.006;
+      } else {
+        continue;                       // 篮里 / 手上 / 弹回途中：不动它的目标
+      }
+      a.tx = tx; a.ty = ty;
+      if ((a.state === 'ok' || a.state === 'out') && Math.hypot(a.x - tx, a.y - ty) > 0.6) {
+        /* 位子变了 → 用一小段飞行补过去，别整颗瞬移 */
+        a.state = 'fly';
+        a.inTray = (a.place === 'tray');
+      }
+    }
+  }
+
+  /* 松手结算：木盘 / 废料筐都收，只有丢在空白处才弹回。
+     20261116（玩家口径改）：拖错不再自动飘回原位 —— 分拣的意义就是「放错了要认」。
+       · 坏果放进木盘 → 会被洗、被切、被烤进派里（pickBadIn 记数，结算按比例降级）；
+       · 好果丢进废料筐 → 白白少一份馅（pickGoodOut 记数）；
+       · 只有没放进任何容器才弹回（那不是放错，是没放）。 */
+  function evePickRelease(st) {
+    const a = st.grab;
+    st.grab = null;
+    if (!a || a.state !== 'drag') return;
+    const W = st._W, H = st._H;
+    if (!W) return;
+    const zone = evePickZone(a.x, a.y, W, H);
+
+    if (zone === 'tray') {                     // 木盘：好果坏果都收
+      a.place = 'tray';
+      a.trot = rand(-0.35, 0.35);
+      a.state = 'fly';
+      a.inTray = true;
+      evePickRecount(st);
+      if (a.bad) evePickSay(st, '这颗坏了，也会被切进派里', true);
+      else evePickSay(st, '');
+      return;
+    }
+    if (zone === 'bin') {                      // 废料筐：好果坏果都收
+      a.place = 'bin';
+      a.trot = rand(-1.2, 1.2);
+      a.state = 'fly';
+      a.inTray = false;
+      evePickRecount(st);
+      if (!a.bad) evePickSay(st, '这颗还新鲜，扔了可惜', true);
+      else evePickSay(st, '');
+      return;
+    }
+
+    // 没放进任何一个容器：弹回篮口
+    a.place = '';
+    a.state = 'back';
+    a.tx = a.hx; a.ty = a.hy; a.trot = a.homeRot;
+    evePickRecount(st);
+    evePickSay(st, '放木盘或废料筐里才算挑完', true);
+  }
+
+  function eveStartPick(st, W, H, S) {
+    st.phase = 'pick'; st.phaseT = 0; st.fade = 0;
+    st.pickReady = false; st.pick = [];
+    st.pickOut = 0; st.pickBadOut = 0; st.pickAllAt = -1;
+    // 20261116：分拣账本 —— 盘里混了几颗坏果、筐里扔了几颗好果（结算按这两个数降级）
+    st.pickBadIn = 0; st.pickGoodOut = 0;
+    st.grab = null; st.pickHint = ''; st.pickHintT = 0; st.pickHintBad = false;
+    evePickLayout(st, W, H);
+    /* 20261116：先把规则说清楚 —— 放错不拦，但坏果混进木盘会被切进派里。
+       不说的话玩家会以为「放错会自动弹回」，最后烤出一个发酸的派还以为出 bug。 */
+    evePickSay(st, '坏果混进木盘，也会被切进派里', false);
+  }
+
+  /* 洗果：挑进木盘的果子一字排在水槽上方，数量跟着实际挑出的走。
+     20261116：不再固定 4 颗 —— 玩家可能只留 2 颗、也可能 6 颗全留下；
+     盘里混进来的坏果排在最后，洗不亮（带暗斑），洗的时候一眼能看出哪颗坏了。 */
+  function eveWashLayout(st, W, H) {
+    const n = clamp(Math.round(st.pickOut || 4), 1, 6);
+    const spread = n <= 1 ? 0 : 0.56;
+    const xs = [];
+    for (let i = 0; i < n; i++) xs.push(n <= 1 ? 0.50 : 0.50 - spread / 2 + spread * i / (n - 1));
+    const badN = clamp(Math.round(st.pickBadIn || 0), 0, n);
+    st.wash = xs.map((k, i) => ({
+      x: W * k, y: H * 0.682, r: W * (n > 4 ? 0.040 : 0.048),
+      clean: 0, wet: 0, ph: i * 1.7,
+      bad: i >= n - badN,          // 坏果排在最后
+    }));
+    st.washReady = true;
+  }
+
+  function eveStartWash(st, W, H, S) {
+    st.phase = 'wash'; st.phaseT = 0; st.fade = 0;
+    st.washReady = false; st.wash = []; st.washDoneAt = -1; st.washProgress = 0;
+    eveWashLayout(st, W, H);
+  }
+
+  /* 洗好了 → 交回原有的切苹果流程（切之前的计数全部归零，保证判定干净） */
+  function eveStartBoard(st) {
+    st.phase = 'board'; st.phaseT = 0; st.fade = 0;
+    st.cuts = 0; st.goodCuts = 0; st.trash = 0; st.plated = 0;
+    /* 20261116：把分拣的结果带进案板 —— 盘里混了几颗坏果，按比例算坏果率。
+       切的时候这整盘苹果被当成「一整个苹果」来切（10 片 = 一颗），
+       所以坏果率直接按下刀片数摊到馅里，结算时用它降级。 */
+    st.badRatio = clamp((st.pickBadIn || 0) / Math.max(1, st.pickOut || 1), 0, 1);
+    /* 20261116（玩家要求）：洗果可以「没洗完就点空白上案板」，所以这里必须把洗净度
+       定格带进结算，分四档 —— 全洗净 / 略脏（只在明细里提）/ 没洗净 / 带泥。
+       洗到一半就切，代价在这一炉的评级里认。 */
+    const wp = clamp(st.washProgress || 0, 0, 1);
+    st.washP = wp;
+    st.dirty = wp >= 0.999 ? 0 : wp >= 0.75 ? 1 : wp >= 0.45 ? 2 : 3;
+    st.cutAngle = 0; st.knifeT = 0;
+    st.slices.length = 0; st.crumbs.length = 0;
+    st.hintSlowT = 0; st.dragAcc = 0; st._moved = false; st._tapApple = false;
+  }
+
   function eveBoardGeom(W, H) {
     return {
       ax: W * 0.40, ay: H * 0.645, ar: W * 0.100,
@@ -2142,7 +2990,16 @@
 
   /* ---------- 重做：把状态清干净 ---------- */
   function eveReset(st) {
-    st.phase = 'board'; st.phaseT = 0; st.fade = 0; st.doneK = 0;
+    /* 20261116：重播从「摇树」开始（不再是直接上案板），前置三段状态一并归零 */
+    st.phase = 'shake'; st.phaseT = 0; st.fade = 0; st.doneK = 0;
+    st.treeReady = false; st.treeApples.length = 0; st.dropApples.length = 0;
+    st.basket.length = 0; st.shakeAmp = 0; st.shakeAcc = 0; st.shakeDir = 0;
+    st.shakeOn = false; st.shakeCount = 0;
+    st.pickReady = false; st.pick.length = 0; st.pickOut = 0; st.pickBadOut = 0; st.pickAllAt = -1;
+    // 20261116：分拣账本与坏果率一并归零，重做不再继承上一炉的坏果
+    st.pickBadIn = 0; st.pickGoodOut = 0; st.badRatio = 0;
+    st.washReady = false; st.wash.length = 0; st.washHold = false;
+    st.washDoneAt = -1; st.washProgress = 0;
     st.cuts = 0; st.goodCuts = 0; st.trash = 0; st.plated = 0; st.cutAngle = 0;
     st.knifeT = 0; st.trail.length = 0; st.slices.length = 0; st.crumbs.length = 0;
     st.sugar = 0; st.sugarPour = false; st.sugarDone = false;
@@ -2365,7 +3222,10 @@
     ctx.fillRect(0, 0, W, H);
 
     ctx.globalAlpha = st.fade;
-    if (st.phase === 'board') drawEveBoard(st, ctx, t, W, H, S);
+    if (st.phase === 'shake') drawEveShake(st, ctx, t, W, H, S);
+    else if (st.phase === 'pick') drawEvePick(st, ctx, t, W, H, S);
+    else if (st.phase === 'wash') drawEveWash(st, ctx, t, W, H, S);
+    else if (st.phase === 'board') drawEveBoard(st, ctx, t, W, H, S);
     else if (st.phase === 'sugar') drawEveSugar(st, ctx, t, W, H, S);
     else if (st.phase === 'plate') drawEvePlate(st, ctx, t, W, H, S);
     else if (st.phase === 'glaze') drawEveGlaze(st, ctx, t, W, H, S);
@@ -2503,6 +3363,596 @@
             : st.cuts === EVE_FULL_SLICES ? '一整个苹果，切完了 · 点空白送进派'
               : st.cuts < EVE_MAX_SLICES ? '还想再添半个？也能切，或点空白送进派'
                 : '切满了 · 点空白处送进派里',
+      W, H, S, '#ffe9cf');
+  }
+
+  /* ---------- 藤编木篮：后壁（含影子/内壁） + 前缘，中间留给你画苹果 ----------
+     拆成前后两半，是为了让果子看起来「躺在篮子里」——
+     苹果画完后再压一道前缘木边，底部就被篮沿挡住，不会像贴纸浮在篮口上。 */
+  function drawEveBasketBack(ctx, cx, cy, rx, ry, S) {
+    // 落地影子
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + ry * 1.55, rx * 0.92, ry * 0.40, 0, 0, TAU);
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx.fill();
+    // 篮体
+    ctx.beginPath();
+    ctx.moveTo(cx - rx, cy);
+    ctx.bezierCurveTo(cx - rx * 1.04, cy + ry * 1.35, cx - rx * 0.52, cy + ry * 1.66, cx, cy + ry * 1.66);
+    ctx.bezierCurveTo(cx + rx * 0.52, cy + ry * 1.66, cx + rx * 1.04, cy + ry * 1.35, cx + rx, cy);
+    ctx.closePath();
+    const bg = ctx.createLinearGradient(cx, cy - ry, cx, cy + ry * 1.7);
+    bg.addColorStop(0, '#b0803f');
+    bg.addColorStop(0.45, '#8d5f2c');
+    bg.addColorStop(1, '#5f3d1c');
+    ctx.fillStyle = bg;
+    ctx.fill();
+    // 编织横纹（三道，越往下越密）
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx - rx, cy);
+    ctx.bezierCurveTo(cx - rx * 1.04, cy + ry * 1.35, cx - rx * 0.52, cy + ry * 1.66, cx, cy + ry * 1.66);
+    ctx.bezierCurveTo(cx + rx * 0.52, cy + ry * 1.66, cx + rx * 1.04, cy + ry * 1.35, cx + rx, cy);
+    ctx.closePath();
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(255,214,160,0.16)';
+    ctx.lineWidth = 1.6 * S;
+    for (let i = 1; i <= 5; i++) {
+      const yy = cy + ry * 0.30 * i;
+      ctx.beginPath();
+      ctx.moveTo(cx - rx, yy);
+      ctx.quadraticCurveTo(cx, yy + ry * 0.28, cx + rx, yy);
+      ctx.stroke();
+    }
+    // 竖编纹
+    ctx.strokeStyle = 'rgba(60,36,14,0.22)';
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(cx + i * rx * 0.34, cy + ry * 0.10);
+      ctx.lineTo(cx + i * rx * 0.30, cy + ry * 1.62);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // 篮口内壁（深色，制造「里面是空的」的深度）
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, TAU);
+    ctx.fillStyle = '#3d2710';
+    ctx.fill();
+  }
+
+  function drawEveBasketFront(ctx, cx, cy, rx, ry, S) {
+    // 前缘木边（只压下半圈）+ 一点高光
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0.02 * Math.PI, 0.98 * Math.PI, false);
+    ctx.strokeStyle = '#d9a763';
+    ctx.lineWidth = 3.2 * S;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx * 0.96, ry * 0.94, 0, 0.10 * Math.PI, 0.90 * Math.PI, false);
+    ctx.strokeStyle = 'rgba(255,232,190,0.42)';
+    ctx.lineWidth = 1.1 * S;
+    ctx.stroke();
+  }
+
+  /* 坏果标记：褐斑 + 虫眼（挑果阶段才用，摇树时果子外观一致） */
+  function drawBadMarks(ctx, x, y, r, S) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(92,58,26,0.55)';
+    const spots = [[-0.34, -0.26, 0.21], [0.30, 0.06, 0.17], [-0.06, 0.46, 0.13]];
+    for (const p of spots) {
+      ctx.beginPath();
+      ctx.ellipse(x + p[0] * r, y + p[1] * r, p[2] * r, p[2] * r * 0.82, 0.7, 0, TAU);
+      ctx.fill();
+    }
+    // 虫眼：深色小孔 + 一圈被蛀空的浅色边
+    ctx.beginPath();
+    ctx.arc(x + r * 0.12, y - r * 0.20, r * 0.15, 0, TAU);
+    ctx.fillStyle = '#2a190d';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,224,190,0.55)';
+    ctx.lineWidth = Math.max(0.7, 0.8 * S);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /* ---------- ⓪ 摇树摘果 ---------- */
+  function drawEveShake(st, ctx, t, W, H, S) {
+    const g = eveTreeGeom(W, H);
+    const sway = Math.sin(t * 13) * st.shakeAmp;    // -1~1，摇得越狠摆得越大
+
+    // 夜空：盖掉厨房那层暖光，换成院子里的夜色
+    const sky = ctx.createLinearGradient(0, H * 0.38, 0, H);
+    sky.addColorStop(0, 'rgba(26,20,46,0)');
+    sky.addColorStop(0.34, 'rgba(23,18,42,0.72)');
+    sky.addColorStop(1, 'rgba(16,12,28,0.96)');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, H * 0.38, W, H * 0.62);
+    // 星点（固定位置，只做呼吸）
+    for (let i = 0; i < 14; i++) {
+      const sx = W * ((i * 37) % 97) / 97;
+      const sy = H * (0.40 + ((i * 23) % 17) / 100);
+      ctx.globalAlpha = (0.18 + 0.30 * Math.abs(Math.sin(t * 0.8 + i))) * st.fade;
+      ctx.fillStyle = '#ffeecb';
+      ctx.beginPath();
+      ctx.arc(sx, sy, 0.9 * S, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = st.fade;
+
+    // 地面
+    ctx.fillStyle = '#291f30';
+    ctx.beginPath();
+    ctx.moveTo(0, g.groundY);
+    ctx.quadraticCurveTo(W * 0.5, g.groundY - H * 0.014, W, g.groundY);
+    ctx.lineTo(W, H);
+    ctx.lineTo(0, H);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,196,150,0.13)';
+    ctx.lineWidth = 1.6 * S;
+    ctx.beginPath();
+    ctx.moveTo(0, g.groundY);
+    ctx.quadraticCurveTo(W * 0.5, g.groundY - H * 0.014, W, g.groundY);
+    ctx.stroke();
+
+    // 树干（根部不动，越往上摆得越多）
+    const lean = sway * 4 * S;
+    ctx.beginPath();
+    ctx.moveTo(g.trunkX - g.trunkW * 0.55, g.groundY);
+    ctx.quadraticCurveTo(g.trunkX - g.trunkW * 0.34, H * 0.700, g.trunkX - g.trunkW * 0.26 + lean, g.trunkTop);
+    ctx.lineTo(g.trunkX + g.trunkW * 0.26 + lean, g.trunkTop);
+    ctx.quadraticCurveTo(g.trunkX + g.trunkW * 0.34, H * 0.700, g.trunkX + g.trunkW * 0.55, g.groundY);
+    ctx.closePath();
+    const tg = ctx.createLinearGradient(g.trunkX - g.trunkW * 0.5, 0, g.trunkX + g.trunkW * 0.5, 0);
+    tg.addColorStop(0, '#4b3220');
+    tg.addColorStop(0.42, '#6d4a2c');
+    tg.addColorStop(1, '#3d2718');
+    ctx.fillStyle = tg;
+    ctx.fill();
+    // 树皮竖纹
+    ctx.strokeStyle = 'rgba(28,16,8,0.30)';
+    ctx.lineWidth = 1 * S;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(g.trunkX + i * g.trunkW * 0.20, H * 0.640);
+      ctx.quadraticCurveTo(g.trunkX + i * g.trunkW * 0.18 + lean * 0.6, H * 0.600, g.trunkX + i * g.trunkW * 0.16 + lean, g.trunkTop + 2 * S);
+      ctx.stroke();
+    }
+
+    // 树冠：三层叠圆（深 → 中 → 亮），整体随摆幅平移
+    const cx = g.crownX + sway * 8 * S, cy = g.crownY;
+    const layers = [
+      { dx: 0, dy: 0, r: 1.00, c: '#1d4530' },
+      { dx: -0.32, dy: 0.10, r: 0.62, c: '#26563a' },
+      { dx: 0.34, dy: 0.06, r: 0.60, c: '#2a6142' },
+      { dx: -0.06, dy: -0.30, r: 0.58, c: '#2f6b48' },
+    ];
+    for (const L of layers) {
+      ctx.beginPath();
+      ctx.arc(cx + L.dx * g.crownR, cy + L.dy * g.crownR, g.crownR * L.r, 0, TAU);
+      ctx.fillStyle = L.c;
+      ctx.fill();
+    }
+    // 顶部受光
+    const lit = ctx.createRadialGradient(cx - g.crownR * 0.30, cy - g.crownR * 0.42, 0, cx, cy, g.crownR * 1.05);
+    lit.addColorStop(0, 'rgba(150,220,160,0.20)');
+    lit.addColorStop(1, 'rgba(150,220,160,0)');
+    ctx.fillStyle = lit;
+    ctx.beginPath();
+    ctx.arc(cx, cy, g.crownR * 1.02, 0, TAU);
+    ctx.fill();
+
+    // 枝头苹果（比树冠摆得更大一点，才有「被摇下来」的预期）
+    for (const a of st.treeApples) {
+      drawApple(ctx, a.x + sway * 11 * S, a.y + Math.sin(t * 13 + 0.6) * st.shakeAmp * 2.2 * S, a.r, a.rot + sway * 0.10);
+    }
+
+    // 正在下落的苹果
+    for (const a of st.dropApples) {
+      ctx.globalAlpha = st.fade * 0.28;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(a.x, g.groundY - 3 * S, a.r * 0.8, a.r * 0.28, 0, 0, TAU);
+      ctx.fill();
+      ctx.globalAlpha = st.fade;
+      drawApple(ctx, a.x, a.y, a.r, a.rot);
+    }
+
+    // 篮子（先画后壁 → 画已落的苹果 → 压前缘）
+    drawEveBasketBack(ctx, g.basketX, g.basketY, g.basketRx, g.basketRy, S);
+    const shown = st.basket.slice(-6);
+    shown.forEach((b, i) => {
+      const bx = g.basketX + (i - (shown.length - 1) / 2) * g.basketRx * 0.46;
+      const by = g.basketY - g.basketRy * 0.10 - (b.bounce || 0) * g.basketRy * 0.18;
+      drawApple(ctx, bx, by, b.r * 0.92, (b.rot || 0) + 0.05 * i);
+    });
+    drawEveBasketFront(ctx, g.basketX, g.basketY, g.basketRx, g.basketRy, S);
+
+    // 计数
+    const total = 6;
+    const got = (st.basket || []).length;
+    drawCountTag(ctx, got >= total ? '六颗都摇下来了' : '已摇下 ' + got + ' / ' + total + ' 颗',
+      W * 0.760, H * 0.600, S, got >= total ? '#ffd68c' : null);
+
+    /* 20261116（玩家要求）：第一帧弹一张小提示窗，提醒「这一关要摇」。
+       底部那条提示条离画面重心太远，玩家第一眼往往看不到树干是能按的；
+       这张卡只在最前面几秒出现，且一真的摇起来（shakeAmp 上来）就自己退场，
+       不挡操作、不打断节奏。放在 0.335H —— 树冠顶在 0.425H 左右，卡片压不到树。 */
+    const tipIn = clamp(st.phaseT / 0.30, 0, 1);
+    const tipOut = clamp((4.8 - st.phaseT) / 0.70, 0, 1);
+    const tipAmp = clamp((0.22 - (st.shakeAmp || 0)) / 0.16, 0, 1);
+    const tipK = tipIn * tipOut * tipAmp * clamp(st.fade, 0, 1);
+    if (tipK > 0.012) {
+      const cw = W * 0.74, chh = H * 0.088;
+      const ccx = W * 0.5, ccy = H * 0.335;
+      ctx.save();
+      ctx.globalAlpha = tipK;
+      // 卡片：深底 + 一圈暖色描边，和厨房/夜色的暖调接上
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(ccx - cw / 2, ccy - chh / 2, cw, chh, 12 * S);
+      else ctx.rect(ccx - cw / 2, ccy - chh / 2, cw, chh);
+      ctx.fillStyle = 'rgba(28,19,24,0.93)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,220,160,0.58)';
+      ctx.lineWidth = 1.2 * S;
+      ctx.stroke();
+      // 标题 + 一行说明
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '700 ' + (14 * S) + 'px system-ui, -apple-system, sans-serif';
+      ctx.fillStyle = '#fff0d2';
+      ctx.fillText('摇一摇苹果树', ccx, ccy - chh * 0.18);
+      ctx.font = (11 * S) + 'px system-ui, -apple-system, sans-serif';
+      ctx.fillStyle = 'rgba(255,242,222,0.95)';
+      ctx.fillText('按住树干，左右来回晃 · 把六颗苹果摇进篮子', ccx, ccy + chh * 0.24);
+      ctx.restore();
+    }
+
+    drawHint(ctx,
+      st.shakeAmp > 0.25 ? '摇得对，接着晃'
+        : got >= total ? '果子齐了 · 该挑了'
+          : '按住树干，左右摇一摇',
+      W, H, S, '#ffe9cf');
+  }
+
+  /* ---------- ⓪-2 挑果 ---------- */
+  function drawEvePick(st, ctx, t, W, H, S) {
+    drawCounter(ctx, W, H, S);
+
+    const bx = W * 0.580, by = H * 0.672, brx = W * 0.225, bry = W * 0.092;
+
+    /* 左上角净果木盘（挑出来的好果摆这儿）。
+       上一版是个圆角矩形，像贴了张便利贴；改成俯视的椭圆木盘，带木纹和内圈，
+       和水槽、篮子同一套「木器」语言。 */
+    const tx = W * 0.160, ty = H * 0.598;
+    const trx = W * 0.118, try_ = W * 0.052;
+    ctx.save();
+    // 投影
+    ctx.beginPath();
+    ctx.ellipse(tx, ty + try_ * 1.15, trx * 0.96, try_ * 0.42, 0, 0, TAU);
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fill();
+    // 盘体（侧面厚度）
+    ctx.beginPath();
+    ctx.ellipse(tx, ty + try_ * 0.16, trx, try_ * 1.04, 0, 0, TAU);
+    ctx.fillStyle = '#5b3a1c';
+    ctx.fill();
+    // 盘面
+    ctx.beginPath();
+    ctx.ellipse(tx, ty, trx, try_, 0, 0, TAU);
+    const bg2 = ctx.createLinearGradient(0, ty - try_, 0, ty + try_);
+    bg2.addColorStop(0, '#b0824a');
+    bg2.addColorStop(0.55, '#8d6132');
+    bg2.addColorStop(1, '#6a4522');
+    ctx.fillStyle = bg2;
+    ctx.fill();
+    // 木纹（三道弧）
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(tx, ty, trx, try_, 0, 0, TAU);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(58,34,14,0.22)';
+    ctx.lineWidth = 1 * S;
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.ellipse(tx + i * trx * 0.22, ty, trx * 0.82, try_ * 0.86, 0, 0, TAU);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // 内圈高光
+    ctx.beginPath();
+    ctx.ellipse(tx, ty - try_ * 0.06, trx * 0.90, try_ * 0.86, 0, 0, TAU);
+    ctx.strokeStyle = 'rgba(255,224,178,0.24)';
+    ctx.lineWidth = 1.2 * S;
+    ctx.stroke();
+    ctx.restore();
+
+    // 右下角废料筐（坏果拨这儿）
+    const wx = W * 0.130, wy = H * 0.712;
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(wx, wy + W * 0.026, W * 0.080, W * 0.026, 0, 0, TAU);
+    ctx.fillStyle = 'rgba(0,0,0,0.30)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(wx - W * 0.075, wy);
+    ctx.quadraticCurveTo(wx, wy + W * 0.090, wx + W * 0.075, wy);
+    ctx.closePath();
+    ctx.fillStyle = '#61452a';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(wx, wy, W * 0.075, W * 0.023, 0, 0, TAU);
+    ctx.fillStyle = '#33210f';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(214,170,120,0.45)';
+    ctx.lineWidth = 1.4 * S;
+    ctx.beginPath();
+    ctx.ellipse(wx, wy, W * 0.075, W * 0.023, 0, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+
+    /* 拎着苹果时，两个投放点同时亮一圈（不区分对错 —— 对错由果子的样子决定，
+       这里只告诉玩家"可以放这儿"）。 */
+    if (st.grab) {
+      const pulse = 0.34 + 0.16 * Math.sin(st.phaseT * 6.0);
+      ctx.save();
+      ctx.setLineDash([5 * S, 4 * S]);
+      ctx.lineDashOffset = -st.phaseT * 22 * S;
+      ctx.strokeStyle = 'rgba(255,228,178,' + pulse.toFixed(3) + ')';
+      ctx.lineWidth = 2 * S;
+      ctx.beginPath();
+      ctx.ellipse(W * 0.160, H * 0.598, W * 0.140, W * 0.074, 0, 0, TAU);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(W * 0.130, H * 0.712, W * 0.098, W * 0.058, 0, 0, TAU);
+      ctx.stroke();
+      /* 两个目标各带一句小字：光靠形状分不清「盘」和「筐」，尤其第一次玩 */
+      ctx.setLineDash([]);
+      const lf = 9.5 * S;
+      ctx.font = '600 ' + lf + 'px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,236,205,' + (pulse + 0.20).toFixed(3) + ')';
+      ctx.fillText('木盘 · 要切的', W * 0.160, H * 0.598 + W * 0.088);
+      ctx.fillText('废料筐 · 不要的', W * 0.130, H * 0.712 + W * 0.082);
+      ctx.restore();
+    }
+
+    // 大篮子（特写）
+    drawEveBasketBack(ctx, bx, by, brx, bry, S);
+
+    // 篮里的苹果（弹回途中也一起画，被篮沿压住才对）
+    for (const a of st.pick) {
+      if (a.state !== 'in' && a.state !== 'back') continue;
+      drawApple(ctx, a.x, a.y, a.r, a.rot);
+      if (a.bad) drawBadMarks(ctx, a.x, a.y, a.r, S);
+    }
+    drawEveBasketFront(ctx, bx, by, brx, bry, S);
+
+    // 飞出去的（好果 → 木盘，坏果 → 废料筐）
+    for (const a of st.pick) {
+      if (a.state === 'in' || a.state === 'back' || a.state === 'drag') continue;
+      drawApple(ctx, a.x, a.y, a.r, a.rot);
+      if (!a.bad) continue;
+      drawBadMarks(ctx, a.x, a.y, a.r, S);
+      // 坏果打个淡淡的叉，一眼看出「这颗不要」
+      if (a.state === 'out') {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,120,110,0.55)';
+        ctx.lineWidth = 1.6 * S;
+        ctx.beginPath();
+        ctx.moveTo(a.x - a.r * 0.5, a.y - a.r * 0.5);
+        ctx.lineTo(a.x + a.r * 0.5, a.y + a.r * 0.5);
+        ctx.moveTo(a.x + a.r * 0.5, a.y - a.r * 0.5);
+        ctx.lineTo(a.x - a.r * 0.5, a.y + a.r * 0.5);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    /* 手上拎着的那颗画在最上层：放大一点 + 落影子，像真的被提起来了 */
+    if (st.grab && st.grab.state === 'drag') {
+      const a = st.grab;
+      const k = 1 + 0.14 * (a.lift || 0);
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(a.x + a.r * 0.20, a.y + a.r * 1.30, a.r * 0.82, a.r * 0.30, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(0,0,0,0.34)';
+      ctx.fill();
+      ctx.restore();
+      drawApple(ctx, a.x, a.y, a.r * k, a.rot);
+      if (a.bad) drawBadMarks(ctx, a.x, a.y, a.r * k, S);
+    }
+
+    // 计数：盘里 / 筐里各几颗，混进去的坏果单独标出来（玩家要看得见自己的账）
+    drawCountTag(ctx, '盘里 ' + (st.pickOut || 0) + ' 颗'
+      + ((st.pickBadIn || 0) ? '（坏 ' + st.pickBadIn + '）' : '')
+      + '　·　筐里 ' + (st.pickBadOut || 0) + ' 颗',
+      W * 0.620, H * 0.560, S);
+
+    const busy = st.pick.some(a => a.state === 'in' || a.state === 'back');
+    drawHint(ctx,
+      !busy ? '还能拖出来重放 · 点空白去洗果'
+        : (st.pickHintT > 0 && st.pickHint) ? st.pickHint
+          : st.grab ? '松手就放下 · 木盘是要切的，筐是丢的'
+            : '按住苹果拖去分拣 · 点空白直接去洗',
+      W, H, S, (st.pickHintT > 0 && st.pickHintBad) ? '#ffc9bd' : '#ffe9cf');
+  }
+
+  /* ---------- ⓪-3 洗果 ---------- */
+  function drawEveWash(st, ctx, t, W, H, S) {
+    // 台面 / 水槽
+    const deck = ctx.createLinearGradient(0, H * 0.66, 0, H);
+    deck.addColorStop(0, 'rgba(58,42,62,0)');
+    deck.addColorStop(1, 'rgba(28,19,33,0.92)');
+    ctx.fillStyle = deck;
+    ctx.fillRect(0, H * 0.66, W, H * 0.34);
+
+    /* 水槽：盆口椭圆 + 下方碗身，苹果嵌在盆里。
+       上一版只有一个扁椭圆，看着像把苹果摆在盘沿上；补出碗深才有「在洗」的感觉。 */
+    const bx = W * 0.500, by = H * 0.690, brx = W * 0.395, bry = W * 0.070;
+    // 碗身
+    ctx.beginPath();
+    ctx.moveTo(bx - brx, by);
+    ctx.bezierCurveTo(bx - brx * 0.98, by + bry * 1.75, bx - brx * 0.46, by + bry * 1.98, bx, by + bry * 1.98);
+    ctx.bezierCurveTo(bx + brx * 0.46, by + bry * 1.98, bx + brx * 0.98, by + bry * 1.75, bx + brx, by);
+    ctx.closePath();
+    const pg = ctx.createLinearGradient(0, by - bry, 0, by + bry * 2);
+    pg.addColorStop(0, '#7d6d86');
+    pg.addColorStop(0.45, '#54455c');
+    pg.addColorStop(1, '#2b2030');
+    ctx.fillStyle = pg;
+    ctx.fill();
+    // 盆口内壁
+    ctx.beginPath();
+    ctx.ellipse(bx, by, brx, bry, 0, 0, TAU);
+    ctx.fillStyle = 'rgba(58,46,66,0.92)';
+    ctx.fill();
+    // 盆里的水
+    ctx.beginPath();
+    ctx.ellipse(bx, by + bry * 0.10, brx * 0.92, bry * 0.82, 0, 0, TAU);
+    const wg2 = ctx.createLinearGradient(0, by - bry * 0.6, 0, by + bry * 0.8);
+    wg2.addColorStop(0, 'rgba(150,205,235,0.38)');
+    wg2.addColorStop(1, 'rgba(70,130,175,0.24)');
+    ctx.fillStyle = wg2;
+    ctx.fill();
+    // 盆沿高光
+    ctx.beginPath();
+    ctx.ellipse(bx, by, brx, bry, 0, 0.02 * Math.PI, 0.98 * Math.PI, false);
+    ctx.strokeStyle = 'rgba(255,226,200,0.30)';
+    ctx.lineWidth = 2.2 * S;
+    ctx.stroke();
+
+    /* 水龙头：左边接一段横管 → 弯头向下 → 靠近盆面的出水口。
+       上一版只有一根细长竖条悬在空中，像麦秆；现在管子有来处、水流短而粗。 */
+    const jx = W * 0.500, jTop = H * 0.570, jBot = by + bry * 0.30;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#9aa0ad';
+    ctx.lineWidth = 5.4 * S;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.02, H * 0.534);
+    ctx.lineTo(jx - 16 * S, H * 0.534);
+    ctx.quadraticCurveTo(jx, H * 0.534, jx, H * 0.562);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.40)';
+    ctx.lineWidth = 1.6 * S;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.02, H * 0.528);
+    ctx.lineTo(jx - 18 * S, H * 0.528);
+    ctx.stroke();
+    ctx.restore();
+    // 出水口（喇叭口）
+    ctx.save();
+    ctx.fillStyle = '#c3c8d2';
+    ctx.beginPath();
+    ctx.moveTo(jx - 4.6 * S, jTop - 10 * S);
+    ctx.lineTo(jx + 4.6 * S, jTop - 10 * S);
+    ctx.lineTo(jx + 7.4 * S, jTop);
+    ctx.lineTo(jx - 7.4 * S, jTop);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // 水柱（画在苹果后面）
+    ctx.save();
+    ctx.globalAlpha = 0.55 * st.fade;
+    const wg = ctx.createLinearGradient(0, jTop, 0, jBot);
+    wg.addColorStop(0, 'rgba(198,234,255,0.85)');
+    wg.addColorStop(1, 'rgba(150,205,255,0.30)');
+    ctx.fillStyle = wg;
+    ctx.beginPath();
+    ctx.moveTo(jx - 5.2 * S, jTop);
+    ctx.lineTo(jx + 5.2 * S, jTop);
+    ctx.lineTo(jx + 7.6 * S, jBot);
+    ctx.lineTo(jx - 7.6 * S, jBot);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 0.30 * st.fade;
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    const span = jBot - jTop;
+    for (let i = 0; i < 4; i++) {
+      const yy = jTop + ((t * 260 + i * (span / 4)) % span);
+      ctx.fillRect(jx - 2.2 * S, yy, 4.4 * S, 9 * S);
+    }
+    ctx.restore();
+
+    // 苹果一排
+    const washed = st.wash.filter(a => a.clean >= 0.999).length;
+    st.wash.forEach((a, i) => {
+      const bob = Math.sin(t * 1.6 + a.ph) * 1.6 * S;
+      const y = a.y + bob;
+      drawApple(ctx, a.x, y, a.r, 0.06 * Math.sin(t * 0.9 + a.ph));
+      /* 20261116：混进木盘的坏果 —— 洗得再干净也留一块褐斑（它是从里面坏的）。
+         洗的时候一眼能看出哪几颗不该在里面，但不阻止玩家继续洗，
+         代价留到最后结算：坏果会跟着切片一起进派。 */
+      if (a.bad) {
+        ctx.save();
+        ctx.globalAlpha = 0.62 * st.fade;
+        ctx.fillStyle = 'rgba(74,48,30,0.80)';
+        ctx.beginPath();
+        ctx.ellipse(a.x + a.r * 0.22, y + a.r * 0.10, a.r * 0.30, a.r * 0.24, 0.4, 0, TAU);
+        ctx.fill();
+        ctx.globalAlpha = 0.38 * st.fade;
+        ctx.beginPath();
+        ctx.ellipse(a.x - a.r * 0.26, y - a.r * 0.18, a.r * 0.16, a.r * 0.13, -0.3, 0, TAU);
+        ctx.fill();
+        ctx.restore();
+      }
+      // 污渍：洗得越干净越淡
+      if (a.clean < 0.985) {
+        ctx.save();
+        ctx.globalAlpha = (1 - a.clean) * 0.80 * st.fade;
+        ctx.fillStyle = 'rgba(96,74,40,0.62)';
+        const spots = [[-0.30, -0.16, 0.20], [0.24, 0.22, 0.17], [-0.02, -0.40, 0.13]];
+        for (const p of spots) {
+          ctx.beginPath();
+          ctx.ellipse(a.x + p[0] * a.r, y + p[1] * a.r, p[2] * a.r, p[2] * a.r * 0.78, 0.5, 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+      // 洗干净 → 水亮高光 + 几颗水珠
+      if (a.clean >= 0.985) {
+        ctx.save();
+        ctx.globalAlpha = 0.85 * st.fade;
+        ctx.strokeStyle = 'rgba(255,255,255,0.70)';
+        ctx.lineWidth = 1.4 * S;
+        ctx.beginPath();
+        ctx.arc(a.x - a.r * 0.26, y - a.r * 0.30, a.r * 0.34, 2.2, 3.9);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(210,240,255,0.85)';
+        for (let k = 0; k < 3; k++) {
+          const ang = t * 0.7 + k * 2.1 + a.ph;
+          ctx.beginPath();
+          ctx.arc(a.x + Math.cos(ang) * a.r * 0.72, y + Math.sin(ang) * a.r * 0.62, 1.5 * S, 0, TAU);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+      // 正在擦洗的水花
+      if (a.wet > 0.05 && a.clean < 0.999) {
+        ctx.save();
+        ctx.globalAlpha = a.wet * 0.55 * st.fade;
+        ctx.strokeStyle = 'rgba(190,230,255,0.85)';
+        ctx.lineWidth = 1.1 * S;
+        for (let k = 0; k < 2; k++) {
+          const rr = a.r * (1.05 + ((t * 0.9 + k * 0.5) % 1) * 0.55);
+          ctx.beginPath();
+          ctx.arc(a.x, y, rr, 0.4 + k, 2.2 + k);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    });
+
+    // 计数
+    drawCountTag(ctx, washed >= st.wash.length ? '都洗干净了' : '已洗净 ' + washed + ' / ' + st.wash.length + ' 颗',
+      W * 0.5, H * 0.500, S, washed >= st.wash.length ? '#ffd68c' : null);
+
+    drawHint(ctx,
+      washed >= st.wash.length ? '冲干净了 · 点空白上案板'
+        : '按住苹果左右擦 · 点空白直接上案板（没洗净会算进结算）',
       W, H, S, '#ffe9cf');
   }
 
@@ -2797,6 +4247,1127 @@
   }
 
   /* ---------- ⑦ 出炉：成品形象 + 评级 ---------- */
+  /* ============================================================
+   * 出炉评级表（20261116 玩家口径）：标题统一成「……的苹果派」。
+   *   甜度四档：淡 / 刚好（糖量条绿区）/ 甜美（刚过绿区，绑蝴蝶结）/ 齁
+   *   馅量四档：太少 / 偏少 / 刚好 / 塞满（>13 片，会流心）
+   *   坏果两档：有点发酸 / 坏了一半
+   *   洗净两档：没洗干净 / 带着泥下锅
+   * 火候档优先（生、焦糖、糊、炭），因为那是整炉的定性。
+   * flags 只给装饰用，和标题互不影响：塞满又能同时是甜美的（蝴蝶结 + 流心）。
+   * ============================================================ */
+  function evePieJudge(st) {
+    const n = st.plated || 0;
+    const sugar = st.sugar || 0;
+    const sweet = sugar < 0.40 ? 0 : sugar <= 0.66 ? 1 : sugar <= 0.80 ? 2 : 3;
+    const amt = n < 5 ? 0 : n < 8 ? 1 : n <= 13 ? 2 : 3;
+    const badN = clamp(Math.round(st.pickBadIn || 0), 0, 6);
+    const bad = badN <= 0 ? 0 : ((badN / Math.max(1, st.pickOut || 1)) <= 0.34 ? 1 : 2);
+    const dirty = clamp(st.dirty || 0, 0, 3);
+    const washPct = Math.round(clamp(st.washP || 0, 0, 1) * 100);
+
+    const sweetTxt = ['甜度偏淡', '甜度刚好', '甜而不腻', '甜得发齁'][sweet];
+    const amtTxt = n === EVE_FULL_SLICES ? '一颗苹果'
+      : (n === EVE_FULL_SLICES - 1 || n === EVE_FULL_SLICES + 1) ? n + ' 片 · 差一片'
+        : ['馅料太少', '只有 ' + n + ' 片', n + ' 片', n + ' 片塞满'][amt];
+    const detail = sweetTxt + ' · ' + amtTxt
+      + ' · 蛋液 ' + (st.coatScore || 0) + '/20 · 火候 ' + (st.bakeScore || 0) + '/30'
+      + (bad ? ' · 坏果 ' + badN + ' 颗' : '')
+      + (dirty ? ' · 洗净 ' + washPct + '%' : '');
+
+    const gd = st.cookResult || '';
+    /* 20261116 第四轮：标题全部改成「……的苹果派」，并且每一档都给一句自己的
+       判定语（就是标题下面那行）。判定语不报数字，只描述「这一炉长什么样」，
+       具体的甜度/片数/火候仍然并到 detail 里、只在需要时挂上去。
+       命名口径（玩家点名改过的三处）：
+         甜得齁嗓子 → 像糖浆的苹果派
+         有点淡     → 不太甜的苹果派
+       洗涤两档（玩家 20261116 明确纠正，别再搞反）：
+         浅档 洗净 45~74%（dirty=2）→ 有些掉渣的苹果派 + 「最原生态」
+         深档 洗净 <45%（dirty=3）  → 有石子的苹果派   + 「有点硌牙」 */
+    let kind, title, sub;
+    /* 20261116 第五轮：玩家亲自写的判词，按档一一对应（不再由我编）。
+       口径确认过的三处：碳化→成了炭；边上有一点焦→边上烤糊（不是焦糖）；
+       糖脆/馅软/皮酥→焦糖色；洗涤两档按方案 C（浅=掉渣·最原生态 / 重=石子·硌牙）。 */
+    if (st.isPerfect) {
+      kind = 'perfect'; title = '最完美的苹果派';
+      sub = '恭喜你！做出了世界上最完美的苹果派！！无论年纪，老少皆宜，没有人不爱吃这款苹果派。';
+    } else if (gd === 'raw') {
+      kind = 'raw'; title = '还没烤熟的苹果派';
+      sub = '虽然没怎么烤熟，但上面满是苹果的清香。';
+    } else if (gd === 'caramel') {
+      kind = 'caramel'; title = '焦糖色的苹果派';
+      sub = '口感层次非常丰富，糖脆脆的，馅软软的，皮酥酥的。';
+    } else if (gd === 'burnt') {
+      kind = 'burnt'; title = '边上烤糊的苹果派';
+      sub = '边上有一点焦，但也是别有风味，爱吃苦一点的可以尝尝。';
+    } else if (gd === 'carbon') {
+      kind = 'carbon'; title = '成了炭的苹果派';
+      sub = '已经碳化了，可以放到相框里收藏了，放 100 年也不会坏。';
+    } else if (bad === 2) {
+      kind = 'rotten'; title = '酸得倒牙的苹果派';
+      sub = '酸得牙根发软，连舌头都想躲开。';
+    } else if (dirty === 3) {
+      kind = 'dusty'; title = '有石子的苹果派';
+      sub = '好吃，就是可能会有点硌牙，可以拿去作为最佳牙口挑战大赛的道具了。';
+    } else if (bad === 1) {
+      kind = 'sour'; title = '有点发酸的苹果派';
+      sub = '有一丝酸，但刚好解腻了。';
+    } else if (dirty === 2) {
+      kind = 'muddy'; title = '有些掉渣的苹果派';
+      sub = '这简直是最原生态的苹果派。';
+    } else if (sweet === 3) {
+      kind = 'toosweet'; title = '像糖浆的苹果派';
+      sub = '糖浆挂在饼皮上，真适合配一杯热茶。';
+    } else if (sweet === 2) {
+      kind = 'sweet'; title = '甜美的苹果派';
+      /* 20261116 第六轮：玩家否掉旧句「糖在表面结了一层薄壳」——派不会结壳。
+         改从香气/氛围切入，只写甜「是什么感觉」，不写任何入口的动作。 */
+      sub = '甜是从香气里先来的，像把一整个秋天收进了派里，风都吹得暖了一点。';
+    } else if (sweet === 0) {
+      kind = 'faint'; title = '不太甜的苹果派';
+      sub = '不太甜？很好！这简直是国人的最高评价！';
+    } else if (amt === 0) {
+      kind = 'empty'; title = '几乎没馅的苹果派';
+      sub = '切面几乎是一整块酥皮，苹果只在最中间留了个影子。';
+    } else if (amt === 1) {
+      kind = 'thin'; title = '皮比馅多的苹果派';
+      sub = '皮烤得真香，苹果再多两片，我就能确认它是苹果派了。';
+    } else if (amt === 3) {
+      kind = 'full'; title = '流心的苹果派';
+      sub = '我说真的，这个流心真的看起来非常好吃。';
+    } else {
+      kind = 'fine'; title = '刚刚好的苹果派';
+      sub = '哪儿都没多做一步，哪儿也没少做一步——这一炉，就是这个派该有的样子。';
+    }
+    return {
+      kind, title, sub, detail, sweet, amt, bad, dirty, badN, n, washPct,
+      halo: !!st.isPerfect,
+      bow: kind === 'sweet',                                  // 甜美 → 缎带蝴蝶结
+      stream: amt === 3 && gd !== 'carbon',                   // 塞满 → 馅从边沿流出来
+    };
+  }
+
+  /* ============================================================
+   * 结算页：每一档自己的「小特色」（20261116 第四轮）
+   * 十六炉派原本长着同一张脸，玩家分不出自己烤没烤好；
+   * 所以除了标题，每一档再给一点只属于它的动静：
+   *   完美    金环 + 散射金光 + 上升的金色光尘
+   *   甜美    缎带蝴蝶结 + 缓缓落下的糖晶
+   *   糖浆    表面挂浆扫光 + 两道糖丝 + 糖泡
+   *   不太甜  派顶一枝苹果花 + 一滴清露
+   *   没馅    派心塌下去 + 干裂纹
+   *   皮多    边沿几处豁口，露出干派皮
+   *   流心    馅从边沿溢出来 + 热气
+   *   生      淡蓝冷气 + 一层没烤到的面粉
+   *   焦糖    琥珀边光 + 焦糖香雾
+   *   糊      细烟
+   *   炭      黑烟 + 暗红火星
+   *   酸      灰绿霉斑 + 往上冒的酸气泡
+   *   坏一半  大片霉斑 + 两只绕飞的小虫
+   *   有石子  沙粒 + 两三颗白石子
+   *   掉渣    干裂 + 碎屑往下掉
+   * 全部画在 drawDish 之后（才压得住网格），并且收在派与盘之间，
+   * 不上探到结算文字所在的 0.772H。
+   * ============================================================ */
+  /* 确定性伪随机：同一颗籽每帧都一样，否则颗粒会满画飘 */
+  function pieHash(i) {
+    const x = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+    return x - Math.floor(x);
+  }
+
+  /* 一缕往上飘的烟/气：分 5 段逐段变淡、变粗，才不会像一根硬线条 */
+  function pieSmoke(ctx, cx, cy, r, S, e, t, col, n, rise, wide, thick, seed) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    const steps = 5;
+    for (let i = 0; i < n; i++) {
+      const s1 = pieHash(i * 3.7 + seed);
+      const s2 = pieHash(i * 7.1 + seed * 2.3);
+      const bx = cx + (s1 - 0.5) * wide * r;
+      const by = cy + (s2 - 0.5) * r * 0.30;
+      const amp = r * (0.04 + 0.05 * s1);
+      const ph = t * (0.65 + 0.5 * s2) + i * 1.7;
+      const up = r * rise * (0.85 + 0.3 * s2);
+      let px = bx, py = by;
+      for (let k = 1; k <= steps; k++) {
+        const u = k / steps;
+        const nx = bx + Math.sin(ph + u * 3.2) * amp * u * 1.6;
+        const ny = by - up * u;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.quadraticCurveTo((px + nx) / 2 + amp * 0.8, (py + ny) / 2, nx, ny);
+        ctx.strokeStyle = 'rgba(' + col + ',' + (e * (1 - u) * 0.42).toFixed(3) + ')';
+        ctx.lineWidth = Math.max(1, r * thick * (1 + u * 1.6));
+        ctx.stroke();
+        px = nx; py = ny;
+      }
+    }
+    ctx.restore();
+  }
+
+  /* 颗粒：铺在派面上（面粉/糖霜）或从派沿往下掉（碎屑） */
+  function pieGrains(ctx, cx, cy, r, S, e, t, col, n, alpha, sand, fall) {
+    const ry = r * 0.40;
+    ctx.save();
+    for (let i = 0; i < n; i++) {
+      const a = pieHash(i * 5.3 + 1.1) * TAU;
+      const rad = Math.sqrt(pieHash(i * 9.7 + 2.7)) * 0.88;
+      let gx = cx + Math.cos(a) * r * rad;
+      let gy = cy + Math.sin(a) * ry * rad;
+      let al = alpha;
+      if (fall) {
+        const ph = (t * 0.4 + pieHash(i * 3.3)) % 1;
+        gx = cx + Math.cos(a) * r * (0.90 + 0.10 * rad);
+        gy = cy + Math.sin(a) * ry * 0.90 + r * 0.62 * ph;
+        al = alpha * (1 - ph);
+      }
+      const sz = r * (sand ? (0.015 + 0.010 * pieHash(i * 2.1)) : (0.019 + 0.013 * pieHash(i * 2.1)));
+      ctx.beginPath();
+      ctx.arc(gx, gy, Math.max(0.8, sz), 0, TAU);
+      ctx.fillStyle = 'rgba(' + col + ',' + (e * al).toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 霉斑：一块霉由 5 个小圆叠出来，边界才毛糙 */
+  function pieMold(ctx, cx, cy, r, S, e, big) {
+    const ry = r * 0.40;
+    const n = big ? 6 : 3;
+    ctx.save();
+    for (let i = 0; i < n; i++) {
+      const a = pieHash(i * 4.1 + 0.7) * TAU;
+      const rad = 0.28 + 0.55 * pieHash(i * 8.3 + 1.9);
+      const mx = cx + Math.cos(a) * r * rad;
+      const my = cy + Math.sin(a) * ry * rad;
+      const mr = r * (big ? (0.135 + 0.085 * pieHash(i * 2.7)) : (0.085 + 0.050 * pieHash(i * 2.7)));
+      /* 20261116 第三版：上一版是「一个圆形 + 白色中心点」，缩小后读成了青豆/葡萄。
+         现在改成 7 块大小不一的暗绿斑叠在一起（边缘自然毛糙、没有圆轮廓），
+         再罩一层很淡的灰白霉霜 —— 这才是「坏了」。 */
+      for (let k = 0; k < 7; k++) {
+        const aa = pieHash(i * 5.9 + k * 2.7) * TAU;
+        const off = mr * (0.30 + 0.55 * pieHash(k * 4.3 + i * 1.7));
+        const rr2 = mr * (0.24 + 0.62 * pieHash(k * 3.1 + i * 5.3));
+        ctx.beginPath();
+        ctx.arc(mx + Math.cos(aa) * off, my + Math.sin(aa) * off * 0.55, rr2, 0, TAU);
+        ctx.fillStyle = 'rgba(74,90,54,' + (e * 0.34).toFixed(3) + ')';
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.ellipse(mx, my, mr * 0.92, mr * 0.54, i * 0.5, 0, TAU);
+      ctx.fillStyle = 'rgba(198,206,180,' + (e * 0.13).toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 两只绕派飞的小虫：翅膀高频抖，离派不远 */
+  function pieFlies(ctx, cx, cy, r, S, e, t) {
+    ctx.save();
+    for (let i = 0; i < 2; i++) {
+      const ph = t * (1.1 + 0.3 * i) + i * 2.6;
+      const fx = cx + Math.cos(ph) * r * (0.92 + 0.14 * Math.sin(ph * 1.7));
+      const fy = cy - r * 0.26 + Math.sin(ph * 1.9) * r * 0.34;
+      const wf = 0.35 + 0.55 * Math.abs(Math.sin(t * 26 + i));
+      [-1, 1].forEach(sg => {
+        ctx.beginPath();
+        ctx.ellipse(fx + sg * r * 0.052, fy - r * 0.040, r * 0.048, r * 0.023 * wf, sg * 0.5, 0, TAU);
+        ctx.fillStyle = 'rgba(238,238,230,' + (e * 0.44).toFixed(3) + ')';
+        ctx.fill();
+      });
+      ctx.beginPath();
+      ctx.arc(fx, fy, r * 0.033, 0, TAU);
+      ctx.fillStyle = 'rgba(38,30,26,' + (e * 0.80).toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 气泡：从派面往上冒（酸气 / 糖泡），到顶前渐隐 */
+  function pieBubbles(ctx, cx, cy, r, S, e, t, col) {
+    const ry = r * 0.40;
+    ctx.save();
+    for (let i = 0; i < 6; i++) {
+      const s = pieHash(i * 3.9 + 0.4);
+      const ph = (t * (0.32 + 0.20 * s) + pieHash(i * 7.7)) % 1;
+      const wob = Math.sin(t * 2 + i) * r * 0.02;
+      const bx = cx + (pieHash(i * 5.1 + 1.3) - 0.5) * r * 1.25 + wob;
+      const by = cy + ry * 0.32 - r * 0.78 * ph;
+      const br = Math.max(0.9, r * (0.024 + 0.020 * s) * (1 + ph * 0.6));
+      ctx.beginPath();
+      ctx.arc(bx, by, br, 0, TAU);
+      ctx.fillStyle = 'rgba(' + col + ',' + (e * (1 - ph) * 0.52).toFixed(3) + ')';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(bx - br * 0.3, by - br * 0.3, Math.max(0.4, br * 0.30), 0, TAU);
+      ctx.fillStyle = 'rgba(255,255,255,' + (e * (1 - ph) * 0.55).toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 糖浆：整面挂一层蜜色浆 + 两块湿润反光 + 三道挂下来的糖丝。
+     20261116 第二版：上一版只叠了两道极淡的渐变，在浅棕派面上等于没有；
+     现在先整面铺浆、再补高光和糖丝，远看也能看出「这派是湿的」。 */
+  function pieSyrup(ctx, cx, cy, r, S, e, t) {
+    const ry = r * 0.40;
+    ctx.save();
+    // ① 整面挂浆
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.975, ry * 0.975, 0, 0, TAU);
+    const sg = ctx.createLinearGradient(cx - r * 0.8, cy - ry, cx + r * 0.7, cy + ry);
+    sg.addColorStop(0, 'rgba(226,150,50,' + (e * 0.30).toFixed(3) + ')');
+    sg.addColorStop(0.44, 'rgba(255,214,142,' + (e * 0.26).toFixed(3) + ')');
+    sg.addColorStop(1, 'rgba(190,112,30,' + (e * 0.34).toFixed(3) + ')');
+    ctx.fillStyle = sg;
+    ctx.fill();
+    // ② 湿润高光：两团柔光在不同位置轻轻移，像浆面反光
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.965, ry * 0.965, 0, 0, TAU);
+    ctx.clip();
+    const sw = 0.5 + 0.5 * Math.sin(t * 0.7);
+    [[-0.34, -0.32, 0.30], [0.32, 0.14, 0.19]].forEach((hl, i) => {
+      const hx = cx + r * (hl[0] + 0.07 * sw);
+      const hy = cy + ry * hl[1];
+      const g2 = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * hl[2] * 1.9);
+      g2.addColorStop(0, 'rgba(255,247,222,' + (e * (i ? 0.30 : 0.48)).toFixed(3) + ')');
+      g2.addColorStop(1, 'rgba(255,247,222,0)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(cx - r, cy - ry, r * 2, ry * 2);
+    });
+    ctx.restore();
+    // ③ 三道从派沿往下挂的糖丝，末端挂一颗糖珠
+    for (let i = 0; i < 3; i++) {
+      const a = Math.PI * (0.42 + 0.22 * i);       // 前偏右 → 正前 → 左前，别挤在一侧
+      const px = cx + Math.cos(a) * r * 0.93;
+      const py = cy + Math.sin(a) * ry * 0.93;
+      const len = r * (0.32 + 0.06 * Math.sin(t * 0.9 + i * 1.4));
+      const w = r * (0.032 + 0.004 * i);
+      ctx.beginPath();
+      ctx.moveTo(px - w, py);
+      ctx.quadraticCurveTo(px - w * 0.7, py + len * 0.6, px, py + len);
+      ctx.quadraticCurveTo(px + w * 0.7, py + len * 0.6, px + w, py);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,190,84,' + (e * 0.95).toFixed(3) + ')';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(px, py + len + w * 0.9, w * 0.95, w * 1.15, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(232,160,56,' + (e * 0.90).toFixed(3) + ')';
+      ctx.fill();
+      // 糖丝上一道细高光
+      ctx.beginPath();
+      ctx.moveTo(px - w * 0.34, py + len * 0.20);
+      ctx.quadraticCurveTo(px - w * 0.26, py + len * 0.58, px, py + len * 0.86);
+      ctx.strokeStyle = 'rgba(255,244,206,' + (e * 0.55).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(0.8, r * 0.008);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* 暗红火星：只给「成了炭」那一炉，缓慢上飘 */
+  function pieEmbers(ctx, cx, cy, r, S, e, t) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 7; i++) {
+      const s = pieHash(i * 4.7 + 0.9);
+      const ph = (t * (0.26 + 0.20 * s) + pieHash(i * 8.1)) % 1;
+      const ex = cx + (pieHash(i * 2.3 + 0.5) - 0.5) * r * 1.5;
+      const ey = cy + r * 0.20 - r * 0.58 * ph;
+      const er = Math.max(0.9, r * (0.022 + 0.016 * s) * (1 - ph * 0.5));
+      const al = e * (1 - ph) * (0.50 + 0.50 * Math.abs(Math.sin(t * 3 + i)));
+      ctx.beginPath();
+      ctx.arc(ex, ey, er * 2.6, 0, TAU);
+      ctx.fillStyle = 'rgba(255,90,30,' + (al * 0.14).toFixed(3) + ')';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(ex, ey, er, 0, TAU);
+      ctx.fillStyle = 'rgba(255,140,58,' + al.toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 干裂纹：三条从派心往外折的裂缝 */
+  function pieCracks(ctx, cx, cy, r, S, e) {
+    const ry = r * 0.40;
+    ctx.save();
+    for (let i = 0; i < 3; i++) {
+      const a0 = pieHash(i * 6.1 + 2.2) * TAU;
+      let px = cx + Math.cos(a0) * r * 0.24;
+      let py = cy + Math.sin(a0) * ry * 0.24;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      for (let k = 1; k <= 4; k++) {
+        const a = a0 + (pieHash(i * 3.1 + k) - 0.5) * 0.9;
+        px += Math.cos(a) * r * 0.16;
+        py += Math.sin(a) * ry * 0.22;
+        ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = 'rgba(74,38,12,' + (e * 0.62).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(1.2, r * 0.019);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* 派心塌陷：中间压一圈暗影，像馅缩下去了 */
+  function pieSink(ctx, cx, cy, r, S, e, k) {
+    const ry = r * 0.40;
+    const g = ctx.createRadialGradient(cx, cy + ry * 0.12, r * 0.05, cx, cy + ry * 0.12, r * 0.70);
+    g.addColorStop(0, 'rgba(48,22,4,' + (e * 0.58 * k).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(52,24,6,0)');
+    ctx.save();
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.88, ry * 0.88, 0, 0, TAU);
+    ctx.fill();
+    // 凹陷的折痕：一道暗色弧，塌下去的地方才有「边」
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + ry * 0.07, r * 0.56, ry * 0.56, 0, 0, TAU);
+    ctx.strokeStyle = 'rgba(56,26,6,' + (e * 0.34 * k).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(1, r * 0.022);
+    ctx.stroke();
+    /* 20261116 第七轮：坑口补一道受光的亮边。
+       只有暗影时整块读成「一坑泥」，有亮边才读得出是「派皮塌下去」。 */
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + ry * 0.05, r * 0.56, ry * 0.56, 0, Math.PI * 1.02, Math.PI * 1.98);
+    ctx.strokeStyle = 'rgba(255,228,172,' + (e * 0.34 * k).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(1, r * 0.018);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /* 豁口：网格里空出来的几块，露出下面干干的派皮 */
+  function pieGaps(ctx, cx, cy, r, S, e) {
+    const ry = r * 0.40;
+    ctx.save();
+    for (let i = 0; i < 3; i++) {
+      const a = Math.PI * (0.10 + 0.80 * pieHash(i * 3.7 + 1.2));
+      const rad = 0.26 + 0.42 * pieHash(i * 7.3 + 0.5);
+      const gx = cx + Math.cos(a) * r * rad;
+      const gy = cy + Math.sin(a) * ry * rad;
+      // ① 凹陷的缺口（深色，读作「这里没有馅」）
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, r * 0.150, ry * 0.25, a, 0, TAU);
+      ctx.fillStyle = 'rgba(52,24,4,' + (e * 0.62).toFixed(3) + ')';
+      ctx.fill();
+      // ② 洞底那点干派皮：只占缺口的下半，别糊成一块白斑
+      ctx.beginPath();
+      ctx.ellipse(gx, gy + ry * 0.07, r * 0.086, ry * 0.12, a, 0, TAU);
+      ctx.fillStyle = 'rgba(222,186,142,' + (e * 0.38).toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 一枝苹果花 + 一滴清露：给「不太甜」那一炉，清清淡淡的一笔 */
+  function pieBlossom(ctx, cx, cy, r, S, e, t) {
+    const bx = cx + r * 0.02, by = cy - r * 0.10;
+    const rr = r * 0.185;                 // 上一版 0.13r，在 360 宽的画布上只有 12px，远看是个白点
+    ctx.save();
+    ctx.globalAlpha = e;
+    ctx.beginPath();
+    ctx.moveTo(bx - rr * 0.3, by + rr * 0.5);
+    ctx.quadraticCurveTo(bx + rr * 0.5, by + rr * 1.0, bx + rr * 1.5, by + rr * 1.2);
+    ctx.strokeStyle = 'rgba(112,88,52,0.82)';
+    ctx.lineWidth = Math.max(1, rr * 0.13);
+    ctx.stroke();
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i / 5) * TAU + 0.2;
+      const px = bx + Math.cos(a) * rr * 0.52;
+      const py = by + Math.sin(a) * rr * 0.52;
+      ctx.beginPath();
+      ctx.ellipse(px, py, rr * 0.46, rr * 0.31, a, 0, TAU);
+      const pg = ctx.createLinearGradient(bx, by, px + Math.cos(a) * rr * 0.4, py + Math.sin(a) * rr * 0.4);
+      pg.addColorStop(0, 'rgba(255,253,250,0.98)');
+      pg.addColorStop(1, 'rgba(250,208,216,0.94)');
+      ctx.fillStyle = pg;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(226,176,188,0.42)';
+      ctx.lineWidth = Math.max(0.6, rr * 0.035);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(bx, by, rr * 0.23, 0, TAU);
+    ctx.fillStyle = 'rgba(246,206,96,0.96)';
+    ctx.fill();
+    const dr = rr * 0.19;
+    const dx = bx + rr * 0.74;
+    const dy = by + rr * 0.60 + Math.sin(t * 1.4) * rr * 0.05;
+    ctx.beginPath();
+    ctx.arc(dx, dy, dr, 0, TAU);
+    ctx.fillStyle = 'rgba(212,238,246,0.78)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(dx - dr * 0.3, dy - dr * 0.3, dr * 0.32, 0, TAU);
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /* 糖晶：甜美档周围缓缓落下的白色小亮点 */
+  /* 甜美档的糖霜：派面一层薄糖粉 + 卷边内侧堆起来的一圈白霜 + 一把糖粒。
+     20261116 第三版（玩家）：上一版只有空中飘的几颗糖晶，看不出「甜」。
+     甜的第一眼应该是「这上面撒过糖」，所以糖粉必须落在派面上。 */
+  /* 甜美档的糖晶星芒：七粒，散在派上方的空气里与派沿两侧。
+     一颗颗四角星、大小不一、各自呼吸 —— 甜品摄影里那种「bling」，
+     比在派面上堆白点更干净，也更甜。 */
+  function pieSparkle(ctx, cx, cy, r, e, t) {
+    const SPK = [
+      { u: -0.92, v: -0.62, s: 0.052, ph: 0.0 },
+      { u: 0.86, v: -0.50, s: 0.042, ph: 1.1 },
+      { u: -1.06, v: 0.10, s: 0.034, ph: 2.2 },
+      { u: 1.02, v: 0.22, s: 0.046, ph: 3.3 },
+      { u: -0.46, v: -1.02, s: 0.038, ph: 4.1 },
+      { u: 0.52, v: -0.94, s: 0.030, ph: 5.0 },
+      { u: -0.24, v: -1.14, s: 0.032, ph: 5.8 },
+    ];
+    ctx.save();
+    for (const sp of SPK) {
+      const al = 0.26 + 0.62 * Math.abs(Math.sin(t * 1.45 + sp.ph));
+      const sx = cx + sp.u * r;
+      const sy = cy + sp.v * r * 0.62;
+      const sz = r * sp.s;
+      ctx.globalAlpha = e * al;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - sz * 2.0);
+      ctx.lineTo(sx + sz * 0.42, sy - sz * 0.42);
+      ctx.lineTo(sx + sz * 2.0, sy);
+      ctx.lineTo(sx + sz * 0.42, sy + sz * 0.42);
+      ctx.lineTo(sx, sy + sz * 2.0);
+      ctx.lineTo(sx - sz * 0.42, sy + sz * 0.42);
+      ctx.lineTo(sx - sz * 2.0, sy);
+      ctx.lineTo(sx - sz * 0.42, sy - sz * 0.42);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,252,250,0.96)';
+      ctx.fill();
+      // 极淡的粉色外晕，让星芒偏甜不发冷
+      ctx.beginPath();
+      ctx.arc(sx, sy, sz * 2.6, 0, TAU);
+      ctx.fillStyle = 'rgba(255,170,200,0.16)';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function pieFrost(ctx, cx, cy, r, ry, e, t) {
+    ctx.save();
+    ctx.globalAlpha = e;
+
+    // ① 糖粉：中心略亮、边缘化开的一层白雾（太厚派就变灰了，控制在极淡）
+    const g = ctx.createRadialGradient(cx - r * 0.12, cy - ry * 0.26, r * 0.02, cx, cy, r * 0.98);
+    g.addColorStop(0, 'rgba(255,251,246,0.26)');
+    g.addColorStop(0.52, 'rgba(255,247,238,0.16)');
+    g.addColorStop(1, 'rgba(255,243,232,0.03)');
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.945, ry * 0.945, 0, 0, TAU);
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // ② 卷边内侧一道白霜：糖粉最爱堆在边上
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.895, ry * 0.895, 0, 0, TAU);
+    ctx.strokeStyle = 'rgba(255,253,249,0.30)';
+    ctx.lineWidth = Math.max(2, r * 0.040);
+    ctx.stroke();
+
+    // ③ 糖粒：位置写死（每帧不跳），大小不一，一部分会闪
+    for (let i = 0; i < 34; i++) {
+      const u = pieHash(i * 3.7 + 1.1) * 2 - 1;
+      const v = pieHash(i * 5.3 + 2.9) * 2 - 1;
+      if (u * u + v * v > 1) continue;
+      const px = cx + u * r * 0.93;
+      const py = cy + v * ry * 0.93;
+      /* 糖粒要「看得见」：直径 1.5~3.4px（按派半径缩），白度高、边缘实 */
+      const sz = Math.max(1.0, r * (0.014 + 0.024 * pieHash(i * 7.9 + 0.4)));
+      const tw = 0.5 + 0.5 * Math.sin(t * 1.5 + i * 1.7);
+      ctx.beginPath();
+      ctx.arc(px, py, sz, 0, TAU);
+      ctx.fillStyle = 'rgba(255,255,252,' + (0.46 + 0.44 * tw).toFixed(3) + ')';
+      ctx.fill();
+      // 糖晶的暗边：白色小点压在金色派上，没有暗边会糊进去
+      ctx.beginPath();
+      ctx.arc(px + sz * 0.25, py + sz * 0.30, sz * 0.55, 0, TAU);
+      ctx.fillStyle = 'rgba(186,132,58,0.22)';
+      ctx.fill();
+    }
+    // ④ 整面一层很淡的糖光：撒过糖的派在灯下会泛白
+    const gl = ctx.createRadialGradient(cx - r * 0.16, cy - ry * 0.30, r * 0.02, cx, cy, r * 0.86);
+    gl.addColorStop(0, 'rgba(255,252,248,0.16)');
+    gl.addColorStop(0.60, 'rgba(255,250,244,0.07)');
+    gl.addColorStop(1, 'rgba(255,248,240,0)');
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - ry * 0.06, r * 0.86, ry * 0.86, 0, 0, TAU);
+    ctx.fillStyle = gl;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function pieSugar(ctx, cx, cy, r, S, e, t) {
+    ctx.save();
+    for (let i = 0; i < 10; i++) {
+      const s = pieHash(i * 4.3 + 1.7);
+      const ph = (t * (0.18 + 0.12 * s) + pieHash(i * 6.7)) % 1;
+      const sx = cx + (pieHash(i * 2.9 + 0.3) - 0.5) * r * 1.9;
+      const sy = cy - r * 0.62 + r * 1.15 * ph;
+      const sz = Math.max(0.7, r * (0.016 + 0.011 * s));
+      const al = e * Math.sin(ph * Math.PI) * 0.90;
+      ctx.fillStyle = 'rgba(255,246,240,' + al.toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - sz * 2.2);
+      ctx.lineTo(sx + sz, sy);
+      ctx.lineTo(sx, sy + sz * 2.2);
+      ctx.lineTo(sx - sz, sy);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 金色光尘：完美档里从派面往上飘的碎光 */
+  function pieDust(ctx, cx, cy, r, S, e, t) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 14; i++) {
+      const s = pieHash(i * 5.9 + 0.8);
+      const ph = (t * (0.14 + 0.10 * s) + pieHash(i * 8.7)) % 1;
+      const dx = cx + Math.sin(t * 0.5 + i) * r * (0.45 + 0.65 * s) * ph;
+      const dy = cy + r * 0.50 - r * 1.45 * ph;
+      const dr = Math.max(0.7, r * (0.013 + 0.011 * s));
+      const al = e * Math.sin(ph * Math.PI) * 0.80;
+      ctx.beginPath();
+      ctx.arc(dx, dy, dr, 0, TAU);
+      ctx.fillStyle = 'rgba(255,234,172,' + al.toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 小石子：有石子那一档，派面上嵌着两三颗洗不掉的白石子 */
+  function pieStones(ctx, cx, cy, r, S, e) {
+    const ry = r * 0.40;
+    ctx.save();
+    for (let i = 0; i < 3; i++) {
+      const a = pieHash(i * 5.3 + 2.4) * TAU;
+      const rad = 0.25 + 0.55 * pieHash(i * 9.1 + 0.6);
+      const sx = cx + Math.cos(a) * r * rad;
+      const sy = cy + Math.sin(a) * ry * rad;
+      const sr = r * (0.046 + 0.022 * pieHash(i * 3.9));
+      ctx.beginPath();
+      ctx.ellipse(sx, sy + sr * 0.3, sr * 1.05, sr * 0.55, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(30,14,4,' + (e * 0.26).toFixed(3) + ')';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(sx, sy, sr, sr * 0.82, a, 0, TAU);
+      const g = ctx.createLinearGradient(sx - sr, sy - sr, sx + sr, sy + sr);
+      g.addColorStop(0, 'rgba(246,244,238,' + (e * 0.95).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(172,166,154,' + (e * 0.95).toFixed(3) + ')');
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(sx - sr * 0.28, sy - sr * 0.28, Math.max(0.4, sr * 0.28), 0, TAU);
+      ctx.fillStyle = 'rgba(255,255,255,' + (e * 0.80).toFixed(3) + ')';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 酸果档：坏果只是「刚摘下来就比较酸」，不是烂透了。
+     所以这里**不画霉斑、不画飞虫、不画气泡** —— 那些是放到长毛才有的东西。
+     只画「酸」能看见的两件事：切口渗出的酸汁（湿润、微亮），
+     以及极淡的一点青色酸气。k=1.0 酸得倒牙 / 0.55 有一丝酸。 */
+  function pieAcidJuice(ctx, cx, cy, r, S, e, t, k) {
+    const KY = 0.40;                    // 派面透视压扁比（跟派盘一致）
+    ctx.save();
+    const n = k > 0.8 ? 4 : 2;
+    for (let i = 0; i < n; i++) {
+      /* 画「被汁水浸湿的一小片派面」：扁、边缘柔、颜色浅琥珀。
+         试过两种都不行：圆点缩小像糖珠，细长条+末端珠子像小虫。
+         湿片没有硬轮廓、没有孤立高光点，任何尺寸都不会读错。 */
+      const a = pieHash(i * 4.7 + 1.3) * TAU;
+      const rad = 0.20 + 0.40 * pieHash(i * 7.9 + 0.4);
+      const px = cx + Math.cos(a) * r * rad;
+      const py = cy + Math.sin(a) * r * KY * rad;
+      const dr = r * (0.070 + 0.036 * pieHash(i * 3.1 + 2.2));
+      const g = ctx.createRadialGradient(px, py, dr * 0.10, px, py, dr);
+      g.addColorStop(0, 'rgba(250,248,208,' + (e * (0.48 * k + 0.12)).toFixed(3) + ')');
+      g.addColorStop(0.62, 'rgba(232,226,164,' + (e * 0.34 * k).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(226,218,150,0)');
+      ctx.beginPath();
+      ctx.ellipse(px, py, dr * 1.15, dr * 0.72, a * 0.6, 0, TAU);
+      ctx.fillStyle = g;
+      ctx.fill();
+      // 液面的边缘：只在上缘描一小段更亮的弧（张力的反光），不成点
+      ctx.beginPath();
+      ctx.ellipse(px, py, dr * 1.10, dr * 0.68, a * 0.6, Math.PI * 1.12, Math.PI * 1.88);
+      ctx.strokeStyle = 'rgba(255,252,214,' + (e * 0.50 * k).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(0.8, dr * 0.10);
+      ctx.stroke();
+    }
+    // 酸得倒牙：派沿再挂两道很细的汁，慢慢往下渗
+    if (k > 0.8) {
+      for (let i = 0; i < 2; i++) {
+        const a = Math.PI * (0.52 + 0.22 * i);
+        const px = cx + Math.cos(a) * r * 0.95;
+        const py = cy + Math.sin(a) * r * KY * 0.95;
+        const len = r * (0.11 + 0.035 * Math.sin(t * 0.7 + i * 2.1));
+        ctx.beginPath();
+        ctx.moveTo(px - r * 0.016, py);
+        ctx.quadraticCurveTo(px - r * 0.010, py + len * 0.62, px, py + len);
+        ctx.quadraticCurveTo(px + r * 0.010, py + len * 0.62, px + r * 0.016, py);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(234,224,156,' + (e * 0.46).toFixed(3) + ')';
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /* 掉渣档：派沿下方、盘面上散落的派皮碎屑
+     （20261116：这个函数之前只写了调用没写实现，muddy 档绘制时直接抛错中断，
+      上面的标题和「点一下重做」都没画出来——已补上） */
+  function pieCrumbsOnPlate(ctx, cx, cy, r, S, e, t) {
+    const ry = r * 0.40;
+    ctx.save();
+    for (let i = 0; i < 14; i++) {
+      const a = Math.PI * (0.08 + 0.84 * pieHash(i * 3.7 + 0.9));
+      const rad = 1.03 + 0.30 * pieHash(i * 6.1 + 2.2);
+      const px = cx + Math.cos(a) * r * rad;
+      const py = cy + Math.sin(a) * ry * rad * 1.08 + r * 0.05;
+      const sz = r * (0.013 + 0.011 * pieHash(i * 2.3 + 4.1));
+      // 投影
+      ctx.beginPath();
+      ctx.ellipse(px, py + sz * 0.55, sz * 1.20, sz * 0.60, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(72,44,18,' + (e * 0.20).toFixed(3) + ')';
+      ctx.fill();
+      // 碎屑本体：小片、带一点不规则的转角
+      ctx.beginPath();
+      ctx.ellipse(px, py, sz, sz * 0.80, pieHash(i * 1.7) * TAU, 0, TAU);
+      const g = ctx.createLinearGradient(px - sz, py - sz, px + sz, py + sz);
+      g.addColorStop(0, 'rgba(238,210,164,' + (e * 0.88).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(194,156,102,' + (e * 0.88).toFixed(3) + ')');
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 焦糖档：沿派顶外缘一圈琥珀色的亮边，像糖被烤化又凝住 */
+  function pieCaramelRim(ctx, cx, cy, r, S, e, t) {
+    const ry = r * 0.40;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const pulse = 0.62 + 0.22 * Math.sin(t * 1.6);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.99, ry * 0.99, 0, Math.PI * 0.02, Math.PI * 0.98);
+    ctx.strokeStyle = 'rgba(255,166,52,' + (e * 0.34 * pulse).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(2.4, r * 0.085);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * 0.985, ry * 0.985, 0, Math.PI * 0.02, Math.PI * 0.98);
+    ctx.strokeStyle = 'rgba(255,216,138,' + (e * 0.62 * pulse).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(1.2, r * 0.030);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /* 分发：一档一套，互不重叠（流心的溢馅与甜美的蝴蝶结走独立的 J.stream / J.bow） */
+  function drawPieFlavor(ctx, cx, cy, r, S, e, t, kind) {
+    switch (kind) {
+      case 'perfect': pieDust(ctx, cx, cy, r, S, e, t); break;
+      case 'sweet': pieSugar(ctx, cx, cy, r, S, e, t); break;
+      case 'toosweet':
+        pieSyrup(ctx, cx, cy, r, S, e, t);
+        pieBubbles(ctx, cx, cy, r, S, e, t, '255,204,116');
+        break;
+      case 'faint':
+        pieBlossom(ctx, cx, cy, r, S, e, t);
+        pieSmoke(ctx, cx, cy, r, S, e, t, '255,250,238', 2, 0.50, 0.55, 0.028, 0.6);
+        break;
+      case 'empty':
+        /* 20261116 第七轮（玩家）：这一炉的主角是「派皮」，不是一坑泥。
+           去掉那几条像划痕的裂纹，只留浅浅一塌 + 一点干面粉；
+           馅少时四周本来就会露出金黄的派皮（见 drawAppleFilling 的覆盖半径）。 */
+        pieSink(ctx, cx, cy, r, S, e, 0.62);
+        pieFewSlices(ctx, cx, cy, r, S, e);
+        pieGrains(ctx, cx, cy, r, S, e, t, '244,232,206', 20, 0.34, true, false);
+        break;
+      case 'thin':
+        pieSink(ctx, cx, cy, r, S, e, 0.70);
+        pieGaps(ctx, cx, cy, r, S, e);
+        pieGrains(ctx, cx, cy, r, S, e, t, '236,206,158', 16, 0.34, true, false);
+        break;
+      case 'full':
+        pieSmoke(ctx, cx, cy, r, S, e, t, '255,246,232', 3, 0.80, 0.55, 0.034, 0.3);
+        break;
+      case 'raw':
+        pieSmoke(ctx, cx, cy, r, S, e, t, '216,240,252', 4, 0.92, 0.55, 0.044, 1.0);
+        pieGrains(ctx, cx, cy, r, S, e, t, '255,253,248', 34, 0.70, false, false);
+        break;
+      case 'caramel':
+        pieCaramelRim(ctx, cx, cy, r, S, e, t);
+        pieSmoke(ctx, cx, cy, r, S, e, t, '255,230,192', 2, 0.55, 0.50, 0.030, 2.0);
+        break;
+      case 'burnt':
+        pieSmoke(ctx, cx, cy, r, S, e, t, '198,190,182', 3, 1.00, 0.50, 0.032, 3.0);
+        break;
+      case 'carbon':
+        pieSmoke(ctx, cx, cy, r, S, e, t, '150,142,136', 4, 1.15, 0.55, 0.038, 4.0);
+        pieEmbers(ctx, cx, cy, r, S, e, t);
+        break;
+      case 'sour':
+        /* 20261116（玩家）：坏果只是酸，不是烂。
+           第七轮再收紧：**一点绿色气体都不要** —— 派上冒青烟看着像变质，很怪。
+           现在只剩切口渗出的一小片湿亮酸汁。 */
+        pieAcidJuice(ctx, cx, cy, r, S, e, t, 0.55);
+        break;
+      case 'rotten':
+        /* 同上：不画霉斑、不画飞虫、不冒绿气，只把「酸」加重。 */
+        pieAcidJuice(ctx, cx, cy, r, S, e, t, 1.0);
+        break;
+      case 'dusty':
+        pieGrains(ctx, cx, cy, r, S, e, t, '228,216,190', 34, 0.55, true, false);
+        pieStones(ctx, cx, cy, r, S, e);
+        break;
+      case 'muddy':
+        /* 20261116 第七轮（玩家）：掉渣档派面上那些弯曲细线被读成了「毛」。
+           掉渣只是掉渣，派面不该有毛 —— 去掉裂纹，只留砂粒与盘上的碎屑。 */
+        pieGrains(ctx, cx, cy, r, S, e, t, '206,184,152', 34, 0.58, false, true);
+        pieGrains(ctx, cx, cy, r, S, e, t, '222,202,172', 22, 0.50, true, false);
+        pieCrumbsOnPlate(ctx, cx, cy, r, S, e, t);
+        break;
+      default: break;
+    }
+  }
+
+  /* 甜美档的蝴蝶结：系在派顶上方，两片环 + 一个结 + 两条飘带。
+     20261116 第三版（玩家）：前两版是深玫红，压在暖黄的派上发闷，
+     看着像「一块深色的结」，一点都不甜美。
+     这一版把整块缎带提到「樱桃粉 → 玫瑰糖」的亮度区间，描白边、结心换成糖珠、
+     四周补几粒星芒 —— 甜美靠亮度和糖的质感，不是靠把颜色压深。 */
+  function drawPieBow(ctx, cx, cy, r, ry, S, e, t) {
+    const bx = cx + r * 0.005;
+    const by = cy - ry * 0.02;
+    /* 缩小一档：大了在暖黄派面上像两只粉色气球；小一点才读成「系上去的一个结」。 */
+    const w = r * 0.300;
+    const h = r * 0.185;
+    ctx.save();
+    ctx.globalAlpha = e;
+
+    // 投影：贴着派面，读作「压在派上」
+    ctx.beginPath();
+    ctx.ellipse(bx, by + h * 0.92, w * 0.98, h * 0.44, 0, 0, TAU);
+    ctx.fillStyle = 'rgba(70,22,34,0.20)';
+    ctx.fill();
+
+    // 两条飘带（从结心往下垂，末端斜口，长度只到派面）
+    [-1, 1].forEach(sgn => {
+      ctx.beginPath();
+      ctx.moveTo(bx + sgn * w * 0.10, by + h * 0.05);
+      ctx.bezierCurveTo(
+        bx + sgn * w * 0.38, by + h * 0.70,
+        bx + sgn * w * 0.26, by + h * 1.26,
+        bx + sgn * w * 0.50, by + h * 1.44);
+      ctx.lineTo(bx + sgn * w * 0.66, by + h * 1.30);
+      ctx.bezierCurveTo(
+        bx + sgn * w * 0.44, by + h * 1.10,
+        bx + sgn * w * 0.52, by + h * 0.56,
+        bx + sgn * w * 0.24, by + h * 0.10);
+      ctx.closePath();
+      const rg = ctx.createLinearGradient(bx, by, bx + sgn * w * 0.6, by + h * 1.4);
+      rg.addColorStop(0, '#ffe0ec');
+      rg.addColorStop(0.5, '#ff8fb4');
+      rg.addColorStop(1, '#df5c85');
+      ctx.fillStyle = rg;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = Math.max(1, r * 0.008);
+      ctx.stroke();
+    });
+
+    // 两片环
+    [-1, 1].forEach(sgn => {
+      /* 20261116 第九轮（玩家）：上一版两片环是圆鼓鼓的胶囊，一眼看像两只粉色气球。
+         真的蝴蝶结是「上下两条边在结心收窄、在外端收尖、中间有折痕」——
+         所以这里把外端拉出一个尖角，并补一条从结心到尖角的折痕（明暗分界）。 */
+      const ring = () => {
+        ctx.beginPath();
+        ctx.moveTo(bx, by - h * 0.22);
+        ctx.bezierCurveTo(bx + sgn * w * 0.30, by - h * 1.16,
+          bx + sgn * w * 0.94, by - h * 1.08, bx + sgn * w * 1.02, by - h * 0.30);
+        ctx.bezierCurveTo(bx + sgn * w * 1.05, by - h * 0.06,
+          bx + sgn * w * 1.00, by + h * 0.10, bx + sgn * w * 0.94, by + h * 0.22);
+        ctx.bezierCurveTo(bx + sgn * w * 0.66, by + h * 0.66,
+          bx + sgn * w * 0.24, by + h * 0.56, bx, by + h * 0.20);
+        ctx.closePath();
+      };
+      ring();
+      const g = ctx.createLinearGradient(bx, by - h, bx + sgn * w, by + h * 0.5);
+      g.addColorStop(0, '#fff5f9');
+      g.addColorStop(0.38, '#ffa8c8');
+      g.addColorStop(1, '#ef6a95');
+      ctx.fillStyle = g;
+      ctx.fill();
+      // 白缎带包边：这是「缎带」最直接的信号，浅到接近白才显甜
+      ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+      ctx.lineWidth = Math.max(1, r * 0.010);
+      ctx.stroke();
+      /* 20261117 第十轮（玩家）：上一版在翼里掏了个椭圆孔，还描了一圈亮边，
+         结果被读成「两只眼睛 / 两个洞」，透不透都别扭。
+         真正的缎带环不是靠「洞」成立的 —— 是靠「环内侧那道卷起来的折腔」。
+         所以这里取消闭口椭圆：只画一道不闭合的弯月暗面（上边深、往里渐浅），
+         再沿内缘补一条卷边亮线。不描边、不闭合，就不会再像眼睛。 */
+      ctx.save();
+      ring();
+      ctx.clip();
+      /* 折腔：贴着环内侧的一条弯月，越靠外端越深 —— 缎带在这里翻折 */
+      ctx.beginPath();
+      ctx.moveTo(bx + sgn * w * 0.08, by - h * 0.34);
+      ctx.quadraticCurveTo(bx + sgn * w * 0.50, by - h * 0.84, bx + sgn * w * 0.96, by - h * 0.26);
+      ctx.quadraticCurveTo(bx + sgn * w * 0.62, by - h * 0.10, bx + sgn * w * 0.08, by + h * 0.12);
+      ctx.closePath();
+      const cg = ctx.createLinearGradient(
+        bx + sgn * w * 0.10, by - h * 0.60,
+        bx + sgn * w * 0.96, by + h * 0.04);
+      cg.addColorStop(0, 'rgba(214,102,140,0.08)');
+      cg.addColorStop(0.55, 'rgba(186,66,106,0.26)');
+      cg.addColorStop(1, 'rgba(168,50,90,0.34)');
+      ctx.fillStyle = cg;
+      ctx.fill();
+      /* 缎面反光：折腔上方那一块才是受光面，缎带的光泽靠它 */
+      const sh = ctx.createRadialGradient(
+        bx + sgn * w * 0.36, by - h * 0.72, 0,
+        bx + sgn * w * 0.36, by - h * 0.72, w * 0.60);
+      sh.addColorStop(0, 'rgba(255,255,255,0.42)');
+      sh.addColorStop(0.55, 'rgba(255,255,255,0.14)');
+      sh.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = sh;
+      ctx.fillRect(bx - w * 1.40, by - h * 2.20, w * 2.80, h * 4.40);
+      /* 卷边：折腔下沿的一道细亮线，暗示缎带是卷起来的（不是贴片） */
+      ctx.beginPath();
+      ctx.moveTo(bx + sgn * w * 0.12, by + h * 0.16);
+      ctx.quadraticCurveTo(bx + sgn * w * 0.62, by - h * 0.08, bx + sgn * w * 0.94, by - h * 0.22);
+      ctx.strokeStyle = 'rgba(255,244,248,0.46)';
+      ctx.lineWidth = Math.max(1, r * 0.011);
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+
+      // 折痕：从结心到外尖的一条明暗分界，蝴蝶结才「有折」
+      ctx.save();
+      ring();
+      ctx.clip();
+      ctx.beginPath();
+      ctx.moveTo(bx, by - h * 0.06);
+      ctx.quadraticCurveTo(bx + sgn * w * 0.48, by - h * 0.44, bx + sgn * w * 1.02, by - h * 0.30);
+      ctx.lineTo(bx + sgn * w * 1.02, by + h * 0.24);
+      ctx.quadraticCurveTo(bx + sgn * w * 0.48, by + h * 0.46, bx, by + h * 0.20);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(198,74,112,0.24)';     // 下半折面压暗
+      ctx.fill();
+      // 反折亮带：紧贴折痕的那一条，是缎带翻折时露出的背面
+      ctx.beginPath();
+      ctx.moveTo(bx, by - h * 0.04);
+      ctx.quadraticCurveTo(bx + sgn * w * 0.50, by - h * 0.40, bx + sgn * w * 1.00, by - h * 0.26);
+      ctx.strokeStyle = 'rgba(255,246,250,0.55)';
+      ctx.lineWidth = Math.max(1, r * 0.016);
+      ctx.stroke();
+      ctx.restore();
+      // 高光：沿环上缘一道白弧
+      ctx.beginPath();
+      ctx.moveTo(bx + sgn * w * 0.14, by - h * 0.56);
+      ctx.quadraticCurveTo(bx + sgn * w * 0.54, by - h * 0.92, bx + sgn * w * 0.80, by - h * 0.32);
+      ctx.strokeStyle = 'rgba(255,255,255,0.78)';
+      ctx.lineWidth = Math.max(1, r * 0.015);
+      ctx.stroke();
+      // 缎面光泽：两条很淡的斜亮带 —— 缎带跟气球最大的区别就在这里
+      ctx.save();
+      ring();
+      ctx.clip();
+      for (const off of [-0.20, 0.16]) {
+        ctx.beginPath();
+        ctx.moveTo(bx + sgn * w * (0.12 + off), by - h * 1.2);
+        ctx.quadraticCurveTo(bx + sgn * w * (0.46 + off), by - h * 0.30,
+          bx + sgn * w * (0.34 + off), by + h * 0.9);
+        ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+        ctx.lineWidth = Math.max(1, r * 0.020);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+
+    // 结心：一颗糖珠，而不是一块布结（布结太「硬」，糖珠才甜）
+    const kb = ctx.createRadialGradient(bx - w * 0.05, by - h * 0.22, h * 0.04, bx, by, h * 0.86);
+    kb.addColorStop(0, '#fff3f8');
+    kb.addColorStop(0.45, '#ff9dc0');
+    kb.addColorStop(1, '#d95a86');
+    ctx.beginPath();
+    ctx.ellipse(bx, by, w * 0.135, h * 0.62, 0, 0, TAU);
+    ctx.fillStyle = kb;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.80)';
+    ctx.lineWidth = Math.max(1, r * 0.009);
+    ctx.stroke();
+
+    ctx.globalAlpha = e;
+    ctx.restore();
+  }
+
+  /* 塞满档的流心：馅从派顶下缘溢出来，沿派壁往下淌，末端挂一颗将落未落的。
+     上宽下窄、带一点摆动，才不会看着像几根硬棍子。 */
+  function drawPieDrip(ctx, cx, cy, r, ry, S, e, t) {
+    ctx.save();
+    ctx.globalAlpha = e;
+    /* 20261116 第七轮（玩家）：三版垂滴全部失败 —— 獠牙、小瓶子、高脚杯。
+       根因是尺度：派半径只有 88px，「竖条 + 珠子」怎么画都读成零件。
+       这一版不再画实体垂滴，改成「卷边外沿两段湿润的糖浆反光」：
+       低对比、不抢中心糖心，但看得出边上是黏的、刚刚溢过。 */
+    for (const a0 of [0.44, 0.845]) {
+      const pulse = 0.72 + 0.28 * Math.sin(t * 0.6 + a0 * 5);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + ry * 0.05, r * 0.945, ry * 0.945, 0, Math.PI * a0, Math.PI * (a0 + 0.10));
+      ctx.strokeStyle = 'rgba(255,216,152,' + (0.52 * pulse).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(2, r * 0.052);
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+    /* 盘面两处糖渍：极扁的一点亮斑，读作「滴下去过」 */
+    for (const a of [0.52, 0.80]) {
+      const px = cx + Math.cos(Math.PI * a) * r * 0.86;
+      const py = cy + Math.sin(Math.PI * a) * ry * 0.92 + r * 0.30;
+      const g = ctx.createRadialGradient(px, py, r * 0.004, px, py, r * 0.075);
+      g.addColorStop(0, 'rgba(255,226,166,0.55)');
+      g.addColorStop(1, 'rgba(206,132,44,0)');
+      ctx.beginPath();
+      ctx.ellipse(px, py, r * 0.075, r * 0.030, 0, 0, TAU);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* 流心档：一颗完整的派，糖心从饼皮边缘「挤」出来，一注两注往盘上淌。
+     20261117 第二十三版。前面试过切走一角、也试过画裂口，小尺寸下都会被读成
+     「派上破了个洞 / 有道裂痕」—— 玩家明确说过没让加裂痕，也看不出切块。
+     所以回到最直白的读法：派是完整的，糖是从饼皮边沿溢出来的。
+       ① 派沿先被糖顶起一个鼓包（糖正从卷边缝里往外拱）；
+       ② 糖顺着派壁淌下来，上粗—中细—落盘铺开，两侧走黏稠的弧线，带一道高光；
+       ③ 落到盘面上积成一小滩，滩面反光，外沿一圈浅浅的糖渍。
+     一共两注：右前一注大的、左前一注小的，都在观众看得到的这一侧。 */
+  function pieHeart(ctx, cx, cy, r, ry, e, t) {
+    const f = ry / r;
+    const depth = r * 0.26;              // 派壁高度，必须与 drawDish 的 depth 一致
+    const R1 = r * 0.255;
+
+    ctx.save();
+    ctx.globalAlpha = e;
+
+    /* ---------- ① 馅满到派沿：一圈流心贴着卷边 ---------- */
+    /* 这一档前后试过十几版「糖从派沿流下来」：细条像栏杆，糖片像袋子，
+       垂下来那一截像小桶，派面上的糖痕像两根筷子。原因很简单 ——
+       任何挂在派壁上的东西，在这个尺寸下都会被读成一个「配件」。
+       换成没有凸出物的表达：馅满到派沿内侧，卷边里圈一整圈都是亮的糖，
+       前端两处再稍微鼓出来一点，像就要溢出来、但还挂在边上。 */
+    const ringIn = r * 0.872, ringOut = r * 0.972;
+    /* 边缘带一点起伏：完全等宽的一圈会被读成「描了一圈线」 */
+    const wob = a2 => 1 + 0.030 * Math.sin(a2 * 3.0 + 0.7) + 0.018 * Math.sin(a2 * 5.0 + 2.1);
+    const edgeOf = (a2, inward) => {
+      const R2 = inward
+        ? ringIn * (1 - 0.022 * Math.sin(a2 * 4.0 + 1.4))
+        : ringOut * wob(a2);
+      return [cx + Math.cos(a2) * R2, cy + Math.sin(a2) * R2 * f];
+    };
+    ctx.beginPath();
+    for (let i = 0; i <= 108; i++) {
+      const p = edgeOf((i / 108) * TAU, false);
+      if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+    }
+    for (let i = 108; i >= 0; i--) {
+      const p = edgeOf((i / 108) * TAU, true);
+      ctx.lineTo(p[0], p[1]);
+    }
+    ctx.closePath();
+    const rg = ctx.createLinearGradient(cx, cy - ringOut * f, cx, cy + ringOut * f);
+    rg.addColorStop(0, 'rgba(255,224,164,1)');
+    rg.addColorStop(0.30, 'rgba(248,184,92,1)');
+    rg.addColorStop(0.66, 'rgba(222,140,44,1)');
+    rg.addColorStop(1, 'rgba(176,98,22,1)');
+    ctx.fillStyle = rg;
+    ctx.fill();
+    /* 内缘一道浅色糖液面：亮在贴着派面的那一侧，糖才像「液面」不是「糖圈」 */
+    ctx.beginPath();
+    for (let i = 0; i <= 108; i++) {
+      const a2 = (i / 108) * TAU;
+      const p = edgeOf(a2, true);
+      const dx = p[0] - cx, dy = p[1] - cy;
+      const L2 = Math.hypot(dx, dy) || 1;
+      const q = [p[0] + (dx / L2) * r * 0.006, p[1] + (dy / L2) * r * 0.006];
+      if (i === 0) ctx.moveTo(q[0], q[1]); else ctx.lineTo(q[0], q[1]);
+    }
+    ctx.strokeStyle = 'rgba(255,246,212,0.44)';
+    ctx.lineWidth = Math.max(1, r * 0.010);
+    ctx.stroke();
+
+    /* 前端两处鼓包：馅在卷边那儿多顶出来一点，但不过卷边、更不往下垂 */
+    [[Math.PI * 0.415, 0.078, 0.034], [Math.PI * 0.600, 0.050, 0.024]].forEach(function (o) {
+      const a3 = o[0], rr3 = r * o[1], ry3 = r * o[2];
+      const bxp = cx + Math.cos(a3) * r * 0.952;
+      const byp = cy + Math.sin(a3) * r * 0.952 * f;
+      const bg3 = ctx.createRadialGradient(
+        bxp - r * 0.010, byp - r * 0.012, r * 0.004,
+        bxp, byp, rr3);
+      bg3.addColorStop(0, 'rgba(255,232,180,1)');
+      bg3.addColorStop(0.55, 'rgba(246,182,88,1)');
+      bg3.addColorStop(1, 'rgba(196,114,26,0.90)');
+      ctx.beginPath();
+      ctx.ellipse(bxp, byp, rr3, ry3, 0, 0, TAU);
+      ctx.fillStyle = bg3;
+      ctx.fill();
+    });
+
+    /* ---------- ④ 中心糖坑：圆形保留，液面反光加强 ---------- */
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1, f);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R1, R1, 0, 0, TAU);
+    const cg = ctx.createRadialGradient(-R1 * 0.26, -R1 * 0.30, R1 * 0.05, 0, 0, R1);
+    cg.addColorStop(0, 'rgba(255,244,204,0.99)');
+    cg.addColorStop(0.30, 'rgba(250,200,118,0.98)');
+    cg.addColorStop(0.70, 'rgba(226,152,62,0.97)');
+    cg.addColorStop(0.94, 'rgba(190,110,28,0.96)');
+    cg.addColorStop(1, 'rgba(168,92,16,0.95)');
+    ctx.fillStyle = cg;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R1 * 0.90, R1 * 0.90, 0, 0, TAU);
+    ctx.strokeStyle = 'rgba(255,250,226,0.40)';
+    ctx.lineWidth = Math.max(1, r * 0.014);
+    ctx.stroke();
+    for (const ph2 of [0, 2.2]) {
+      const sw = Math.sin(t * 0.75 + ph2) * 0.55;
+      ctx.beginPath();
+      ctx.ellipse(R1 * 0.06 * Math.cos(ph2), R1 * 0.06 * Math.sin(ph2),
+        R1 * 0.58, R1 * 0.58, sw * 0.28, 0.5 + ph2 * 0.15, 2.3 + ph2 * 0.15);
+      ctx.strokeStyle = 'rgba(255,248,220,' + (ph2 ? 0.26 : 0.44) + ')';
+      ctx.lineWidth = Math.max(1, r * (ph2 ? 0.009 : 0.012));
+      ctx.stroke();
+    }
+    const hg = ctx.createRadialGradient(-R1 * 0.22, -R1 * 0.26, R1 * 0.02, -R1 * 0.22, -R1 * 0.26, R1 * 0.52);
+    hg.addColorStop(0, 'rgba(255,255,250,0.34)');
+    hg.addColorStop(1, 'rgba(255,255,250,0)');
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R1, R1, 0, 0, TAU);
+    ctx.fillStyle = hg;
+    ctx.fill();
+    ctx.restore();
+
+    ctx.restore();
+  }
+
   function drawEveDone(st, ctx, t, W, H, S) {
     const g = eveDishGeom(W, H);
     const e = clamp(st.doneK, 0, 1);
@@ -2813,92 +5384,162 @@
     const cy = lerp(H * 0.71, H * 0.63, e);
     const r = lerp(g.r * 0.82, g.r * 1.04, e);
     const k = bakeKOf(st.bakeT);
+    // 这一炉的全部判定（标题 / 副标 / 蝴蝶结 / 流心 / 光环）都从这里取，画面和文字不会打架
+    const J = evePieJudge(st);
+
+    /* 最完美：背景四散的散射金光 —— 十几道粗细不一的扇形光从派心射出去，
+       慢速自转 + 各自呼吸，配合下面那一圈金色光环。用 lighter 叠色，
+       才有「光从派里透出来」的感觉，而不是贴了几块半透明色块。 */
+    if (J.halo) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      /* 先铺一层大范围的金色光晕：光束再柔，没有这层底色也会显得干。 */
+      const glow = ctx.createRadialGradient(cx, cy - r * 0.10, r * 0.36, cx, cy - r * 0.10, W * 0.64);
+      glow.addColorStop(0, 'rgba(255,208,124,' + (0.17 * e).toFixed(3) + ')');
+      glow.addColorStop(0.58, 'rgba(255,182,84,' + (0.06 * e).toFixed(3) + ')');
+      glow.addColorStop(1, 'rgba(255,160,60,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, W, H);
+      /* 20261116 第三版：上一版光一直射到画面边缘，看着像星芒爆炸。
+         现在 8 道、更宽、半径收到 0.5~0.6W —— 光是「散在派周围」，
+         而不是刺穿整屏。 */
+      const rays = 7;
+      for (let i = 0; i < rays; i++) {
+        const a0 = t * 0.10 + (i / rays) * TAU;
+        /* 20261116 第四版：光再收一档 —— 半径从 0.5~0.6W 收到 0.4~0.48W，
+           单道扇形放宽到 8~11°，这样是「大块的散射光围在派周围」，
+           而不是几道细光射穿整屏、把标题也切了。 */
+        const wide = 0.130 + 0.070 * (0.5 + 0.5 * Math.sin(i * 2.7 + 1.1));
+        const R = W * (0.40 + 0.08 * Math.sin(t * 0.55 + i * 1.3));
+        /* 每道光画三层同心扇形（宽→窄、淡→浓），两侧边界自然过渡。
+           单层硬边扇形画出来就是探照灯，三层叠下来才像"光散在空气里"。 */
+        [[1, 0.34, 0.88], [0.64, 0.62, 0.94], [0.34, 1.0, 1.0]].forEach((lay) => {
+          const ws = lay[0], ka = lay[1], rk = lay[2];
+          const g2 = ctx.createRadialGradient(cx, cy - r * 0.10, r * 0.52, cx, cy - r * 0.10, R);
+          g2.addColorStop(0, 'rgba(255,222,150,' + (0.24 * e * ka).toFixed(3) + ')');
+          g2.addColorStop(0.42, 'rgba(255,200,110,' + (0.10 * e * ka).toFixed(3) + ')');
+          g2.addColorStop(1, 'rgba(255,180,70,0)');
+          ctx.fillStyle = g2;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy - r * 0.10);
+          ctx.arc(cx, cy - r * 0.10, R * rk, a0 - wide * ws, a0 + wide * ws);
+          ctx.closePath();
+          ctx.fill();
+        });
+      }
+      ctx.restore();
+    }
 
     // 完美的金环（柔光：细线 + 大范围发光。硬边椭圆看着像"选中框"，不像光）
     if (st.isPerfect) {
       ctx.save();
-      ctx.globalAlpha = e * (0.42 + 0.22 * Math.sin(t * 2.0));
-      ctx.strokeStyle = 'rgba(255,216,140,0.60)';
-      ctx.lineWidth = 1.4 * S;
-      ctx.shadowColor = 'rgba(255,196,90,0.85)';
-      ctx.shadowBlur = 18 * S;
+      ctx.globalAlpha = e * (0.58 + 0.24 * Math.sin(t * 2.0));
+      ctx.strokeStyle = 'rgba(255,222,152,0.88)';
+      ctx.lineWidth = 2.4 * S;
+      ctx.shadowColor = 'rgba(255,196,90,0.95)';
+      ctx.shadowBlur = 26 * S;
       ctx.beginPath();
       ctx.ellipse(cx, cy + r * 0.18, r * 1.30, r * 0.58, 0, 0, TAU);
       ctx.stroke();
       // 外圈再补一层更淡的，边缘就不会那么硬
-      ctx.globalAlpha = e * 0.20;
+      ctx.globalAlpha = e * 0.26;
       ctx.beginPath();
-      ctx.ellipse(cx, cy + r * 0.18, r * 1.46, r * 0.68, 0, 0, TAU);
+      ctx.ellipse(cx, cy + r * 0.18, r * 1.48, r * 0.70, 0, 0, TAU);
       ctx.stroke();
       ctx.shadowBlur = 0;
       // 星星
-      for (let i = 0; i < 6; i++) {
-        const a = t * 0.6 + (i / 6) * TAU;
+      for (let i = 0; i < 8; i++) {
+        const a = t * 0.6 + (i / 8) * TAU;
         const sr = r * (1.40 + 0.10 * Math.sin(t * 2 + i));
         const sx = cx + Math.cos(a) * sr;
         const sy = cy + r * 0.20 + Math.sin(a) * r * 0.62;
-        ctx.globalAlpha = e * (0.35 + 0.55 * Math.abs(Math.sin(t * 2.2 + i)));
-        ctx.fillStyle = '#ffe9b0';
+        ctx.globalAlpha = e * (0.42 + 0.58 * Math.abs(Math.sin(t * 2.2 + i)));
+        ctx.fillStyle = '#ffeebe';
         ctx.beginPath();
-        ctx.moveTo(sx, sy - 3.4 * S);
-        ctx.lineTo(sx + 1.1 * S, sy - 1.1 * S);
-        ctx.lineTo(sx + 3.4 * S, sy);
-        ctx.lineTo(sx + 1.1 * S, sy + 1.1 * S);
-        ctx.lineTo(sx, sy + 3.4 * S);
-        ctx.lineTo(sx - 1.1 * S, sy + 1.1 * S);
-        ctx.lineTo(sx - 3.4 * S, sy);
-        ctx.lineTo(sx - 1.1 * S, sy - 1.1 * S);
+        ctx.moveTo(sx, sy - 4.2 * S);
+        ctx.lineTo(sx + 1.3 * S, sy - 1.3 * S);
+        ctx.lineTo(sx + 4.2 * S, sy);
+        ctx.lineTo(sx + 1.3 * S, sy + 1.3 * S);
+        ctx.lineTo(sx, sy + 4.2 * S);
+        ctx.lineTo(sx - 1.3 * S, sy + 1.3 * S);
+        ctx.lineTo(sx - 4.2 * S, sy);
+        ctx.lineTo(sx - 1.3 * S, sy - 1.3 * S);
         ctx.closePath();
         ctx.fill();
       }
       ctx.restore();
     }
 
-    drawDish(ctx, cx, cy, r, { k: k, fill: eveFillK(st), lattice: 1, glaze: st.coat > 0 ? 1 : 0.4, sugared: 1 });
-
-    /* 文案
-       20261115：结果不再只看火候一个维度。这一版加了「甜度」和「馅量」两条：
-         甜度 → 偏淡 / 刚好 / 甜得发齁（由撒糖时停在哪一格决定）
-         馅量 → 太少 / 偏少 / 刚好 / 塞满（由送进派的片数决定）
-       所以同一炉火候，也能烤出「太甜的苹果派」「苹果很少的苹果派」等不同结果。 */
-    const n = st.plated || 0;
-    const sweet = st.sugar < 0.40 ? 0 : st.sugar <= 0.72 ? 1 : 2;   // 0 淡 · 1 刚好 · 2 太甜
-    const amt = n < 5 ? 0 : n < 8 ? 1 : n <= 13 ? 2 : 3;            // 0 太少 · 1 偏少 · 2 刚好 · 3 塞满
-    const sweetTxt = ['甜度偏淡', '甜度刚好', '甜得发齁'][sweet];
-    /* 馅量文案也带一点暗示：10 片说「一颗苹果」，9/11 片说「差一片」，
-       其余才直接报片数 —— 不说满分是多少，但读起来能感到「一颗苹果」是个刻度。 */
-    const amtTxt = n === EVE_FULL_SLICES ? '一颗苹果'
-      : (n === EVE_FULL_SLICES - 1 || n === EVE_FULL_SLICES + 1) ? n + ' 片 · 差一片'
-        : ['馅料太少', '只有 ' + n + ' 片', n + ' 片', n + ' 片塞满'][amt];
-    let sub = sweetTxt + ' · ' + amtTxt + ' · 蛋液 ' + st.coatScore + '/20 · 火候 ' + (st.bakeScore || 0) + '/30';
-
-    let title;
-    const gd = st.cookResult;
-    if (st.isPerfect) {
-      title = '最完美的苹果派';
-      sub = '甜得刚好、烤得刚好，连网格都编得刚好';
-    } else if (gd === 'raw') {
-      title = '还是生的 · 派皮没熟';
-    } else if (gd === 'caramel') {
-      title = '焦糖色 · 更香一点';
-    } else if (gd === 'burnt') {
-      title = '烤焦了 · 边上发苦';
-    } else if (gd === 'carbon') {
-      title = '已经成炭 · 下次盯着火候';
-    } else {
-      // 火候完美 → 由甜度和馅量决定这是「哪一款」苹果派
-      if (sweet === 2) title = '太甜了 · 齁嗓子';
-      else if (sweet === 0) title = '有点淡 · 苹果味清清的';
-      else if (amt === 0) title = '空落落 · 几乎没有馅';
-      else if (amt === 1) title = '皮比馅多 · 苹果少了点';
-      else if (amt === 3) title = '塞得满满 · 一口掉渣';
-      else title = '刚刚好 · 金黄酥皮';
+    /* 甜美档专属：派后面一层暖暖的粉光。
+       「甜」不只是配件，还是整张图的氛围 —— 让这一炉看起来像甜品台的照片。 */
+    if (J.kind === 'sweet') {
+      const ph = ctx.createRadialGradient(cx, cy + r * 0.06, r * 0.55, cx, cy + r * 0.06, r * 1.80);
+      ph.addColorStop(0, 'rgba(255,186,206,' + (0.26 * e).toFixed(3) + ')');
+      ph.addColorStop(0.55, 'rgba(255,168,196,' + (0.10 * e).toFixed(3) + ')');
+      ph.addColorStop(1, 'rgba(255,168,196,0)');
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + r * 0.06, r * 1.80, r * 1.16, 0, 0, TAU);
+      ctx.fillStyle = ph;
+      ctx.fill();
     }
+
+    /* 20261116 第七轮：成品这一张加上「顶部苹果圈」与「夹心层」。
+       topRing 的片数跟着塞进去的片数走（馅少的派不会凭空长满一圈）；
+       夹心只给塞满/流心那几炉 —— 那是它们跟别的派长得不一样的地方。 */
+    const fillK = eveFillK(st);
+    drawDish(ctx, cx, cy, r, {
+      k: k, fill: fillK, lattice: 1, glaze: st.coat > 0 ? 1 : 0.4, sugared: 1,
+      /* 片数按馅量分档。玩家的要求是「码一圈、码整齐」，
+         所以数量要够密：16 片以上相邻两片真的压到一起，才连成一条边。 */
+      topRing: fillK >= 0.95 ? 10 : fillK >= 0.75 ? 10 : fillK >= 0.5 ? 9 : fillK >= 0.3 ? 7 : 0,
+      core: !!J.stream,
+      /* 甜美档的苹果片提亮一档：它的甜要靠「糖渍苹果」那种亮，不是靠蝴蝶结一个配件 */
+      ringBright: J.kind === 'sweet' ? 1 : 0,
+    });
+
+    /* 档位装饰（画在派之后，才压得住网格）：
+       塞满 → 馅从边沿流出来；甜美 → 系一个缎带蝴蝶结。两者可以同时出现。 */
+    const dry = r * 0.40;
+    /* 完美档：光环在派之后再补一道前景弧。
+       前面那道整圈有一半会被派盖住，只看得到上半圈，像个断掉的框；
+       这里按「派沿外侧的下半圈」再描一道，光环就完整地兜住了派。 */
+    if (J.halo) {
+      ctx.save();
+      ctx.globalAlpha = e * (0.50 + 0.22 * Math.sin(t * 2.0));
+      ctx.strokeStyle = 'rgba(255,226,160,0.90)';
+      ctx.lineWidth = 2.2 * S;
+      ctx.shadowColor = 'rgba(255,198,92,0.95)';
+      ctx.shadowBlur = 24 * S;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + r * 0.18, r * 1.30, r * 0.58, 0, Math.PI * 0.02, Math.PI * 0.98);
+      ctx.stroke();
+      ctx.restore();
+    }
+    /* 流心档的心脏：中心一块塌下去的糖心（玩家要的「中间有夹心」）。
+       画在网格之上才看得见 —— 压在网格下面只会被缝里的暗色吃掉。 */
+    if (J.stream) {
+      /* 流心的全部视觉都在 pieHeart 里：中心糖坑 + 三条漫到派沿的流心。
+         原来那个 drawPieDrip（卷边湿润反光）已并入，避免两处糖浆各说各话。 */
+      pieHeart(ctx, cx, cy, r, dry, e, t);
+    }
+    /* 甜美档：糖霜先落在派面上，蝴蝶结再压上去 —— 反过来糖粉会把缎带糊白。 */
+    if (J.kind === 'sweet') {
+      pieFrost(ctx, cx, cy, r, dry, e, t);
+      pieSparkle(ctx, cx, cy, r, e, t);
+    }
+    if (J.bow) drawPieBow(ctx, cx, cy, r, dry, S, e, t);
+    /* 每一档自己的小特色：热气 / 烟 / 霉斑 / 糖丝 / 苹果花 / 石子 / 火星……
+       画在派之后，才压得住网格；范围也收在派与盘之间，不上探到标题。 */
+    drawPieFlavor(ctx, cx, cy, r, S, e, t, J.kind);
+
+    /* 文案：标题与副标全部来自 evePieJudge —— 标题统一成「……的苹果派」，
+       副标只报这一炉的账（甜度 / 馅量 / 蛋液 / 火候 / 坏果 / 洗净）。 */
+    const title = J.title, sub = J.sub;
     /* 20261114：结算页三行字原来挤成两行 —— 副标题落点（y+19S）正好被底部的
        「点一下重做」提示条压住。现在标题上移到 0.772、提示条下移到 0.862，
        中间留出约一行半的空隙。 */
-    drawResultText(ctx, W, H, S, title, sub, !!st.isPerfect, 0.772);
-    drawHint(ctx, '点一下重做', W, H, S, '#ffe9cf', 0.862);
+    drawResultText(ctx, W, H, S, title, sub, !!J.halo, 0.772);
+    drawHint(ctx, '点一下重做', W, H, S, '#ffe9cf', 0.895);
   }
 
 
@@ -3392,9 +6033,36 @@
     return sc;
   }
 
+  /* ★ 20261116：苹果派的十六档结算，**唯一档位表**。
+     预览页（__pieflow.html）和主项目（入梦签调试器）都从这里取，
+     免得两边各写一份、改一档忘一处。
+     每项：name=档名（和 evePieJudge 的 title 一致），opt=喂给 debugJump 的状态。
+       cuts=片数 / sweet=糖量 / sugar=糖分 / coat=蛋液 / t=烘烤秒数
+       bad=坏果颗数 / dirty=洗净档（2 掉渣浅档、3 石子深档）
+     顺序与 evePieJudge 的判定优先级一致，一档一档对得下来。 */
+  const PIE_TIERS = [
+    { name: '最完美的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 20, coat: 1, t: 4.2 } },
+    { name: '甜美的苹果派', opt: { cuts: 10, sweet: 0.72, sugar: 14, coat: 1, t: 4.2 } },
+    { name: '像糖浆的苹果派', opt: { cuts: 10, sweet: 0.92, sugar: 6, coat: 1, t: 4.2 } },
+    { name: '不太甜的苹果派', opt: { cuts: 10, sweet: 0.30, sugar: 6, coat: 1, t: 4.2 } },
+    { name: '几乎没馅的苹果派', opt: { cuts: 3, sweet: 0.54, sugar: 14, coat: 1, t: 4.2 } },
+    { name: '皮比馅多的苹果派', opt: { cuts: 6, sweet: 0.54, sugar: 14, coat: 1, t: 4.2 } },
+    { name: '流心的苹果派', opt: { cuts: 15, sweet: 0.54, sugar: 14, coat: 1, t: 4.2 } },
+    { name: '刚刚好的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 0.7, t: 4.2 } },
+    { name: '还没烤熟的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 1, t: 2.0 } },
+    { name: '焦糖色的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 1, t: 5.5 } },
+    { name: '边上烤糊的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 1, t: 6.8 } },
+    { name: '成了炭的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 1, t: 8.4 } },
+    { name: '有点发酸的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 1, t: 4.2, bad: 1 } },
+    { name: '酸得倒牙的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 1, t: 4.2, bad: 4 } },
+    { name: '有些掉渣的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 1, t: 4.2, dirty: 2 } },
+    { name: '有石子的苹果派', opt: { cuts: 10, sweet: 0.54, sugar: 14, coat: 1, t: 4.2, dirty: 3 } },
+  ];
+
   window.BMFX_SPECIAL = {
     halloween: { start: (cv) => mount('halloween', cv, halloweenHooks) },
     christmasEve: { start: (cv) => mount('christmasEve', cv, eveHooks) },
+    PIE_TIERS,
     christmas: { start: (cv) => mount('christmas', cv, christmasHooks) },
     stopAll() {
       for (const k in scenes) { try { scenes[k].stop(); } catch (e) {} }
@@ -3407,8 +6075,26 @@
       const st = sc.state;
       opt = opt || {};
       if (kind !== 'christmasEve') return false;
+      /* 20261116：预览页可以直接跳到前置三段看效果（摇树 / 挑果 / 洗果） */
+      if (phase === 'shake') {
+        eveReset(st); st.fade = 1;
+        return true;
+      }
+      if (phase === 'pick') {
+        eveReset(st);
+        if (st._W) eveStartPick(st, st._W, st._H, st._S);
+        st.fade = 1;
+        return true;
+      }
+      if (phase === 'wash') {
+        eveReset(st);
+        if (st._W) eveStartWash(st, st._W, st._H, st._S);
+        st.fade = 1;
+        return true;
+      }
       if (phase === 'board') {
         eveReset(st);
+        st.phase = 'board'; st.phaseT = 0;   // eveReset 现在从「摇树」开始，调试切苹果要显式跳回来
         // 调试：直接摆出「已经切了 N 片」的样子（看木托上的摞片效果）
         const W = st._W, H = st._H, S = st._S;
         if (W && opt.cuts) {
@@ -3516,9 +6202,19 @@
         st.bakeScore = st.cookResult === 'perfect' ? (inGold ? 30 : 26)
           : st.cookResult === 'caramel' ? 20 : st.cookResult === 'raw' ? 8 : st.cookResult === 'burnt' ? 5 : 0;
         st.sliceScore = SLICE_SCORE_TBL[Math.min(EVE_MAX_SLICES, Math.max(0, nc))];
-        st.total = Math.max(0, st.sliceScore + st.sugarScore + st.coatScore + st.bakeScore);
+        /* 20261116：调试也能单独看「有点发酸 / 没洗干净 / 甜美 / 流心」这几档，
+           不用真去玩一遍。opt.bad=坏果颗数，opt.dirty=洗净档 0~3。 */
+        st.pickOut = 6;
+        st.pickBadIn = opt.bad == null ? 0 : clamp(opt.bad, 0, 6);
+        st.badRatio = clamp(st.pickBadIn / 6, 0, 1);
+        st.dirty = clamp(opt.dirty || 0, 0, 3);
+        st.washP = st.dirty === 0 ? 1 : st.dirty === 1 ? 0.88 : st.dirty === 2 ? 0.60 : 0.30;
+        st.washProgress = st.washP;
+        st.washPenalty = [0, 4, 9, 15][st.dirty];
+        st.total = Math.max(0, st.sliceScore + st.sugarScore + st.coatScore + st.bakeScore - st.washPenalty);
         st.isPerfect = st.cookResult === 'perfect' && inGold && nc === EVE_FULL_SLICES &&
-          st.trash === 0 && st.sugarScore >= 20 && st.coatScore >= 20;
+          st.trash === 0 && st.sugarScore >= 20 && st.coatScore >= 20 &&
+          st.pickBadIn === 0 && st.dirty === 0;
         st.phase = 'done'; st.phaseT = 0; st.doneK = 1; st.fade = 1;
         // 与真玩时一样：结算态让底部的寄语淡出
         if (st.__host && st.__host.classList) st.__host.classList.add('fx-result');
@@ -3527,6 +6223,8 @@
         if (st.__host && st.__host.dataset) {
           st.__host.dataset.pie = JSON.stringify({
             perfect: !!st.isPerfect, cook: st.cookResult || '', slices: nc, sweet: st.sugar || 0,
+            badRatio: Number(st.badRatio.toFixed(3)), badN: st.pickBadIn,
+            dirty: st.dirty, washP: st.washP,
           });
         }
       }

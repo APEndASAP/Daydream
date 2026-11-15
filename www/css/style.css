@@ -652,7 +652,20 @@ select.input option:checked { color: #fff; }
   position: absolute;          /* 铺满整卡：不然 min-height 撑出来的高度里，内容会全部贴顶 */
   inset: 0;
   justify-content: flex-start;
-  padding: 40px 26px 3vh;
+  padding: 26px 26px 3vh;      /* 20261116：顶边 40→26，整块文字往上提，给游戏让出高度 */
+}
+/* 20261116（玩家要求）：这三张可玩卡的字「占地方」，把标题块整体缩一档、间距压紧，
+   让苹果树 / 南瓜灯 / 圣诞树上方那块空地变宽，手指有地方放。
+   只改 .fx-game，其他节日/节气卡的版式一律不动。 */
+.festival-card.fx-game .dream-fx-head { margin-bottom: 8px; }
+.festival-card.fx-game .dream-fx-term {
+  font-size: 11px; letter-spacing: 7px; text-indent: 7px; margin-bottom: 4px;
+}
+.festival-card.fx-game .dream-fx-title {
+  font-size: 23px; letter-spacing: 4px; text-indent: 4px; margin-bottom: 6px;
+}
+.festival-card.fx-game .dream-fx-msg {
+  font-size: 12px; line-height: 1.8; max-width: 252px;
 }
 .festival-card.fx-game .dream-fx-from {
   margin-top: auto;                 /* 寄语与按钮作为一组压到底 */
@@ -660,6 +673,28 @@ select.input option:checked { color: #fff; }
   text-shadow: 0 1px 4px rgba(8,6,20,.95), 0 0 14px rgba(8,6,20,.75);
 }
 .festival-card.fx-game .dream-fx-btn { margin-top: 9vh; }     /* 与寄语之间的呼吸带 */
+
+/* 20261116（玩家）：小游戏里「第一次点空白」→ 周边文字清屏，画布独占整张卡。
+   用 opacity + visibility，不用 display:none —— 寄语是 margin-top:auto 那一组，
+   一旦脱离文档流按钮会跳位，玩家正玩着就会按空。按钮本身永远保留。 */
+.festival-card.fx-game .dream-fx-head,
+.festival-card.fx-game .dream-fx-term,
+.festival-card.fx-game .dream-fx-title,
+.festival-card.fx-game .dream-fx-msg,
+.festival-card.fx-game .dream-fx-from,
+.festival-card.fx-game .dream-fx-badges {
+  transition: opacity .38s ease, transform .38s ease, visibility 0s linear .38s;
+}
+.festival-card.fx-game.fx-cleared .dream-fx-head,
+.festival-card.fx-game.fx-cleared .dream-fx-term,
+.festival-card.fx-game.fx-cleared .dream-fx-title,
+.festival-card.fx-game.fx-cleared .dream-fx-msg,
+.festival-card.fx-game.fx-cleared .dream-fx-from,
+.festival-card.fx-game.fx-cleared .dream-fx-badges {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-10px);
+}
 
 /* 20261115：小游戏「结算」态。画布要在底部写结果标题 + 各项评分，
    那一段正好是寄语的落点，两边一起写就叠字（平安夜截图里那行糊掉的字）。
@@ -671,9 +706,26 @@ select.input option:checked { color: #fff; }
    · 出现时与「我收到啦」并排各占半宽（绝对定位在底部同一行），不再额外占垂直空间，
      否则会把画布上的结果标题挤掉 */
 .festival-card.fx-game .dream-fx-gift { display: none; }
+/* 20261116（玩家）：这两个按钮必须**一样大**。之前各写各的：
+   「我收到啦」带 .dream-fx-btn 的 max-width:230px、字号 15px；
+   「送给 TA 尝尝」字号 13.5px 且没有上限 —— 宽屏上不等宽，
+   窄屏上「送给 TA 尝尝」被挤成两行、比旁边高出一截，看着像两个按钮压在一起。
+   现在把尺寸收进同一条规则：等宽、等高、单行、同款药丸形，
+   左右各留 26px，中间 10px 间隙。 */
 .festival-card.fx-game.fx-done .dream-fx-gift,
 .festival-card.fx-game.fx-done .dream-fx-btn {
-  position: absolute; bottom: 3vh; width: calc(50% - 31px); margin: 0;
+  position: absolute;
+  bottom: 3vh;
+  margin: 0;
+  width: calc(50% - 31px);
+  max-width: none;          /* 抵掉 .dream-fx-btn 的 max-width:230px */
+  height: 44px;
+  padding: 0 10px;
+  font-size: 13.5px;
+  line-height: 1;
+  white-space: nowrap;      /* 「送给 TA 尝尝」不许折成两行 */
+  border-radius: 999px;     /* 与「我收到啦」同款药丸形 */
+  box-sizing: border-box;
 }
 .festival-card.fx-game.fx-done .dream-fx-gift {
   left: 26px;
@@ -682,9 +734,8 @@ select.input option:checked { color: #fff; }
   border: 1px solid rgba(167, 139, 250, .55);
   color: #ece3ff;
   font-weight: 600;
-  font-size: 13.5px;
 }
-.festival-card.fx-game.fx-done .dream-fx-btn { right: 26px; }
+.festival-card.fx-game.fx-done .dream-fx-btn { right: 26px; font-weight: 600; }
 /* 送出后按钮置灰，避免重复点 */
 .festival-card.fx-game.fx-done .dream-fx-gift.given {
   opacity: .55; pointer-events: none; filter: grayscale(.25);

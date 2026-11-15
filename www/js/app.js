@@ -352,6 +352,8 @@ async function init() {
     scheduleAutoBackup();  // 20261002ce：自动备份兜底（APK 端静默写「文档/白日梦备份」，防卸载丢数据）
     // 20261112e：启动后空闲预读每个角色最近的消息，点第 2/3 个角色时和点第 1 个一样快（真机 WebView 冷读慢 5~10 倍）
     setTimeout(() => { try { warmupChatReads(); } catch (e) {} }, 1500);
+    // 20261115b：网页端「太久没导出」提示（APP 端内部会直接 return）
+    setTimeout(() => { try { maybeShowExportReminder(); } catch (e) {} }, 2500);
     startProactiveTimer(); // 5.3 主动发消息
     startStatusTimer();    // 7 聊天页顶部状态按时段自动换
     startDayRolloverTimer(); // 8 聊天天数过零点自动 +1
@@ -462,6 +464,7 @@ async function showSoftwareNotice(opts = {}) {
         <div class="nt-sub" style="margin-top:4px;">参考使用了小红书 @VII（Septem6439_cccg）老师所开源的真拟态玻璃（hyalite 液态玻璃）源码，本软件「玻璃美化预设 · 2号液态玻璃」即基于该开源库制作</div>
         <div class="nt-sub" style="margin-top:4px;">本软件「角色主动视频搜发」功能的灵感来自小红书 @我要学英语 老师（4356852316），该功能的思路与代码均为本软件自研</div>
         <div class="nt-sub" style="margin-top:4px;">本软件「占卜 · 询问访客」功能（把三张牌发给角色、由角色评价这份占卜解牌）的灵感来自小红书 @001 老师（27739216821），该功能的想法与实现方式均为本软件自研</div>
+        <div class="nt-sub" style="margin-top:4px;">本软件「四季」的植物识别使用开源模型 <b>quarrying-plant-id</b>（作者 <b>Kang Kai</b>，BSD 3-Clause License，版权 © 2021）与其推理引擎 <b>onnxruntime-web</b>（版权归 Microsoft Corporation 所有，MIT License），版权均归原作者所有，在此致谢</div>
         ${isReview ? '<button class="icon-btn" id="notice-close" style="position:absolute;top:0;right:0;color:rgba(230,222,255,0.9);"><i data-icon="close" data-size="17"></i></button>' : ''}
         <div class="nt-line"></div>
         <p class="nt-lead">感谢你来到《白日梦》。为了维护良好的创作与交流环境，请在下载、使用或分享本软件前，仔细阅读以下声明。</p>
@@ -1128,22 +1131,42 @@ function _pieInfoOf(card) {
   try { return JSON.parse((card && card.dataset && card.dataset.pie) || '{}') || {}; } catch (e) { return {}; }
 }
 
-/* 我送出去时说的话：按火候/片数换口气，别每一炉都同一句 */
+/* 送派台词：与结算页（festival-fx-special.js 的 evePieJudge）同一套判定、同一顺序。
+   20261116（玩家口径）：结算标题统一成「……的苹果派」，甜度多一档「甜美」，
+   所以台词也要能分出「甜而不腻」和「齁」；洗净度同理（带着泥 / 没洗干净）。
+   顺序：完美 → 火候 → 坏果 → 带泥 → 没洗净 → 甜度 → 馅量 → 默认。 */
 function _piePlayerLine(pie) {
+  pie = pie || {};
+  const sugar = pie.sweet || 0;
+  const badRatio = pie.badRatio || 0;
+  const dirty = pie.dirty || 0;
+  const sl = pie.slices || 0;
   if (pie.perfect) return '给你做了个苹果派。这次是真的成了——皮是金的，边上一点都没糊。趁热。';
   if (pie.cook === 'caramel') return '给你做了个苹果派，焦糖色那种。闻着比上次香。';
   if (pie.cook === 'raw') return '给你做了个苹果派。火候好像没够，皮还有点软，你先尝尝再说。';
   if (pie.cook === 'burnt') return '给你做了个苹果派，边上有点苦，那一圈别吃。';
   if (pie.cook === 'carbon') return '给你做了个苹果派。……算了，你看看就行，别真吃。';
-  if ((pie.slices || 0) > 13) return '给你做了个苹果派，苹果塞得太满，切的时候可能会掉。';
-  if ((pie.slices || 0) > 0 && pie.slices < 5) return '给你做了个苹果派，苹果放少了点，皮比馅多。';
-  if ((pie.sweet || 0) > 0.72) return '给你做了个苹果派，糖好像撒多了，甜得有点凶。';
-  if ((pie.sweet || 0) > 0 && pie.sweet < 0.40) return '给你做了个苹果派，糖撒得少，偏淡。';
+  if (badRatio > 0.34) return '给你做了个苹果派。……里面坏的有点多，我没挑干净，你别吃了。';
+  /* 洗涤两档：浅档 45~74% = 掉渣；深档 <45% = 有石子（20261116 玩家点名） */
+  if (dirty >= 3) return '给你做了个苹果派。苹果没冲干净，沙石还在缝里——你咬慢一点，别硌了牙。';
+  if (badRatio > 0) return '给你做了个苹果派。混了一颗坏的进去，吃到发酸的那口就吐掉。';
+  if (dirty === 2) return '给你做了个苹果派。苹果洗得急了点，皮烤得干，一切就掉渣，你拿个盘子接着吃。';
+  if (sugar > 0.80) return '给你做了个苹果派，糖化在表面成了浆，切开能拉出丝——你配茶吃。';
+  if (sugar > 0.66) return '给你做了个苹果派。糖多撒了一点，我自己觉得这次更香。';
+  if (sugar > 0 && sugar < 0.40) return '给你做了个苹果派，糖撒得少，偏淡。';
+  if (sl > 13) return '给你做了个苹果派，塞得太满，切开的时候馅都流出来了。';
+  if (sl > 0 && sl < 5) return '给你做了个苹果派，苹果放少了点，皮比馅多。';
+  if (sl >= 5 && sl < 8) return '给你做了个苹果派，馅不算多，皮比馅多一点点。';
   return '给你做了个苹果派，刚出炉，趁热尝尝。';
 }
 
 /* TA 收到之后回一句：预设短句，随机取一条（不走 AI，不占额度） */
 function _pieReplyLine(pie) {
+  pie = pie || {};
+  const sugar = pie.sweet || 0;
+  const badRatio = pie.badRatio || 0;
+  const dirty = pie.dirty || 0;
+  const sl = pie.slices || 0;
   let pool;
   if (pie.perfect) {
     pool = ['……你居然真的做出来了。', '第一口给你留着。', '皮是脆的，我听见了。', '这个我记住了。'];
@@ -1151,10 +1174,24 @@ function _pieReplyLine(pie) {
     pool = ['焦糖边最好吃，你不知道？', '闻着就甜。', '明天还想吃。'];
   } else if (pie.cook === 'raw' || pie.cook === 'burnt' || pie.cook === 'carbon') {
     pool = ['……我勉强吃两口。', '下次我陪你一起做。', '心意收下了，派就先放着吧。'];
-  } else if ((pie.sweet || 0) > 0.72) {
+  } else if (badRatio > 0.34) {
+    pool = ['……你自己吃了吗。', '这个我不太敢。', '心意我收，派就放着吧。'];
+  } else if (dirty >= 3) {
+    pool = ['沙子硌牙了。', '……你是不是没洗。', '先放着，我明天再说。'];
+  } else if (badRatio > 0) {
+    pool = ['有一口是酸的，我吃到了。', '下次挑一挑再切，好不好。', '剩下的我吃完，别浪费。'];
+  } else if (dirty === 2) {
+    pool = ['掉的渣我拿手接着吃的。', '下次多冲两遍，皮就不这么干了。', '苹果是好苹果。'];
+  } else if (sugar > 0.80) {
     pool = ['甜得有点过分，但我没说不好吃。', '配茶刚好。', '你是把整罐糖都倒进去了吗。'];
-  } else if ((pie.slices || 0) > 0 && pie.slices < 5) {
+  } else if (sugar > 0.66) {
+    pool = ['这个甜度我喜欢。', '比上次那个更好吃。', '蝴蝶结是你系的吗。'];
+  } else if (sl > 13) {
+    pool = ['馅都流出来了，趁热吃。', '这么满，你是想把整个果园放进去。', '切的时候别烫手。'];
+  } else if (sl > 0 && sl < 5) {
     pool = ['苹果呢？', '皮挺好吃的，真的。', '下次多放两片，好不好。'];
+  } else if (sl >= 5 && sl < 8) {
+    pool = ['皮挺好吃的。', '苹果再多两片就好了。', '这个大小刚好当早饭。'];
   } else {
     pool = ['刚出炉的？我闻到了。', '谢谢。我会慢慢吃。', '你手上是不是还沾着面粉。'];
   }
@@ -1305,6 +1342,16 @@ function renderFxDebug() {
   const _prevScroll = document.querySelector('.fx-debug-scroll');
   if (_prevScroll) _fxDebugScrollTop = _prevScroll.scrollTop;
   const groups = [];
+  /* ★ 20261116（玩家要求）：苹果派十六档结算单独开一栏 —— 玩家看动画用，不必真去玩一遍。
+     档位表只有一份，在 festival-fx-special.js 的 BMFX_SPECIAL.PIE_TIERS 里，
+     和结算判词 evePieJudge 的优先级一一对应；这里只负责把「第几档」传下去。 */
+  const pieTiers = (window.BMFX_SPECIAL && Array.isArray(window.BMFX_SPECIAL.PIE_TIERS))
+    ? window.BMFX_SPECIAL.PIE_TIERS : [];
+  if (pieTiers.length) {
+    const pieItems = pieTiers.map((t, i) =>
+      `<div class="fx-debug-item" data-type="pie" data-tier="${i}" data-name="${escapeHtml(t.name)}">${i + 1}. ${escapeHtml(t.name)}</div>`);
+    groups.push(`<div class="fx-debug-group"><div class="fx-debug-gtitle">苹果派结算（平安夜 · ${pieTiers.length} 档）</div>${pieItems.join('')}</div>`);
+  }
   // 节日
   const festItems = [];
   for (const k in FESTIVAL_CARDS) {
@@ -1380,6 +1427,36 @@ function renderFxDebug() {
       const title = el.getAttribute('data-title');
       const type = el.getAttribute('data-type');
       let line = '';
+      /* ★ 20261116：苹果派某一档 —— 进平安夜这张卡，再把画布直接跳到「出炉」，
+         出来的就是这一档的结算动画（标题 + 判词 + 派的样子）。
+         这是纯预览：不写任何存档、不往聊天里发派，所以把「送给 TA 尝尝」那颗按钮摘掉。 */
+      if (type === 'pie') {
+        const tier = Math.max(0, Math.min(pieTiers.length - 1, parseInt(el.getAttribute('data-tier'), 10) || 0));
+        const dcp = await getDailyChar();
+        const dp = {
+          charId: dcp ? dcp.id : null,
+          charName: dcp ? dcp.name : '访客',
+          charAvatar: dcp ? (dcp.avatar || '') : '',
+          annivText: '', careText: '',
+          motto: '调试预览 · 入梦签',
+          festival: { type: 'festival', key: 'pinganye', name: '平安夜', title: '苹果与炉火', line: '' },
+        };
+        openDailyCardModal(dp, () => {
+          try { unmountDreamCardFx(); } catch (e) {}
+          renderFxDebug();
+        });
+        setTimeout(() => {
+          try {
+            const gb = document.getElementById('btn-daily-receive-gift');
+            if (gb) gb.remove();           // 预览不落库：这个按钮会把派真发出去
+          } catch (e) {}
+          try {
+            window.BMFX_SPECIAL.debugJump('christmasEve', 'done',
+              (pieTiers[tier] && pieTiers[tier].opt) || {});
+          } catch (e) {}
+        }, 320);
+        return;
+      }
       if (type === 'festival' && FESTIVAL_CARDS[key]) {
         line = FESTIVAL_CARDS[key].lines[0];
       } else if (type === 'solar') {
@@ -8574,6 +8651,24 @@ async function bmBackgroundRecover() {
     for (const t of due) {
       if (!t || !t.taskId) continue;
       bmDiag('bgrecover_task', { taskId: t.taskId, charId: t.charId, dueAt: t.dueAt });
+      /* 四季照料：同样走自己的链路。进程被杀期间漏掉的那一跳，
+         按原定时刻补一次（这是唯一还会回算的场合，其余都是现场发生）。 */
+      if (_seasonCareIsTask(t.taskId, t.kind)) {
+        if (_seasonCareClaim(t.charId)) {
+          try { await _seasonCareDeliver(t.charId, t.dueAt); } catch (e) {}
+          finally { _seasonCareRelease(t.charId); }
+        }
+        continue;
+      }
+      /* 四季留言：进程被杀期间没赶上闹钟 → 按「本该发生的那一刻」补记一条时间戳，
+         然后照常排下一条闹钟。这是唯一还会「回算」的场合，其余都是现场发生。 */
+      if (_seasonNoteIsTask(t.taskId, t.kind)) {
+        if (_seasonNoteClaim(t.charId)) {
+          try { await _seasonNoteDeliver(t.charId, t.dueAt); } catch (e) {}
+          finally { _seasonNoteRelease(t.charId); }
+        }
+        continue;
+      }
       // 找到对应角色，走与 tick 相同的统一处理入口（补生成/补 confirm）
       const ch = characters.find(x => x && x.id === t.charId);
       if (ch) await _bmProcessTask(ch, t.kind || 'msg', t.taskId);
@@ -8915,6 +9010,33 @@ try {
         const taskId = d.taskId;
         const charId = d.charId;
         if (!taskId || !charId) return;
+        /* ★ 20261115b：四季照料也走自己的处理函数（那一刻真的照顾一次），
+           绝不进 _bmProcessTask —— 那是私聊，会把照料落成一条聊天消息。 */
+        if (_seasonCareIsTask(taskId, d.kind)) {
+          bmDiag('bg_due_seasoncare', { taskId, charId, dueAt: d.dueAt });
+          if (_seasonCareClaim(charId)) {
+            (async () => {
+              try { await _seasonCareDeliver(charId); }
+              catch (e) { bmDiag('season_care_due_error', { err: String(e && e.message || e) }); }
+              finally { _seasonCareRelease(charId); }
+            })();
+          }
+          return;
+        }
+        /* ★ 20261115：四季留言走自己的处理函数（那一刻真的写一条留言），
+           不能进 _bmProcessTask —— 那是私聊，会把留言落到聊天流里。 */
+        if (_seasonNoteIsTask(taskId, d.kind)) {
+          bmDiag('bg_due_seasonnote', { taskId, charId, dueAt: d.dueAt });
+          /* 用四季自己的锁，不参与私聊的 _taskClaimed */
+          if (_seasonNoteClaim(charId)) {
+            (async () => {
+              try { await _seasonNoteDeliver(charId); }
+              catch (e) { bmDiag('season_note_due_error', { err: String(e && e.message || e) }); }
+              finally { _seasonNoteRelease(charId); }
+            })();
+          }
+          return;
+        }
         const ch = characters.find(x => x && x.id === charId);
         if (!ch) return;
         bmDiag('bg_due_event', { taskId, charId, dueAt: d.dueAt });
@@ -13527,7 +13649,7 @@ function openSeasonLayer(cid) {
                     frame.contentWindow.document.body.children.length > 0);
   } catch (e) { frameAlive = false; }
   if (frame && (!_seasonFrameLoaded || !frameAlive)) {
-    frame.src = 'season/index.html';
+    frame.src = 'season/index.html?v=20261115c';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
     _seasonFrameLoaded = true;
   }
   layer.classList.add('show');
@@ -13882,7 +14004,7 @@ async function _seasonGenReply(d) {
    ⚠️ 四季 iframe 开着时不动手（它自己收 season-tick 自己结算），避免双写。
    ============================================================ */
 const _SEASON_BG = {
-  careGapMs: 90 * 60000,      // 超过 90 分钟没人浇 → 角色自己去浇
+  careGapMs: 90 * 60000,      // 20261115b 起仅作兜底默认值：照料主路径已交给原生闹钟（_seasonCareDeliver）
   loveGapMs: 6 * 3600000,     // 爱意邀请冷却
   dryWarnMs: 5 * 86400000,    // 5 天没人照顾 → 保底提醒
   careDays: 0.08,             // 与四季 SEASON_RULES.careDays 一致
@@ -13913,15 +14035,565 @@ function _seasonStageIdx(pl, now) {
   const pct = _seasonGrowPct(pl, now);
   return Math.min(n - 1, Math.floor(pct / 100 * n));
 }
+/* 20261115：把「旧快照」（planet.pool[角色]）里多出来的照料记录合并回正本
+   （planet.plants）。只做并集，不删不改：已经丢在快照里的那些浇水 / 施肥 /
+   未照料 / 溢水 / 肥伤记录能靠这一步找回来，玩家升级后不用重玩一遍。
+   acts 用「时间 + 动作 + 谁做的」当键去重；bonusDays 取大的；
+   careDay 只在同一天时取两边较大的计数（额度不能因为合并被重置）。 */
+function _seasonMergeActs(keep, stale) {
+  try {
+    const byId = {};
+    (stale || []).forEach(function (p) { if (p && p.id) byId[p.id] = p; });
+    (keep || []).forEach(function (pl) {
+      if (!pl || !pl.id) return;
+      const old = byId[pl.id];
+      if (!old) return;
+      const seen = {};
+      const all = [];
+      (pl.acts || []).forEach(function (a) {
+        if (!a) return;
+        const k = (a.t || 0) + '|' + (a.k || '') + '|' + (a.by || '');
+        if (seen[k]) return;
+        seen[k] = 1; all.push(a);
+      });
+      (old.acts || []).forEach(function (a) {
+        if (!a) return;
+        const k = (a.t || 0) + '|' + (a.k || '') + '|' + (a.by || '');
+        if (seen[k]) return;
+        seen[k] = 1; all.push(a);
+      });
+      if (all.length !== (pl.acts || []).length) {
+        all.sort(function (a, b) { return (a.t || 0) - (b.t || 0); });
+        pl.acts = all.slice(-80);          /* 和四季页一样留最近 80 条 */
+      }
+      if ((old.bonusDays || 0) > (pl.bonusDays || 0)) pl.bonusDays = old.bonusDays;
+      if ((old.grow || 0) > (pl.grow || 0)) pl.grow = old.grow;
+      const a1 = pl.careDay, a2 = old.careDay;
+      if (a1 && a2 && a1.d === a2.d) {
+        ['water', 'fert', 'waterP', 'waterC', 'fertP', 'fertC'].forEach(function (f) {
+          a1[f] = Math.max(a1[f] || 0, a2[f] || 0);
+        });
+      } else if (!a1 && a2) {
+        pl.careDay = a2;
+      }
+    });
+  } catch (e) {}
+}
+/* ============================================================
+   20261116：四季 · 后台留言线（角色自己给玩家留一句）
+   ------------------------------------------------------------
+   ★ 玩家原话：「留言不能够在后台自动留言吗？非得卜算才能够留言吗？
+                角色不可以在后台自动留言吗？」
+   之前只有四季页开着、而且停在「星球」子页时才会抽字卡 —— App 挂后台、
+   或者根本还没点进四季，留言一条都不会有。所以玩家看到的现象就是：
+   照料（有补算）天天有，留言永远是旧的。
+   现在这条线和照料并列，也有自己的时间线（planet.noteNextAtBy[角色]），
+   进后台 tick 时把漏掉的按当时的时间补回来。
+
+   ⚠️ 内置池必须和 season/index.html 里的 PRESET_CARD 保持一致（同一个池子、
+      同一批句子），否则同一个角色在后台和在前台留下的语气会不一样。
+   ⚠️ 只补「字卡留言」，不补爱意邀请 —— 后者有自己的节奏（见 _SEASON_BG.loveGapMs）。
+   ============================================================ */
+const _SEASON_NOTE_PRESET = [
+  '今天风大，我把「{n}」往墙根挪了半尺。',
+  '土面裂了道小缝，我沿着盆边慢慢浇的。',
+  '早上露水重，叶尖挂着，太阳一出来就没了。',
+  '边上长了两棵野草，我连根拔了。',
+  '中午日头毒，我用旧席子挡了半天。',
+  '昨夜下了雨，我把它搬出去淋了一会儿。',
+  '新叶比上个月宽了，摸上去有点凉。',
+  '有只小虫在叶背，我用指甲刮掉了。',
+  '换了个大一点的盆，根舒展得开些。',
+  '花苞鼓起来了，还没开，我天天看。',
+  '今天阴，一整天没怎么见光。',
+  '施了点薄肥，别嫌我手重。',
+  '藤爬过盆沿了，我给它搭了根小枝。',
+  '叶子上落了灰，我用软布擦了。',
+  '天凉了，晚上我把它搬进屋里。',
+  '早晚温差大，白天搬出去，晚上搬回来。',
+  '土有点板结，松了松，根能喘口气。',
+  '掉了一片老叶，是正常的，我没慌。',
+  '冒了第三个芽，位置长得还挺正。',
+  '我给你留了张纸条压在盆底下，你回来自己看。',
+  '今天没做什么，就是坐着看了一会儿。',
+  '它好像认得我的脚步声，也可能是我自作多情。',
+  '我把它转了个方向，让另一边也晒晒。',
+  '屋后那条路修好了，能一直走到坡上。',
+  '隔壁家的猫又来蹲着，赶了两次。',
+  '我在盆边插了根小竹签，写着日子。',
+  '一场风把花吹斜了，我扶正了，绑了根线。',
+  '今天的云像鱼鳞，一片一片铺到天边。',
+  '我数了，一株上开了七朵。',
+  '剪了两枝插在瓶里，屋里也有一点颜色了。',
+  '盆底垫了碎瓦片，排水顺畅些。',
+  '早上有点冷，我搓了搓手才去碰它。',
+  '我从坡上带回来一把新土，掺了些。',
+  '今天的风里有青草味。',
+  '有只蜂在花上绕了两圈就飞走了。',
+  '我把水晾了半天才浇，怕太凉。',
+  '叶子背面有细小的绒毛，凑近了才看得见。',
+  '今天没长多少，可能是阴天的缘故。',
+  '我把落下的花瓣收进了一个小纸包。',
+  '你要是在，我就能问你这是不是开得太早了。',
+  '天气预报说明天有雨，我提前把盆挪到檐下。',
+  '一个下午都在下小雨，滴在叶子上有声。',
+  '我把它旁边那株也浇了，两株一起长。',
+  '这两天忙，只来得及看它一眼。',
+  '它今天好像更绿了一点，也许是我想多了。',
+  '我把旧的标签换了，写了新的日子。',
+  '晚上有风，窗子留了条缝，它能听见。',
+  '这一轮的土是我新配的，看着还不错。',
+  '花开到第三朵了，一朵比一朵小。',
+  '这一株就交给我吧，你别惦记。'
+];
+
+/* 留言间隔：沿用角色的「抽卡间隔」设置（分钟），和四季页的 INTERACT.cardMinMs 同源 */
+function _seasonNoteGapMs() {
+  let g = { cardGapMin: 120, cardGapMax: 240 };
+  try { g = _seasonGapsOf(); } catch (e) {}
+  const lo = Math.max(60000, (Number(g.cardGapMin) || 120) * 60000);
+  const hi = Math.max(lo + 60000, (Number(g.cardGapMax) || 240) * 60000);
+  return { lo, hi };
+}
+function _seasonRandGap(lo, hi) {
+  return lo + Math.floor(Math.random() * Math.max(1, hi - lo));
+}
+/* 抽一条留言：一半走玩家自己的回复字卡（抽 2~3 张拼成一条），
+   一半走内置池（只出 1 句）—— 与四季页 seasonDrawCard 的规则一致。
+   没有玩家字卡时自动落到内置池，绝不出空白。 */
+function _seasonBgNoteText(cid, plants) {
+  const c = (characters || []).find(x => x.id === cid) || null;
+  const pl = (plants || [])[0] || null;
+  const nm = (pl && pl.name) || '那株';
+  const fill = s => String(s || '').replace(/\{n\}/g, nm);
+  let own = [];
+  try { own = _seasonCardPoolFor(c) || []; } catch (e) {}
+  if (own.length && Math.random() < 0.5) {
+    const n = (Math.random() < 0.58) ? 2 : 3;
+    const parts = [];
+    for (let i = 0; i < n; i++) parts.push(fill(own[Math.floor(Math.random() * own.length)]));
+    const body = parts.filter(Boolean).join('。');
+    if (body) return body + '。';
+  }
+  const pool = _SEASON_NOTE_PRESET;
+  return fill(pool[Math.floor(Math.random() * pool.length)]) || '';
+}
+
+
+/* ================= 20261115：四季留言 · 交给原生闹钟真后台执行 =================
+   玩家要求：「不能每次都靠补算来显示留言，我要的是后台真实发生的行为。」
+   以前四季留言只有两条腿：
+     ① 四季页里的 setTimeout —— 页面一冻结就停；
+     ② 主项目 60 秒 tick 的补算 —— 把过去几小时一次性补齐，时间戳全是算出来的。
+   两条都不是「那一刻真的发生了」。现在改成与私聊主动消息同一条原生链路：
+     ① 按 planet.noteNextAtBy[角色] 给每个角色排一个 AlarmManager 精确闹钟
+        （taskId = 角色id|seasonNote，与私聊的 |proactive 互不干扰）；
+     ② 闹钟真正到点 → 原生推 bmBackgroundDue → **此刻**生成一条留言并落盘
+        （at = 现在，不是回算的时间戳），再排下一个闹钟；
+     ③ 只有「进程被杀、WebView 救不回来」那一段才回到补算兜底。
+   全部复用已有的 bm-background 插件，不新增任何权限。 */
+var _SEASON_NOTE_KIND = 'seasonNote';
+var _SEASON_NOTE_PREFIX = 'snote|';        // 四季留言自己的任务命名空间，与私聊的「角色id|类别」完全不重叠
+/* 已排进原生的到期时间：避免 60 秒轮询反复重设同一条闹钟（写盘 + 重设都有开销） */
+var _seasonNoteArmed = {};
+/* 四季留言**自己的**抢锁表：不借用私聊那套 _taskClaimed，两条线互不参与 */
+var _seasonNoteClaimed = {};
+function _seasonNoteTaskId(cid) { return _SEASON_NOTE_PREFIX + String(cid); }
+/* 判断某个原生任务是不是「四季留言」——前缀或 kind 任一命中即可。
+   原生 emitDue 只带 taskId/charId/dueAt（不带 kind），所以前缀判断是主判据。 */
+function _seasonNoteIsTask(taskId, kind) {
+  if (kind === _SEASON_NOTE_KIND) return true;
+  if (typeof taskId !== 'string') return false;
+  return taskId.indexOf(_SEASON_NOTE_PREFIX) === 0;
+}
+/* 四季专用抢锁（只防「闹钟事件」与「回前台恢复」同时处理同一条） */
+function _seasonNoteClaim(cid) {
+  const now = Date.now();
+  const cur = _seasonNoteClaimed[cid];
+  if (cur && (now - cur < 60000)) return false;
+  _seasonNoteClaimed[cid] = now;
+  return true;
+}
+function _seasonNoteRelease(cid) { delete _seasonNoteClaimed[cid]; }
+/* 把「这个角色下一条留言的时间」排进原生闹钟。同 taskId 覆盖，本身就是幂等；
+   再加上内存缓存，正常轮询不会重复下发。 */
+async function _seasonNoteArm(cid, name, dueAt) {
+  if (!cid || !dueAt || dueAt <= Date.now() + 1000) return false;
+  if (_seasonNoteArmed[cid] === dueAt) return true;
+  const ok = await bmBackgroundSchedule(_seasonNoteTaskId(cid), cid, dueAt, name || '访客', _SEASON_NOTE_KIND);
+  if (ok) _seasonNoteArmed[cid] = dueAt;
+  return ok;
+}
+/* 后台到点：真的生成一条留言。
+   atOverride 只有「回前台补收」时才传 —— 那种情况进程已经死了，只能按本该发生的那一刻记时间；
+   正常闹钟到点走 Date.now()，这才是「真实发生」。 */
+async function _seasonNoteDeliver(cid, atOverride) {
+  const taskId = _seasonNoteTaskId(cid);
+  let doc = null;
+  try {
+    const raw = localStorage.getItem('bmSeasonSave');
+    if (!raw) { await bmBackgroundConfirm(taskId); return false; }
+    doc = JSON.parse(raw);
+  } catch (e) { return false; }
+  if (!doc || !doc.__season || !doc.planet) { await bmBackgroundConfirm(taskId); return false; }
+
+  /* 四季页正开着：留言由它自己那条线生成，这里只把任务确认掉、不重复写档。
+     （两边都写同一个 localStorage key 会互相覆盖） */
+  const seasonFrame = document.getElementById('season-frame');
+  if (seasonFrame && seasonFrame.contentWindow) {
+    /* 20261115b：四季页自己会写留言；这里只确认，并把它写下的「下一条」
+       排回原生闹钟 —— 不能因为玩家开着四季就让整条链路断掉。 */
+    const fc = (characters || []).find(function (x) { return x && x.id === cid; });
+    const fnx = ((doc.planet && doc.planet.noteNextAtBy) || {})[cid] || 0;
+    if (fnx > Date.now()) await _seasonNoteArm(cid, (fc && fc.name) || 'TA', fnx);
+    await bmBackgroundConfirm(taskId);
+    bmDiag('season_note_skip_frame', { cid: cid });
+    return true;
+  }
+
+  const planet = doc.planet;
+  const bgNow = Date.now();
+  const notes = Array.isArray(planet.notes) ? planet.notes : (planet.notes = []);
+  const nextBy = planet.noteNextAtBy || (planet.noteNextAtBy = {});
+
+  /* 防重：这条时间线已经推进到未来，说明刚刚已经发生过一条（tick 或另一条路径先到），
+     只补确认、不再生一条。 */
+  if ((nextBy[cid] || 0) > bgNow) {
+    await bmBackgroundConfirm(taskId);
+    bmDiag('season_note_skip_already', { cid: cid });
+    return true;
+  }
+
+  const c = (characters || []).find(function (x) { return x && x.id === cid; }) || null;
+  const name = (c && c.name) || 'TA';
+  /* 这个角色的植物（{n} 要填成植物名）：当前角色读 plants，其他角色读 pool 快照 */
+  let plants = [];
+  if (planet.viewId === cid && Array.isArray(planet.plants)) plants = planet.plants;
+  else if (planet.pool && Array.isArray(planet.pool[cid]) && planet.pool[cid].length) plants = planet.pool[cid];
+  else if (Array.isArray(planet.plants)) plants = planet.plants;
+
+  const at = (typeof atOverride === 'number' && atOverride > 0 && atOverride <= bgNow) ? atOverride : bgNow;
+  const txt = _seasonBgNoteText(cid, plants);
+  if (txt) {
+    notes.push({
+      id: 'nt' + at.toString(36) + Math.floor(Math.random() * 1000),
+      byId: cid, by: name, kind: 'draw', text: txt,
+      at: at, ref: null, detail: null, seq: 9
+    });
+    if (notes.length > 120) notes.splice(0, notes.length - 120);   // 20261115b：与四季页 notes 上限（120）对齐，别把玩家旧留言裁掉
+    /* 下一条从「此刻」起算随机间隔 —— 这是角色自己的节奏，不是凑数 */
+    const gaps = _seasonNoteGapMs();
+    nextBy[cid] = bgNow + _seasonRandGap(gaps.lo, gaps.hi);
+    try { localStorage.setItem('bmSeasonSave', JSON.stringify(doc)); } catch (e) {}
+    /* ★ 20261115 玩家明确要求：四季留言**不是通知类**。
+       它只往四季里写一条留言，不弹系统通知、不进聊天列表、不碰私聊的
+       通知开关与会话式通知，免得和正常的主动消息抢通知。 */
+  }
+  /* 排下一条闹钟 + 确认本条（确认必须在落盘之后，落了才算真发生） */
+  if (nextBy[cid]) await _seasonNoteArm(cid, name, nextBy[cid]);
+  await bmBackgroundConfirm(taskId);
+  bmDiag('season_note_delivered', { cid: cid, at: at, next: nextBy[cid] || 0 });
+  return true;
+}
+
+
+/* ================= 20261115b：四季照料 · 交给原生闹钟真后台执行 =================
+   玩家追问：「四季的照料互动，有没有是那一刻真实发生的？」
+   以前的答案是不算：60 秒 tick 里 `while (t <= now)` 一口气把过去几小时补出来，
+   时间戳是「回算的计划点」，等于事后补账 —— 植物确实长胖了，但那一跳不是真的发生过。
+   现在与留言同构，改成一条独立链路：
+     ① 每个角色一条自己的时间线 planet.careNextAtBy[角色]，
+        把它排进 AlarmManager（taskId = care|角色id，kind = seasonCare，
+        与私聊的「角色id|类别」、留言的 snote|角色id 三个命名空间互不重叠）；
+     ② 闹钟真到点 → 原生推 bmBackgroundDue → **此刻**执行一跳照料
+        （挑最久没浇的那株 / 浇还是施 / 额度判断 / 写 act / 涨当天摘要，at = 现在），
+        推进下一条时间线，再排下一个闹钟；
+     ③ 只有「进程被杀、闹钟没救回来」才回到补算兜底，并且最多补 1 天 / 12 跳 ——
+        不再一次补出三天的假历史。
+   ★ 照料同样不是通知类：Java 侧对 seasonCare 也跳过引导通知，不碰私聊通知链路。 */
+var _SEASON_CARE_KIND = 'seasonCare';
+var _SEASON_CARE_PREFIX = 'care|';        // 四季照料自己的任务命名空间
+var _seasonCareArmed = {};                // 已排进原生的到期时间（避免 60 秒轮询反复重设）
+var _seasonCareClaimed = {};              // 四季照料自己的抢锁表，不借用私聊那套 _taskClaimed
+function _seasonCareTaskId(cid) { return _SEASON_CARE_PREFIX + String(cid); }
+function _seasonCareIsTask(taskId, kind) {
+  if (kind === _SEASON_CARE_KIND) return true;
+  if (typeof taskId !== 'string') return false;
+  return taskId.indexOf(_SEASON_CARE_PREFIX) === 0;
+}
+function _seasonCareClaim(cid) {
+  const now = Date.now();
+  const cur = _seasonCareClaimed[cid];
+  if (cur && (now - cur < 60000)) return false;
+  _seasonCareClaimed[cid] = now;
+  return true;
+}
+function _seasonCareRelease(cid) { delete _seasonCareClaimed[cid]; }
+/* 照料间隔：与四季页 careGapRange 同源（聊天设置里可调的 30~90 分钟随机区间） */
+function _seasonCareGapMs() {
+  let g = { careGapMin: 30, careGapMax: 90 };
+  try { g = _seasonGapsOf(); } catch (e) {}
+  const lo = Math.max(60000, (Number(g.careGapMin) || 30) * 60000);
+  const hi = Math.max(lo + 60000, (Number(g.careGapMax) || 90) * 60000);
+  return { lo, hi };
+}
+/* 存盘的日期键，和四季页 dayStrOf 写法一致（摘要按「天」归并靠它） */
+function _seasonDayKey(ts) {
+  const d = new Date(ts || Date.now());
+  return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+}
+async function _seasonCareArm(cid, name, dueAt) {
+  if (!cid || !dueAt || dueAt <= Date.now() + 1000) return false;
+  if (_seasonCareArmed[cid] === dueAt) return true;
+  const ok = await bmBackgroundSchedule(_seasonCareTaskId(cid), cid, dueAt, name || '访客', _SEASON_CARE_KIND);
+  if (ok) _seasonCareArmed[cid] = dueAt;
+  return ok;
+}
+/* 把存档里所有角色的下一条照料 / 下一条留言排进原生闹钟。
+   四季页开着的时候 tick 不结算（交给 iframe 自己那条线），但**闹钟必须照样排** ——
+   否则玩家开着四季那段时间一过，原生链路就断了，关掉 App 再也不会自己醒。 */
+function _seasonArmAll(doc) {
+  try {
+    const planet = doc && doc.planet;
+    if (!planet) return;
+    const careBy = planet.careNextAtBy || {};
+    const noteBy = planet.noteNextAtBy || {};
+    const now = Date.now();
+    const ids = {};
+    Object.keys(careBy).forEach(function (k) { ids[k] = 1; });
+    Object.keys(noteBy).forEach(function (k) { ids[k] = 1; });
+    Object.keys(ids).forEach(function (cid) {
+      const c = (characters || []).find(function (x) { return x && x.id === cid; }) || null;
+      const nm = (c && c.name) || 'TA';
+      if ((careBy[cid] || 0) > now) _seasonCareArm(cid, nm, careBy[cid]).catch(function () {});
+      if ((noteBy[cid] || 0) > now) _seasonNoteArm(cid, nm, noteBy[cid]).catch(function () {});
+    });
+  } catch (e) {}
+}
+/* ---- 一跳照料：真的动手一次，返回这一跳做了什么 ----
+   与四季页 careTickAt 的规则对齐：挑最久没浇的那株 → 按「TA 自己」当天额度决定浇水/施肥
+   → 有活可干也允许「不作为」（用户 20261112 定案：要有不作為这个行为）。
+   返回 { sumKind:'水'|'肥'|'看', plantId, name }，由调用方写摘要。 */
+function _seasonCareOneStep(list, name, ts) {
+  /* ★ 20261115c 玩家：「星球上都还没有种子，角色照料个啥呀」
+     没有可照料的活株（空 / 全枯 / 全烧 / 全长满）→ 这一跳什么也不做，
+     返回 null 让调用方去清理时间线（只留留言那条线）。 */
+  const cands = (list || []).filter(function (pl) {
+    return pl && !pl.dead && !pl.burned && (pl.grow || 0) < 100;
+  });
+  if (!cands.length) return null;
+  let dp = null, dpat = 0;
+  cands.forEach(function (pl) {
+    if (!pl || pl.dead) return;
+    const acts = pl.acts || [];
+    let w = 0;
+    for (let i = acts.length - 1; i >= 0; i--) { if (acts[i] && acts[i].k === '浇水') { w = acts[i].t || 0; break; } }
+    if (!w) w = pl.t0 || 0;
+    if (!dp || w < dpat) { dp = pl; dpat = w; }
+  });
+  if (!dp) return null;
+  const key = _seasonDayKey(ts);
+  if (!dp.careDay || dp.careDay.d !== key) {
+    dp.careDay = { d: key, water: 0, fert: 0, waterP: 0, waterC: 0, fertP: 0, fertC: 0 };
+  }
+  const q = dp.careDay;
+  if (typeof q.waterC !== 'number') q.waterC = 0;
+  if (typeof q.fertC !== 'number') q.fertC = 0;
+  let act = '';
+  if (q.waterC < 3) act = '浇水';
+  else if (q.fertC < 2) act = '施肥';
+  /* 有活可干也不一定动手：22% 概率只是看一眼（这跳照实记成「观察」） */
+  if (act && Math.random() < 0.22) act = '';
+  if (!act) {
+    return { sumKind: '看', plantId: dp.id, name: dp.name || '那株' };
+  }
+  dp.acts = dp.acts || [];
+  dp.acts.push({ t: ts, k: act, by: name });
+  if (act === '浇水') { q.water++; q.waterC++; }
+  else { q.fert++; q.fertC++; }
+  dp.bonusDays = (dp.bonusDays || 0) + _SEASON_BG.careDays;
+  dp.grow = _seasonGrowPct(dp, ts);
+  return { sumKind: act === '浇水' ? '水' : '肥', plantId: dp.id, name: dp.name || '那株' };
+}
+/* ★ 20261115c：清掉某颗星球上「已经没有活株」却还挂着的照料摘要。
+   和四季页 carePurgeOrphan 同一条规则：按 byId 删 kind==='care' 的条目。
+   只在「这个池一株能照料的都没有」时调，有活株的星球一条不动。 */
+function _seasonCarePurgeOrphan(planet, cid) {
+  try {
+    const notes = planet && planet.notes;
+    if (!Array.isArray(notes) || !notes.length) return false;
+    let changed = false;
+    for (let i = notes.length - 1; i >= 0; i--) {
+      const n = notes[i];
+      if (n && n.kind === 'care' && n.byId === cid) { notes.splice(i, 1); changed = true; }
+    }
+    return changed;
+  } catch (e) { return false; }
+}
+/* ★ 20261115c：星球上没有能照料的活株时的统一收尾——
+   撤掉照料时间线（不再空转闹钟）+ 清掉旧版本遗留的照料摘要。
+   空池、全枯、全烧、全长满都走这里；留言那条线不受影响。 */
+function _seasonCareMarkEmpty(planet, cid) {
+  let changed = false;
+  try {
+    const nb = planet && planet.careNextAtBy;
+    if (nb && nb[cid]) { delete nb[cid]; changed = true; }
+    if (planet && (planet.viewId || planet.ownerId) === cid && planet.careNextAt) {
+      try { delete planet.careNextAt; changed = true; } catch (e) {}
+    }
+    /* ★ 只有「一株活的都没有」才清摘要；
+       只是长满了（grow>=100）→ 摘要留着，那确实是照料过的记录。 */
+    let alive = false;
+    try {
+      const view = planet.viewId || planet.ownerId;
+      const list = (cid === view) ? (planet.plants || []) : ((planet.pool && planet.pool[cid]) || []);
+      alive = (list || []).some(function (pl) { return pl && !pl.dead && !pl.burned; });
+    } catch (e) {}
+    if (!alive && _seasonCarePurgeOrphan(planet, cid)) changed = true;
+  } catch (e) {}
+  return changed;
+}
+/* ---- 当天摘要条：和四季页 careSumAdd 完全同一套结构 ----
+   { kind:'care', sumDay, sumKind, detail:[{t,s}], text:'他给植物浇了四次水。' }
+   同一天同类只维护一条，次数跟着涨 —— 留言区不会被一跳一条刷屏；
+   逐次动作本身留在植株的「互动记录」（pl.acts）里，两条线各管各的。 */
+var _SEASON_CARE_SUM_LABEL = { '水': '浇了水', '肥': '施了肥', '看': '看了一眼，没动手' };
+var _SEASON_CARE_SUM_SEQ = { '水': 0, '肥': 1, '看': 2 };
+function _seasonCareSumAdd(notes, cid, name, sumKind, plName, ts) {
+  const dayKey = _seasonDayKey(ts);
+  const find = function (k) {
+    for (let i = notes.length - 1; i >= 0; i--) {
+      const n = notes[i];
+      if (n && n.kind === 'care' && n.sumDay === dayKey && n.sumKind === k && n.byId === cid) return n;
+    }
+    return null;
+  };
+  let n = find(sumKind);
+  if (!n) {
+    n = {
+      id: 'nt' + ts.toString(36) + Math.floor(Math.random() * 1000),
+      byId: cid, by: name, kind: 'care', text: '', at: ts, ref: null,
+      detail: [], seq: _SEASON_CARE_SUM_SEQ[sumKind], sumDay: dayKey, sumKind: sumKind
+    };
+    notes.push(n);
+  }
+  if (!Array.isArray(n.detail)) n.detail = [];
+  n.detail.push({ t: ts, s: '「' + plName + '」· ' + _SEASON_CARE_SUM_LABEL[sumKind] });
+  if (n.detail.length > 60) n.detail = n.detail.slice(-60);
+  /* 三项文案一起重算：「除此之外」要看当天有没有浇过/施过 */
+  const w = find('水'), f = find('肥'), l = find('看');
+  const nw = w ? (w.detail || []).length : 0;
+  const nf = f ? (f.detail || []).length : 0;
+  const nl = l ? (l.detail || []).length : 0;
+  if (w) w.text = '他给植物浇了' + _seasonCnNum(nw) + '次水。';
+  if (f) f.text = '他给植物施了' + _seasonCnNum(nf) + '次肥。';
+  if (l) l.text = ((nw || nf) ? '除此之外，' : '') + '他还静静地观察了植物' + _seasonCnNum(nl) + '次。';
+  /* 当天三条共用「这一天最后一次动作」的时间，列表里挨在一起，不会散到别的日期中间 */
+  [w, f, l].forEach(function (m) { if (m) m.at = Math.max(m.at || 0, ts); });
+  return n;
+}
+/* 后台到点：真的照料一次并落盘。
+   atOverride 只有「回前台补收」才传（进程已死，只能按本该发生的那一刻记时间）；
+   正常闹钟到点走 Date.now()，这才是「真实发生」。 */
+async function _seasonCareDeliver(cid, atOverride) {
+  const taskId = _seasonCareTaskId(cid);
+  let doc = null;
+  try {
+    const raw = localStorage.getItem('bmSeasonSave');
+    if (!raw) { await bmBackgroundConfirm(taskId); return false; }
+    doc = JSON.parse(raw);
+  } catch (e) { return false; }
+  if (!doc || !doc.__season || !doc.planet) { await bmBackgroundConfirm(taskId); return false; }
+
+  const planet = doc.planet;
+  const viewCid = planet.viewId || planet.ownerId || '';
+  /* 当前角色的正本永远是 planet.plants，别人的在 pool 里 —— 与 tick 同一套对齐规则 */
+  let list = [];
+  if (cid === viewCid) {
+    if (Array.isArray(planet.plants)) list = planet.plants;
+    else if (planet.pool && Array.isArray(planet.pool[cid])) list = planet.pool[cid];
+  } else if (planet.pool && Array.isArray(planet.pool[cid])) {
+    list = planet.pool[cid];
+  }
+  if (!list.length) {
+    /* ★ 20261115c：这颗星球连种子都还没有 → 只留留言、不照料。
+       把旧版本写下的照料摘要与时间线一并清掉（玩家：「星球上都还没有种子，
+       角色照料个啥呀」），然后把这个闹钟确认掉，不再排下一个。 */
+    if (_seasonCareMarkEmpty(planet, cid)) {
+      try { localStorage.setItem('bmSeasonSave', JSON.stringify(doc)); } catch (e) {}
+    }
+    await bmBackgroundConfirm(taskId);
+    bmDiag('season_care_skip_empty', { cid: cid });
+    return true;
+  }
+
+  const c = (characters || []).find(function (x) { return x && x.id === cid; }) || null;
+  const name = (c && c.name) || 'TA';
+  /* 四季页正开着：它自己的照料定时器在跑，这里只确认不抢着写档
+     （两边写同一个 localStorage key 会互相覆盖）。
+     20261115b：同样要把它写下的「下一条」排回闹钟，链路不断。 */
+  const seasonFrame = document.getElementById('season-frame');
+  if (seasonFrame && seasonFrame.contentWindow) {
+    const fnx = ((planet && planet.careNextAtBy) || {})[cid] || 0;
+    if (fnx > Date.now()) await _seasonCareArm(cid, name, fnx);
+    await bmBackgroundConfirm(taskId);
+    bmDiag('season_care_skip_frame', { cid: cid });
+    return true;
+  }
+
+  const bgNow = Date.now();
+  const nextBy = planet.careNextAtBy || (planet.careNextAtBy = {});
+  /* 这条时间线已经推进到未来 → 刚刚已经照顾过（另一条路径先到），只补确认 */
+  if ((nextBy[cid] || 0) > bgNow) {
+    await bmBackgroundConfirm(taskId);
+    bmDiag('season_care_skip_already', { cid: cid });
+    return true;
+  }
+
+  const at = (typeof atOverride === 'number' && atOverride > 0 && atOverride <= bgNow) ? atOverride : bgNow;
+  const did = _seasonCareOneStep(list, name, at);
+  if (!did) {
+    /* ★ 20261115c：这颗星球上没有能照料的活株（空 / 全枯 / 全烧 / 全长满）。
+       玩家：「星球上没有种子的时候只能留言，不能够照料。」
+       → 不写摘要、不推时间线、不排下一个闹钟，并把旧版本遗留的照料摘要清掉。 */
+    _seasonCareMarkEmpty(planet, cid);
+    /* 不管有没有东西可清，时间线都已掤掉，直接落盘 */
+    try { localStorage.setItem('bmSeasonSave', JSON.stringify(doc)); } catch (e) {}
+    await bmBackgroundConfirm(taskId);
+    bmDiag('season_care_skip_noplant', { cid: cid });
+    return true;
+  }
+  const notes = Array.isArray(planet.notes) ? planet.notes : (planet.notes = []);
+  if (did) {
+    _seasonCareSumAdd(notes, cid, name, did.sumKind, did.name, at);
+    if (notes.length > 120) notes.splice(0, notes.length - 120);   // 20261115b：与四季页 notes 上限（120）对齐，别把玩家旧留言裁掉
+  }
+  /* 下一条从「此刻」起算随机间隔 —— 角色自己的节奏 */
+  const gaps = _seasonCareGapMs();
+  nextBy[cid] = bgNow + _seasonRandGap(gaps.lo, gaps.hi);
+  if (cid === viewCid) planet.careNextAt = nextBy[cid];
+  const bg = planet.bg || (planet.bg = {});
+  const st = bg[cid] || (bg[cid] = {});
+  st.lastCareAt = bgNow;
+  try { localStorage.setItem('bmSeasonSave', JSON.stringify(doc)); } catch (e) {}
+  if (nextBy[cid]) await _seasonCareArm(cid, name, nextBy[cid]);
+  await bmBackgroundConfirm(taskId);
+  bmDiag('season_care_delivered', { cid: cid, at: at, kind: did && did.sumKind, next: nextBy[cid] || 0 });
+  return true;
+}
+
 async function _seasonBgTick() {
   const f = document.getElementById('season-frame');
-  if (f && f.contentWindow) return;          // 四季开着 → 交给它自己结算
   let raw = null;
   try { raw = localStorage.getItem('bmSeasonSave'); } catch (e) { return; }
   if (!raw) return;
   let doc = null;
   try { doc = JSON.parse(raw); } catch (e) { return; }
   if (!doc || !doc.__season || !doc.planet) return;
+  /* 四季页开着 → 结算交给它自己那条线（避免重复照料）；
+     但**原生闹钟照样要排**，否则玩家开着四季的这段时间一过，
+     照料 / 留言的闹钟就断了，关掉 App 再也不会自己醒。 */
+  if (f && f.contentWindow) { _seasonArmAll(doc); return; }
 
   const now = Date.now();
   const planet = doc.planet;
@@ -13930,15 +14602,36 @@ async function _seasonBgTick() {
   const notices = [];
   let dirty = false;
 
+  /* ★ 20261115 修「后台照料了，植物互动记录里却一条都没有」（玩家报的 bug）：
+     旧代码先放 plants，再让 pool 覆盖同名键 —— 而 pool[当前角色] 是「上次切星球
+     时存进去的旧快照」（四季 switchPlanetChar 每次都往 pool 里塞一份），
+     于是后台照料把 act、额度、bonusDays 全写进了那份快照，
+     四季页打开读的却是 planet.plants → 两份从读档起就是互不相干的对象，
+     留言（走 pending）看得到、互动记录（走 plants[].acts）看不到。
+     ⇒ 当前角色一律以 planet.plants 为准，并且把快照里多出来的那些 act 合并回来，
+       顺便让两份指向同一个数组，存盘不再分叉。 */
+  const viewCid = planet.viewId || planet.ownerId || '';
   const pools = {};
-  if (Array.isArray(planet.plants)) pools[planet.viewId || planet.ownerId] = planet.plants;
   Object.keys(planet.pool || {}).forEach(function (k) {
-    if (Array.isArray(planet.pool[k])) pools[k] = planet.pool[k];
+    if (Array.isArray(planet.pool[k]) && k !== viewCid) pools[k] = planet.pool[k];
   });
+  if (viewCid && Array.isArray(planet.plants)) {
+    const stale = Array.isArray(planet.pool[viewCid]) ? planet.pool[viewCid] : [];
+    if (stale.length) _seasonMergeActs(planet.plants, stale);
+    pools[viewCid] = planet.plants;
+    planet.pool[viewCid] = planet.plants;
+  }
 
   Object.keys(pools).forEach(function (cid) {
     const list = pools[cid] || [];
-    if (!cid || !list.length) return;
+    if (!cid) return;
+    /* ★ 20261115c：壳子里一颗种子都没有 → 只留留言。顺手把旧版本遗留的
+       照料摘要与照料时间线清掉（否则空星球上会一直挂着「照料」）。
+       ❗ 这里**不能 return**：留言线（③-5）在下面，一 return 就连留言一起停了。 */
+    const hasPlants = list.length > 0;
+    if (!hasPlants) {
+      if (_seasonCareMarkEmpty(planet, cid)) dirty = true;
+    }
     const st = bg[cid] || (bg[cid] = {});
     st.snap = st.snap || {};
     st.lovePending = st.lovePending || 0;
@@ -13959,31 +14652,29 @@ async function _seasonBgTick() {
       if (prev == null || idx > prev) { st.snap[pl.id] = idx; dirty = true; }
     });
 
-    // ② 角色后台照料：挑最久没浇的那株，超过 careGap 就自己动手
+    // ② 角色后台照料：挑最久没浇的那株（只在「可照料的活株」里挑）
     let driest = null, driestAt = 0;
     list.forEach(function (pl) {
-      if (!pl || pl.dead) return;
+      if (!pl || pl.dead || pl.burned || (pl.grow || 0) >= 100) return;
       const acts = pl.acts || [];
       let w = 0;
       for (let i = acts.length - 1; i >= 0; i--) { if (acts[i] && acts[i].k === '浇水') { w = acts[i].t || 0; break; } }
       if (!w) w = pl.t0 || 0;
       if (!driest || w < driestAt) { driest = pl; driestAt = w; }
     });
-    /* ② 角色后台照料：挑最久没浇的那株动手
-       ★ 20261112 重写（用户：「软件挂后台一两天，点进四季一条照料的信息都没有」）
-       旧逻辑三个坑：
-         · 一次 tick 只手动作一次，就算隔了两天也只补一下；
-         · 四季 iframe 只要还活着就整段 return（为了不重复照料），
-           而四季那边又只在「星球」子页才干活 → 两边都不做事；
-         · App 关掉那段时间完全没账，回来也不补。
-       现在：和四季页共用同一个基准 `planet.careNextAt`（下一次该到点的时间），
-       谁的 iframe 活着谁负责；iframe 没起来（玩家从没开过四季 / 进程被杀）就这里补：
-       从 careNextAt 一跳一跳往后推，每跳照顾最干的那株，并且**按株按天**守额度
-       （TA 每天每株最多 3 次水 + 2 次肥，和四季页的账本是同一本），
-       最后按「浇水 / 施肥 / 静静看着」各留一条（带明细），不再糊成一条大摘要。 */
-    const careGap = _SEASON_BG.careGapMs;
-    /* ★ 20261112：每颗星球一条自己的时间线（planet.careNextAtBy[cid]）。
-       以前所有角色共用一根 planet.careNextAt —— 第一个角色补完就把它推到未来，
+    /* ② 角色后台照料：到点就真的照顾一次
+       ★ 20261115b 重写（玩家追问：「四季的照料互动，有没有是那一刻真实发生的？」）
+       以前这里是一段 while 补算：从 careNextAt 一跳一跳往后推，把过去几小时
+       （最多 3 天 / 160 跳）一次性补出来，时间戳全是回算的计划点。
+       植物确实长胖了，但那一跳不是真的发生过 —— 玩家问到了根上。
+       现在：主路径是原生闹钟（见 _seasonCareDeliver）——
+         到点那一刻由 AlarmManager 叫醒，现场挑株、浇水、写互动记录、涨当天摘要；
+       这里只剩两件事：**把下一条排进闹钟** + **闹钟没救回来时兜底补**。
+       兜底最多 1 天 / 12 跳，不再一次补出三天的假历史。
+       （按株按天守额度不变：TA 每天每株最多 3 次水 + 2 次肥，和四季页同一本账。） */
+    const careGaps = _seasonCareGapMs();
+    /* 每颗星球一条自己的时间线（planet.careNextAtBy[cid]）。
+       以前所有角色共用一根 planet.careNextAt —— 第一个角色补完就推到未来，
        后面的角色看到「还没到点」直接跳过，等于只有一个人在被照料。 */
     const nextBy = planet.careNextAtBy || (planet.careNextAtBy = {});
     const isViewing = (cid === (planet.viewId || planet.ownerId));
@@ -13992,91 +14683,47 @@ async function _seasonBgTick() {
     if (!nextCare && !Object.keys(nextBy).length && isViewing) {
       nextCare = planet.careNextAt || 0;
     }
-    if (!nextCare) {
-      nextBy[cid] = now + careGap;
+    /* ★ 20261115c：池里一株能照料的都没有（全枯 / 全烧 / 全长满）→ 只留留言，不照料。
+       空池在上面就 return 了，这里兜的是「有株但一株都照料不了」。
+       这种星球不设时间线、不排闹钟，也不该留着旧的照料摘要。 */
+    if (!driest) {
+      if (_seasonCareMarkEmpty(planet, cid)) dirty = true;
+    } else if (!nextCare) {
+      /* 第一次见到这颗星球：给一个完整间隔的起点（四季页首跳取区间/6，那是给前台看的） */
+      nextBy[cid] = now + _seasonRandGap(careGaps.lo, careGaps.hi);
       if (isViewing) planet.careNextAt = nextBy[cid];
       dirty = true;
-    } else if (nextCare <= now && driest) {
-      const CAP = 3 * 86400000;                    /* 最多补 3 天 */
-      let t = Math.max(nextCare, now - CAP);
-      let didW = 0, didF = 0, looked = 0, guard = 0;
-      const touched = {};
-      /* ★ 20261112 用户否掉「一天一条大摘要」（「还有九次它看了一眼，没动手」太 AI 腔）：
-         改成按「浇水 / 施肥 / 静静看着」三类各一条，每条带可展开的明细。
-         所以这里按天分袋，袋里除了计数还留每一次的时间 + 株名。 */
-      const dayBag = {};
-      const dayKeyOf = (ts) => {
-        const d = new Date(ts || Date.now());
-        return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
-      };
-      while (t <= now && guard++ < 160) {
-        /* 每跳重新挑最干的（刚浇过的那株就不再是最干的） */
-        let dp = null, dpat = 0;
-        list.forEach(function (pl) {
-          if (!pl || pl.dead) return;
-          const acts = pl.acts || [];
-          let w = 0;
-          for (let i = acts.length - 1; i >= 0; i--) { if (acts[i] && acts[i].k === '浇水') { w = acts[i].t || 0; break; } }
-          if (!w) w = pl.t0 || 0;
-          if (!dp || w < dpat) { dp = pl; dpat = w; }
-        });
-        if (!dp) break;
-        const key = dayKeyOf(t);
-        if (!dp.careDay || dp.careDay.d !== key) {
-          dp.careDay = { d: key, water: 0, fert: 0, waterP: 0, waterC: 0, fertP: 0, fertC: 0 };
+      _seasonCareArm(cid, name, nextBy[cid]).catch(function () {});
+    } else if (nextCare > now) {
+      /* 还没到点：把这个时间点排进 AlarmManager，到点由 _seasonCareDeliver 现场照料 */
+      _seasonCareArm(cid, name, nextCare).catch(function () {});
+    } else if (driest) {
+      /* 原生那边正在处理这一条（闹钟刚响）→ 本轮不补，避免同一跳做两次 */
+      const scBusy = _seasonCareClaimed[cid] && (now - _seasonCareClaimed[cid] < 60000);
+      if (!scBusy) {
+        const CARE_CAP = 86400000;                 /* 兜底最多回看 1 天 */
+        let t = Math.max(nextCare, now - CARE_CAP), guard = 0;
+        const planetNotes = Array.isArray(planet.notes) ? planet.notes : (planet.notes = []);
+        while (t <= now && guard++ < 12) {
+          const did = _seasonCareOneStep(list, name, t);
+          if (did) _seasonCareSumAdd(planetNotes, cid, name, did.sumKind, did.name, t);
+          t += _seasonRandGap(careGaps.lo, careGaps.hi);
         }
-        const q = dp.careDay;
-        if (typeof q.waterC !== 'number') q.waterC = 0;
-        if (typeof q.fertC !== 'number') q.fertC = 0;
-        let act = '';
-        if (q.waterC < 3) act = '浇水';
-        else if (q.fertC < 2) act = '施肥';
-        const bag = dayBag[key] || (dayBag[key] = { w: 0, f: 0, look: 0, wd: [], fd: [], ld: [] });
-        if (!act) {
-          looked++;                                 /* 这株今天它已经照料够了，看一眼没动手 */
-          bag.look++;
-          bag.ld.push({ t: t, s: '「' + (dp.name || '那株') + '」· 看了一眼，没动手' });
-        } else {
-          dp.acts = dp.acts || [];
-          dp.acts.push({ t: t, k: act, by: name });
-          if (act === '浇水') { q.water++; q.waterC++; didW++; bag.w++; bag.wd.push({ t: t, s: '「' + (dp.name || '那株') + '」· 浇了水' }); }
-          else { q.fert++; q.fertC++; didF++; bag.f++; bag.fd.push({ t: t, s: '「' + (dp.name || '那株') + '」· 施了肥' }); }
-          dp.bonusDays = (dp.bonusDays || 0) + _SEASON_BG.careDays;
-          dp.grow = _seasonGrowPct(dp, t);
-          touched[dp.id] = 1;
-        }
-        t += careGap;
-      }
-      nextBy[cid] = t;
-      if (isViewing) planet.careNextAt = t;
-      st.lastCareAt = now;
-      dirty = true;
-      if (didW || didF || looked) {
-        /* 三类各一条：浇水一条、施肥一条、静静看着一条，全部带明细（几点 / 哪一株）。
-           「除此之外，」只在同一天有浇水或施肥时才加 —— 用户 20261112 给的句式。 */
-        const atOf = (arr) => (arr && arr.length ? arr[arr.length - 1].t : now);
-        Object.keys(dayBag).sort().forEach(function (k) {
-          const b = dayBag[k];
-          if (!b.w && !b.f && !b.look) return;
-          /* 三条共用「这一天最后一次动作」的时间 + seq，四季页按 at→seq 排，
-             读起来就是「浇水 → 施肥 → 除此之外…」 */
-          const dayLast = Math.max(atOf(b.wd) || 0, atOf(b.fd) || 0, atOf(b.ld) || 0) || now;
-          const put = function (txt, arr, sq) {
-            (pending[cid] = pending[cid] || []).push({
-              kind: 'care', at: dayLast, text: txt, seq: sq,
-              detail: (arr || []).slice(0, 40),
-            });
-          };
-          if (b.w) put('他给植物浇了' + _seasonCnNum(b.w) + '次水。', b.wd, 0);
-          if (b.f) put('他给植物施了' + _seasonCnNum(b.f) + '次肥。', b.fd, 1);
-          if (b.look) put((b.w || b.f ? '除此之外，' : '') +
-                          '他还静静地观察了植物' + _seasonCnNum(b.look) + '次。', b.ld, 2);
-        });
+        if (planetNotes.length > 120) planetNotes.splice(0, planetNotes.length - 120);   // 与四季页 notes 上限对齐
+        nextBy[cid] = t > now ? t : now + _seasonRandGap(careGaps.lo, careGaps.hi);
+        if (isViewing) planet.careNextAt = nextBy[cid];
+        st.lastCareAt = now;
+        dirty = true;
+        /* 补完立刻把下一条排进闹钟，下一次由闹钟叫醒，不再靠轮询兜 */
+        _seasonCareArm(cid, name, nextBy[cid]).catch(function () {});
       }
     }
 
     // ③ 爱意邀请（后台累积，进页面合并成一条）
-    if (!st.lastLoveAt) {
+    /* 20261115c：空星球不发邀请（“一起照料植物”但一株都没有，很怪）；留言照常 */
+    if (!hasPlants) {
+      /* 什么也不做，直接去留言那一段 */
+    } else if (!st.lastLoveAt) {
       st.lastLoveAt = now; dirty = true;
     } else if ((now - st.lastLoveAt) > _SEASON_BG.loveGapMs && Math.random() < 0.5) {
       st.lastLoveAt = now;
@@ -14087,6 +14734,66 @@ async function _seasonBgTick() {
       // 玩家不在四季页 → 同时往聊天流发一张邀请卡（点开直接进四季）
       try { _seasonSendLoveCard(cid, name, ''); } catch (e) {}
       dirty = true;
+    }
+
+    /* ③-5 留言线：角色自己留一句 —— 和照料并列，进后台 tick 就补
+       ★ 20261116（玩家：「角色不可以在后台自动留言吗」）
+         以前这条线只在四季页开着、且停在星球子页时才跑，所以挂后台两天
+         只有照料、没有一句新留言。现在按 planet.noteNextAtBy[角色] 这条
+         独立时间线补：最多补 3 天 / 12 条，at 用当时那一跳的时间，
+         不会全挤在「刚刚」，也不会和照料互相挤占。 */
+    {
+      const gaps = _seasonNoteGapMs();
+      const noteNextBy = planet.noteNextAtBy || (planet.noteNextAtBy = {});
+      const planetNotes = Array.isArray(planet.notes) ? planet.notes : (planet.notes = []);
+      let nNext = (typeof noteNextBy[cid] === 'number' && noteNextBy[cid]) || 0;
+      if (!nNext) {
+        /* 老存档还没有这条时间线：有上一条留言就从那条往后推一格，
+           没有才从此刻起算 —— 否则老玩家打开会看到「今天一条都没有」。 */
+        let lastAt = 0;
+        for (let i = planetNotes.length - 1; i >= 0; i--) {
+          if (planetNotes[i] && planetNotes[i].byId === cid) { lastAt = planetNotes[i].at || 0; break; }
+        }
+        if (lastAt) {
+          nNext = lastAt + _seasonRandGap(gaps.lo, gaps.hi);
+          noteNextBy[cid] = nNext;
+        } else {
+          noteNextBy[cid] = now + _seasonRandGap(gaps.lo, gaps.hi);
+        }
+        nNext = noteNextBy[cid];   // 20261115b：首次初始化后同样要排进闹钟，不能等下一轮轮询
+        dirty = true;
+      }
+      /* ★ 20261115：**主路径改成原生闹钟**。
+         还没到点就把这个时间点排进 AlarmManager —— 到点原生会推 bmBackgroundDue，
+         由 _seasonNoteDeliver 在那一刻真的生成一条留言（at = 当时），不是回算。
+         下面那段补算只在「闹钟没救回来」（进程被杀 / 网页端没有插件）时才走。 */
+      if (nNext && nNext > now) {
+        _seasonNoteArm(cid, name, nNext).catch(function () {});
+      }
+      /* 原生那边正在处理这一条（闹钟刚响）→ 本轮不补，避免同一条写两次 */
+      const snBusy = _seasonNoteClaimed[cid] && (now - _seasonNoteClaimed[cid] < 60000);
+      if (nNext && nNext <= now && !snBusy) {
+        const NOTE_CAP = 3 * 86400000;
+        let nt = Math.max(nNext, now - NOTE_CAP);
+        let guardN = 0;
+        while (nt <= now && guardN++ < 12) {
+          const txt = _seasonBgNoteText(cid, list);
+          if (txt) {
+            planetNotes.push({
+              id: 'nt' + nt.toString(36) + Math.floor(Math.random() * 1000),
+              byId: cid, by: name, kind: 'draw', text: txt,
+              at: nt, ref: null, detail: null, seq: 9
+            });
+          }
+          nt += _seasonRandGap(gaps.lo, gaps.hi);
+        }
+        /* 四季页也是最多留 80 条，这里同规，避免后台把存档撑大 */
+        if (planetNotes.length > 120) planetNotes.splice(0, planetNotes.length - 120);   // 与四季页 notes 上限对齐
+        noteNextBy[cid] = nt > now ? nt : now + _seasonRandGap(gaps.lo, gaps.hi);
+        dirty = true;
+        /* 补完立刻把下一条排进原生闹钟，下一次就由闹钟叫醒，不再靠轮询兜 */
+        _seasonNoteArm(cid, name, noteNextBy[cid]).catch(function () {});
+      }
     }
 
     // ④ 多日无人照顾的保底提醒（每天最多一次）
@@ -17126,6 +17833,8 @@ async function finishExport(save, blob, okMsg) {
       // Directory.Documents = 'DOCUMENTS'（公共文档目录，卸载不删）；recursive 建父目录
       await FS.writeFile({ path: '白日梦备份/' + save.filename, data: b64, directory: 'DOCUMENTS', recursive: true });
       miniToast(okMsg + '（已存到「文档/白日梦备份」，卸载重装后可从该目录导入）');
+      // 20261115b：记录导出时间（网页端「太久没导出」提示用；APP 端记了也无害）
+      try { await setSetting('lastExportAt', Date.now()); } catch (e) {}
       return true;
     } catch (e) {
       miniToast('保存到文档目录失败：' + (e && e.message ? e.message : '未知错误'));
@@ -17142,7 +17851,68 @@ async function finishExport(save, blob, okMsg) {
   a.click();
   setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000); // 延迟撤销，给下载留足启动时间
   miniToast(okMsg + '（已开始下载，见浏览器"下载"目录或通知栏）');
+  try { await setSetting('lastExportAt', Date.now()); } catch (e) {}
   return true;
+}
+
+/* ---------- 20261115b：网页端「太久没导出」轻提示 ----------
+   网页版数据只存在当前浏览器的 IndexedDB 里：清缓存、换浏览器、换设备就没了，
+   而网页端没有 Filesystem，做不了自动备份。所以这里只做一条可关闭的浮条：
+   距上次导出 ≥ 7 天（或从未导出过）时提醒一次，点「7 天后再说」静默一周。
+   APP 端有自动备份兜底，不弹这个。 */
+const BM_EXPORT_TIP_DAYS = 7;
+let _exportTipShown = false;
+async function maybeShowExportReminder() {
+  try {
+    if (bmImgIsApp()) return;                 // APP 端有自动备份，不打扰
+    if (_exportTipShown) return;
+    const snooze = await getSetting('exportTipSnoozeUntil', 0);
+    if (snooze && Date.now() < snooze) return;
+    const last = await getSetting('lastExportAt', 0);
+    const days = last ? Math.floor((Date.now() - last) / 86400000) : -1;
+    if (days >= 0 && days < BM_EXPORT_TIP_DAYS) return;
+    _exportTipShown = true;
+    showExportReminderBar(days);
+  } catch (e) {}
+}
+function showExportReminderBar(days) {
+  try {
+    if (document.getElementById('bm-export-tip')) return;
+    const el = document.createElement('div');
+    el.id = 'bm-export-tip';
+    /* 20261116：原来钉在屏幕最底部，被底栏和输入框挡着基本看不见。
+       改成「中上部居中的一张提示卡」——视线正落在聊天区上沿，不遮输入框、不挡底栏。 */
+    el.style.cssText = 'position:fixed;left:50%;top:calc(14vh + env(safe-area-inset-top));transform:translateX(-50%);' +
+      'width:min(330px,calc(100vw - 44px));z-index:9998;' +
+      'background:linear-gradient(180deg,var(--bg-elevated-2,#2a2436),var(--bg-elevated,#241f30));' +
+      'border:1px solid var(--border,#3a3350);border-radius:18px;' +
+      'padding:16px 16px 13px;box-shadow:0 18px 44px rgba(0,0,0,.42);' +
+      'display:flex;flex-direction:column;gap:10px;' +
+      'animation:bmTipIn .26s cubic-bezier(.22,1,.36,1) both;';
+    if (!document.getElementById('bm-tip-anim')) {
+      const st = document.createElement('style');
+      st.id = 'bm-tip-anim';
+      st.textContent = '@keyframes bmTipIn{from{opacity:0;transform:translateX(-50%) translateY(-8px) scale(.97)}to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}';
+      document.head.appendChild(st);
+    }
+    const txt = days < 0 ? '还没导出过备份' : ('已经 ' + days + ' 天没导出备份了');
+    el.innerHTML = '<div style="font-size:14.5px;font-weight:650;color:var(--text,#fff);letter-spacing:.2px;">' + txt + '</div>' +
+      '<div style="font-size:12.5px;line-height:1.62;color:var(--text-secondary,#cfc9e0);">' +
+      '网页版的数据只存在这个浏览器里，清缓存或换浏览器就没了。建议导出一份 .ocdata 存到电脑或网盘。' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:2px;">' +
+      '<button class="btn" id="bm-export-tip-later" style="font-size:12.5px;padding:8px 13px;">7 天后再说</button>' +
+      '<button class="btn primary" id="bm-export-tip-go" style="font-size:12.5px;padding:8px 15px;">去导出</button>' +
+      '</div>';
+    document.body.appendChild(el);
+    const later = document.getElementById('bm-export-tip-later');
+    const go = document.getElementById('bm-export-tip-go');
+    if (later) later.onclick = async () => {
+      el.remove();
+      try { await setSetting('exportTipSnoozeUntil', Date.now() + BM_EXPORT_TIP_DAYS * 86400000); } catch (e) {}
+    };
+    if (go) go.onclick = () => { el.remove(); try { exportAll(); } catch (e) {} };
+  } catch (e) {}
 }
 
 /* ---------- 事件绑定 ---------- */
@@ -23072,15 +23842,15 @@ function showDataCatModal(id) {
   /* 20260929z：子页标题图标与导航行同款（统一淡紫 SVG），不再用 emoji */
   const ti = (ic) => `<span style="display:inline-flex;vertical-align:-4px;margin-right:7px;color:var(--purple-soft);">${icon(ic, 18)}</span>`;
   const titles = {
-    migrate: [`${ti('data')}数据迁移`, '把整个《白日梦》数据打包成单个 .ocdata 文件，或从备份恢复（覆盖/合并）'],
+    migrate: [`${ti('data')}数据迁移`, '把整个《白日梦》数据打包成单个 .ocdata 文件（可选连四季一起），或从备份恢复（覆盖/合并）'],
     chars: [`${ti('user')}角色卡`, '导出/导入角色卡：角色 + TA 的专属表情包 + 角色设定（人设、关系、昵称等）。<b>不含字卡</b>、聊天记录、玩家表情库'],
     chat: [`${ti('chatset')}聊天记录`, '单独备份/恢复聊天记录，或一键清空（不影响访客、字卡、美化等）'],
     letters: [`${ti('letter')}书信`, '单独导出全部往来书信与信箱文件夹结构（.letterdata），或从备份导入（按 ID 合并去重）'],
     world: [`${ti('tree')}世界树`, '导出/导入世界观设定库（.worlddata，含文件夹、条目与草稿箱；导入会覆盖当前世界树）'],
     palace: [`${ti('memory')}记忆宫殿`, '导出/导入记忆条目与文件夹结构（.palacedata）；导出可选访客/玩家文件夹，导入自动分辨归属'],
-    music: [`${ti('music')}音乐数据`, '单独导出/导入音乐数据（音乐库 · 歌单 · 访客收藏 · 音源设置）。<b>独立于全局备份</b>，全局导出/导入不包含音乐数据，需在此单独操作'],
-    focus: [`${ti('timer')}番茄钟结算`, '导出/导入番茄钟陪伴的专注结算记录。导出可按角色单选或多选（分角色导出），也可一键全部导出'],
-    season: [`${ti('season')}四季数据`, '单独导出/导入四季小游戏数据（星球 · 书签集 · 照片墙图鉴 · 收集进度）。<b>独立于全局备份</b>，全局导出/导入不包含四季数据，需在此单独操作'],
+    music: [`${ti('music')}音乐数据`, '单独导出/导入音乐数据（音乐库 · 歌单 · 访客收藏 · 音源设置）。<b>全局备份已带歌名/歌单等元数据</b>，但音频文件本体不随全局走，需要在此单独处理'],
+    focus: [`${ti('timer')}番茄钟结算`, '导出/导入番茄钟陪伴的专注结算记录。导出可按角色单选或多选（分角色导出），也可一键全部导出。<b>全局备份已包含结算记录</b>，这里用于单独备份或按角色导出'],
+    season: [`${ti('season')}四季数据`, '单独导出/导入四季小游戏数据（星球 · 书签集 · 照片墙图鉴 · 收集进度）。<b>也可在导出全局时勾选一起打包</b>；单独导出文件更小、更快，平时推荐这一种'],
   };
   const t = titles[id] || ['', ''];
   const btn = (bid, label, tail) => `<button class="btn block" style="margin-bottom:10px;justify-content:space-between;" id="${bid}">${label} <span>${tail}</span></button>`;
@@ -23101,19 +23871,22 @@ function showDataCatModal(id) {
       ${btn('btn-export', '导出全局数据（.ocdata）', '<i data-icon="download" data-size="15"></i>')}
       ${btn('btn-import', '导入全局数据（.ocdata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);line-height:1.85;margin:2px 0 4px;padding:10px 12px;background:var(--bg-elevated-2);border-radius:10px;">
-        <b style="color:var(--text);">全局备份包含</b>：角色卡（含每个角色的聊天背景图）、聊天记录、玩家表情包、<b style="color:var(--text);">字卡（自定义字卡与字卡分组）</b>、记忆宫殿、书信、世界树、记事簿、朋友圈、纪念日、问卷、<b style="color:var(--text);">问卷库（预存题库）</b>、超频礼物柜、<b style="color:var(--text);">经期潮汐、通话背景图、全局色彩与毛玻璃档位</b>，以及聊天气泡颜色 / 自定义 CSS 等美化与各项设置。<br>
-        <b style="color:var(--text);">不包含</b>（需在对应分类里单独导出）：四季（.seasondata）、音乐（.musicdata）、番茄钟结算（.focusdata）。全局导出再导入，这三块<b style="color:var(--text);">不会跟着回来</b>。<br>
+        <b style="color:var(--text);">全局备份包含</b>：角色卡（含每个角色的聊天背景图）、聊天记录、玩家表情包、<b style="color:var(--text);">字卡（自定义字卡与字卡分组）</b>、记忆宫殿、书信、世界树、记事簿、朋友圈、纪念日、问卷、<b style="color:var(--text);">问卷库（预存题库）</b>、超频礼物柜、<b style="color:var(--text);">经期潮汐、通话背景图、全局色彩与毛玻璃档位</b>、<b style="color:var(--text);">音乐库（歌名/歌单/收藏/音源设置）</b>、<b style="color:var(--text);">番茄钟结算记录</b>，以及聊天气泡颜色 / 自定义 CSS 等美化与各项设置。<br>
+        <b style="color:var(--text);">四季数据可选</b>：导出时可以勾选「连四季一起打包」，勾了会一起写进<b style="color:var(--text);">同一个文件</b>（不压缩），导入时自动分成全局包与四季包一起导入，四季只合并、不覆盖。四季照片体积较大，也可以平时在「四季数据」里单独导。<br>
+        <b style="color:var(--text);">不包含</b>（需在对应分类里单独导出）：音乐<b style="color:var(--text);">音频文件本体</b>（本地歌曲恢复后要重新选一次文件）。<br>
         另外<b style="color:var(--text);">两处按设计不备份</b>：AI 接口配置、占卜接口地址——换机或重装后需要重新填写；角色每日日程表会在次日自动重新生成。
       </div>
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">恢复：检测现有<b>自动备份</b>，选择要恢复到的那一份（无需手动找文件）</div>
       ${btn('btn-restore-auto', '恢复自动备份（选择）', '🔄')}
+      ${btn('btn-clear-legacy-auto', '清除旧格式备份（保留最新一份）', '🗂')}
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">维护：软件或浏览器更新后，清掉旧版本遗留的冗余缓存（只清缓存，<b>不影响</b>访客、聊天记录等正式数据）</div>
       ${btn('btn-clear-stale', '清除冗余缓存（旧版遗留）', '🧹')}`;
-    $('#btn-export').onclick = exportAll;
+    $('#btn-export').onclick = () => showExportAllModal(() => showDataCatModal('migrate'));
     $('#btn-import').onclick = () => showImportModal(showDataModal);
     $('#btn-restore-auto').onclick = restoreAutoBackup;
+    $('#btn-clear-legacy-auto').onclick = clearLegacyAutoBackups;
     $('#btn-clear-stale').onclick = clearStaleCache;
     // 20261011 晚：重进数据迁移页时，若有进行中的导入/导出任务，恢复完整进度面板继续显示
     if (isProgressActive()) setProgressPanelMode(true);
@@ -23156,9 +23929,9 @@ function showDataCatModal(id) {
       ${btn('btn-export-music', '导出音乐数据（.musicdata）', '<i data-icon="download" data-size="15"></i>')}
       ${btn('btn-import-music', '导入音乐数据（.musicdata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
-        音乐数据<b>独立于全局备份</b>：全局导出/导入不包含音乐，需在此单独备份。<br>
-        导出内容：音乐库歌曲、歌单、访客收藏、音源路径设置。<br>
-        注意：本地上传的音频文件本体不随导出（仅记录歌名/封面/来源），导入后本地歌曲需重新上传文件。
+        全局备份<b>已包含</b>歌曲元数据（歌名/歌手/封面/歌单/访客收藏/音源路径）。<br>
+        这里用于单独备份音乐、或换机时把音乐库单独带走。<br>
+        注意：本地上传的音频文件本体不随任何备份（仅记录歌名/封面/来源），导入后本地歌曲需重新上传文件。
       </div>`;
     $('#btn-export-music').onclick = exportMusicData;
     $('#btn-import-music').onclick = () => showImportMusicModal(showDataModal);
@@ -23167,7 +23940,7 @@ function showDataCatModal(id) {
       ${btn('btn-export-focus', '导出番茄钟结算（.focusdata）', '<i data-icon="download" data-size="15"></i>')}
       ${btn('btn-import-focus', '导入番茄钟结算（.focusdata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
-        番茄钟陪伴的专注结算记录。<br>
+        番茄钟陪伴的专注结算记录（全局备份<b>已包含</b>，这里用于单独备份）。<br>
         导出时可选<b>按角色分角色导出</b>（单选或多选），也可一键全部导出。<br>
         导入时按记录 id 合并去重，不会覆盖已有结算。
       </div>`;
@@ -23178,9 +23951,10 @@ function showDataCatModal(id) {
       ${btn('btn-export-season', '导出四季数据（.seasondata）', '<i data-icon="download" data-size="15"></i>')}
       ${btn('btn-import-season', '导入四季数据（.seasondata）', '<i data-icon="upload" data-size="15"></i>')}
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
-        四季数据<b>独立于全局备份</b>：全局导出/导入不包含四季，需在此单独备份。<br>
-        导出内容：星球（植物/皮肤/爱意/凝星）、书签集（书签与寄语）、照片墙图鉴、收集进度。<br>
-        注意：玩家实拍/相册的照片图片本体不随导出（仅记录文字与来源标识），导入后照片图需重新拍摄。
+        四季数据<b>可以随全局一起导出</b>：导出全局时勾选「连四季一起打包」，会写进同一个文件。<br>
+        也可以在这里单独导出 —— 文件更小、更快，平时推荐这一种。<br>
+        导出内容：星球（植物/皮肤/爱意/凝星）、书签集（书签与寄语）、照片墙图鉴、收集进度、照片本体。<br>
+        导入固定为<b>合并</b>：只补缺的记录和照片，不会冲掉你现在养到的进度。
       </div>`;
     $('#btn-export-season').onclick = exportSeasonData;
     $('#btn-import-season').onclick = () => showImportSeasonModal(showDataModal);
@@ -23403,31 +24177,42 @@ function showImportMusicModal(back = null) {
   };
 }
 
-/* ---------- 导出四季数据（20261108：独立于全局，.seasondata 单文件） ---------- */
+/* ---------- 导出四季数据（20261116：带照片的单文件） ----------
+   旧版只导 localStorage 里的 JSON，照片本体一张都不带（_seasonCleanPhoto 会把 img 剔掉），
+   恢复后照片墙全是示例图。现在把 bmSeasonImg 里的照片一起写进同一个文件：
+   头 JSON + 逐张追加，全程只有一张图在内存里。 */
 async function exportSeasonData() {
   try {
-    /* 优先从四季 iframe 取实时序列化结果（同源可直接调 contentWindow.bmSeasonExport）；
-       若四季层未打开，则退回直接读共享 localStorage 的 bmSeasonSave */
-    let jsonStr = null;
-    const frame = document.getElementById('season-frame');
-    if (frame && frame.contentWindow && typeof frame.contentWindow.bmSeasonExport === 'function') {
-      try { jsonStr = frame.contentWindow.bmSeasonExport(); } catch (e) { jsonStr = null; }
+    const save = await bmReadSeasonSave();
+    if (!save) { miniToast('还没有四季数据可以导出'); return; }
+    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    const pad2 = n => String(n).padStart(2, '0');
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
+    if (FS && typeof FS.writeFile === 'function') {
+      const fname = '白日梦四季数据备份_' + stamp + '.seasondata';
+      const n = await bmWriteSeasonBackupFile(FS, '白日梦备份/' + fname, save);
+      miniToast('已导出四季数据（含 ' + n + ' 张照片），见「文档/白日梦备份」');
+      return;
     }
-    if (!jsonStr) {
-      try { jsonStr = localStorage.getItem('bmSeasonSave'); } catch (e) { jsonStr = null; }
+    // 网页端：拼成一个 JSON 走下载（照片本来就小，浏览器里拼得动）
+    const photos = {};
+    for (const k of await bmSeasonImgKeys()) {
+      const v = await bmSeasonImgGet(k);
+      if (v) photos[k] = v;
     }
-    if (!jsonStr) { miniToast('还没有四季数据可以导出'); return; }
-    const payload = JSON.parse(jsonStr);
-    if (!payload || !payload.__season) { miniToast('四季数据格式不对，无法导出'); return; }
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const ok = await finishExport({ filename: '白日梦四季数据备份.seasondata' }, blob, '已导出四季数据');
+    const payload = { __season: 1, v: '2.0', packedAt: Date.now(), save, photos };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const ok = await finishExport({ filename: '白日梦四季数据备份_' + stamp + '.seasondata' }, blob, '已导出四季数据');
     if (!ok) miniToast('导出失败');
   } catch (e) {
     miniToast('导出四季数据失败：' + (e && e.message ? e.message : '未知错误'));
   }
 }
 
-/* ---------- 导入四季数据（独立，覆盖导入） ---------- */
+/* ---------- 导入四季数据（20261116：只合并，不覆盖） ----------
+   四季的进度是「慢慢养出来的」，用一份旧备份整块覆盖会把最近的星球进度冲掉，
+   所以这里固定合并：只补本地没有的照片与记录，本地已有的原样保留。 */
 function showImportSeasonModal(back = null) {
   const backFn = () => back ? back() : closeModal();
   openModal(`
@@ -23437,11 +24222,12 @@ function showImportSeasonModal(back = null) {
       <button class="icon-btn" id="ism-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:14px;">
-      选择之前导出的「白日梦四季数据备份.seasondata」文件，覆盖导入当前四季进度。<br>
-      <b>独立于全局数据</b>，不影响访客、聊天记录等其他数据。
+      选择「白日梦四季数据备份_*.seasondata」或自动备份里的「白日梦四季备份_*.seasondata」。<br>
+      导入方式固定为<b>合并</b>：补上缺的照片与图鉴/书签记录，不会清掉你现在养到的进度。<br>
+      独立于全局数据，不影响访客、聊天记录等其他内容。
     </div>
     <input type="file" id="ism-file" accept=".seasondata,.json" style="display:none;" />
-    <button class="btn primary block" id="ism-go">选择文件并导入</button>
+    <button class="btn primary block" id="ism-go">选择文件并合并导入</button>
     <div id="ism-msg" style="font-size:12px;color:var(--text-tertiary);margin-top:10px;display:none;"></div>
   `);
   $('#ism-back').onclick = backFn;
@@ -23458,18 +24244,10 @@ function showImportSeasonModal(back = null) {
       const text = await f.text();
       const data = JSON.parse(text);
       if (!data || !data.__season) { msg.textContent = '文件格式不对（不是四季数据备份）'; return; }
-      /* 优先写入四季 iframe（若已打开），否则直接写共享 localStorage，下次进四季时 seasonLoad 恢复 */
-      let ok = false;
-      const frame = document.getElementById('season-frame');
-      if (frame && frame.contentWindow && typeof frame.contentWindow.bmSeasonImport === 'function') {
-        try { ok = frame.contentWindow.bmSeasonImport(text); } catch (e2) { ok = false; }
-      }
-      if (!ok) {
-        try { localStorage.setItem('bmSeasonSave', text); ok = true; } catch (e2) { ok = false; }
-      }
-      if (!ok) { msg.textContent = '导入失败：写入四季数据出错'; return; }
-      msg.textContent = '导入完成：四季进度已恢复（照片图片本体需重新拍摄）';
-      miniToast('已导入四季数据');
+      const r = await bmImportSeasonPayload(data, { merge: true });
+      if (!r.ok) { msg.textContent = '导入失败：写入四季数据出错'; return; }
+      msg.textContent = '合并完成：补回 ' + r.addedPhotos + ' 张照片、' + r.addedRecords + ' 条记录';
+      miniToast('已合并四季数据');
       fileInput.value = '';
     } catch (e2) {
       msg.textContent = '导入失败：' + (e2 && e2.message ? e2.message : '文件格式不对');
@@ -23904,8 +24682,9 @@ function showImportModal(back = null) {
       <button class="icon-btn" id="import-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
-      选择之前导出的「白日梦数据备份.ocdata」文件。<br>
-      <span style="color:var(--danger);"><i data-icon="alert" data-size="15"></i> 覆盖导入会清空当前所有数据，此操作无法撤销。</span>
+      选择之前导出的「白日梦数据备份.ocdata」，或自动备份生成的「白日梦自动备份_*.ocdata」，两者都能直接导入。<br>
+      默认<b>合并导入</b>：保留你现有的数据，按 ID 去重追加。只有想彻底替换时才选覆盖导入。<br>
+      如果这个文件里带着四季数据（导出时勾选过），会<b>自动一起合并导入</b>；四季不会被覆盖。
     </div>
     <div class="field">
       <label>备份文件</label>
@@ -23915,11 +24694,11 @@ function showImportModal(back = null) {
       <label>导入方式</label>
       <div style="display:flex;gap:10px;">
         <label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
-          <input type="radio" name="import-mode" value="overwrite" checked style="accent-color:var(--purple);">
+          <input type="radio" name="import-mode" value="overwrite" style="accent-color:var(--purple);">
           <span style="font-size:14px;">覆盖导入<span style="display:block;font-size:11px;color:var(--text-tertiary);">清空当前，完全替换</span></span>
         </label>
         <label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
-          <input type="radio" name="import-mode" value="merge" style="accent-color:var(--purple);">
+          <input type="radio" name="import-mode" value="merge" checked style="accent-color:var(--purple);">
           <span style="font-size:14px;">合并导入<span style="display:block;font-size:11px;color:var(--text-tertiary);">保留现有，合并追加</span></span>
         </label>
       </div>
@@ -23936,7 +24715,7 @@ function showImportModal(back = null) {
   $('#import-go').onclick = async () => {
     const file = $('#import-file').files[0];
     if (!file) { showToast('请先选择备份文件'); return; }
-    const mode = (document.querySelector('input[name="import-mode"]:checked') || {}).value || 'overwrite';
+    const mode = (document.querySelector('input[name="import-mode"]:checked') || {}).value || 'merge';
     // 20261011：四阶段进度面板（读取文件 → 解析数据 → 还原图片 → 写入数据库），
     // 分块读取文件并实时刷新进度，根治「导入全局点确定就卡死/像假死」的观感。
     // 20261011 晚：进度状态全局持久——关闭弹窗后台继续，重进恢复完整面板。
@@ -23980,6 +24759,21 @@ function showImportModal(back = null) {
         }
       }
       setStageProgress(1, 1, 1);
+      /* 20261116：同一个文件里可能还带着四季段（导出时勾了「连四季一起打包」）。
+         读文件尾部尾标 → 精确切出四季 JSON → 就地合并导入（四季固定合并，不覆盖），
+         再走全局导入。旧备份没有尾标 → 整段跳过，行为与以前完全一致。 */
+      try {
+        const seg = await bmReadSeasonTail(file);
+        if (seg) {
+          setStageProgress(1, 1, 1);
+          const stxt = await file.slice(seg.start, seg.start + seg.len).text();
+          const sp = JSON.parse(stxt);
+          if (sp && sp.__season) await bmImportSeasonPayload(sp, { merge: true });
+        }
+      } catch (e) {
+        /* 四季段损坏不能拖累全局导入：吞掉继续，全局那半边照常恢复 */
+        console.warn('[白日梦] 文件内四季段合并失败', e);
+      }
       if (data.app !== 'bairimeng') {
         closeProgressPanel();
         showConfirm('该文件似乎不是《白日梦》的备份，仍要导入吗？', () => doImport(data, mode));
@@ -24124,6 +24918,16 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
       showConfirm('⚠️ 这个备份文件是空的（没有任何角色/聊天记录/记忆宫殿数据）。\n\n覆盖导入会清空你当前的所有数据，因此已自动拦截，不会执行。\n\n请检查是否选错了文件，或先导出正确的备份再导入。', null);
       throw new Error('空备份已拦截，未执行覆盖导入');
     }
+    /* 20261116（P9）：覆盖导入不能把本机的接口配置清空。
+       包内有意不带 AI 接口 / 占卜接口（换机本来就该重填），但本机已经填过的必须留住 ——
+       否则玩家覆盖导入一次，AI 就整片失效，还得重新找 Key。
+       先记下来，等写完包内数据再按「包里有有效值才用包里的」回填。 */
+    const _keepLocalCfg = {};
+    if (mode === 'overwrite') {
+      for (const k of ['aiConfig', 'divinationApi']) {
+        try { const v = await getSetting(k, null); if (v != null) _keepLocalCfg[k] = v; } catch (e) {}
+      }
+    }
     if (mode === 'overwrite') {
       // 清空现有数据
       await idbClear('characters');
@@ -24135,6 +24939,10 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
       /* 20261112b：问卷库也是「覆盖导入就该被替换掉」的数据。
          它不在 kv 里（独立 store），旧的 idbClear('kv') 清不到它，会留下上一份数据的残影。 */
       await idbClear('surveyLibrary');
+      /* 20261116：番茄钟结算也属于「覆盖导入就该被替换」的数据。
+         但只在包内确实带了这个字段时才清 —— 老备份（20261116 之前导出）没有 focusSessions，
+         清了就等于把玩家本机的专注历史抹掉，属于数据丢失，绝不允许。 */
+      if (Array.isArray(data.focusSessions)) await idbClear('focus_session');
       await idbClear('kv');
     }
     // 写入导入的数据（覆盖模式直接写；合并模式按 id 合并覆盖）
@@ -24147,7 +24955,8 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
     const srvs = Array.isArray(data.surveys) ? data.surveys : []; // 问卷（20260929al）
     const gifts = Array.isArray(data.gifts) ? data.gifts : []; // 超频礼物柜（20260929ao）
     const svls = Array.isArray(data.surveyLibrary) ? data.surveyLibrary : []; // 问卷库（20261112b）
-    const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length + svls.length || 1;
+    const fses = Array.isArray(data.focusSessions) ? data.focusSessions : []; // 番茄钟结算（20261116）
+    const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length + svls.length + fses.length || 1;
     let wDone = 0;
     _stage(3, 0, wTotal);
     const bulkWithProg = async (store, arr) => {
@@ -24165,6 +24974,16 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
     await bulkWithProg('surveys', srvs);
     await bulkWithProg('gifts', gifts);
     await bulkWithProg('surveyLibrary', svls);
+    /* 20261116：音乐库只「补缺」不覆盖 —— 本地已有的条目保留（它可能带着音频 blob），
+       备份里仅元数据的同 id 记录不会把本地那条冲成没有音频的空壳。 */
+    if (Array.isArray(data.music) && data.music.length) {
+      try {
+        const curMusic = await idbGetAll('musicHistory');
+        const have = new Set((curMusic || []).map(x => String(x && x.id)));
+        const addMusic = data.music.filter(x => x && x.id != null && !have.has(String(x.id)));
+        if (addMusic.length) await idbBulkPut('musicHistory', addMusic);
+      } catch (e) { /* 音乐不是关键路径，失败不影响本次导入 */ }
+    }
     _stage(3, wTotal, wTotal);
     if (data.cards) {
       if (mode === 'merge') {
@@ -24208,6 +25027,15 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
         if (v !== null && v !== undefined) await setSetting(k, v);
       }
     }
+    /* P9 收尾：包内没有有效接口配置 → 把本机原来的写回（本机原本没有就保持没有，不造空对象） */
+    for (const k of Object.keys(_keepLocalCfg)) {
+      let keep = true;
+      try {
+        const v = await getSetting(k, null);
+        if (v != null && !(typeof v === 'object' && !Object.keys(v).length)) keep = false; // 包里有有效值
+      } catch (e) {}
+      if (keep) { try { await setSetting(k, _keepLocalCfg[k]); } catch (e) {} }
+    }
     closeModal();
     miniToast('导入成功，正在重新载入…');
     setTimeout(() => location.reload(), 800);
@@ -24224,6 +25052,53 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
    · 旧格式：仍扫描 auto-* 目录 + manifest.json（老用户的备份不会突然用不了）；
    · 恢复时新格式走「读文件 → 内存 File → 与全局导入完全相同的容器解析链」。 */
 
+/* 20261115b：清除旧格式（目录式 auto-*）自动备份。
+   ⚠️ 永远保留最新那 1 份作为兜底 —— 玩家刚重装 APK、别的备份都没了时，
+   这份旧格式备份可能是唯一的救命稻草（哪怕图片不全，文字数据仍在）。
+   · 有 2 份及以上：删掉较早的，只留最新 1 份；
+   · 只有 1 份：不动，如实告知「已作为兜底保留」。
+   删除范围严格限定 auto-* 目录：单文件自动备份、手动导出的数据包、角色卡、
+   记忆宫殿备份、白日梦图片数据目录一律不碰。 */
+async function clearLegacyAutoBackups() {
+  const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!FS || typeof FS.readdir !== 'function') {
+    showConfirm('当前环境不支持清理旧格式备份（需在手机 App 内操作）。', null);
+    return;
+  }
+  try {
+    const r = await FS.readdir({ path: BM_AUTO_BACKUP_DIR, directory: 'DOCUMENTS' });
+    const names = (r.files || []).map(f => f.name).filter(n => n && n.indexOf('auto-') === 0);
+    if (!names.length) { await confirmAsync('当前没有任何旧格式备份，无需清理。', '知道了', '关闭'); return; }
+    names.sort((a, b) => (parseInt(a.slice(5), 10) || 0) - (parseInt(b.slice(5), 10) || 0)); // 旧 → 新
+    const newest = names[names.length - 1];
+    if (names.length <= 1) {
+      await confirmAsync('当前只有 1 份旧格式备份：\n' + newest + '\n\n它已作为兜底保留，不做清理。', '知道了', '关闭');
+      return;
+    }
+    const doomed = names.slice(0, names.length - 1);
+    const fT = (n) => { const t = parseInt(n.slice(5), 10) || 0; return t ? fmtBackupTime(t) : '未知时间'; };
+    const okGo = await confirmAsync(
+      '检测到 ' + names.length + ' 个旧格式备份。\n\n' +
+      '将删除较早的 ' + doomed.length + ' 个（' + fT(doomed[0]) + ' ~ ' + fT(doomed[doomed.length - 1]) + '），' +
+      '保留最新一份作兜底：\n' + newest + '（' + fT(newest) + '）\n\n' +
+      '单文件自动备份、手动导出的数据包、角色卡、记忆宫殿备份都不受影响。删除后不可恢复。',
+      '删除 ' + doomed.length + ' 个', '取消');
+    if (!okGo) return;
+    let okN = 0, failN = 0;
+    for (const n of doomed) {
+      try {
+        await FS.rmdir({ path: BM_AUTO_BACKUP_DIR + '/' + n, directory: 'DOCUMENTS', recursive: true });
+        okN++;
+      } catch (e) { failN++; }
+    }
+    miniToast(failN
+      ? ('已清理 ' + okN + ' 个，' + failN + ' 个删除失败')
+      : ('已清理 ' + okN + ' 个旧格式备份，保留最新一份作兜底'));
+  } catch (e) {
+    miniToast('扫描旧格式备份失败：' + (e && e.message ? e.message : '未知错误'));
+  }
+}
+
 /* 扫描所有自动备份（新单文件 + 旧目录式），弹选择列表。 */
 async function restoreAutoBackup() {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
@@ -24236,6 +25111,10 @@ async function restoreAutoBackup() {
     const names = (r.files || []).map(f => f.name).filter(Boolean);
     const containerNames = names.filter(n => /^白日梦自动备份.*\.ocdata$/.test(n)); // 新：单文件容器
     const dirNames = names.filter(n => n.indexOf('auto-') === 0);                    // 旧：目录式备份集合
+    /* 20261116：四季包按时间戳配对。索引丢失也能靠文件名把两份对上（索引只是加速）。 */
+    const stampOf = (n) => { const m = /(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/.exec(String(n || '')); return m ? m[1] + m[2] + m[3] + '-' + m[4] + m[5] : ''; };
+    const seasonByStamp = new Map();
+    names.filter(n => BM_SEASON_BACKUP_RE.test(n)).forEach(n => { const k = stampOf(n); if (k) seasonByStamp.set(k, n); });
 
     // 索引尽力而为：不存在 / 与目录不同步都不影响恢复，只是统计可能显示「—」
     let idxMap = new Map();
@@ -24260,10 +25139,17 @@ async function restoreAutoBackup() {
           if (!isNaN(dt.getTime())) stamp = dt.getTime();
         }
       }
+      const sKey = stampOf(n);
+      const sFile = (meta && BM_SEASON_BACKUP_RE.test(String(meta.seasonFile || '')) && names.indexOf(meta.seasonFile) >= 0)
+        ? String(meta.seasonFile)
+        : (seasonByStamp.get(sKey) || '');
       list.push({
         kind: 'container',
         set: n,
         stamp,
+        seasonFile: sFile,
+        seasonPhotos: (meta && typeof meta.seasonPhotos === 'number') ? meta.seasonPhotos : -1,
+        seasonBytes: (meta && Number(meta.seasonBytes)) || 0,
         time: stamp ? fmtBackupTime(stamp) : '未知时间',
         // -1 = 「索引里没有，暂无统计」，列表显示为「—」，不假装是 0
         charCount: (meta && typeof meta.charCount === 'number') ? meta.charCount : -1,
@@ -24322,17 +25208,44 @@ function fmtBackupTime(stamp) {
    统计里 -1 表示「索引里没记录」→ 显示「—」；旧目录式备份额外打个「旧格式」标记。 */
 function showRestoreAutoModal(list) {
   const fmtN = v => (typeof v === 'number' && v >= 0) ? String(v) : '—';
+  /* 20261115b：
+     · 旧格式里「最新的一份」= 「清除旧格式备份」会保留的兜底那一份，单独打标，别让玩家以为它也要被清掉；
+     · 旧格式图片数为 0 时给黄字警示 —— 那种备份恢复出来只有文字，图全丢；
+     · 旧格式超过 10 条默认折叠（真机上曾有 50+ 个），避免列表刷屏。 */
+  const dirList = list.filter(x => x.kind === 'dir');
+  const newestDirStamp = dirList.reduce((m, x) => Math.max(m, x.stamp || 0), 0);
+  const shownDir = new Set(dirList.slice(0, 10).map(x => x.set));
+  const extraCount = dirList.length - shownDir.size;
   const rows = list.map((it, i) => {
     const sizeTxt = it.bytes > 0 ? ' · ' + bmFmtBytes(it.bytes) : '';
-    const tag = it.kind === 'dir'
-      ? '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--bg-elevated-2);color:var(--text-tertiary);font-size:10.5px;font-weight:500;vertical-align:1px;">旧格式</span>'
+    const isDir = it.kind === 'dir';
+    const isFallback = isDir && newestDirStamp > 0 && (it.stamp || 0) === newestDirStamp;
+    let tag = '';
+    if (isDir) {
+      tag += '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--bg-elevated-2);color:var(--text-tertiary);font-size:10.5px;font-weight:500;vertical-align:1px;">旧格式</span>';
+    }
+    if (isFallback) {
+      tag += '<span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:6px;background:var(--purple-dim);color:var(--purple);font-size:10.5px;font-weight:600;vertical-align:1px;">兜底·已保留</span>';
+    }
+    /* 20261116：新格式会显示四季是否跟着一起恢复 —— 这是玩家最关心的「照片墙在不在」 */
+    const seasonTxt = isDir ? ''
+      : (it.seasonFile
+        ? ' · 四季 ' + (it.seasonPhotos > 0 ? (it.seasonPhotos + ' 张照片') : '已包含')
+        : ' · 无四季');
+    const seasonTag = (!isDir && it.seasonFile)
+      ? '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--purple-dim);color:var(--purple);font-size:10.5px;font-weight:600;vertical-align:1px;">含四季</span>'
       : '';
+    const warn = (isDir && it.imgCount === 0)
+      ? '<div style="font-size:11.5px;color:#c08a1e;margin-top:3px;line-height:1.4;">⚠ 此备份不含图片，恢复后聊天与朋友圈的图会丢</div>'
+      : '';
+    const hidden = isDir && !shownDir.has(it.set);
     return `
-    <label class="bm-restore-item" data-idx="${i}" style="display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;margin-bottom:8px;">
+    <label class="bm-restore-item" data-idx="${i}" ${hidden ? 'data-extra="1"' : ''} style="display:${hidden ? 'none' : 'flex'};align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;margin-bottom:8px;">
       <input type="radio" name="bm-restore-pick" value="${i}" style="accent-color:var(--purple);width:16px;height:16px;" ${i === 0 ? 'checked' : ''}>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:14px;font-weight:600;color:var(--text-primary);">${escapeHtml(it.time)}${tag}</div>
-        <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;line-height:1.5;">角色 ${fmtN(it.charCount)} 个 · 消息 ${fmtN(it.msgCount)} 条 · 图片 ${fmtN(it.imgCount)} 张${sizeTxt}</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text-primary);">${escapeHtml(it.time)}${tag}${seasonTag}</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;line-height:1.5;">角色 ${fmtN(it.charCount)} 个 · 消息 ${fmtN(it.msgCount)} 条 · 图片 ${fmtN(it.imgCount)} 张${sizeTxt}${seasonTxt}</div>
+        ${warn}
       </div>
     </label>`;
   }).join('');
@@ -24343,7 +25256,7 @@ function showRestoreAutoModal(list) {
       <button class="icon-btn" id="bm-restore-close"><i data-icon="close" data-size="17"></i></button>
     </div>
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">检测到 ${list.length} 份自动备份，选择要恢复到的那一份。</div>
-    <div style="max-height:46vh;overflow-y:auto;">${rows}</div>
+    <div style="max-height:46vh;overflow-y:auto;">${rows}${extraCount > 0 ? `<button class="btn block" id="bm-restore-more" style="margin-top:2px;">显示全部旧格式备份（还有 ${extraCount} 个）</button>` : ''}</div>
     <div style="color:var(--danger);font-size:12px;margin:12px 0 4px;line-height:1.5;"><i data-icon="alert" data-size="12"></i> 覆盖恢复会先清空当前所有数据（角色/聊天/表情包/记忆宫殿等），再写入所选备份。</div>
     <div style="display:flex;gap:10px;margin-top:12px;">
       <button class="btn" style="flex:1;" id="bm-restore-cancel">取消</button>
@@ -24353,6 +25266,15 @@ function showRestoreAutoModal(list) {
 
   $('#bm-restore-close').onclick = () => closeModal();
   $('#bm-restore-cancel').onclick = () => closeModal();
+  // 20261115b：旧格式默认折叠到 10 条，点这里展开全部（老玩家机器上曾有 50+ 份）
+  const moreBtn = $('#bm-restore-more');
+  if (moreBtn) moreBtn.onclick = () => {
+    document.querySelectorAll('.bm-restore-item[data-extra="1"]').forEach(el => {
+      el.style.display = 'flex';
+      el.removeAttribute('data-extra');
+    });
+    moreBtn.remove();
+  };
   $('#bm-restore-go').onclick = async () => {
     const picked = document.querySelector('input[name="bm-restore-pick"]:checked');
     if (!picked) { miniToast('请先选择一份备份'); return; }
@@ -24438,7 +25360,22 @@ async function doRestoreAutoBackup(it) {
           }
         : null;
       await doImport(data, 'overwrite', (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), readImageV4);
+
+      /* 20261116：配对的四季包一起恢复。四季永远「合并」—— 恢复一份旧备份
+         不应该把玩家最近养的星球进度冲掉，只把缺的照片/记录补回来。 */
+      let seasonMsg = '';
+      if (it.seasonFile) {
+        try {
+          const sr = await FS.readFile({ path: BM_AUTO_BACKUP_DIR + '/' + it.seasonFile, directory: 'DOCUMENTS' });
+          const payload = JSON.parse(bmB64ToText(String(sr.data)));
+          const r2 = await bmImportSeasonPayload(payload, { merge: true });
+          seasonMsg = r2.ok ? ('四季已合并（照片 +' + r2.addedPhotos + '）') : '四季导入失败';
+        } catch (e) {
+          seasonMsg = '四季导入失败（' + String((e && e.message) || e).slice(0, 40) + '）';
+        }
+      }
       closeProgressPanel();
+      if (seasonMsg) miniToast('恢复完成 · ' + seasonMsg);
       return;
     }
 
@@ -24772,6 +25709,140 @@ async function imgDescToExport(v) {
    兼容：导入端检测到 \nBMIMG\n 分隔符才走容器还原；老格式（{__img:1}/{__img:3}/字符串/Blob）完全不受影响。 */
 
 const BM_CONTAINER_SEP = '\nBMIMG\n'; // 容器分隔符（JSON 头与图片块之间）
+
+/* ============================================================
+   20261116：全局单文件「内嵌四季段」
+   ------------------------------------------------------------
+   玩家口径：导出全局时可以自己勾选「连四季一起带走」；不压缩、不多文件选择
+   （手机端根本没法一次选多个文件导入）。所以产物仍是**一个** .ocdata：
+       [全局 JSON 头]\nBMIMG\n[图片字节…][四季 JSON 字节…][尾标 32 字节]
+   尾标 = 19 位十进制长度 + 13 字节魔数，从文件末尾倒数读：
+     · 不用分隔符扫描 —— 图片/JSON 二进制里一旦撞到同样的字符串就会切错段；
+     · 旧备份没有尾标 → 读不到就当「不含四季」，老包照常能导；
+     · 四季段在最后，不影响前面图片的 offset/len（那些是相对图片块起点算的）。
+   ============================================================ */
+const BM_SEASON_TAIL_MAGIC = 'BMSEASONTAIL1';   // 13 字节
+const BM_SEASON_TAIL_SIZE = 32;                 // 19 位长度 + 13 字节魔数
+
+function bmSeasonTailBytes(len) {
+  const s = String(Math.max(0, Math.floor(len)));
+  const txt = '0'.repeat(Math.max(0, 19 - s.length)) + s + BM_SEASON_TAIL_MAGIC;
+  const out = new Uint8Array(BM_SEASON_TAIL_SIZE);
+  for (let i = 0; i < BM_SEASON_TAIL_SIZE; i++) out[i] = txt.charCodeAt(i) & 0xff;
+  return out;
+}
+
+/* 读文件尾部 → { start, len }（四季段在文件里的绝对起止）。没有尾标返回 null。 */
+async function bmReadSeasonTail(file) {
+  if (!file || !file.size || file.size <= BM_SEASON_TAIL_SIZE) return null;
+  const buf = new Uint8Array(await file.slice(file.size - BM_SEASON_TAIL_SIZE).arrayBuffer());
+  let tail = '';
+  for (let i = 0; i < buf.length; i++) tail += String.fromCharCode(buf[i]);
+  if (tail.slice(19) !== BM_SEASON_TAIL_MAGIC) return null;
+  const len = Number(tail.slice(0, 19));
+  if (!Number.isFinite(len) || len <= 0) return null;
+  const start = file.size - BM_SEASON_TAIL_SIZE - len;
+  if (start < 0) return null;
+  return { start, len };
+}
+
+/* 四季段头：{__season:1, v:"2.0", packedAt, save, photos:{ … }}
+   两遍遍历（算长度 / 写入）必须用同一个 packedAt，否则尾标长度对不上 → 尾段读歪。 */
+function bmSeasonSectionHead(save, packedAt) {
+  return '{"__season":1,"v":"2.0","packedAt":' + packedAt + ',"save":' + JSON.stringify(save) + ',"photos":{';
+}
+
+/* 第一遍：只算四季段的 UTF-8 字节数（不保留照片字符串，内存只有单张）。 */
+async function bmSeasonSectionByteLen(save, packedAt) {
+  const enc = new TextEncoder();
+  let total = enc.encode(bmSeasonSectionHead(save, packedAt)).length + 2; // 头 + 收尾 '}}'
+  let first = true;
+  for (const k of await bmSeasonImgKeys()) {
+    const v = await bmSeasonImgGet(k);
+    if (!v) continue;
+    total += enc.encode((first ? '' : ',') + JSON.stringify(k) + ':' + JSON.stringify(v)).length;
+    first = false;
+  }
+  return total;
+}
+
+/* 网页端：把四季段拼成 Blob 分片（不生成一个几百 MB 的大字符串）。 */
+async function bmBuildSeasonParts(save, packedAt) {
+  const parts = [new Blob([bmSeasonSectionHead(save, packedAt)])];
+  let first = true, n = 0;
+  for (const k of await bmSeasonImgKeys()) {
+    const v = await bmSeasonImgGet(k);
+    if (!v) continue;
+    parts.push(new Blob([(first ? '' : ',') + JSON.stringify(k) + ':' + JSON.stringify(v)]));
+    first = false; n++;
+  }
+  parts.push(new Blob(['}}']));
+  let bytes = 0;
+  for (const b of parts) bytes += b.size;
+  return { parts, count: n, bytes };
+}
+
+/* APP 端：在容器文件末尾流式追加四季段 + 尾标（逐张转码，内存只留一张）。 */
+async function bmAppendSeasonSection(FS, path, save, packedAt, directory, onProgress = null) {
+  const enc = new TextEncoder();
+  const totalBytes = await bmSeasonSectionByteLen(save, packedAt);
+  let written = 0;
+  const CHUNK = 4 * 1024 * 1024;
+  const BIN_CHUNK = 3 * 1024 * 1024;
+  let binParts = [];
+  let binLen = 0;
+  const flush = async () => {
+    if (!binParts.length) return;
+    const merged = new Blob(binParts);
+    binParts = []; binLen = 0;
+    const du = await blobToDataURL(merged);
+    const seg = (du.indexOf(',') !== -1 ? du.slice(du.indexOf(',') + 1) : du);
+    for (let off = 0; off < seg.length; off += CHUNK) {
+      const part = seg.slice(off, off + CHUNK);
+      await FS.appendFile({ path, data: part, directory, recursive: true });
+      written += (part.length / 4) * 3;
+      if (onProgress) {
+        try { onProgress(Math.min(written, totalBytes), totalBytes); } catch (e) {}
+      }
+    }
+  };
+  const pushText = async (t) => {
+    const u = enc.encode(t);
+    binParts.push(u); binLen += u.length;
+    if (binLen >= BIN_CHUNK) await flush();
+  };
+  await pushText(bmSeasonSectionHead(save, packedAt));
+  let first = true, n = 0;
+  for (const k of await bmSeasonImgKeys()) {
+    const v = await bmSeasonImgGet(k);
+    if (!v) continue;
+    await pushText((first ? '' : ',') + JSON.stringify(k) + ':' + JSON.stringify(v));
+    first = false; n++;
+  }
+  await pushText('}}');
+  await flush();
+  // 尾标：19 位长度 + 魔数（告诉导入端「最后这么多字节是四季段」）
+  const tail = bmSeasonTailBytes(totalBytes);
+  let tstr = '';
+  for (let i = 0; i < tail.length; i++) tstr += String.fromCharCode(tail[i]);
+  await FS.appendFile({ path, data: btoa(tstr), directory, recursive: true });
+  if (onProgress) { try { onProgress(totalBytes, totalBytes); } catch (e) {} }
+  return n;
+}
+
+/* 粗略估算四季段体积（导出弹窗里给个量级提示，不做全量统计，避免点开弹窗就卡）。 */
+async function bmSeasonSizeHint() {
+  try {
+    const keys = await bmSeasonImgKeys();
+    const save = await bmReadSeasonSave();
+    const nPhotos = keys.length;
+    // 照片入库时已压到长边 1000 / JPEG 0.82，单张约 90~160KB；按 130KB 估
+    const approx = nPhotos * 130 * 1024 + 120 * 1024;
+    return { photos: nPhotos, approx, records: save ? ((save.photos || []).length + (save.books || []).length) : 0 };
+  } catch (e) {
+    return { photos: 0, approx: 0, records: 0 };
+  }
+}
 
 /* base64 正文 → 解码后二进制字节数（精确：L/4*3 减去末尾 padding 数；无换行、纯连续 base64）。 */
 function b64ToByteLen(b64) {
@@ -25614,6 +26685,20 @@ async function buildBackupPayload(mode = '2.2', onImgProgress = null) {
        玩家预存的题库（玩家库 + 每个角色的问卷库）换机/覆盖导入后会完全消失，且无法再生成。
        这里补进全量备份；文件夹名（svLibFolders / svLibCharFolders）随 settings 一起走。 */
     surveyLibrary: await idbGetAll('surveyLibrary'),
+    /* 20261116：音乐库进全局包（玩家点名要）。只带元数据：歌名/歌手/歌单/收藏/来源，
+       音频本体（blob）导出前剔掉 —— 本地歌在恢复后需要重新选一次文件；
+       网易云那类直连的在联网时按 id 重新取链，元数据齐了就能接着用。 */
+    music: (await idbGetAll('musicHistory')).map(m => {
+      if (!m || typeof m !== 'object') return m;
+      const o = Object.assign({}, m);
+      delete o.blob;
+      return o;
+    }),
+    /* 20261116（玩家确认）：番茄钟结算记录进全局包。
+       此前只有元数据在 chatSettings 里（时长/白噪音/锁机），结算本体 focus_session 一直
+       只走单独的 .focusdata 通道 —— 玩家换机后「专注历史」整片消失，与「全局」名不符实。
+       纯文本记录、无图片，直接进 JSON 头，不增加容器负担。 */
+    focusSessions: await idbGetAll('focus_session'),
     cards: cards,
     playerProfile: await getSetting('playerProfile', null),
     chatSettings: await getSetting('chatSettings', null),
@@ -25695,7 +26780,55 @@ async function probeDocumentsWritable() {
   }
 }
 
-async function exportAll() {
+/* 20261116：导出前的「要不要连四季一起带走」弹窗。
+   玩家口径：导出时自己勾选；四季体积大，提前告诉玩家、建议单独导；
+   勾选状态记进 kv，下次打开还是上次那个状态（玩家点名要记住）。 */
+async function showExportAllModal(back = null) {
+  const backFn = () => back ? back() : closeModal();
+  const last = await getSetting('exportWithSeason', false);
+  const hint = await bmSeasonSizeHint();
+  const sizeTxt = hint.approx > 0 ? ('约 ' + bmFmtBytes(hint.approx)) : '体积未知';
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;">导出全局数据</div>
+      <button class="icon-btn" id="exa-close"><i data-icon="close" data-size="17"></i></button>
+    </div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;line-height:1.7;">
+      全部内容会打包成<b>一个</b> .ocdata 文件（不压缩），导入时选这一个文件就行。
+    </div>
+    <label style="display:flex;gap:10px;align-items:flex-start;padding:12px 13px;border:1px solid var(--border);border-radius:12px;cursor:pointer;margin-bottom:8px;">
+      <input type="checkbox" id="exa-season" ${last ? 'checked' : ''} style="accent-color:var(--purple);margin-top:2px;flex:none;">
+      <span style="font-size:14px;line-height:1.5;">
+        连四季数据一起打包
+        <span style="display:block;font-size:11.5px;color:var(--text-tertiary);margin-top:3px;line-height:1.6;">
+          ${hint.photos} 张照片 · ${sizeTxt} · ${hint.records} 条书签/图鉴记录
+        </span>
+      </span>
+    </label>
+    <div style="font-size:12px;color:var(--text-tertiary);line-height:1.75;margin-bottom:14px;padding:10px 12px;background:var(--bg-elevated-2);border-radius:10px;">
+      四季的照片比较占地方，<b style="color:var(--text);">平时建议在「四季数据」里单独导出</b>，文件小、也快。<br>
+      勾上之后仍然只有<b style="color:var(--text);">一个文件</b>：导入时自动认出里面的全局包和四季包，一起导进去；
+      四季部分只做<b style="color:var(--text);">合并</b>（补上缺的，不会冲掉你现在养到的进度）。
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn" style="flex:1;" id="exa-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="exa-go">开始导出</button>
+    </div>
+  `);
+  $('#exa-close').onclick = backFn;
+  $('#exa-cancel').onclick = backFn;
+  $('#exa-go').onclick = async () => {
+    const on = !!($('#exa-season') && $('#exa-season').checked);
+    try { await setSetting('exportWithSeason', on); } catch (e) {}   // 记住这次的选择
+    closeModal();
+    await exportAll({ withSeason: on });
+  };
+}
+
+async function exportAll(opts = {}) {
+  /* 20261116：玩家在导出弹窗里勾选「连四季一起带走」。
+     勾了 → 同一个 .ocdata 尾部追加四季段；不勾 → 就是纯全局包（默认）。 */
+  const withSeason = !!(opts && opts.withSeason);
   let save = null;
   let prog = null;
   try {
@@ -25728,6 +26861,7 @@ async function exportAll() {
         { label: '整理数据' },
         { label: '图片转码' },
         { label: '写入文件' },
+        ...(withSeason ? [{ label: '打包四季' }] : []),
       ], 0, 'export');
       setProgressPanelMode(true);
       // 阶段0：整理数据（读库）
@@ -25746,8 +26880,24 @@ async function exportAll() {
         setStageProgress(2, done, total);
       });
       setStageProgress(2, 1, 1);
+      /* 20261116：勾选了四季 → 在同一个文件末尾追加四季段（不压缩、不另生成文件）。 */
+      let seasonPhotos = 0;
+      if (withSeason) {
+        const seasonSave = await bmReadSeasonSave();
+        if (seasonSave) {
+          seasonPhotos = await bmAppendSeasonSection(FS, '白日梦备份/' + expFile, seasonSave,
+            Date.now(), 'DOCUMENTS', (done, total) => setStageProgress(3, done, total));
+          setStageProgress(3, 1, 1);
+        }
+      }
       closeProgressPanel();
-      miniToast('已导出单文件「' + expFile + '」到「文档/白日梦备份」，导入时选该文件即可');
+      if (withSeason && seasonPhotos) {
+        miniToast('已导出单文件「' + expFile + '」（含四季 ' + seasonPhotos + ' 张照片）到「文档/白日梦备份」');
+      } else if (withSeason) {
+        miniToast('没有四季数据，已只导出全局包「' + expFile + '」');
+      } else {
+        miniToast('已导出单文件「' + expFile + '」到「文档/白日梦备份」，导入时选该文件即可');
+      }
       return;
     }
     // 网页端（无 Capacitor）：20261101 修复「导出失败：Invalid string length」——
@@ -25765,6 +26915,7 @@ async function exportAll() {
       { label: '整理数据' },
       { label: '图片转码' },
       { label: '写入文件' },
+      ...(withSeason ? [{ label: '打包四季' }] : []),
     ], 0, 'export');
     setProgressPanelMode(true);
     setStageProgress(0, 1, 1);
@@ -25791,9 +26942,22 @@ async function exportAll() {
       parts.push(im.compressed || new Uint8Array(0));
       im.compressed = null; im.blob = null; im.dataURL = null;
     }
+    /* 20261116：勾选了四季 → 同一个 Blob 尾部接四季段 + 尾标（网页端不落临时文件）。 */
+    let seasonPhotos = 0;
+    if (withSeason) {
+      const seasonSave = await bmReadSeasonSave();
+      if (seasonSave) {
+        setStageProgress(3, 0, 1);
+        const sp = await bmBuildSeasonParts(seasonSave, Date.now());
+        for (const b of sp.parts) parts.push(b);
+        parts.push(bmSeasonTailBytes(sp.bytes));   // 尾标长度 = 四季段实际字节数（Blob.size 累加，精确）
+        seasonPhotos = sp.count;
+        setStageProgress(3, 1, 1);
+      }
+    }
     const blob = new Blob(parts, { type: 'application/octet-stream' });
     setStageProgress(2, 1, 1);
-    await finishExport(save, blob, '全量备份已导出');
+    await finishExport(save, blob, seasonPhotos ? ('全量备份已导出（含四季 ' + seasonPhotos + ' 张照片）') : '全量备份已导出');
     closeProgressPanel();
     return;
   } catch (e) {
@@ -25829,8 +26993,10 @@ async function exportAll() {
    恢复时可直接走导入端同一条容器解析链，也能把这个 .ocdata 拿去「导入全局备份」手动导入。 */
 const BM_AUTO_BACKUP_DIR = '白日梦备份';                            // 自动备份所在目录（公共文档目录下）
 const BM_AUTO_BACKUP_INDEX = '白日梦备份/白日梦自动备份索引.json';  // 列表用索引（只存统计，几十字节/条）
-const BM_AUTO_BACKUP_KEEP = 1;                                      // 只保留最近 N 份单文件备份（省空间，旧的删掉）
+const BM_AUTO_BACKUP_KEEP = 10;                                     // 20261115b：保留最近 N 份单文件备份（每天一条，约覆盖 10 天）
 const BM_AUTO_RESTORE_MAX_BYTES = 80 * 1024 * 1024;                 // 直接恢复的体积上限（原因见 doRestoreAutoBackup）
+/* 20261115b：自动备份文件名的唯一判定（清理/轮转只认它，绝不误伤手动导出包） */
+const BM_AUTO_BACKUP_RE = /^白日梦自动备份_\d{8}-\d{4}\.ocdata$/;
 
 /* 字节数 → 人类可读（恢复列表 / 体积提示用） */
 function bmFmtBytes(n) {
@@ -25863,6 +27029,210 @@ async function bmReadJsonFile(FS, path) {
   return JSON.parse(new TextDecoder('utf-8').decode(u8));
 }
 
+/* ---------- 20261116：四季专用备份（含照片） ----------
+   四季不在全局包里：元数据在 localStorage['bmSeasonSave']，照片在独立库 bmSeasonImg。
+   自动备份因此同时写两个单文件：
+     · 白日梦自动备份_YYYYMMDD-HHMM.ocdata      ← 全局（聊天/角色/表情/宫殿…）
+     · 白日梦四季备份_YYYYMMDD-HHMM.seasondata  ← 四季（星球进度 + 照片）
+   两份同时间戳，恢复时按时间戳配对一起导入；四季永远是「合并」，不覆盖现有进度。
+
+   写文件走「流式追加」：头 JSON 一次写入，照片一张一张 append，
+   任何时候只有一张图在内存里 —— 避免几百 MB 的四季照片把 APP 撑爆。 */
+const BM_SEASON_IMG_DB = 'bmSeasonImg';
+const BM_SEASON_IMG_STORE = 'img';
+const BM_SEASON_BACKUP_RE = /^白日梦四季备份_\d{8}-\d{4}\.seasondata$/;
+
+function bmSeasonImgOpen() {
+  return new Promise((res) => {
+    let req;
+    try { req = indexedDB.open(BM_SEASON_IMG_DB, 1); } catch (e) { res(null); return; }
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(BM_SEASON_IMG_STORE)) db.createObjectStore(BM_SEASON_IMG_STORE);
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => res(null);
+    req.onblocked = () => res(null);
+  });
+}
+function bmSeasonImgKeys() {
+  return bmSeasonImgOpen().then(db => new Promise(res => {
+    if (!db) return res([]);
+    try {
+      const rq = db.transaction(BM_SEASON_IMG_STORE, 'readonly').objectStore(BM_SEASON_IMG_STORE).getAllKeys();
+      rq.onsuccess = () => res((rq.result || []).map(String));
+      rq.onerror = () => res([]);
+    } catch (e) { res([]); }
+  })).catch(() => []);
+}
+function bmSeasonImgGet(key) {
+  return bmSeasonImgOpen().then(db => new Promise(res => {
+    if (!db) return res('');
+    try {
+      const rq = db.transaction(BM_SEASON_IMG_STORE, 'readonly').objectStore(BM_SEASON_IMG_STORE).get(key);
+      rq.onsuccess = () => res(rq.result || '');
+      rq.onerror = () => res('');
+    } catch (e) { res(''); }
+  })).catch(() => '');
+}
+function bmSeasonImgPut(key, val) {
+  return bmSeasonImgOpen().then(db => new Promise(res => {
+    if (!db) return res(false);
+    try {
+      const tx = db.transaction(BM_SEASON_IMG_STORE, 'readwrite');
+      tx.objectStore(BM_SEASON_IMG_STORE).put(val, key);
+      tx.oncomplete = () => res(true);
+      tx.onerror = () => res(false);
+      tx.onabort = () => res(false);
+    } catch (e) { res(false); }
+  })).catch(() => false);
+}
+
+/* 读当前四季存档：优先向已打开的四季 iframe 要实时序列化（可能还没落盘），否则读 localStorage */
+async function bmReadSeasonSave() {
+  try {
+    const frame = document.getElementById('season-frame');
+    if (frame && frame.contentWindow && typeof frame.contentWindow.bmSeasonExport === 'function') {
+      const s = frame.contentWindow.bmSeasonExport();
+      if (s) { const d = JSON.parse(s); if (d && d.__season) return d; }
+    }
+  } catch (e) {}
+  try {
+    const raw = localStorage.getItem('bmSeasonSave');
+    if (raw) { const d = JSON.parse(raw); if (d && d.__season) return d; }
+  } catch (e) {}
+  return null;
+}
+
+/* 收集「存档里真正引用到的照片 key」。孤儿图（删了照片没删文件）不进备份，省体积。 */
+function bmSeasonKeepKeys(save) {
+  const keep = new Set();
+  const scan = (arr) => (Array.isArray(arr) ? arr : []).forEach(x => {
+    if (x && x.hasImg && x.imgId != null) keep.add('p' + x.imgId);
+  });
+  scan(save && save.photos);
+  scan(save && save.books);
+  return keep;
+}
+
+/* 文本 → 分块 base64（单次 apply 参数过多会爆栈，所以按 32KB 循环拼） */
+function bmTextToB64(text) {
+  const u8 = new TextEncoder().encode(text);
+  let bin = '';
+  const CH = 0x8000;
+  for (let i = 0; i < u8.length; i += CH) {
+    bin += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  }
+  return btoa(bin);
+}
+/* base64 → UTF-8 文本（四季包里有中文与 dataURL，必须按 UTF-8 解，不能逐字节当 latin1） */
+function bmB64ToText(b64) {
+  const bin = atob(String(b64 || '').replace(/[\r\n]/g, ''));
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(u8);
+}
+/* 整写 / 追加（appendFile 收到的是 base64，写入时按字节追加，正好拼接同一份 JSON） */
+async function bmWriteTextFile(FS, relPath, text) {
+  await FS.writeFile({ path: relPath, data: bmTextToB64(text), directory: 'DOCUMENTS', recursive: true });
+}
+async function bmAppendTextFile(FS, relPath, text) {
+  if (typeof FS.appendFile !== 'function') throw new Error('当前环境不支持追加写入');
+  await FS.appendFile({ path: relPath, data: bmTextToB64(text), directory: 'DOCUMENTS' });
+}
+
+/* 写四季备份：头 JSON + 逐张照片追加 + 收尾。返回写进去的照片张数。 */
+async function bmWriteSeasonBackupFile(FS, relPath, save) {
+  const keep = bmSeasonKeepKeys(save);
+  await bmWriteTextFile(FS, relPath,
+    '{"__season":1,"v":"2.0","packedAt":' + Date.now() + ',"save":' + JSON.stringify(save) + ',"photos":{');
+  const keys = await bmSeasonImgKeys();
+  let n = 0, first = true;
+  for (const k of keys) {
+    if (keep.size && !keep.has(k)) continue;
+    const v = await bmSeasonImgGet(k);
+    if (!v) continue;
+    await bmAppendTextFile(FS, relPath, (first ? '' : ',') + JSON.stringify(k) + ':' + JSON.stringify(v));
+    first = false; n++;
+  }
+  await bmAppendTextFile(FS, relPath, '}}');
+  return n;
+}
+
+/* 四季存档合并：只加不删。本地已有的记录一律保留，包里的新记录补进来。 */
+function bmMergeSeasonSave(local, inc) {
+  const out = (local && local.__season) ? JSON.parse(JSON.stringify(local)) : { __season: true, version: '1.1' };
+  const incSave = (inc && inc.__season) ? inc : {};
+  const arrMerge = (key, idKey) => {
+    const base = Array.isArray(out[key]) ? out[key] : [];
+    const seen = new Set(base.map(x => String(x && x[idKey])));
+    (Array.isArray(incSave[key]) ? incSave[key] : []).forEach(x => {
+      const id = String(x && x[idKey]);
+      if (id === 'undefined' || seen.has(id)) return;
+      base.push(x); seen.add(id);
+    });
+    out[key] = base;
+  };
+  arrMerge('photos', 'id');
+  arrMerge('books', 'id');
+  arrMerge('seeds', 'id');
+  arrMerge('dexExtra', 'dex');
+  out.dexSeen = Object.assign({}, incSave.dexSeen || {}, out.dexSeen || {});   // 并集，本地优先
+  out.mutSeen = Object.assign({}, incSave.mutSeen || {}, out.mutSeen || {});
+  out.titles = Object.assign({}, incSave.titles || {}, out.titles || {});
+  out.impFound = Array.from(new Set([].concat(out.impFound || [], incSave.impFound || [])));
+  /* 星球进度：本地有进度就整块保留（合并不能把玩家现在的星球冲掉）；
+     本地是空的（新装机 / 刚清除数据）才整块取包里的。 */
+  const localPl = out.planet && typeof out.planet === 'object' ? out.planet : null;
+  const localPlEmpty = !localPl || !((localPl.plants || []).length || (localPl.mutSeeds || []).length
+    || (localPl.pool && Object.keys(localPl.pool).length) || (localPl.round || 0));
+  if (localPlEmpty && incSave.planet) out.planet = JSON.parse(JSON.stringify(incSave.planet));
+  else if (localPl && incSave.planet) {
+    // 非空时只补「已解锁的皮肤 / 已见种类」这类只增不减的账
+    localPl.seenKinds = Object.assign({}, incSave.planet.seenKinds || {}, localPl.seenKinds || {});
+    localPl.skins = Object.assign({}, incSave.planet.skins || {}, localPl.skins || {});
+  }
+  if (!out.bookTitle && incSave.bookTitle) out.bookTitle = incSave.bookTitle;
+  if (!out.wallBg && incSave.wallBg) out.wallBg = incSave.wallBg;
+  if (!out.firstTill && incSave.firstTill) out.firstTill = incSave.firstTill;
+  return out;
+}
+
+/* 导入四季备份（合并）。返回 {ok, addedPhotos, addedRecords} */
+async function bmImportSeasonPayload(payload, opt) {
+  const merge = !opt || opt.merge !== false;
+  if (!payload || !payload.__season) return { ok: false };
+  // 兼容两种形态：裸存档（只含 save 字段）／新格式（save + photos）
+  const incSave = payload.save && payload.save.__season ? payload.save : payload;
+  let localSave = null;
+  try { const raw = localStorage.getItem('bmSeasonSave'); if (raw) localSave = JSON.parse(raw); } catch (e) {}
+  if (!localSave || !localSave.__season) localSave = await bmReadSeasonSave();
+
+  // ① 照片先落库（只补没有的 key，不覆盖本地已修的图）
+  let addedPhotos = 0;
+  const photos = payload.photos || {};
+  const localKeys = new Set(await bmSeasonImgKeys());
+  for (const k of Object.keys(photos)) {
+    if (merge && localKeys.has(k)) continue;
+    if (await bmSeasonImgPut(k, photos[k])) addedPhotos++;
+  }
+
+  // ② 存档合并 / 替换
+  const before = localSave ? (localSave.photos || []).length + (localSave.books || []).length : 0;
+  const next = merge ? bmMergeSeasonSave(localSave, incSave) : incSave;
+  const after = (next.photos || []).length + (next.books || []).length;
+  try { localStorage.setItem('bmSeasonSave', JSON.stringify(next)); } catch (e) { return { ok: false, addedPhotos }; }
+
+  // ③ 四季 iframe 开着就让它立刻重载，不用等下次进入四季
+  try {
+    const frame = document.getElementById('season-frame');
+    if (frame && frame.contentWindow && typeof frame.contentWindow.bmSeasonImport === 'function') {
+      frame.contentWindow.bmSeasonImport(JSON.stringify(next));
+    }
+  } catch (e) {}
+  return { ok: true, addedPhotos, addedRecords: Math.max(0, after - before) };
+}
+
 let _autoBackupRunning = false; // 20261006：防重入锁——写几百张图要几十秒，期间切后台补备+40s首备可能并发触发，防重复写/重复清理
 async function autoBackup() {
   if (_autoBackupRunning) return; // 已有备份在执行，直接跳过（不创建第二个 backup-set）
@@ -25873,17 +27243,36 @@ async function autoBackup() {
     // 有访客数据才备份，避免全新空库也写一份空备份覆盖掉已有的有效备份
     const chars = await idbGetAll('characters');
     if (!chars || !chars.length) return;
-    // 20261005dz：自动备份限频止血——同一天内最多备份一次，防「每次切后台都打包全量图片
-    // base64（~98MB）→ Java Heap OOM」。判断依据复用既有 lastAutoBackupAt 时间戳（只在下方
-    // writeFile 真正成功后才写入），当天已成功备份过则直接跳过；跨自然日自动放行再次备份。
+    /* 20261115b：由「每天只认第一次」改为「每天一条、当天可刷新」。
+       旧逻辑当天一旦成功就 return —— 白天聊的内容永远进不了当天的备份，
+       晚上的增量要等第二天才可能落盘（用户实测指出这个问题）。
+       现在的规则：
+         · 同一天且距上次 < 30 分钟 → 跳过（避免每次切后台都重打包几十 MB，伤存储也耗电）；
+         · 同一天且数据指纹（消息条数 / 最新消息时间 / 角色·表情包·朋友圈数量）没变 → 跳过；
+         · 同一天且数据有变化 → 写一份新的，写完把当天更早那份淘汰（下面轮转按日期只留最新一条）；
+         · 跨自然日 → 正常新增一条。
+       任何一次写入失败都不会更新 lastAutoBackupAt，下次触发会自动重试，不会留下空档。 */
+    const AUTO_MIN_GAP_MS = 30 * 60 * 1000;
     const lastAt = await getSetting('lastAutoBackupAt', 0);
-    if (lastAt) {
-      const d = new Date(lastAt), nowD = new Date();
-      if (d.getFullYear() === nowD.getFullYear() && d.getMonth() === nowD.getMonth() && d.getDate() === nowD.getDate()) {
-        return; // 今天已成功自动备份过，跳过
-      }
-    }
+    const nowProbe = new Date();
+    const sameDayAsNow = (t) => {
+      if (!t) return false;
+      const d = new Date(t);
+      return d.getFullYear() === nowProbe.getFullYear() && d.getMonth() === nowProbe.getMonth() && d.getDate() === nowProbe.getDate();
+    };
+    const lastSameDay = sameDayAsNow(lastAt);
+    if (lastSameDay && Date.now() - lastAt < AUTO_MIN_GAP_MS) return; // 30 分钟内不重复打包
     const rawData = await buildBackupPayload('3.0'); // 读出全量原始数据（图片还是 {blob,thumb} / {__img:5} 引用）
+    // 数据指纹：用来判断「同一天里到底有没有新内容」，没有就不重写。
+    const sigOf = (d) => {
+      let maxT = 0;
+      const msgs = d.messages || [];
+      for (let i = 0; i < msgs.length; i++) { const t = msgs[i] && msgs[i].time; if (t > maxT) maxT = t; }
+      return [msgs.length, maxT, (d.characters || []).length, (d.emojis || []).length,
+        ((d.settings && d.settings.momentsPosts) || []).length].join('|');
+    };
+    const sig = sigOf(rawData);
+    if (lastSameDay && (await getSetting('lastAutoBackupSig', '')) === sig) return; // 当天没有新内容
     // 20261115：改走导出侧同一套「去重 + 抽图」——同一张图被多处引用时只进容器一次。
     const { data, images } = await collectImagesV4(rawData);
     data.version = '2.2'; // 容器格式统一标 2.2（导入端靠分隔符识别，不看 version）
@@ -25903,6 +27292,23 @@ async function autoBackup() {
     let bytes = 0;
     try { const st = await FS.stat({ path: relPath, directory: 'DOCUMENTS' }); bytes = (st && st.size) || 0; } catch (e) {}
 
+    /* 20261116：四季另存一个单文件（含照片），与全局包同时间戳。
+       失败不影响全局备份 —— 四季那半边单独记空，恢复列表如实标「无四季」。
+       四季文件自身失败也不删旧的，玩家手里至少还有上一次的四季包。 */
+    let seasonFile = '', seasonBytes = 0, seasonPhotos = 0, seasonErr = '';
+    try {
+      const seasonSave = await bmReadSeasonSave();
+      if (seasonSave) {
+        seasonFile = '白日梦四季备份_' + stamp + '.seasondata';
+        const sRel = BM_AUTO_BACKUP_DIR + '/' + seasonFile;
+        seasonPhotos = await bmWriteSeasonBackupFile(FS, sRel, seasonSave);
+        try { const st2 = await FS.stat({ path: sRel, directory: 'DOCUMENTS' }); seasonBytes = (st2 && st2.size) || 0; } catch (e) {}
+      }
+    } catch (e) {
+      seasonErr = String(e && e.message ? e.message : e).slice(0, 120);
+      seasonFile = ''; seasonBytes = 0; seasonPhotos = 0;
+    }
+
     // 写索引（= 「本次备份完成」的提交标记）。列表页只读它，绝不为了统计去整读几十 MB 的容器。
     let idx = { v: 1, items: [] };
     try {
@@ -25918,19 +27324,48 @@ async function autoBackup() {
       msgCount: Array.isArray(data.messages) ? data.messages.length : 0,
       imgCount: Array.isArray(images) ? images.length : 0, // 去重后的素材数（不是引用次数）
       bytes,
+      sig, // 20261115b：本次数据指纹，供下次「同一天无变化则跳过」使用
+      seasonFile,        // 20261116：配对的四季单文件（空 = 这次没收进四季）
+      seasonBytes,
+      seasonPhotos,
+      seasonErr,
     });
-    const keep = idx.items.slice(0, BM_AUTO_BACKUP_KEEP);
-    const drop = idx.items.slice(BM_AUTO_BACKUP_KEEP);
+    /* 20261115b 轮转（三条规则，缺一不可）：
+       ① 同一天只保留最新一条 —— 当天刷新产生的旧文件在这里被自然淘汰，实现「每天一条」；
+       ② 总数上限 BM_AUTO_BACKUP_KEEP（10 份，约覆盖 10 天）。只按份数，不按体积限流
+          —— 数据以后只会越来越大，卡体积会让玩家莫名其妙少几份备份。
+       另外：最新一条永远保留，磁盘上任何时刻都有一份可用的。 */
+    const dayKeyOf = (ts) => { const d = new Date(ts || 0); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+    const sorted = idx.items.filter(x => x && x.file).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const keep = [];
+    const drop = [];
+    const seenDay = new Set();
+    for (const it of sorted) {
+      const dk = dayKeyOf(it.ts);
+      if (seenDay.has(dk)) { drop.push(it); continue; }          // 同一天更早的那份
+      seenDay.add(dk);
+      if (keep.length >= BM_AUTO_BACKUP_KEEP) { drop.push(it); continue; }   // 超过 10 份
+      keep.push(it);
+    }
     idx.items = keep;
     await bmWriteJsonAsFile(FS, BM_AUTO_BACKUP_INDEX, idx);
 
     // 索引写成功才算本次备份完成 → 才更新 lastAutoBackupAt（失败走 catch，不标记，下次可重试）
     try { await setSetting('lastAutoBackupAt', now.getTime()); } catch (e) {}
     try { await setSetting('lastAutoBackupFile', fname); } catch (e) {}
+    try { await setSetting('lastAutoBackupSig', sig); } catch (e) {}
 
-    // 清掉超出保留数的旧单文件备份（新备份已完整落盘，删旧的不会造成空档；失败静默忽略）
+    /* 清掉被轮转淘汰的旧备份。新备份已完整落盘后才删，任何时刻都不会出现空档。
+       20261115b 白名单：只删「白日梦自动备份_YYYYMMDD-HHMM.ocdata」——
+       手动导出的「白日梦数据备份_*」、角色卡、宫殿备份一律不碰（索引被写脏也不会误删）。 */
     for (const it of drop) {
+      if (!it || !BM_AUTO_BACKUP_RE.test(String(it.file || ''))) continue;
       try { await FS.deleteFile({ path: BM_AUTO_BACKUP_DIR + '/' + it.file, directory: 'DOCUMENTS' }); } catch (e) {}
+      // 配对的四季包一起删，否则全局包被裁掉、四季包会一直堆着占空间
+      const sf = String(it.seasonFile || '');
+      if (BM_SEASON_BACKUP_RE.test(sf)) {
+        try { await FS.deleteFile({ path: BM_AUTO_BACKUP_DIR + '/' + sf, directory: 'DOCUMENTS' }); } catch (e) {}
+      }
     }
   } catch (e) {
     /* 静默失败，不打扰用户；只留一条最近错误（截断 200 字）供排查用，
@@ -29922,11 +31357,16 @@ const TAROT_SUITS = [
 /* ══ 抽牌随机性 ══
    ★ 20261112 用户明确要求：「占卜的抽牌应该是完完全全的随机抽牌，
      不是根据玩家的问题来抽牌」。
-   事实核对（改之前就是这样）：
-     · 抽牌发生在**弹窗打开那一刻**，此时问题框还是空的，代码里没有任何地方读 question；
-     · question 只在三张牌翻开之后，被送进解牌 AI 当解读素材 —— 它影响的是「怎么讲」，
-       不是「抽到哪三张」；
-     · 三张牌从 78 张里一次性洗出，不放回（不会重复），各张正逆位独立判定。
+   ★ 20261115 用户进一步要求（改了实现）：
+     「点开牌面之前其实就已经随机抽好了 —— 不应该这样。是我在输入完问题之后、
+       我翻开牌的那一刻才开始抽才对：点第一张、准备翻开时第一张才抽好；
+       点第二张时第二张才抽好。」
+   现在的时序：
+     · 打开弹窗只洗「池子」的概念，**一张都不预先抽**；
+     · 每次点击某一张牌，在加翻转动画之前，才从「还没被抽走的牌」里现抽一张；
+     · 抽走的不放回：第二、三张不会跟前面重复；
+     · 正逆位也在翻开那一刻独立掷；
+     · 从 78 张起，每一张都是等概率（crypto 均匀下标），与问题、与上一次占卜无关。
    这里再把洗牌本身换成**密码学均匀洗牌**，把「随机」做到数学上无可挑剔：
      · Math.random 是伪随机，且 Fisher-Yates 的下标由浮点乘法取整得到，
        理论上存在极微弱的偏差；改用 crypto.getRandomValues + 拒绝采样后，
@@ -29960,8 +31400,17 @@ function diviShuffleDeck() {
 
 /* 占卜：三张牌时间流（过去/现在/未来），牌背→点击翻开牌面（正逆位随机），不记录任何历史 */
 async function showDivinationModal() {
-  // 先洗牌、先定牌：与问题、与上一次占卜、与任何角色都无关
-  const pick = diviShuffleDeck().slice(0, 3).map(card => ({ card, reversed: _diviRandInt(2) === 1 }));
+  /* 20261115：打开弹窗时**一张都不抽**。
+     pick 先留三个空位，等玩家真的点开某一张、要翻开它的时候才现抽。
+     已抽走的牌记在 drawn 里，后面几张从剩下的里抽 —— 不放回、不重复。 */
+  const pick = [null, null, null];
+  const drawn = [];
+  const drawOneCard = () => {
+    const pool = TAROT_DECK.filter(c => !drawn.includes(c));
+    const card = pool[_diviRandInt(pool.length)];
+    drawn.push(card);
+    return { card, reversed: _diviRandInt(2) === 1 };
+  };
   // 20260929bc：卡背改为魔法阵（月相星轨）SVG，替代原 🌙 + 星点
   const magicBack = () => `
     <svg class="tb-magic" viewBox="0 0 100 100">
@@ -29999,16 +31448,17 @@ async function showDivinationModal() {
       <input type="checkbox" id="divi-useai" ${diviUseAI ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
     </div>
     <div class="tarot-wrap">
-      ${pick.map((p, i) => `
+      ${[0, 1, 2].map(i => `
         <div class="tarot-slot">
           <div class="tarot-card" data-ti="${i}">
             <div class="tarot-inner">
               <div class="tarot-back">${magicBack()}</div>
-              <div class="tarot-face${p.reversed ? ' reversed' : ''}">
-                <div class="tf-no">${p.card.realm ? p.card.realm : '大阿卡纳'}</div>
-                <div class="tf-sym">${_diviSymSVG(p.card.n, p.card.realm || '')}</div>
-                <div class="tf-name">${escapeHtml(p.card.n)}</div>
-                <div class="tf-pos">${p.reversed ? '逆位' : '正位'}</div>
+              <!-- 牌面内容在翻开那一刻才注入：抽牌时间 = 玩家点击的时间 -->
+              <div class="tarot-face">
+                <div class="tf-no"></div>
+                <div class="tf-sym"></div>
+                <div class="tf-name"></div>
+                <div class="tf-pos"></div>
               </div>
             </div>
           </div>
@@ -30046,8 +31496,22 @@ async function showDivinationModal() {
   document.querySelectorAll('.tarot-card').forEach(el => {
     el.onclick = () => {
       if (el.classList.contains('open')) return;
+      const i = parseInt(el.dataset.ti);
+      /* 翻开的手势发出去了、动画还没转过去，这时候才抽：
+         抽到什么就翻出什么，牌背翻开的瞬间就是结果出现的瞬间。 */
+      const p = drawOneCard();
+      pick[i] = p;
+      const face = el.querySelector('.tarot-face');
+      if (face) {
+        face.innerHTML = `
+          <div class="tf-no">${p.card.realm ? p.card.realm : '大阿卡纳'}</div>
+          <div class="tf-sym">${_diviSymSVG(p.card.n, p.card.realm || '')}</div>
+          <div class="tf-name">${escapeHtml(p.card.n)}</div>
+          <div class="tf-pos">${p.reversed ? '逆位' : '正位'}</div>`;
+        if (p.reversed) face.classList.add('reversed');
+      }
       el.classList.add('open');
-      opened.add(parseInt(el.dataset.ti));
+      opened.add(i);
       if (opened.size === 3) { renderDivinationMeaning(pick); enableAsk(); }
     };
   });

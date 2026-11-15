@@ -31,7 +31,15 @@ import java.util.List;
 public class BmBackgroundReceiver extends BroadcastReceiver {
 
     private static final String CHANNEL_ID = "bm-background";
+    /** 四季内容类任务类别：与私聊（proactive/summon/...）完全分开，且不产生任何通知 */
+    private static final String SEASON_NOTE_KIND = "seasonNote";   // 四季 · 留言
+    private static final String SEASON_CARE_KIND = "seasonCare";   // 四季 · 照料
     private static final String CHANNEL_NAME = "白日梦后台消息";
+
+    /** 四季的「内容类」任务（留言 / 照料）：只在四季里留痕，不属于通知类 */
+    private static boolean isSeasonContentKind(String kind) {
+        return SEASON_NOTE_KIND.equals(kind) || SEASON_CARE_KIND.equals(kind);
+    }
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -71,8 +79,12 @@ public class BmBackgroundReceiver extends BroadcastReceiver {
         //    emitDue 内部判实例/桥/WebView 存活，任一缺失返回 false → 走兜底通知
         boolean pushed = BmBackgroundPlugin.emitDue(taskId, task.charId, task.dueAt);
         if (!pushed) {
-            // WebView 不可用 → 保留 pending + 引导通知兜底
-            sendGuideNotification(context, task);
+            // WebView 不可用 → 保留 pending 等回前台 recoverDue 处理。
+            // 四季的内容类任务（kind=seasonNote / seasonCare）玩家明确要求**不是通知类**，
+            // 不许弹任何通知，也不许借用私聊那条「TA 发来消息」的引导通知。
+            if (!isSeasonContentKind(task.kind)) {
+                sendGuideNotification(context, task);
+            }
         }
     }
 

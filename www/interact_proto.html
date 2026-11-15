@@ -443,15 +443,21 @@
   .sleep-cap.dragging{cursor:grabbing;transition:none;}
   .cv-duration{font-size:15px;color:var(--ink);margin-top:26px;letter-spacing:1px;}
   .cv-duration b{font-size:22px;color:var(--main-deep);font-weight:800;font-variant-numeric:tabular-nums;}
-  /* 互动消息小圆片弹窗（留白区） */
-  .cv-bubbles{flex:1;width:100%;position:relative;margin-top:10px;}
+  /* 互动消息小圆片弹窗（留白区）
+     20261114：改成「不规则散布」——每次在留白区里随机找一个空位冒出来，彼此绝不重叠，
+     而不是排成一列。位置由 emitCompBubbles 里的 placeBubble() 现场算，这里只负责容器不滚动。 */
+  .cv-bubbles{
+    flex:1;width:100%;margin-top:10px;min-height:140px;
+    position:relative;overflow:hidden;
+  }
   .cv-bubble{
-    position:absolute;max-width:78%;padding:10px 16px;border-radius:18px;
+    position:absolute;flex:0 0 auto;max-width:78%;padding:10px 16px;border-radius:18px;
     /* 20261106 毛玻璃遮罩：不用实色卡片，改为半透明遮罩 + 背景模糊，去掉硬边框，与背景融为一体 */
     background:var(--glass-mask,rgba(255,255,255,.18));
     -webkit-backdrop-filter:blur(22px) saturate(1.3);backdrop-filter:blur(22px) saturate(1.3);
     border:0;color:var(--ink);font-size:13px;line-height:1.5;
     box-shadow:0 4px 14px var(--shadow-color);animation:bubbleIn .5s cubic-bezier(.34,1.56,.64,1) both;
+    word-break:break-word;
   }
   @keyframes bubbleIn{from{opacity:0;transform:translateY(12px) scale(.9);}to{opacity:1;transform:translateY(0) scale(1);}}
   /* 白噪音播放按钮（清屏页） */
@@ -496,6 +502,21 @@
     color:var(--ink);font-size:14px;font-weight:600;cursor:pointer;
   }
   .noise-actions button.primary{background:var(--main);color:#fff;border-color:var(--main);}
+  /* 20261114：上次专注未完成的询问弹窗（样式沿用白噪音弹窗那套 sheet，只多一行信息块） */
+  .resume-sheet{position:fixed;inset:0;z-index:150;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);padding:20px;}
+  .resume-sheet.show{display:flex;}
+  .resume-sheet .sheet{
+    width:100%;max-width:420px;background:var(--phone-grad-a);border-radius:24px;padding:24px 20px 22px;
+    box-shadow:0 16px 40px rgba(0,0,0,.3);
+  }
+  .resume-sheet h4{margin:0 0 6px;font-size:17px;color:var(--ink);text-align:center;}
+  .resume-sheet .sub{font-size:12.5px;color:var(--ink2);text-align:center;line-height:1.7;}
+  .resume-sheet .rs-meta{
+    margin-top:14px;padding:12px 14px;border-radius:14px;background:var(--card-bg);
+    border:1px solid var(--line);color:var(--ink);font-size:13px;line-height:1.9;
+  }
+  .resume-sheet .rs-meta b{color:var(--main-deep);font-size:16px;font-variant-numeric:tabular-nums;}
+  .resume-sheet .rs-meta .rs-k{color:var(--ink2);font-size:12px;margin-right:6px;}
   /* 20261106 时长轮盘选择弹窗（闹钟式滚轮：小时+分钟） */
   .wheel-sheet{position:fixed;inset:0;z-index:140;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.4);padding:20px;}
   .wheel-sheet.show{display:flex;}
@@ -1141,13 +1162,9 @@
       <button class="add-char" id="todoBtn" title="选择待办">☑</button>
       <span class="switch-toggle" id="todoToggle"></span>
     </div>
-    <!-- 20261112：专注时是否允许网页悬浮窗继续显示（测试性开关，默认关）
-         关 = 一起听歌 / 碎梦重拼 / 模拟通话小窗 在专注页全部收起，退出专注后恢复；
-         开 = 允许它们照常浮在专注页上。安卓原生系统悬浮窗不受此开关影响。 -->
-    <div class="interact-row">
-      <div class="lab">专注时显示悬浮窗<small>音乐 · 碎梦重拼 · 通话</small></div>
-      <span class="switch-toggle" id="floatGateToggle"></span>
-    </div>
+    <!-- 20261114：原来这里有个「专注时显示悬浮窗」开关，已按用户要求移到
+         主项目「聊天设置 › 番茄钟」分类下（存 chatSettings.pomodoroAllowFloat），
+         专注页不再重复出现同一个设置。 -->
   </div>
 
   <!-- 底部开始按钮 -->
@@ -1199,7 +1216,8 @@
     </div>
     <div class="cv-avatar" id="cvAvatar">✨<span class="ring" id="cvRing"></span></div>
   </div>
-  <div class="cv-duration">已陪伴 <b id="cvDuration">00:00</b></div>
+  <!-- 20261114：前缀改成可切换——正计时是「已陪伴」，倒计时那个数字是「还剩多久」，不能也写已陪伴 -->
+  <div class="cv-duration"><span id="cvDurationLabel">已陪伴</span> <b id="cvDuration">00:00</b></div>
   <div class="cv-bubbles" id="cvBubbles"></div>
   <button class="cv-noise-btn" id="cvNoiseBtn">🎵 播放白噪音</button>
   <button class="cv-exit" id="cvExitBtn">退出专注</button>
@@ -1215,6 +1233,19 @@
     <div class="noise-actions">
       <button id="noiseCancel">取消</button>
       <button class="primary" id="noiseDone">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 20261114：上次专注没走完（关掉番茄钟层 / App 被杀）→ 回来先问一句要不要接着走 -->
+<div class="resume-sheet" id="resumeSheet">
+  <div class="sheet">
+    <h4 id="rsTitle">上次的专注还没走完</h4>
+    <div class="sub" id="rsSub"></div>
+    <div class="rs-meta" id="rsMeta"></div>
+    <div class="noise-actions">
+      <button id="rsEnd">结束并看结算</button>
+      <button class="primary" id="rsGo">继续专注</button>
     </div>
   </div>
 </div>
@@ -2430,7 +2461,25 @@ let focusCountdown = false;    // 是否为倒计时（设置了时长）
 let currentTask = '';          // 当前专注的待办
 let currentChar = -1;          // 当前陪伴角色 idx
 
-function openClearView(){
+function openClearView(resume){
+  if(resume){
+    /* 20261114：接着上一次没走完的专注——身份、待办、事件、邀请状态全部从快照铺回来，
+       不再走「这一轮点过没有」的重新判定（否则结算里的邀请回忆会算错）。 */
+    currentChar = (typeof resume.charIdx === 'number') ? resume.charIdx : -1;
+    currentTask = resume.task || '';
+    focusMode = resume.mode || focusMode;
+    focusSet = !!resume.countdown;
+    if(focusSet && resume.focusMin) focusMin = resume.focusMin;
+    sessionInvited = !!resume.invited;
+    sessionQuiet = !!resume.quiet;
+    selfCameCompanion = !!resume.selfCame;
+    inviteRefusedOnce = !!resume.refused;
+    lastInviteRefused = !!resume.lastRefused;
+    inviteCount = resume.inviteCount || 0;
+    sessionEvents = Array.isArray(resume.events) ? resume.events.slice() : [];
+    companionOn = !!resume.companionOn;
+    if(currentChar >= 0 && CHARS[currentChar]) selectedChar = currentChar;
+  } else {
   currentChar = selectedChar !== null ? selectedChar : -1;
   currentTask = selectedTask;
   /* 20261112：按下「开始专注」＝这一轮开始了，此刻把本轮性质定格，之后不再改判。
@@ -2451,10 +2500,11 @@ function openClearView(){
     // 点过但被拒：确保「忙完赶来」这根线还挂着（可能刚被清过或还没排上）
     if(!companionReturnTimer) scheduleCompanionReturn();
   }
+  }
   focusActive = true;
-  focusCountdown = focusSet;   // 设置专注时长 → 倒计时；否则正计时
+  focusCountdown = resume ? !!resume.countdown : focusSet;   // 设置专注时长 → 倒计时；否则正计时
   document.getElementById('clearView').classList.add('show');
-  companionElapsed = 0;
+  companionElapsed = resume ? Math.max(0, resume.elapsed || 0) : 0;
   updateCvClock();
   updateCvDuration();
   // 头像
@@ -2485,11 +2535,15 @@ function openClearView(){
   // 20261104：默认开白噪音时自动播放（进入专注即出声）；用户已保存过则按其选择播
   if(activeNoises.length) playNoises();
   // 互动气泡：陪伴开关开才 spawn，否则只显示"TA 安静陪着你"的静默气泡
+  // 20261114：接着走时也立刻给一句（TA「看见你回来了」），否则留白区空到下一个间隔
   spawnBubbles();
   // 计时
-  startFocusTimer();
+  startFocusTimer(resume);
   // 后台「忍住互动」独立事件：专注过程中后台随机真实发生并记录（不弹前台）
   startHeldEventTimer();
+  // 20261114：开始每 5 秒写一次快照，中途被关掉/App 被杀还能接着走
+  startSessionSnap();
+  saveSessionSnap();
 }
 
 /* ============ 睡眠小帽（夜间模式） ============ */
@@ -2659,12 +2713,16 @@ function requestLockPermission(onGranted){
   if(onGranted) onGranted();
 }
 
-function startFocusTimer(){
+function startFocusTimer(resume){
   if(cvTimer) clearInterval(cvTimer);
   if(timerId) clearInterval(timerId);
+  const durLabel = document.getElementById('cvDurationLabel');
   if(focusCountdown){
-    // 倒计时：从设置的专注时长开始往下减，陪伴时长也联动倒计时显示
-    remaining = focusMin*60;
+    // 倒计时：从设置的专注时长开始往下减
+    // 20261114：这里的数字是「还剩多久」，前缀不能再写「已陪伴」，改「剩余」
+    if(durLabel) durLabel.textContent = '剩余';
+    // 20261114：中途回来接着走时，remaining 直接从快照扣掉离开的那段时间，不重置回满额
+    remaining = (resume && typeof resume.remaining === 'number') ? Math.max(0, resume.remaining) : focusMin*60;
     document.getElementById('cvDuration').textContent = fmt(remaining);
     timerId = setInterval(()=>{
       remaining--;
@@ -2674,7 +2732,10 @@ function startFocusTimer(){
     }, 1000);
   } else {
     // 正计时：00:00 往上加，无上限
-    companionElapsed = 0;
+    if(durLabel) durLabel.textContent = '已陪伴';
+    // 20261114：正计时按快照里记到的秒数接着往上加（离开的那段不算，避免把没陪着的时间也算进去）
+    companionElapsed = (resume && typeof resume.elapsed === 'number') ? Math.max(0, resume.elapsed) : 0;
+    updateCvDuration();
     cvTimer = setInterval(()=>{ companionElapsed++; updateCvDuration(); }, 1000);
   }
 }
@@ -2699,8 +2760,8 @@ function spawnBubbles(){
     const b = document.createElement('div');
     b.className = 'cv-bubble';
     b.textContent = '（TA 安静地陪着你，没有打扰你）';
-    b.style.top = '6%'; b.style.left = '2%';
     wrap.appendChild(b);
+    placeBubble(wrap, b);
     stopCompInteract();  // 陪伴关，停止前台互动心跳
     return;
   }
@@ -2765,16 +2826,57 @@ function emitCompBubbleFromPool(wrap){
   // 两种气泡：动作（带括号描述）+ 台词（短句）
   emitCompBubbles(wrap, [act, rep]);
 }
-/* 把 lines 数组渲染成气泡（最多留 3 条） */
+/* 把 lines 数组渲染成气泡
+   20261114：位置要「不规则、但绝不叠在一起」——在留白区里随机撒点，每次新气泡都避开已有的框。
+   旧的不会把新的顶走（这里不是聊天流），只保留最近 5 条，超了就把最老的摘掉，给新气泡腾地方。
+   同一次互动的两句错开半秒冒出来，还是一条一条地出。 */
+const CV_MAX_BUBBLES = 5;      // 留白区里最多同时挂几条，多了就看不清背景了
+function placeBubble(wrap, b){
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  const bw = b.offsetWidth, bh = b.offsetHeight;
+  const pad = 2, gap = 12;     // gap：两条气泡之间至少留这么多，贴着也不至于糊成一团
+  if(!W || !H){ b.style.left = '0px'; b.style.top = '0px'; return; }
+  const others = [];
+  for(const el of wrap.querySelectorAll('.cv-bubble')){
+    if(el === b) continue;
+    others.push({ x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight });
+  }
+  const spanX = Math.max(1, W - bw - pad * 2);
+  const spanY = Math.max(1, H - bh - pad * 2);
+  let best = null, bestScore = -Infinity;
+  for(let i = 0; i < 80; i++){
+    const x = pad + Math.random() * spanX;
+    const y = pad + Math.random() * spanY;
+    let ok = true, minGap = Infinity;
+    for(const o of others){
+      // 两个矩形在两轴上的间隙；都为负才是真重叠，这里要求两轴都留够 gap 才算安全
+      const gx = Math.max(o.x - (x + bw), x - (o.x + o.w));
+      const gy = Math.max(o.y - (y + bh), y - (o.y + o.h));
+      if(gx < gap && gy < gap){ ok = false; }
+      minGap = Math.min(minGap, Math.max(gx, gy));
+    }
+    if(ok){ best = { x, y }; break; }
+    // 实在挤不下：退而求其次，选「离已有气泡最远」的那个点
+    if(minGap > bestScore){ bestScore = minGap; best = { x, y }; }
+  }
+  b.style.left = Math.round(best.x) + 'px';
+  b.style.top = Math.round(best.y) + 'px';
+}
 function emitCompBubbles(wrap, lines){
-  while(wrap.children.length >= 3){ wrap.removeChild(wrap.firstChild); }
+  if(!wrap) return;
+  const live = Array.from(wrap.querySelectorAll('.cv-bubble'));
+  let over = live.length + lines.length - CV_MAX_BUBBLES;
+  for(let i = 0; i < live.length && over > 0; i++, over--){
+    if(live[i].parentNode) wrap.removeChild(live[i]);   // 先摘最老的，给新气泡腾位置
+  }
   lines.forEach((m, i) => {
     const b = document.createElement('div');
     b.className = 'cv-bubble';
     b.textContent = m;
-    b.style.top = `${6 + i * 30}%`;
-    b.style.left = i % 2 === 0 ? '2%' : '24%';
+    // animation-fill-mode 是 both，延迟期间保持首帧（透明），所以第二句会晚半秒才冒出来
+    if(i) b.style.animationDelay = (i * 0.5) + 's';
     wrap.appendChild(b);
+    placeBubble(wrap, b);      // 必须先进 DOM 才量得到宽高
   });
 }
 /* AI 生成回填：主项目 pomodoro-comp-interact-result 回传后，填充前台互动气泡 */
@@ -2792,6 +2894,8 @@ function exitFocus(){
   document.getElementById('clearView').classList.remove('show');
   if(cvTimer) clearInterval(cvTimer);
   if(timerId) clearInterval(timerId);
+  stopSessionSnap();             // 20261114：正常结束，不再写快照
+  clearSessionSnap();            // 20261114：已经出结算了，下次进来不许再问「要不要继续」
   stopHeldEventTimer();          // 停止后台互动心跳（结算读取已记录的真实事件）
   stopCompInteract();            // 20261104：停止前台互动心跳（退出专注不再发陪伴气泡）
   clearCompanionReturn();        // 20261112：退出专注＝这一轮结束，不再等 TA「忙完回来」
@@ -2889,18 +2993,8 @@ startBtn.addEventListener('click', ()=>{
   openClearView();
 });
 
-/* 20261112：专注时显示悬浮窗（测试性开关，默认关）
-   关 = 主项目给 body 挂 focus-hide-floats，把一起听歌 / 碎梦重拼 / 模拟通话小窗全部收起；
-   开 = 摘类，允许它们浮在专注页上。开关状态经 postMessage 回传主项目落库，下次进来保持一致。
-   注意：安卓原生系统悬浮窗（原生音乐条、模拟通话原生窗）由系统绘制，不受这里影响。 */
-let allowFloatInFocus = false;
-const floatGateToggle = createSwitchToggle(document.getElementById('floatGateToggle'), {
-  offLabel:'关', onLabel:'开', defaultOn:false,
-  onChange:(on)=>{
-    allowFloatInFocus = on;
-    try{ parent.postMessage({ type:'pomodoro-allow-float', on }, '*'); }catch(e){}
-  }
-});
+/* 20261114：「专注时显示悬浮窗」开关已移到主项目「聊天设置 › 番茄钟」，
+   专注页不再有这份 UI，也就无需在 iframe 里维护状态和回传。 */
 
 /* ============ 结算页（角色文件夹 + 每次结算） ============ */
 const settleRecords = [];  // {id, charIdx, folderId, date, time, durMin, durSec, task, events:[], results:[{text, imgs:[], reply}]}
@@ -2952,19 +3046,175 @@ function restoreSettle(){
     if(Array.isArray(d.settleRecords)) for(const r of d.settleRecords) settleRecords.push(r);
   } catch(e) {}
 }
+
+/* ============ 20261114 专注快照（中途关掉番茄钟层 / App 被杀后还能接着走） ============
+   问题：主项目每次打开番茄钟层都会重设 iframe.src → 整页重载，内存里的
+   focusActive / remaining / companionElapsed / sessionEvents 全部清零。
+   原来的行为是这一轮专注直接蒸发：既不问要不要继续，也不生成结算。
+   做法：
+     ① 专注进行中每 5 秒（以及页面被隐藏 / 卸载前）写一份快照到 localStorage；
+     ② 下次进番茄钟、CHARS 到位后检查快照：还在就弹窗问「继续专注 / 结束并看结算」；
+     ③ 正常「退出专注」已经生成结算 → 立刻清掉快照，不会下次还问。 */
+const SESSION_LS_KEY = 'bairimeng_pomodoro_session_v1';
+let snapTimer = null;          // 快照心跳
+let _resumeChecked = false;    // 每次页面加载只问一次
+let _pendingSnap = null;       // 当前弹窗对应的快照
+
+function saveSessionSnap(){
+  if(!focusActive) return;
+  try {
+    localStorage.setItem(SESSION_LS_KEY, JSON.stringify({
+      v: 1,
+      ts: Date.now(),
+      charIdx: currentChar,
+      task: currentTask || '',
+      mode: focusMode,
+      countdown: !!focusCountdown,
+      focusMin: focusMin,
+      remaining: remaining,
+      elapsed: companionElapsed,
+      events: sessionEvents.slice(),
+      invited: !!sessionInvited,
+      quiet: !!sessionQuiet,
+      selfCame: !!selfCameCompanion,
+      refused: !!inviteRefusedOnce,
+      lastRefused: !!lastInviteRefused,
+      inviteCount: inviteCount,
+      companionOn: !!companionOn,
+    }));
+  } catch(e) {}
+}
+function loadSessionSnap(){
+  try {
+    const raw = localStorage.getItem(SESSION_LS_KEY);
+    if(!raw) return null;
+    const d = JSON.parse(raw);
+    if(!d || d.v !== 1 || typeof d.ts !== 'number') return null;
+    return d;
+  } catch(e) { return null; }
+}
+function clearSessionSnap(){
+  try { localStorage.removeItem(SESSION_LS_KEY); } catch(e) {}
+}
+function startSessionSnap(){
+  stopSessionSnap();
+  snapTimer = setInterval(saveSessionSnap, 5000);
+}
+function stopSessionSnap(){
+  if(snapTimer){ clearInterval(snapTimer); snapTimer = null; }
+}
+// 切后台 / 关页面时补写一次，尽量少丢最后那几秒
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) saveSessionSnap(); });
+window.addEventListener('pagehide', saveSessionSnap);
+window.addEventListener('beforeunload', saveSessionSnap);
+
+/* CHARS 到位后调用：有未完成的快照就问一句要不要接着走 */
+function maybePromptResume(){
+  if(_resumeChecked) return;
+  _resumeChecked = true;
+  const snap = loadSessionSnap();
+  if(!snap) return;
+  // 离开多久（秒）：倒计时是挂钟语义，走掉的时间照扣；正计时只认记下来的陪伴时长
+  const away = Math.max(0, Math.round((Date.now() - snap.ts) / 1000));
+  let left = 0, finished = false;
+  if(snap.countdown){
+    left = Math.max(0, (snap.remaining || 0) - away);
+    finished = left <= 0;
+  }
+  // 把算好的结果写回快照对象，点「继续」时直接用
+  snap.remaining = snap.countdown ? left : 0;
+  snap.elapsed = Math.max(0, snap.elapsed || 0);
+  _pendingSnap = snap;
+
+  const c = (snap.charIdx >= 0 && CHARS[snap.charIdx]) ? CHARS[snap.charIdx] : null;
+  const who = c ? c.name : '自由';
+  const task = snap.task || '自由专注';
+  const title = document.getElementById('rsTitle');
+  const sub = document.getElementById('rsSub');
+  const meta = document.getElementById('rsMeta');
+  const goBtn = document.getElementById('rsGo');
+  const endBtn = document.getElementById('rsEnd');
+
+  if(finished){
+    title.textContent = '上次的专注已经走完了';
+    sub.textContent = '离开的这段时间里倒计时已经归零，这段陪伴记着。';
+    meta.innerHTML = `<div><span class="rs-k">陪伴</span>${who} · ${task}</div>`
+      + `<div><span class="rs-k">时长</span><b>${Math.max(1, Math.round((snap.focusMin || 0)))}</b> 分钟（已走完）</div>`;
+    goBtn.style.display = 'none';
+    endBtn.textContent = '看结算';
+  } else {
+    const secs = snap.countdown ? left : snap.elapsed;
+    title.textContent = '上次的专注还没走完';
+    sub.textContent = snap.countdown ? '接着把剩下的时间走完吗？' : '接着上次继续陪下去吗？';
+    meta.innerHTML = `<div><span class="rs-k">陪伴</span>${who} · ${task}</div>`
+      + `<div><span class="rs-k">${snap.countdown ? '剩余' : '已陪伴'}</span><b>${fmt(secs)}</b></div>`;
+    goBtn.style.display = '';
+    endBtn.textContent = '结束并看结算';
+  }
+  document.getElementById('resumeSheet').classList.add('show');
+}
+
+/* 结束并看结算：用快照里的时长/事件直接补一条结算记录，不让这段陪伴白丢 */
+function settleFromSnap(snap){
+  currentChar = (typeof snap.charIdx === 'number') ? snap.charIdx : -1;
+  currentTask = snap.task || '';
+  focusMode = snap.mode || focusMode;
+  focusCountdown = !!snap.countdown;
+  if(snap.focusMin) focusMin = snap.focusMin;
+  remaining = snap.countdown ? Math.max(0, snap.remaining || 0) : 0;
+  companionElapsed = Math.max(0, snap.elapsed || 0);
+  sessionEvents = Array.isArray(snap.events) ? snap.events.slice() : [];
+  sessionInvited = !!snap.invited;
+  sessionQuiet = !!snap.quiet;
+  selfCameCompanion = !!snap.selfCame;
+  inviteRefusedOnce = !!snap.refused;
+  lastInviteRefused = !!snap.lastRefused;
+  inviteCount = snap.inviteCount || 0;
+  companionOn = !!snap.companionOn;
+  clearSessionSnap();
+  addSettleRecord();
+  openSessionSettle();
+  // 与 exitFocus 一致：结算写完清零，下一轮从第 1 次邀请重新算
+  inviteCount = 0;
+  inviteRefusedOnce = false;
+  sessionInvited = false;
+  sessionQuiet = false;
+  lastInviteRefused = false;
+  selfCameCompanion = false;
+}
+
+document.getElementById('rsGo').onclick = ()=>{
+  const snap = _pendingSnap;
+  document.getElementById('resumeSheet').classList.remove('show');
+  if(!snap) return;
+  _pendingSnap = null;
+  clearSessionSnap();          // 继续后由 openClearView 重新开始写
+  openClearView(snap);
+};
+document.getElementById('rsEnd').onclick = ()=>{
+  const snap = _pendingSnap;
+  document.getElementById('resumeSheet').classList.remove('show');
+  if(!snap) return;
+  _pendingSnap = null;
+  settleFromSnap(snap);
+};
 function makeCharFolder(charIdx){
   const c = charIdx>=0 ? CHARS[charIdx] : { name:'自由', color:'#8b7a66', emoji:'✨' };
   const f = { id: folderIdSeq++, type:'char', charIdx, name:c.name, cover:null, color:c.color, emoji:c.emoji, avatar: c.avatar || null };
   folders.push(f);
   return f;
 }
-function makeCustomFolder(name, parentId){
+function makeCustomFolder(name, parentId, charIdxOverride){
   // 20261113c：parentId 有值时是「子文件夹」——只装这一组的记录，不再参与顶层列表、也不再嵌套。
   const parent = parentId ? folders.find(f=>f.id===parentId) : null;
+  // 20261114：charIdxOverride —— 「移动到文件夹」弹窗里现建根级文件夹时，必须继承来源文件夹
+  //   的角色归属。否则在「全部角色」视图下建出来的 charIdx 是 null，紧接着就会被
+  //   openMoveSheet 里「只能同角色互相移动」的过滤条件挡掉，用户建完回来还是空的。
   const cIdx = parent
     ? (parent.charIdx === undefined ? null : parent.charIdx)
-    : ((selectedChar !== null && selectedChar !== undefined && selectedChar >= 0)
-      ? selectedChar : (currentChar >= 0 ? currentChar : null));
+    : ((typeof charIdxOverride === 'number') ? charIdxOverride
+      : ((selectedChar !== null && selectedChar !== undefined && selectedChar >= 0)
+        ? selectedChar : (currentChar >= 0 ? currentChar : null)));
   const c = cIdx !== null ? CHARS[cIdx] : null;
   const f = {
     id: folderIdSeq++, type:'custom', charIdx: cIdx, name,
@@ -3679,9 +3929,11 @@ window.addEventListener('message', (ev) => {
 // 20261113c：parentId 有值时创建的是「子文件夹」（记录列表页的「＋ 新建子文件夹」）
 let _newFolderParentId = null;
 let _newFolderAfter = null;
-function openNewFolderSheet(parentId, afterCreate){
+let _newFolderCharIdx = null;   // 20261114：根级新建时继承的角色归属（见 makeCustomFolder 注释）
+function openNewFolderSheet(parentId, afterCreate, charIdx){
   _newFolderParentId = (typeof parentId === 'number') ? parentId : null;
   _newFolderAfter = (typeof afterCreate === 'function') ? afterCreate : null;
+  _newFolderCharIdx = (typeof charIdx === 'number') ? charIdx : null;
   const sheet = document.getElementById('nfoldSheet');
   const input = document.getElementById('nfoldInput');
   const titleEl = sheet.querySelector('h4');
@@ -3710,9 +3962,11 @@ document.getElementById('nfoldDone').onclick = ()=>{
   if(!name) return;
   const pid = _newFolderParentId;
   const after = _newFolderAfter;
+  const cidx = _newFolderCharIdx;
   _newFolderParentId = null;
   _newFolderAfter = null;
-  makeCustomFolder(name, pid);
+  _newFolderCharIdx = null;
+  makeCustomFolder(name, pid, pid ? undefined : cidx);
   closeNewFolderSheet();
   if(after) after();
   else if(pid) openSettleRecords(pid);
@@ -3819,18 +4073,34 @@ function openMoveSheetForFolder(fid){
 }
 document.getElementById('moveCancel').onclick = ()=> document.getElementById('moveSheet').classList.remove('show');
 document.getElementById('moveSheet').addEventListener('click', (e)=>{ if(e.target===document.getElementById('moveSheet')) document.getElementById('moveSheet').classList.remove('show'); });
-/* 20261113c：弹层内直接建子文件夹（建完回到候选列表，不用退出去再进来） */
+/* 20261113c：弹层内直接建子文件夹（建完回到候选列表，不用退出去再进来）
+   20261114：记录批量移动（moveMode==='record'）和文件夹批量移动（'bulk'）原来把新建按钮
+   藏了起来，弹窗里只剩一句「没有可移动到的文件夹」＋取消，等于死路。现在三种模式都留入口：
+     · folder → 「＋ 新建子文件夹」（建在当前文件夹下）
+     · record / bulk → 「＋ 新建文件夹」（建根级，建完直接回到候选列表继续选） */
 document.getElementById('moveNewSub').onclick = ()=>{
-  const src = folders.find(x=>x.id===moveFolderFid);
-  const pid = src ? (src.parentId || src.id) : null;
-  openNewFolderSheet(pid, ()=>{ if(moveMode==='folder') openMoveSheetForFolder(moveFolderFid); });
+  if(moveMode==='folder'){
+    const src = folders.find(x=>x.id===moveFolderFid);
+    const pid = src ? (src.parentId || src.id) : null;
+    openNewFolderSheet(pid, ()=>{ openMoveSheetForFolder(moveFolderFid); });
+  } else {
+    // 记录/文件夹批量移动：建一个根级文件夹，建完原地重开候选列表。
+    //   带上来源文件夹的 charIdx，保证新建的文件夹不会被「同角色」过滤挡掉。
+    const baseFid = (moveMode === 'record') ? currentRecordsFid : Array.from(selectedFolderIds)[0];
+    const base = folders.find(f => f.id === baseFid);
+    openNewFolderSheet(null, ()=>{ openMoveSheet(); }, base ? base.charIdx : undefined);
+  }
 };
 
 function openMoveSheet(){
   const root = document.getElementById('moveList');
   root.innerHTML = '';
   const newSubBtn = document.getElementById('moveNewSub');
-  if(newSubBtn) newSubBtn.style.display = (moveMode==='folder') ? '' : 'none';
+  if(newSubBtn){
+    // 三种模式都显示，只是文案不同
+    newSubBtn.style.display = '';
+    newSubBtn.textContent = (moveMode==='folder') ? '＋ 新建子文件夹' : '＋ 新建文件夹';
+  }
   if(moveMode==='bulk'){
     document.getElementById('moveSub').textContent = `将选中的 ${selectedFolderIds.size} 个文件夹移动到…（文件夹不可移动自身）`;
   } else if(moveMode==='record'){
@@ -3867,7 +4137,9 @@ function openMoveSheet(){
     candidates = candidates.filter(f=> f.charIdx===_base.charIdx);
   }
   if(candidates.length===0){
-    root.innerHTML = `<div style="font-size:13px;color:var(--ink2);padding:10px;">没有可移动到的文件夹</div>`;
+    // 20261114：原来只有一句「没有可移动到的文件夹」，下面新建按钮又被藏了 → 死路。
+    //   现在给一句明确指引，按钮就在下面。
+    root.innerHTML = `<div style="font-size:13px;color:var(--ink2);padding:10px;line-height:1.7;">没有可移动到的文件夹 · 点下面「＋ 新建文件夹」先建一个</div>`;
     document.getElementById('moveSheet').classList.add('show');
     return;
   }
@@ -4060,6 +4332,9 @@ setInterval(updateCvClock, 1000);
     if(selectedChar !== null && selectedChar >= CHARS.length) selectedChar = null;
     // 20261104：CHARS 就位后恢复历史结算归档（localStorage），刷新不丢
     restoreSettle();
+    // 20261114：看看上次是不是有没走完的专注——有就弹窗问要不要接着走（必须在 CHARS 之后，
+    //   否则结算/询问里取不到角色名和头像）
+    maybePromptResume();
     renderCharGrid();
     renderArt();
     renderAddBtn();
@@ -4089,11 +4364,8 @@ setInterval(updateCvClock, 1000);
       if(typeof d.pomodoroBreakMin === 'number'){ breakMin = d.pomodoroBreakMin; }
       if(typeof d.pomodoroNoiseOn === 'boolean'){ defaultNoiseOn = d.pomodoroNoiseOn; }
       if(typeof d.pomodoroLockOn === 'boolean'){ defaultLockOn = d.pomodoroLockOn; }
-      // 20261112：专注时显示悬浮窗（测试开关）——回填上次保存的状态，不触发 onChange 回传
-      if(typeof d.pomodoroAllowFloat === 'boolean'){
-        allowFloatInFocus = d.pomodoroAllowFloat;
-        try{ floatGateToggle.on = allowFloatInFocus; }catch(e){}
-      }
+      // 20261114：专注时是否显示悬浮窗改由主项目「聊天设置 › 番茄钟」控制，
+      //   开关值不再下发到 iframe（浮窗全在主项目那一层，iframe 里没有可管的对象）。
       if(typeof d.companionInteractMin === 'number'){ compInteractMin = d.companionInteractMin; }
       if(typeof d.companionInteractMax === 'number'){ compInteractMax = d.companionInteractMax; }
       if(Array.isArray(d.companionActions)){ compActions = d.companionActions.slice(); }

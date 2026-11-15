@@ -9687,6 +9687,8 @@ function seasonFocusChar(id){
          顺手做一次补算。App 从后台被叫醒、玩家还在聊天页时，
          四季里漏掉的照料就是靠这里补回来的。 */
       try { if (typeof careCatchUp === 'function') careCatchUp(); } catch(e){}
+      /* 20261115：留言线和照料线是两条独立的随机间隔，一起补 */
+      try { if (typeof nxCatchUp === 'function') nxCatchUp(); } catch(e){}
       try {
         if (typeof taSeedTick === 'function'){
           const before = (PLANET && PLANET.plants) ? PLANET.plants.length : 0;
@@ -9708,6 +9710,7 @@ function seasonFocusChar(id){
   document.addEventListener('visibilitychange', function(){
     if (document.visibilityState === 'visible'){
       try { if (typeof careCatchUp === 'function') careCatchUp(); } catch(e){}
+      try { if (typeof nxCatchUp === 'function') nxCatchUp(); } catch(e){}
     } else {
       /* 切走前把 careNextAt 存一下：进程被系统回收后，靠它算「漏了多久」 */
       try { seasonSave(); } catch(e){}
@@ -9715,6 +9718,7 @@ function seasonFocusChar(id){
   });
   window.addEventListener('focus', function(){
     try { if (typeof careCatchUp === 'function') careCatchUp(); } catch(e){}
+    try { if (typeof nxCatchUp === 'function') nxCatchUp(); } catch(e){}
   });
   if (window.parent && window.parent !== window){
     try { window.parent.postMessage({ type: 'season-ready' }, '*'); } catch(e){}
@@ -10026,6 +10030,14 @@ function seasonSerialize(){
     planet.pool = {};
     const poolKeys = Object.keys(PLANET.pool || {});
     poolKeys.forEach(k => { planet.pool[k] = (PLANET.pool[k] || []).map(pl => Object.assign({}, pl)); });
+    /* ★ 20261115：当前角色的池子必须以 PLANET.plants 为准写下去。
+       以前两份各存各的（plants 是最新的、pool[自己] 是上次切星球时的旧快照），
+       主项目后台照料把动作写进 pool 那一份，四季页读的是 plants 那一份 →
+       「留言里浇了四次水，植物互动记录一条没有」。这里强制对齐，从存盘就分叉不了。 */
+    {
+      const _vid = PLANET.viewId || PLANET.ownerId;
+      if (_vid) planet.pool[_vid] = planet.plants;
+    }
     planet.skins = Object.assign({}, PLANET.skins || {});
     planet.skin = Object.assign({}, PLANET.skin || {});
     planet.round = PLANET.round || 0;
@@ -10045,6 +10057,8 @@ function seasonSerialize(){
     planet.careNextAt = PLANET.careNextAt || 0;
     /* 20261112：每个角色各自的下一次照料时间（含不在看的那些星球） */
     planet.careNextAtBy = Object.assign({}, PLANET.careNextAtBy || {});
+    /* 20261115：每条留言线的「下一次该到点」——App 关着的时间靠它补算 */
+    planet.noteNextAtBy = Object.assign({}, PLANET.noteNextAtBy || {});
   } catch(e){}
   return {
     __season: true, version: '1.1', exportedAt: Date.now(),
@@ -10170,6 +10184,41 @@ function seasonSplitOld(d){
   });
   return { photos: photos, books: books, dexSeen: dexSeen, seeds: seeds };
 }
+/* 20261115：读档时把「旧快照」里多出来的记录并回正本（见 _seasonApply 调用处）。
+   和主项目 _seasonMergeActs 同一口径：只并集、不删改，让已经丢在 pool 里的
+   浇水 / 施肥 / 未照料 / 溢水记录能被捞回互动记录里。 */
+function seasonMergeActs(keep, stale){
+  try {
+    const byId = {};
+    (stale || []).forEach(function(p){ if (p && p.id) byId[p.id] = p; });
+    (keep || []).forEach(function(pl){
+      if (!pl || !pl.id) return;
+      const old = byId[pl.id];
+      if (!old) return;
+      const seen = {}, all = [];
+      (pl.acts || []).concat(old.acts || []).forEach(function(a){
+        if (!a) return;
+        const k = (a.t || 0) + '|' + (a.k || '') + '|' + (a.by || '');
+        if (seen[k]) return;
+        seen[k] = 1; all.push(a);
+      });
+      if (all.length !== (pl.acts || []).length){
+        all.sort(function(a, b){ return (a.t || 0) - (b.t || 0); });
+        pl.acts = all.slice(-80);
+      }
+      if ((old.bonusDays || 0) > (pl.bonusDays || 0)) pl.bonusDays = old.bonusDays;
+      if ((old.grow || 0) > (pl.grow || 0)) pl.grow = old.grow;
+      const a1 = pl.careDay, a2 = old.careDay;
+      if (a1 && a2 && a1.d === a2.d){
+        ['water', 'fert', 'waterP', 'waterC', 'fertP', 'fertC'].forEach(function(f){
+          a1[f] = Math.max(a1[f] || 0, a2[f] || 0);
+        });
+      } else if (!a1 && a2){
+        pl.careDay = a2;
+      }
+    });
+  } catch(e){}
+}
 function _seasonApply(d){
   if (Array.isArray(d.books)){
     /* ---- 新模型：四本账各读各的 ---- */
@@ -10210,6 +10259,13 @@ function _seasonApply(d){
     if (gp.pool && typeof gp.pool === 'object'){
       Object.keys(gp.pool).forEach(k => { PLANET.pool[k] = (gp.pool[k] || []).map(pl => Object.assign({}, pl)); });
     }
+    /* ★ 20261115：老存档里 plants 与 pool[当前角色] 可能已经分叉
+       （后台照料写进了 pool 那一份）→ 读档时先把快照里的记录并回来，
+       否则这次打开四季，互动记录里还是没有那些浇水/施肥。 */
+    try {
+      const _vid = gp.viewId || gp.ownerId || PLANET.viewId;
+      if (_vid && PLANET.pool[_vid]) seasonMergeActs(PLANET.plants, PLANET.pool[_vid]);
+    } catch(e){}
     if (gp.skins) PLANET.skins = Object.assign({}, gp.skins);
     if (gp.skin) PLANET.skin = Object.assign({}, gp.skin);
     if (gp.round != null) PLANET.round = gp.round;
@@ -10227,6 +10283,10 @@ function _seasonApply(d){
        不至于把上一个人的节奏算到别人头上。 */
     if (gp.careNextAtBy && typeof gp.careNextAtBy === 'object'){
       PLANET.careNextAtBy = Object.assign({}, gp.careNextAtBy);
+    }
+    /* 20261115：留言时间线（没有就是老档，第一次进星球时现排） */
+    if (gp.noteNextAtBy && typeof gp.noteNextAtBy === 'object'){
+      PLANET.noteNextAtBy = Object.assign({}, gp.noteNextAtBy);
     }
   }
   if (Array.isArray(d.impFound) && typeof IMP_FOUND !== 'undefined'){
@@ -11621,23 +11681,103 @@ function aiTick(ch, id){
   }).catch(function(){});
 }
 
-/* ---- ③ 抽字卡 + ④ 定时邀请：进星球页就开始跑 ---- */
+/* ---- ③ 抽字卡：进星球页就开始跑 ----
+   ★ 20261115 玩家报：「隔了三天，一条新留言都没有，最新的只有照料。」
+     根因：这条线只有一个 setTimeout，而且只在 curView==='vPlanet' 时才做事 ——
+     App 关着 / 停在别的子页，它既不动手也不补算，所以三天里只有「照料」
+     （照料有 careCatchUp 补算）而没有任何字卡留言。
+     ⇒ 和照料一样落一个「下一次该到点」的时间（PLANET.noteNextAtBy[角色]），
+       回到前台时按这条时间线把漏掉的留言一条一条补回来（at 用当时那一跳的时间，
+       不会全挤在「刚刚」）。每条留言仍是随机区间，和照料是两条独立的线。 */
 let nxLife = null;
+function nxGapRange(){
+  return {
+    lo: (typeof INTERACT !== 'undefined' && INTERACT.cardMinMs) ? INTERACT.cardMinMs : 7200000,
+    hi: (typeof INTERACT !== 'undefined' && INTERACT.cardMaxMs) ? INTERACT.cardMaxMs : 14400000
+  };
+}
+function nxNextAtOf(cid){
+  if (!cid) return 0;
+  const m = PLANET.noteNextAtBy || (PLANET.noteNextAtBy = {});
+  return (typeof m[cid] === 'number') ? m[cid] : 0;
+}
+function nxSetNextAt(cid, t){
+  if (!cid || !t) return;
+  const m = PLANET.noteNextAtBy || (PLANET.noteNextAtBy = {});
+  m[cid] = t;
+}
+function nxEnsureNextAt(cid){
+  if (!cid) return 0;
+  const n = nxNextAtOf(cid);
+  if (n) return n;
+  const g = nxGapRange();
+  const t = Date.now() + seasonRandGap(g.lo, g.hi);
+  nxSetNextAt(cid, t);
+  return t;
+}
+/* 留言补算：每颗星球各自的时间线，最多补 3 天 / 6 条，逐条 backdate */
+function nxCatchUp(){
+  try {
+    const now = Date.now(), g = nxGapRange();
+    const ids = (typeof careAllCharIds === 'function')
+      ? careAllCharIds() : [PLANET.viewId || PLANET.ownerId];
+    const _bak = _nxQuiet;
+    _nxQuiet = true;
+    ids.forEach(function(cid){
+      const pool = (typeof carePoolOf === 'function') ? carePoolOf(cid) : PLANET.plants;
+      if (!cid || !pool || !pool.length) return;
+      let next = nxNextAtOf(cid);
+      if (!next){
+        /* ★ 20261115：老存档没有这条时间线。**不能**直接从「现在」开始排 ——
+           玩家隔了三天打开，看到的就是「今天一条留言都没有」（正是玩家报的现象）。
+           有上次留言就从那条往后推一格，没有才从此刻起算。 */
+        const prev = notesOf(cid);
+        const lastAt = prev.length ? (prev[prev.length - 1].at || 0) : 0;
+        if (!lastAt){ nxSetNextAt(cid, now + seasonRandGap(g.lo, g.hi)); return; }
+        next = lastAt + seasonRandGap(g.lo, g.hi);
+        nxSetNextAt(cid, next);
+        if (next > now) return;
+      }
+      if (next > now) return;
+      const CAP = 3 * 86400000;
+      if (next < now - CAP) next = now - CAP;
+      let guard = 0;
+      /* 3 天 × 2~4 小时的区间，正常也就十几条；上限留 12 条，够了 */
+      while (next <= now && guard++ < 12){
+        const ch = charById(cid);
+        const pl = plantNeedingCare(cid) || pool[0];
+        try {
+          nxPush(cid, 'draw', seasonDrawCard(ch, pl, 'planet'), { at: next, plantId: pl && pl.id });
+        } catch(e){}
+        next += seasonRandGap(g.lo, g.hi);
+      }
+      nxSetNextAt(cid, next > now ? next : now + seasonRandGap(g.lo, g.hi));
+    });
+    _nxQuiet = _bak;
+  } catch(e){}
+}
 function startCharLife(){
   if (nxLife) return;
   const tick = function(){
-    if (curView !== 'vPlanet') { scheduleNext(); return; }
-    if (!PLANET.plants.length) { scheduleNext(); return; }
+    nxLife = null;
     const id = PLANET.viewId || PLANET.ownerId;
+    const g = nxGapRange();
+    /* 每次做事（或跳过）都把下一跳往后推一格，再按这条时间线排心跳 */
+    const bump = function(){
+      nxSetNextAt(id, Date.now() + seasonRandGap(g.lo, g.hi));
+      scheduleNext();
+    };
+    if (curView !== 'vPlanet') { bump(); return; }
+    if (!PLANET.plants.length) { bump(); return; }
     const ch = charById(id);
     /* 20261109：借这个节拍顺手翻一下还没留言的书签（「过几天又翻到了」） */
     try { bookNoteTick(ch, id); } catch(e){}
     /* ---- AI 模式：交给模型决策 ---- */
-    if (INTERACT.mode === 'ai'){ aiTick(ch, id); scheduleNext(); return; }
+    if (INTERACT.mode === 'ai'){ aiTick(ch, id); bump(); return; }
     /* ---- 字卡模式：本地池子随机 ---- */
     const list = notesOf(id);
     const last = list.length ? list[list.length - 1] : null;
-    if (last && Date.now() - last.at < INTERACT.cardGapMs * 0.7) { scheduleNext(); return; }
+    if (last && Date.now() - last.at < INTERACT.cardGapMs * 0.7) { bump(); return; }
     const roll = Math.random();
     if (roll < 0.7){
       const pl = plantNeedingCare(id) || PLANET.plants[0];
@@ -11645,18 +11785,16 @@ function startCharLife(){
     }
     /* ★ 20261112 用户指定：爱意邀请**不挂抽卡线**，已经挪到 startCare 的照料循环里。
        所以这里只剩「留言」和「什么都不做」——那 30% 留白比刷屏更像真人。 */
-    scheduleNext();
+    bump();
   };
-  /* 每次触发后在 [cardMinMs, cardMaxMs] 随机取下一次（随机固定区间） */
   const scheduleNext = function(){
-    const lo = (typeof INTERACT !== 'undefined' ? INTERACT.cardMinMs : 7200000);
-    const hi = (typeof INTERACT !== 'undefined' ? INTERACT.cardMaxMs : 14400000);
-    nxLife = setTimeout(tick, seasonRandGap(lo, hi));
+    const id = PLANET.viewId || PLANET.ownerId;
+    const n = nxEnsureNextAt(id);
+    const wait = Math.max(1500, Math.min(2147000000, n - Date.now()));
+    nxLife = setTimeout(tick, wait);
   };
-  /* demo 首次用秒级（INTERACT.cardGapMs）快速看到效果，之后走区间随机 */
-  const firstGap = (typeof INTERACT !== 'undefined' ? INTERACT.cardGapMs : 40000);
   nxLife = setTimeout(tick, 9000);   /* 进来先等一句，别让人干等太久 */
-  /* 上面首次 9 秒后 tick 会 scheduleNext 走区间；这里不另起 setInterval */
+  /* 上面首次 9 秒后 tick 会 bump 走区间；这里不另起 setInterval */
 }
 
 /* ---- 球面投影：经纬度 → 屏幕坐标 + 法线 ---- */
@@ -14865,14 +15003,14 @@ function careTickAt(t, quiet, cid){
   const cands = list.filter(function(x){
     return x && !x.burned && !x.dead && (x.grow || 0) < 100;
   });
-  /* ★ 20261112：全都长满了 / 全烧了 → 以前直接 return 'none'，
-     结果是「留言一条没有、互动记录一条没有」，看着像整个功能死了。
-     现在改成「去看了一眼」——照样记进当天的观察摘要。 */
+  /* ★ 20261115c 玩家：「星球上都还没有种子，角色照料个啥呀 ——
+     星球上没有种子的时候只能留言，不能够照料。」
+     以前这里是「去看了一眼」并记一条观察摘要，于是空星球 / 全枯的池子上
+     会挂出一串「照料」记录，看着像 TA 在照顾不存在的植物。
+     现在：池里没有任何可照料的活株（空 / 全枯 / 全烧 / 全长满）→ 完全不动、不留痕，
+     只让留言那条线继续走。 */
   if (!cands.length){
-    const any = list[0];
-    if (any && !any.byId) any.byId = target;   /* 摘要必须记到这颗星球的主人 */
-    careSumAdd(any, '看', now);
-    return { kind: 'skip', pl: any, who: '', cid: target };
+    return { kind: 'none', cid: target };
   }
   const pl = cands[Math.floor(Math.random() * cands.length)];
   /* 老档里个别株可能没有 byId（早期版本没记）→ 按池归属补上，
@@ -14939,7 +15077,8 @@ function careTickAt(t, quiet, cid){
 function carePump(live){
   const now = Date.now();
   const g = careGapRange();
-  let moved = false;
+  /* 20261115c：每次 pump 先把「星球上已经没有活株了」的照料摘要清掉（幂等，没有就不动） */
+  let moved = carePurgeOrphan();
   careAllCharIds().forEach(function(cid){
     const list = carePoolOf(cid);
     if (!list.length) return;                  /* 这颗星球还没种过东西 → 不管它 */
@@ -14986,6 +15125,27 @@ function afterCareRender(){
   try { renderPlanetList(); } catch(e){}
   try { drawPlanetFrame(); } catch(e){}
   try { if (sheetPlant) renderPlantSheet(); } catch(e){}
+}
+/* ★ 20261115c：清掉「星球上根本没有可照料的活株」时遗留下来的照料摘要。
+   玩家：「星球上都还没有种子，角色照料个啥呀」—— 那些条目是旧版本写的，不清掉会一直挂在留言区。
+   只删 kind==='care' 且该角色池里一株活的都没有的条目；有活株的星球一条不动。 */
+function carePurgeOrphan(){
+  try {
+    if (!Array.isArray(PLANET.notes) || !PLANET.notes.length) return false;
+    const deadIds = {};
+    careAllCharIds().forEach(function(cid){
+      const list = carePoolOf(cid);
+      const alive = list.some(function(pl){ return pl && !pl.dead && !pl.burned; });
+      if (!alive) deadIds[cid] = 1;
+    });
+    if (!Object.keys(deadIds).length) return false;
+    let changed = false;
+    for (let i = PLANET.notes.length - 1; i >= 0; i--){
+      const n = PLANET.notes[i];
+      if (n && n.kind === 'care' && deadIds[n.byId]) { PLANET.notes.splice(i, 1); changed = true; }
+    }
+    return changed;
+  } catch(e){ return false; }
 }
 /* 对外入口：回到前台 / 收到宿主 tick / 刚进页面 →
    把所有星球漏掉的那段一次性补回来（不再只管正在看的这颗） */
@@ -15040,6 +15200,7 @@ function startPlanet(){
   /* 20261112：先把「没人在的这段时间」补算掉，再开实时这条线 ——
      否则一进来就是「今天全空」，玩家要等好几个 30~90 分钟才看到 TA 动一次。 */
   try { careCatchUp(); } catch(e){}
+  try { nxCatchUp(); } catch(e){}
   startCare();
   startCharLife();
   startLoveLine();          /* 爱意邀请：独立的一条固定间隔线（20261112 用户定案） */
@@ -15167,34 +15328,16 @@ function updateCareBtns(){
       : 'WATER · 这一轮没有能浇的株了') + '</small>';
   }
   const sw = $('#plsWater'), sf = $('#plsFeed');
-  /* 这两个按钮属于「被点开的那一株」，文案按这株自己的账走 */
-  const _sp = (typeof sheetPlant !== 'undefined') ? sheetPlant : null;
+  /* ★ 20261115 用户要求：植株面板里「浇水 / 施肥」两行小字（第几次、有效几次）
+     全部删掉 —— 那行小字把按钮撑得很高、布局难看。额度信息只在
+     「浇 一 次 水」那颗大按钮和点 ⓘ 的规则页里出现，这里只留按钮名字。 */
   if (sw){
     sw.removeAttribute('disabled');
-    /* 20261111：显示的是「你自己」第几次 —— 有效额度是你 3 次 + TA 3 次，分开算 */
-    const mine = _sp ? careSideOf('浇水', _sp, 'me') : 0;
-    const myCap = careSideCapOf('浇水');
-    const other = _sp ? careSideOf('浇水', _sp, 'char') : 0;
-    sw.innerHTML = '浇 水<small>' + (_sp
-      ? (mine < myCap
-          ? ('你这株今天第 ' + (mine + 1) + ' 次 · 有效 ' + myCap + ' 次')
-          : ('你这株今天第 ' + (mine + 1) + ' 次 · 你已浇满 ' + myCap + ' 次' + (other < myCap ? '，剩 ' + (myCap - other) + ' 次等 TA 来浇' : '')))
-      : '打开一株再浇') + '</small>';
+    sw.innerHTML = '浇 水';
   }
   if (sf){
     sf.removeAttribute('disabled');
-    /* 20261111：施肥与浇水同规 —— 显示「你自己」第几次，有效额度你 2 次 + TA 2 次 */
-    const mineF = _sp ? careSideOf('施肥', _sp, 'me') : 0;
-    const myCapF = careSideCapOf('施肥');
-    const otherF = _sp ? careSideOf('施肥', _sp, 'char') : 0;
-    sf.innerHTML = '施 肥<small>' + (_sp
-      ? (mineF < myCapF
-          ? ('你这株今天第 ' + (mineF + 1) + ' 次 · 有效 ' + myCapF + ' 次')
-          : ('你这株今天第 ' + (mineF + 1) + ' 次 · 你已施满 ' + myCapF + ' 次' +
-             (otherF < myCapF
-               ? '，剩 ' + (myCapF - otherF) + ' 次等 TA 来施'
-               : '，再多施会肥伤')))
-      : '打开一株再施') + '</small>';
+    sf.innerHTML = '施 肥';
   }
 }
 /* ============================================================
