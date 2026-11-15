@@ -387,9 +387,14 @@ public class BmRemoteControlPlugin extends Plugin {
         String cookie = call.getString("cookie");
         String body = call.getString("body");      // 20261107 新增：POST 请求体（weapi 加密体）
         if (url == null || url.isEmpty()) { resolveErr(call, "empty_url"); return; }
-        // 未显式传 cookie 时，用本地已保存的 Cookie
+        /* 20261113 安全修复：以前不管请求哪个域名，都会自动带上玩家保存的 MUSIC_U Cookie。
+           现在只有请求网易云自家域名时才自动带；第三方音源（洛雪 Huibq 等）一律不带，
+           避免把账号凭证发给外部服务器。显式传入的 cookie 参数仍然优先。 */
+        boolean isNeteaseHost = url.indexOf("music.163.com") >= 0 || url.indexOf("126.net") >= 0
+                || url.indexOf(".163.com") >= 0;
+        // 未显式传 cookie 时，用本地已保存的 Cookie（仅限网易云域名）
         if (cookie == null || cookie.isEmpty()) {
-            cookie = neteasePrefs().getString(NETEASE_KEY_COOKIE, "");
+            cookie = isNeteaseHost ? neteasePrefs().getString(NETEASE_KEY_COOKIE, "") : "";
         }
         try {
             java.net.HttpURLConnection conn = null;
@@ -402,6 +407,17 @@ public class BmRemoteControlPlugin extends Plugin {
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36");
             conn.setRequestProperty("Referer", "https://music.163.com/");
             conn.setRequestProperty("Accept", "application/json,text/plain,*/*");
+            /* 20261113：允许前端传入自定义请求头。洛雪社区音源后端（lxmusicapi.onrender.com）
+               要求 X-Request-Key，而它不给 CORS 头，WebView 里 fetch 会被拦，只能走原生。 */
+            com.getcapacitor.JSObject extraHeaders = call.getObject("headers");
+            if (extraHeaders != null) {
+                java.util.Iterator<String> hit = extraHeaders.keys();
+                while (hit.hasNext()) {
+                    String hk = hit.next();
+                    String hv = extraHeaders.getString(hk);
+                    if (hk != null && !hk.isEmpty() && hv != null) conn.setRequestProperty(hk, hv);
+                }
+            }
             if (cookie != null && !cookie.isEmpty()) {
                 conn.setRequestProperty("Cookie", cookie);
             }
