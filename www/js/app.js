@@ -10090,6 +10090,8 @@ function msgTimeLabel(ts) {
 /* ---------- 视图切换 ---------- */
 function switchView(viewName) {
   const prevView = document.body.dataset.view;
+  /* 20261115：回到会话列表页时必须展开 —— 否则 PC 端列表列宽为 0，整页空白 */
+  if (viewName === 'chatlist') pcListSetHidden(false);
   // 20260929aw：离开聊天页即把当前会话标记为已读——修复「在聊天页里看过消息后，
   // 退到导航页仍提示未读」的滞后：期间送达的消息此前只 appendMessage 不更新已读时间
   if (prevView === 'chat' && viewName !== 'chat') {
@@ -10123,6 +10125,29 @@ function switchView(viewName) {
   // 20261008：打字卡悬浮窗常驻圆点显隐同步（仅单聊聊天页+打字卡开+悬浮窗模式才显示；
   // 离开聊天页/进群聊时自动收起待机面板并隐藏圆点）
   try { window.bmTypecard && bmTypecard.updateFloatDot && bmTypecard.updateFloatDot(); } catch (e) {}
+}
+
+/* ---------- PC 宽屏：会话列表收起 / 展开（20261115） ----------
+   只作用于 ≥900px 的三栏布局；手机端一律返回 false / 不落类，点击行为与改动前完全一致。
+   交互：已停在聊天页时点左侧导航「聊天」→ 收起列表；再点一下 → 展开；
+        从主页/朋友圈点「聊天」→ 照常切页，并把列表恢复成展开。 */
+function pcListIsWide() {
+  try { return window.matchMedia('(min-width: 900px)').matches; } catch (e) { return false; }
+}
+function pcListIsHidden() {
+  return document.body.classList.contains('pc-list-hidden');
+}
+function pcListSetHidden(hidden) {
+  // 窄屏绝不保留收起态：缩窄时自动失效，再放大也不会莫名少一栏
+  document.body.classList.toggle('pc-list-hidden', !!hidden && pcListIsWide());
+}
+/* 点「聊天」时先问它：返回 true = 这次点击被「收起/展开」消费，不再切页 */
+function pcListToggleByTab() {
+  if (!pcListIsWide()) return false;
+  const v = document.body.dataset.view;
+  if (v === 'chat') { pcListSetHidden(!pcListIsHidden()); return true; }
+  if (v === 'chatlist' && pcListIsHidden()) { pcListSetHidden(false); return true; }
+  return false;
 }
 
 /* ---------- 多指触摸守卫（20261001ci）----------
@@ -17919,8 +17944,22 @@ function showExportReminderBar(days) {
 function bindEvents() {
   // 底部导航
   $$('.tab-item').forEach(t => {
-    t.onclick = () => { closeModalPanels(); switchView(t.dataset.view); };
+    t.onclick = () => {
+      closeModalPanels();
+      /* 20261115：PC 宽屏已停在聊天页时，点「聊天」不再重复切页，改为收起/展开左侧列表；
+         手机端 pcListToggleByTab() 直接返回 false，走的还是原来那行 switchView */
+      if (t.dataset.view === 'chatlist' && pcListToggleByTab()) return;
+      switchView(t.dataset.view);
+    };
   });
+
+  /* 20261115：窗口从宽屏缩到窄屏时清掉收起态（窄屏没有这回事） */
+  try {
+    const mq = window.matchMedia('(min-width: 900px)');
+    const onMq = () => { if (!mq.matches) document.body.classList.remove('pc-list-hidden'); };
+    if (mq.addEventListener) mq.addEventListener('change', onMq);
+    else if (mq.addListener) mq.addListener(onMq);
+  } catch (e) {}
 
   // 20261106：聊天导航页下拉刷新（#chat-list 滚动到顶后下拉触发）
   if (window.bmFx) {

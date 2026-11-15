@@ -1659,6 +1659,14 @@ body.td-gray .cp-hero {
   body[data-view="chat"] #view-chatlist { display: flex; }
   body[data-view="chat"] #view-chat { display: flex; }
   body[data-view="chatlist"] #pc-placeholder { display: flex; }
+
+  /* 20261115：PC 宽屏侧边列表可收起 —— 规则全部写在 ≥900px 断点内，
+     窄屏（手机）根本没有这个类参与布局，行为一点不变。
+     交互：已停在聊天页时点左侧导航「聊天」→ 收起；再点一下 → 展开。
+     收起后第 2 列宽归 0，聊天区直接吃掉整列宽 */
+  body.pc-list-hidden #app { grid-template-columns: 88px 0 1fr; }
+  body.pc-list-hidden #view-chatlist { display: none !important; }
+  #app { transition: grid-template-columns .26s cubic-bezier(.4, 0, .2, 1); }
   body[data-view="home"] #view-home { display: flex; }
   body[data-view="moments"] #view-moments { display: flex; }
 
