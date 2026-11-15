@@ -1198,10 +1198,56 @@ function _pieReplyLine(pie) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-/* 往某位访客的会话里写两条消息；正开着他/她的聊天页就即时上屏 */
-async function _sendApplePieTo(charId, playerLine, replyLine) {
+/* 20261116：把卡片画布上「这一炉出炉的样子」截成一张图，随消息一起存进会话。
+   · 画布是 DPR 放大的（如 780×1520），先缩到 560 宽再转 JPEG，否则一张要几百 KB；
+   · 画布每帧 clearRect，本身是透明的，所以先铺一层卡片同款深底，图才不会成黑块；
+   · 截的就是结算那一帧 —— 派、光环、评级文字都在，和玩家看到的一模一样。 */
+function _capturePieImage(card) {
+  try {
+    const cv = card && card.querySelector ? card.querySelector('canvas') : null;
+    if (!cv || !cv.width || !cv.height) return '';
+    const MAXW = 560;
+    /* 只截「派 + 评级」那一段：整张画布是竖长的手机比例，直接塞进卡片会变成
+       一张又高又空的图（上面一大片背景、派缩在中间）。结算画面里派的中心在 0.63H、
+       评级标题在 0.772H、副标到约 0.86H，所以从 0.40H 起截 0.50H 高，
+       正好把顶光、派、光环和两行结论包住，下面留一点余白。 */
+    const sy = Math.round(cv.height * 0.40);
+    const sh = Math.max(1, Math.round(cv.height * 0.50));
+    const sw = cv.width;
+    const outW = Math.min(MAXW, sw);
+    const outH = Math.max(1, Math.round(outW * sh / sw));
+    const out = document.createElement('canvas');
+    out.width = outW;
+    out.height = outH;
+    const g = out.getContext('2d');
+    g.fillStyle = '#1a1226';
+    g.fillRect(0, 0, outW, outH);
+    g.drawImage(cv, 0, sy, sw, sh, 0, 0, outW, outH);
+    return out.toDataURL('image/jpeg', 0.75);
+  } catch (e) { return ''; }
+}
+
+/* 往某位访客的会话里写两条消息；正开着他/她的聊天页就即时上屏。
+   ★ 20261116 玩家定案：
+     ① 我这条不再是一句纯文字，而是**一张卡片**（派图 + 我写的寄语 + 评级）；
+     ② TA 的回复**随机抽字卡**，不再走下面那套按火候分档的预设台词。
+     _pieReplyLine 保留着（群聊/别处若引用不至于报错），这里不再调用。 */
+async function _sendApplePieTo(charId, note, pie, card) {
   const now = Date.now();
-  const mine = { id: uid('msg'), charId, from: 'me', type: 'text', content: playerLine, time: now };
+  pie = pie || {};
+  const img = _capturePieImage(card);
+  const mine = {
+    id: uid('msg'), charId, from: 'me', type: 'pieCard', time: now,
+    content: {
+      img,
+      note: String(note == null ? '' : note).trim().slice(0, 120),
+      title: pie.title || '',
+      sub: pie.sub || '',
+      perfect: !!pie.perfect,
+      cook: pie.cook || '',
+      slices: pie.slices || 0,
+    },
+  };
   await idbPut('messages', mine);
   let onThisChat = false;
   try {
@@ -1212,7 +1258,42 @@ async function _sendApplePieTo(charId, playerLine, replyLine) {
   if (onThisChat) { try { appendMessage(mine); } catch (e) {} }
   // 隔一会儿再回，像真的在读那句话
   setTimeout(async () => {
-    const m2 = { id: uid('msg'), charId, from: 'them', type: 'text', content: replyLine, time: Date.now() };
+    /* 20261116（玩家定案）：TA 的回复不是一条字卡，而是**按「多字卡组合回复」的方式**
+       从回复字卡里随机抽 2~3 条不重复的拼成一句（顺序就是抽到的顺序，用「，」连接）。
+       抽不到（字卡库空 / 全被禁词与角色禁用分组滤掉）才给一句最短的承接，
+       绝不退回按火候写好的那套预设 —— 那套已经不再调用。 */
+    let reply = '';
+    try {
+      const c = (typeof characters !== 'undefined' ? characters : []).find(x => x.id === charId);
+      if (typeof drawReply === 'function' && typeof cards !== 'undefined' && cards) {
+        const ban = (c && typeof getCharBanWords === 'function') ? getCharBanWords(c) : [];
+        const rel = c ? (c.relation || null) : null;
+        const bannedGrp = c ? (c.bannedGroups || []) : [];
+        const want = 2 + Math.floor(Math.random() * 2);   // 2~3 条，与多字卡组合一致
+        const used = new Set();
+        const picked = [];
+        for (let i = 0; i < want; i++) {
+          let t = '';
+          let guard = 0;
+          /* drawReply 每次独立抽，可能抽到重复的，抽空了还可能返回占位句：
+             多给几次机会，重复 / 占位 / 状态语（「稍等」这类）一律丢弃重抽。 */
+          while (guard < 12) {
+            t = String(drawReply(cards, ban, rel, bannedGrp) || '').trim();
+            if (t && !used.has(t) && !/^……（我一时不知道说什么）$/.test(t) &&
+                !(typeof _svNoteBadCard === 'function' && _svNoteBadCard(t))) break;
+            t = '';
+            guard++;
+          }
+          if (!t) continue;
+          used.add(t);
+          picked.push(t);
+        }
+        reply = picked.join('，');
+      }
+    } catch (e) { reply = ''; }
+    reply = String(reply || '').trim();
+    if (!reply) reply = '……嗯。';
+    const m2 = { id: uid('msg'), charId, from: 'them', type: 'pieReply', time: Date.now(), content: { text: reply } };
     try { await idbPut('messages', m2); } catch (e) {}
     if (onThisChat) { try { appendMessage(m2); } catch (e) {} }
   }, 1300);
@@ -1245,13 +1326,22 @@ function openApplePieGiftModal(d, giftBtn) {
           <div id="apg-ava">${avaHtml(picked)}</div>
           <div class="apg-txt">
             <b id="apg-name">${escapeHtml(picked.name || '访客')}</b>
-            <small id="apg-note">${picked.id === d.charId ? '这张入梦签上的访客' : '已更换收礼人'}</small>
+            <!-- 20261116 修「送失败」：这个 id 以前也叫 apg-note，和下面寄语的 textarea 撞了。
+                 querySelector('#apg-note') 拿到的是这个 <small>（没有 .value），
+                 于是 layer.querySelector('#apg-note').value.trim() 直接抛 TypeError，
+                 派其实已经写进库了，界面上却报「送失败了」。改名 apg-who-note。 -->
+            <small id="apg-who-note">${picked.id === d.charId ? '这张入梦签上的访客' : '已更换收礼人'}</small>
           </div>
         </div>
       </div>
       <div class="apg-grid" id="apg-grid" style="display:none;"></div>
+      <!-- 20261116 玩家要求：卡片要带「送出去时说的那句话」，所以这里给一个输入框，玩家自己填（可留空） -->
+      <div class="apg-note">
+        <label for="apg-note">写一句话给他 <span>可留空</span></label>
+        <textarea id="apg-note" rows="2" maxlength="120" placeholder="趁热吃，别等我。"></textarea>
+      </div>
       <button class="btn primary block" id="apg-send">送出</button>
-      <div class="apg-tip" id="apg-tip">送出去之后，TA 会在自己的聊天里回你一句。</div>
+      <div class="apg-tip" id="apg-tip">送出去之后，TA 会在聊天里抽一张字卡回你。</div>
     </div>
   `;
   document.body.appendChild(layer);
@@ -1282,7 +1372,7 @@ function openApplePieGiftModal(d, giftBtn) {
         picked = c;
         layer.querySelector('#apg-ava').innerHTML = avaHtml(c);
         layer.querySelector('#apg-name').textContent = c.name || '访客';
-        layer.querySelector('#apg-note').textContent =
+        layer.querySelector('#apg-who-note').textContent =
           c.id === d.charId ? '这张入梦签上的访客' : '已更换收礼人';
         grid.querySelectorAll('.apg-cell').forEach(x => x.classList.toggle('on', x === cell));
         grid.style.display = 'none';
@@ -1296,7 +1386,9 @@ function openApplePieGiftModal(d, giftBtn) {
     btn.disabled = true;
     btn.textContent = '送出中…';
     try {
-      await _sendApplePieTo(picked.id, _piePlayerLine(pie), _pieReplyLine(pie));
+      const noteEl = layer.querySelector('#apg-note');
+      const note = noteEl ? noteEl.value.trim() : '';
+      await _sendApplePieTo(picked.id, note, pie, card);
       close();
       miniToast('苹果派送给 ' + (picked.name || 'TA') + ' 了');
       if (giftBtn) {
@@ -1344,8 +1436,10 @@ function renderFxDebug() {
   const groups = [];
   /* ★ 20261116（玩家要求）：苹果派十六档结算单独开一栏 —— 玩家看动画用，不必真去玩一遍。
      档位表只有一份，在 festival-fx-special.js 的 BMFX_SPECIAL.PIE_TIERS 里，
-     和结算判词 evePieJudge 的优先级一一对应；这里只负责把「第几档」传下去。 */
-  const pieTiers = (window.BMFX_SPECIAL && Array.isArray(window.BMFX_SPECIAL.PIE_TIERS))
+     和结算判词 evePieJudge 的优先级一一对应；这里只负责把「第几档」传下去。
+     ★ 20261116 玩家再定：这 16 档只给开发者模式看 ——
+       从「入梦签效果查看」（玩家输密码进入，_playerFxView）进来时整栏不出现。 */
+  const pieTiers = (chatSettings.developerMode && window.BMFX_SPECIAL && Array.isArray(window.BMFX_SPECIAL.PIE_TIERS))
     ? window.BMFX_SPECIAL.PIE_TIERS : [];
   if (pieTiers.length) {
     const pieItems = pieTiers.map((t, i) =>
@@ -2289,6 +2383,8 @@ async function renderChatList() {
       else if (lastMsg.type === 'topic') brief = '💬 话题：' + (lastMsg.content && lastMsg.content.text || '');
       else if (lastMsg.type === 'vote') brief = '📊 投票：' + (lastMsg.content && lastMsg.content.question || '');
       else if (lastMsg.type === 'letter') brief = lastMsg.from === 'me' ? '[寄出的书信]' : '[书信]';
+      else if (lastMsg.type === 'pieCard') brief = speakerName + '：[苹果派]';
+      else if (lastMsg.type === 'pieReply') brief = speakerName + '：[苹果派的回话]';
       else if (lastMsg.type === 'selfAdjust') brief = (lastMsg.content && lastMsg.content.done) ? '[改好了] 数值修改' : '[数值修改申请]';
       else if (lastMsg.type === 'call') brief = (lastMsg.content && lastMsg.content.group) ? `[群${lastMsg.content.kind === 'video' ? '视频' : '语音'}通话]` : '[通话]';
       else if (typeof lastMsg.content === 'string') brief = speakerName + '：' + lastMsg.content;
@@ -2348,6 +2444,8 @@ async function renderChatList() {
       else if (lastMsg.type === 'coin') brief = '[决策币]';
       else if (lastMsg.type === 'poke') brief = lastMsg.from === 'me' ? '你戳了戳 TA' : 'TA 戳了戳你';
       else if (lastMsg.type === 'letter') brief = lastMsg.from === 'me' ? '[寄出的书信]' : '[收到的书信]';
+      else if (lastMsg.type === 'pieCard') brief = lastMsg.from === 'me' ? '[送出的苹果派]' : '[苹果派]';
+      else if (lastMsg.type === 'pieReply') brief = '[苹果派的回话]';
       else if (lastMsg.type === 'share') brief = '[朋友圈分享]';
       else if (lastMsg.type === 'music') brief = '[一起听歌]';
       else if (lastMsg.type === 'seasonlove') brief = '[四季邀请]';
@@ -4383,6 +4481,30 @@ function msgBodyHtml(m, oneLine = false) {
       return `${quoteHtml(m.quote)}<img class="msg-img" src="${imgSrcAttr(m.content, true)}" data-full="${imgSrcAttr(m.content)}" data-msgid="${m.id}">`;
     case 'emoji':
       return `${quoteHtml(m.quote)}<img class="msg-img msg-emoji" src="${imgSrcAttr(m.content)}" data-msgid="${m.id}">`;
+    /* 20261116：平安夜苹果派 —— 玩家把烤好的派送给访客，以一张卡片落在会话里：
+       派图（出炉那一帧的截图，含评级）+ 评级标题 + 玩家自己填的那句话。
+       卡片自带深底，所以放在气泡里也不靠气泡配色撑可读性。 */
+    case 'pieCard': {
+      const p = m.content || {};
+      const note = String(p.note || '').trim();
+      const img = typeof p.img === 'string' ? p.img : '';
+      return `${quoteHtml(m.quote)}<div class="msg-card msg-pie-card">
+        <span class="msg-card-tag"><i data-icon="gift" data-size="15"></i> 平安夜 · 苹果派</span>
+        ${img ? `<img class="pie-card-img" src="${escapeHtml(img)}" alt="苹果派">` : ''}
+        ${p.title ? `<div class="pie-card-title">${escapeHtml(p.title)}</div>` : ''}
+        ${note ? `<div class="pie-card-note">「${escapeHtml(note)}」</div>` : ''}
+      </div>`;
+    }
+    /* 20261116（玩家定）：TA 收到苹果派的回话也走卡片，不再是裸气泡 ——
+       内容就是那 2~3 张字卡拼成的一句，外面套一张跟苹果派同款的卡。 */
+    case 'pieReply': {
+      const rp = m.content || {};
+      const txt = typeof rp === 'string' ? rp : String(rp.text || '');
+      return `${quoteHtml(m.quote)}<div class="msg-card msg-pie-reply">
+        <span class="msg-card-tag"><i data-icon="gift" data-size="15"></i> 苹果派的回话</span>
+        <div class="pie-reply-text">${escapeHtml(txt)}</div>
+      </div>`;
+    }
     case 'coin':
       return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag"><i data-icon="coin" data-size="16"></i> 决策币</span><div>${escapeHtml(m.content.question)}</div><div style="margin-top:6px;font-size:20px;font-weight:700;color:var(--purple-soft);">${escapeHtml(m.content.result)}</div></div>`;
     /* 20261114：角色自调数值的申请卡 / 完成卡 —— 作为一条真实消息待在聊天流里，
@@ -4901,7 +5023,22 @@ function appendMessage(m, scroll = true, container = null) {
     const pokeMsgEl = row.querySelector('.poke-msg');
     if (pokeMsgEl) {
       pokeMsgEl.style.cursor = 'pointer';
-      pokeMsgEl.addEventListener('click', (e) => { e.stopPropagation(); pushPokeFrame(); });
+      /* 20261116：单击 / 双击分流。
+         触屏上 dblclick 多数不派发，所以自己按点击间隔判定：
+         第一下先压 280ms，期间若来了第二下 → 取消垫片重播、改成中央放大层；
+         280ms 内没有第二下 → 照旧在垫片里重播（行为和原来完全一致）。
+         压这 280ms 是为了避免「双击时小图先闪一遍再放大」的割裂感。 */
+      let tapT = 0;
+      pokeMsgEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (tapT){
+          clearTimeout(tapT);
+          tapT = 0;
+          openPokeZoom(pokeAnimId, pokeSide, fxDir);
+          return;
+        }
+        tapT = setTimeout(() => { tapT = 0; pushPokeFrame(); }, 280);
+      });
     }
     if (scroll) scrollToBottom();
     return;
@@ -12121,8 +12258,69 @@ function maybeStoryEventAfterReply(charId, startedAt){
     /* 目光：先实时生成那句留言，再开演 */
     let sm = '';
     try { sm = await buildGazeWhisper(charId); } catch (e) { sm = ''; }
-    _storyOverlay(STORY_EVENTS.gaze.page + '?embed=1' + (sm ? '&sm=' + encodeURIComponent(sm) : '') + '&cn=' + encodeURIComponent(charNameOf(charId)));
+    /* 20261115f：眼睛是会哭的 —— 每次开演掷一次骰子，四成概率眼里蓄满泪水。
+       这个形态早就在 event-gaze.html 里做好了（body.cry：泪光波光 + 泪滴滚落），
+       但入口从来没把 cry 传进去过，等于永远看不到。 */
+    const cry = Math.random() < .4 ? '&cry=1' : '';
+    _storyOverlay(STORY_EVENTS.gaze.page + '?embed=1' + (sm ? '&sm=' + encodeURIComponent(sm) : '') + '&cn=' + encodeURIComponent(charNameOf(charId)) + cry);
   });
+}
+
+/* 20261116：双击戳一戳垫片 → 画面正中把同一个小球动作放大播一遍
+   规则（用户定）：
+     · 单击 = 垫片里重播（原行为，一点没改）
+     · 双击 = 中央放大播一遍，动作与那条消息记的 m.pokeAnim 完全一致
+     · 放大层**没有背景**：不铺遮罩、不垫卡片、不加文字，就是两颗球在那儿演，
+       后面该显示什么照常显示；整层 pointer-events:none，连触摸都不拦
+   animId：'squish'（20261113g 之前的老动作）或 poke-anims 里的 id
+   side  ：1 大球在右（角色戳玩家）/ -1 大球在左（玩家戳角色）
+   dir   ：'L' / 'R'，只有 squish 用得到（决定哪颗球主动扑过去）
+   关闭：播完再停留 0.45 秒自动淡出，不需要（也无法）点击关闭。 */
+function openPokeZoom(animId, side, dir){
+  /* 20261116（玩家定）：这个放大层只能出现在聊天页。
+     它 z-index 很高、又整层盖满屏幕，万一在开屏 / 主页 / 瞬间被触发，
+     就会浮在那些界面上面 —— 所以入口先认一下当前视图，不在聊天页直接不创建。
+     （正常流程里它是从聊天里的戳一戳垫片触发的，本来也到不了别处。） */
+  if (!document.body || document.body.dataset.view !== 'chat') return;
+  const prev = document.getElementById('poke-zoom');
+  if (prev) prev.remove();
+  const meta = (window.BM_POKE_ANIMS || []).find(a => a.id === animId);
+  const isSquish = animId === 'squish';
+  const layer = document.createElement('div');
+  layer.id = 'poke-zoom';
+  layer.className = 'poke-zoom';
+  /* 结构直接复用垫片里那个容器（同一个 SVG 生成器），所以大小两版动作必然一致 */
+  layer.innerHTML = isSquish
+    ? '<span class="poke-fx play" data-dir="' + (dir === 'L' ? 'L' : 'R') + '">' + pokeFxHtml(dir === 'L' ? 'L' : 'R') + '</span>'
+    : '<span class="poke-anim" data-anim="' + escapeHtml(animId) + '" data-side="' + (side > 0 ? 1 : -1) + '"></span>';
+  document.body.appendChild(layer);
+  requestAnimationFrame(() => layer.classList.add('on'));
+
+  let stop = null;
+  if (isSquish){
+    /* 20261116 修「放大后不动」：老动作 squish 的两颗球不是 CSS 动画，而是
+       playPokeSquish 逐帧改 d/transform 画出来的；原来这里只塞了静态 SVG，
+       所以放大层里那两颗球永远是静止的第一帧。
+       这里跟垫片（pushPokeFrame）走完全同一套：先画一帧、再加 .play 让爱心/星星冒出来。 */
+    const fx = layer.querySelector('.poke-fx');
+    if (fx) {
+      fx.classList.remove('play');
+      void fx.offsetWidth;
+      try { playPokeSquish(fx); } catch (e) {}
+      fx.classList.add('play');
+      setTimeout(() => { try { fx.classList.remove('play'); } catch (e) {} }, 2400);
+    }
+  } else if (window.bmPokePlay){
+    const host = layer.querySelector('.poke-anim');
+    if (host) stop = window.bmPokePlay(host, animId, side);
+  }
+  const dur = isSquish ? 2400 : (meta ? meta.dur : 3000);
+  setTimeout(() => {
+    if (!layer.isConnected) return;
+    if (stop){ try { stop.stop(); } catch (e) {} stop = null; }
+    layer.classList.remove('on');
+    setTimeout(() => layer.remove(), 320);
+  }, dur + 450);
 }
 
 /* 逐帧驱动：冲过去 → 顶进去压出凹坑 → 顺轮廓上下蹭 → 蓄力 → 阻尼弹簧脱开（2000ms） */
@@ -13674,7 +13872,7 @@ function openSeasonLayer(cid) {
                     frame.contentWindow.document.body.children.length > 0);
   } catch (e) { frameAlive = false; }
   if (frame && (!_seasonFrameLoaded || !frameAlive)) {
-    frame.src = 'season/index.html?v=20261115c';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
+    frame.src = 'season/index.html?v=20261116a';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
     _seasonFrameLoaded = true;
   }
   layer.classList.add('show');
@@ -13878,8 +14076,9 @@ async function _seasonPushInit() {
       // 四季栈见底（根页面）才关闭：还原视图到进入时的聊天页（若仍在聊天视图）
       closeSeasonLayer();
     } else if (d.type === 'season-save-image') {
-      // 四季保存图片：主项目侧落地（预留，四季若已自行下载则无需处理）
-      try { if (d.name && d.dataUrl) { const a = document.createElement('a'); a.href = d.dataUrl; a.download = d.name || 'season.png'; document.body.appendChild(a); a.click(); a.remove(); } } catch (e) {}
+      /* 20261116：真正落地。以前这里也是 <a download>，而 APK 的 WebView 没有
+         DownloadListener，点了静默无反应 —— 四季那个「存图片」按钮因此一直是摆设。 */
+      _seasonSaveImage(d.name, d.dataUrl);
     } else if (d.type === 'season-gen-request') {
       // 20261109：四季向主项目要一句话 / 要一个决策（AI 模式）
       _seasonGenReply(d);
@@ -13916,6 +14115,44 @@ async function _seasonPushInit() {
 function _seasonFrameWin() {
   const f = document.getElementById('season-frame');
   return (f && f.contentWindow) ? f.contentWindow : null;
+}
+/* 20261116：四季「存图片」真正落盘
+   · APK（Capacitor Filesystem）→ 写「文档/白日梦书签/」，卸载不删、文件管理器可见；
+   · 网页端 → 浏览器下载。
+   ★ 以前这里（和四季自己）都用 <a download>，而 APK 的 WebView 没有 DownloadListener，
+     点了静默无反应 —— 按钮一直是摆设，只弹一句「已交给白日梦保存到手机」。
+   无论成败都回执 season-save-done，四季据此说真话。 */
+async function _seasonSaveImage(name, dataUrl){
+  const fname = String(name || ('四季书签_' + Date.now() + '.png')).replace(/[\\/:*?"<>|]/g, '_');
+  const cw = _seasonFrameWin();
+  const back = (ok, where, err) => {
+    try { if (cw) cw.postMessage({ type: 'season-save-done', ok: !!ok, name: fname, where: where || '', err: err || '' }, '*'); } catch (e) {}
+  };
+  try {
+    if (!dataUrl || String(dataUrl).indexOf('data:image/') !== 0) throw new Error('图片数据为空');
+    const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+    if (FS && FS.writeFile){
+      const s = String(dataUrl);
+      const b64 = s.slice(s.indexOf(',') + 1);
+      await FS.writeFile({ path: '白日梦书签/' + fname, data: b64, directory: 'DOCUMENTS', recursive: true });
+      miniToast('已存到「文档/白日梦书签」· ' + fname);
+      back(true, '文档/白日梦书签');
+      return true;
+    }
+    const a = document.createElement('a');
+    a.href = dataUrl; a.download = fname;
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { a.remove(); }, 3000);
+    miniToast('已开始下载 · ' + fname);
+    back(true, '浏览器下载');
+    return true;
+  } catch (e){
+    const msg = (e && e.message) ? e.message : '未知错误';
+    miniToast('保存失败：' + msg);
+    back(false, '', msg);
+    return false;
+  }
 }
 function _seasonGenResult(reqId, obj) {
   const cw = _seasonFrameWin();
@@ -18266,7 +18503,7 @@ function showCardsModal() {
               ${batch ? `<span class="bg-check" data-folder="${gi}" style="width:18px;height:18px;border-radius:6px;border:2px solid var(--text-tertiary);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:#141019;flex-shrink:0;cursor:pointer;"></span>` : ''}
               <span style="color:var(--text-tertiary);font-size:12px;transition:transform .15s;">${collapsed ? '▸' : '▾'}</span>
               <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${g.color};"></span>
-              ${escapeHtml(gName)}（${g.items.length}）${g.disabled ? '<span style="color:var(--danger);font-size:11px;">已禁用</span>' : ''}
+              ${escapeHtml(gName)}（${g.items.length}）${g.src === 'lyric' ? '<span style="font-size:11px;color:#7fb3c8;border:1px solid rgba(127,179,200,.45);border-radius:6px;padding:0 4px;margin-left:2px;">一起听歌采集</span>' : ''}${g.disabled ? '<span style="color:var(--danger);font-size:11px;">已禁用</span>' : ''}
             </span>
             ${batch ? '' : `<span class="badge" style="cursor:pointer;color:var(--danger);" data-delgroup="${gi}" title="删除分组">删</span>`}
           </div>

@@ -5472,7 +5472,11 @@ function buildBookPage(host, idx){
         toast(v ? '已命名 · ' + v : '已清除名字');
       });
     });
-    bar.querySelector('#bpSave').addEventListener('click', () => exportTicket(p));
+    /* 20261116 用户定案：书签集的「存图片」要能选
+         · 带 TA 的留言 → 票根 + 便签一起存成一张图
+         · 只存书签     → 只有票根本身
+       没有留言（或者当前不是那个角色的单人视野）就不问，直接存书签。 */
+    bar.querySelector('#bpSave').addEventListener('click', () => saveTicketByChoice(p));
     bar.querySelector('#bpBig').addEventListener('click', () => openTicket(p));
   }
 }
@@ -9604,6 +9608,14 @@ function seasonFocusChar(id){
   window.addEventListener('message', function(ev){
     const d = ev.data;
     if (!d || typeof d !== 'object') return;
+    /* 20261116：父页面把「存图片」真正落盘之后的回执 —— 成功/失败都说真话，
+       不再像以前那样按钮一点就报「已保存」。 */
+    if (d.type === 'season-save-done'){
+      _saveDoneAt = Date.now();
+      if (d.ok) toast('已保存 · ' + (d.where || '手机') + ' · ' + (d.name || ''));
+      else toast('保存失败' + (d.err ? ' · ' + d.err : ''));
+      return;
+    }
     /* 20261112 修串号：宿主每次打开四季层都会补发这条（只带角色 id）。
        season-init 一辈子只发一次，靠它切角色必然串到上一次进去的那个人。 */
     if (d.type === 'season-focus'){
@@ -11222,12 +11234,16 @@ const SEASON_RULES = {
        只有连着几天猛施、反复烧同一个伤口才会卷。
      ⇒ 卷边不冻生长、不影响开花 —— 只是「后面长出来的叶子都是卷的」。 */
   fertCurlTimes: 3,     /* 同一株累计第 3 次肥伤 → 叶缘卷边定型 */
-  /* ---- 废株自愈（20261108 用户定案）----
-     ★ 用户原话
+  /* ---- 废株自愈（20261108 定案 / 20261115 用户纠正条件）----
+     ★ 用户原话（20261108）
        「这个状态，再浇水，然后有几天不给它施肥，它就会自动恢复。」
-     ⇒ 两种烧苗都走这一条：距烧伤时刻满 N 天、期间浇过水、期间没再施肥 → 自动解除。
-       所以烧苗不再是「一锤子买卖」，玩家有救回来的路（代价是这几天不长）。 */
-  burnRecoverDays: 3,   /* 烧伤后连续 3 天不施肥 + 浇过水 → 恢复 */
+     ★ 20261115 用户纠正
+       「烧苗不是指施肥烧的苗，是浇灌爱意烧的苗。施肥的那个叫肥伤。
+         烧苗不施肥，它怎么会缓过来呢？」
+     ⇒ 所以「爱意烧苗」的恢复条件改成：距烧伤满 N 天 + 期间浇过水 +
+       **期间没再浇爱意**。施肥不参与判定 —— 施肥烧出来的是肥伤，走上面 ②，
+       1 天不施肥就自己好。两种伤各走各的路，不再混在一起。 */
+  burnRecoverDays: 3,   /* 爱意烧苗：3 天不再浇爱意 + 期间浇过水 → 恢复 */
 
   /* ---- 爱意额度与风险 ---- */
   /* ★ 20261108 用户定案：阈值从「一轮累计 10 次」改成「一天超过 6 次」★
@@ -11399,6 +11415,10 @@ function nxHHMM(ts){
      「而且还要在聊天设置里面加相关的随机固定间隔的设置。」
      「浇灌爱意无论是角色那边还是玩家这边，每天都是限一次……
        超过五次会烧苗……也有概率苗会变异。」
+       ⚠️ 20261115 注：这句是**按天时代**的原话，已被后续定案覆盖 ——
+          20261108 阈值改成 6 次、概率定 78%/22%；
+          20261110 额度改成按单株；20261112 改成按整轮、跨零点不重置。
+          现行规则以 SEASON_RULES.lovePerRound / loveLimit / burnedRate 为准。
      「照料和爱意……按照这个风格生成至少 50 条。」
      「留言可能会抽后台的预设，也可能会抽玩家已经做好的回复字卡。
        抽回复字卡的话，就是抽两到三张，然后以多字卡回复的形式来进行。」
@@ -11474,7 +11494,8 @@ function nxHHMM(ts){
                玩家回复字卡 → 抽 2~3 张拼句
                后台内置池   → 只抽 1 句（星球 PRESET_CARD / 书签集 PRESET_BOOK）
        · 照料    ：CARE_ACTS 挑动作 + PRESET_CARE 抽说明
-       · 爱意    ：PRESET_LOVE 抽，受「全局每边每天 8 次（玩家8+角色8）」额度限制
+       · 爱意    ：PRESET_LOVE 抽，受「每株每边整轮 8 次（玩家8+角色8）」额度限制
+                   （20261112 起按整轮、不按天；且角色发起只能发邀请卡，等玩家点「好啊」）
      节奏：进页面 9 秒先来一条，之后每 cardGapMs 一个 tick；
            tick 按概率挑一件事做，也可能什么都不做（留白，别刷屏）。
 
@@ -14269,12 +14290,15 @@ function growOf(pl, now){
 /* ============================================================
    废株自愈（20261108）
    ------------------------------------------------------------
-   ★ 用户原话
+   ★ 用户原话（20261108）
      「这个状态，再浇水，然后有几天不给它施肥，它就会自动恢复。」
-   ⇒ 判定三件事，全成立才恢复：
+   ★ 20261115 用户纠正：上面这句是旧版规则，把两种伤混成了一种 ——
+     烧苗是「浇灌爱意过量」烧的，跟施肥无关；施肥烧出来的叫肥伤。
+   ⇒ 爱意烧苗的判定改成三件事，全成立才恢复：
      ① 距烧伤时刻 ≥ burnRecoverDays（3 天）；
      ② 期间浇过水（最后一次浇水记录晚于烧伤时刻）；
-     ③ 期间没再施过肥（有一条施肥记录晚于烧伤时刻就重新计时）。
+     ③ 期间没再浇爱意（有一条爱意记录晚于烧伤时刻就重新计时）。
+     施肥**不参与**爱意烧苗的判定（fertAfter 只给肥伤用）。
    ⇒ 爱意烧苗恢复后要把 t0 往前推，让 growOf 接着「当前进度」算 ——
      否则 burned 一解除，grow 会瞬间跳到「这几天本该长的进度」，
      等于白烧，玩家也没吃到「停长」的代价。
@@ -14308,6 +14332,17 @@ function burnRecoverCheck(pl, now){
     }
     return false;
   };
+  /* 20261115：烧伤之后有没有再浇过爱意。
+     烧苗本身是「爱意浇过量」烧出来的，恢复只该看爱意停没停、水有没有浇，
+     跟施肥无关 —— 施肥烧出来的叫肥伤（上面 ②，1 天就好），两者不是一回事。 */
+  const loveAfter = function(at){
+    for (let i = acts.length - 1; i >= 0; i--){
+      const a = acts[i];
+      /* 严格大于：烧苗那一刻记的是 k:'烧苗'，本来就不是 '爱意'，这里再加一道保险 */
+      if (a && a.t > at && a.k === '爱意') return true;
+    }
+    return false;
+  };
   let done = false;
   /* ① 溢水（20261112 新增）—— 用户定案：「第二天不浇它就会恢复」。
      条件：距溢水满 fertRecoverDays(1)，且期间没再浇过它。 */
@@ -14328,9 +14363,13 @@ function burnRecoverCheck(pl, now){
     pl.acts.push({ t: t, k: '缓过来了', by: '它自己' });
     done = true;
   }
-  /* ③ 爱意烧苗（停长的那种）—— 仍是 3 天 + 浇过水 + 没再施肥 */
+  /* ③ 爱意烧苗（停长的那种）—— 3 天 + 期间浇过水，且期间没再浇爱意。
+     ★ 20261115 用户纠正：这里有一步旧版规则写错了 —— 原来是「期间没再施肥」，
+       可烧苗是**爱意**浇过量烧的，跟施肥毫无关系。施肥烧出来的是肥伤（②），
+       一天就自己好；拿「不施肥」当烧苗的恢复条件，等于「施肥把苗烧了、
+       又靠不施肥缓过来」，逻辑上是错的。现在改回按爱意的账算。 */
   if (pl.burned && pl.burnAt &&
-      t - pl.burnAt >= win && wateredAfter(pl.burnAt) && !fertAfter(pl.burnAt)){
+      t - pl.burnAt >= win && wateredAfter(pl.burnAt) && !loveAfter(pl.burnAt)){
     resumeGrowAt(pl, t);
     pl.burned = false; pl.burnCause = ''; pl.burnAt = 0;
     pl.acts.push({ t: t, k: '缓过来了', by: '它自己' });
@@ -15808,11 +15847,14 @@ function rulesBodyHTML(){
     '你和 TA 都是<b>先申请、对方同意</b>才会浇下去；拒绝就什么都不发生。' +
     '<br>次数按<b>这一株的整个生长周期</b>算，不按天 —— 跨零点不重置。' +
     '<br><span class="ru-ok">你和 TA 各 ' + lCap + ' 次</span>，合计 ' + (lCap * 2) + ' 次。' +
+    '<br>浇一次只让<b>这一株</b>提前 ' + (R.loveDays || 0.5) + ' 天；' +
+      '<span class="ru-warn">第 ' + (lSafe + 1) + ' 次起不再加速</span>，只剩掷骰。' +
     '<br>整轮 ' + lSafe + ' 次以内安全；<span class="ru-warn">第 ' + (lSafe + 1) +
       ' 次起</span> 每次 ' + pBurn + '% 烧苗 / ' + pMut + '% 变异。' +
     '<br><span class="ru-warn">整轮一次都没浇过爱意的株，长满了也<b>不会开花</b></span>。' +
     '<br>烧苗的株暂时不长了，但浇水照样能浇 —— 那是它恢复的条件；' +
-    '3 天不施肥、期间浇过水，它会自己缓过来。');
+    '停 ' + (SEASON_RULES.burnRecoverDays || 3) + ' 天不再浇爱意、期间照常浇水，它会自己缓过来。' +
+    '（烧苗是爱意浇多了烧的，<b>跟施肥无关</b>；施肥烧的是肥伤，另算。）');
   h += sec('生 长 与 凝 星', 'GROW',
     '不照料它也会按时间慢慢长（挂在后台时按六成效率算），照料只是让它更快。' +
     '<br>星球满 9 株，就可以「凝星」，把这一轮的组合印成一张专属星球书签。');
@@ -16535,8 +16577,8 @@ function setLoveCard(ch, title, q, yes, no){
 /* ---- 玩家发起：邀请角色一起浇灌爱意 ----
    点之前就先把两种「浇不了」的情况挡掉，免得玩家点了等半天才被拒：
      ① 已经烧苗 —— 再浇也不会长了
-     ② 今天玩家这份额度用完了 —— 爱意现在是「**按单株**，每边每天 8 次」
-        （这一株：玩家 8 次 + 角色 8 次，20261110 用户定案） */
+     ② 玩家这一份额度用完了 —— 爱意是「**按单株、按整轮**，每边 8 次」
+        （这一株：玩家 8 次 + 角色 8 次，20261110 定按单株 / 20261112 定整轮不按天） */
 function openLoveAsk(pl){
   if (!pl) return;
   if (pl.burned){ toast('「' + pl.name + '」已经烧苗了 · 再浇也不会长了'); return; }
@@ -16587,7 +16629,9 @@ function loveYes(){
         } else if (res.type === 'mutant'){
           setLoveCard(ch, '它 变 了', '「' + pl.name + '」的颜色……不太一样了。', '好', '关 闭');
         } else if (res.type === 'blocked'){
-          setLoveCard(ch, '今 天 浇 过 了', '爱意一天只能浇一次，浇多了对它不好。', '好', '关 闭');
+          /* 20261115：旧文案写「一天只能浇一次」—— 那是按天时代的规则，
+             现在这一株是整轮每边 8 次、跨零点不重置，按天说会直接把规则教错。 */
+          setLoveCard(ch, '额 度 用 完 了', '这一株的爱意整轮每边 8 次，已经浇满了 —— 铲掉重种才会重新算。', '好', '关 闭');
         } else {
           setLoveCard(ch, 'TA 答 应 了', lovePick(LOVE_OK), '好', '关 闭');
         }
@@ -20313,10 +20357,101 @@ function applyScopeUI(){
   b.classList.toggle('on', bookScope === 'char');
 }
 
-/* ---- 导出：把票根重绘成一张 PNG ---- */
-function exportTicket(p){
+/* 最近一次「保存完成」回执的时间戳（用于 12 秒没回执 → 提示失败） */
+let _saveDoneAt = 0;
+
+/* ---- 通用二选一弹窗（20261116：存图片时选「带留言 / 只存书签」）----
+   复用 .sx-ask 的皮，不新造一套样式；点空白处或最后一个按钮 = 关掉。 */
+function askPick(title, items){
+  const old = document.getElementById('pickAsk');
+  if (old) old.remove();
+  const box = document.createElement('div');
+  box.className = 'sx-ask on';
+  box.id = 'pickAsk';
+  box.style.zIndex = '92';
+  const b = document.createElement('div');
+  b.className = 'sx-ask-b';
+  const t = document.createElement('div');
+  t.className = 'sx-ask-t';
+  t.textContent = title || '';
+  b.appendChild(t);
+  (items || []).forEach(function(it, i){
+    const btn = document.createElement('div');
+    btn.className = 'bp-act' + (it.ghost ? ' ghost' : '');
+    btn.textContent = it.label || '';
+    btn.style.marginTop = i ? '8px' : '2px';
+    btn.addEventListener('click', function(){
+      box.remove();
+      try { if (it.act) it.act(); } catch (e) {}
+    });
+    b.appendChild(btn);
+  });
+  box.appendChild(b);
+  box.addEventListener('click', function(e){ if (e.target === box) box.remove(); });
+  document.body.appendChild(box);
+}
+
+/* 书签集（含「看大图」页）的存图入口：有便签就问一句，没有就直接存书签。
+   ★ 照片墙那一侧的「保存图片」（结果浮层 #tkFinalSave）【不】走这里 ——
+     那里存的是刚印出来的书签，用户定案：只存书签本身。 */
+function saveTicketByChoice(p){
   if (!p) return;
-  const W = 620, H = 830;
+  if (bookNoteVisible(p)){
+    askPick('这张书签存成什么？', [
+      { label: '带 TA 的留言一起存', act: () => exportTicket(p, { withNote: true }) },
+      { label: '只存书签本身', ghost: true, act: () => exportTicket(p, {}) }
+    ]);
+  } else {
+    exportTicket(p, {});
+  }
+}
+
+/* 便签文字折行（按像素宽度量，不按字数——中英混排宽度差很多） */
+function _noteWrap(g, text, maxW){
+  const out = [];
+  String(text || '').split('\n').forEach(function(seg){
+    let line = '';
+    for (let i = 0; i < seg.length; i++){
+      const t = line + seg[i];
+      if (g.measureText(t).width > maxW && line){ out.push(line); line = seg[i]; }
+      else line = t;
+    }
+    out.push(line);
+  });
+  return out.length ? out : [''];
+}
+
+/* ---- 导出：把票根重绘成一张 PNG ----
+   20261116：加第二个参数 opts
+     · opts.withNote = true → 票根下方把那张「便签」也画进去（留言 + 落款 + 日期）
+     · 不传 / false       → 只有书签本身（照片墙、结果浮层「保存图片」走这条，用户定案）
+   ★ 以前这里只做票根，且交给父页面后用 <a download> 落地 —— 在 APK 里是空操作，
+     按钮点了只弹 toast、什么都没存下来。现在父页面收到后真正写文件，并存完回执。 */
+function exportTicket(p, opts){
+  if (!p) return;
+  const withNote = !!(opts && opts.withNote) && !!p.noteText;
+  const W = 620, BASE_H = 830;
+
+  /* 先量便签要占多高，再决定画布总高（便签在书签正下方，不压住票根） */
+  const noteBy = String(p.noteBy || p.giftedTo || '');
+  const noteAt = (function(){
+    if (p.noteAt){
+      const d = new Date(p.noteAt);
+      if (d && !isNaN(d.getTime())) return d.getFullYear() + '.' + pad2(d.getMonth() + 1) + '.' + pad2(d.getDate());
+    }
+    return String(p.giftedAt || '');
+  })();
+  const noteSign = '—— ' + noteBy + (noteAt ? ' · ' + noteAt : '');
+  let noteLines = [];
+  let noteH = 0;
+  if (withNote){
+    const mc = document.createElement('canvas').getContext('2d');
+    mc.font = '22px "Songti SC", "Noto Serif SC", "STSong", serif';
+    noteLines = _noteWrap(mc, '「' + p.noteText + '」', W - 210);
+    noteH = 46 + noteLines.length * 34 + 52;   /* 上留白 + 正文 + 落款 */
+  }
+
+  const H = BASE_H + (withNote ? noteH + 92 : 0);
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
@@ -20370,19 +20505,66 @@ function exportTicket(p){
     if (line.length >= 26){ g.fillText(line, W / 2, ly); ly += 32; line = ''; }
   }
   if (line) g.fillText(line, W / 2, ly);
-  /* 底部 */
+  /* 底部（坐标用 BASE_H，票根本身始终是 830 高；便签接在它下面） */
   g.fillStyle = 'rgba(60,50,36,.55)';
   g.font = '15px "Courier New", monospace';
-  g.fillText(SEASON_CN[p.season] + '  ·  ' + (p.date || ''), W / 2, H - 88);
-  g.fillRect(46, H - 68, W - 92, 1);
-  g.fillText('TICKET · 存根', W / 2, H - 40);
+  g.fillText(SEASON_CN[p.season] + '  ·  ' + (p.date || ''), W / 2, BASE_H - 88);
+  g.fillRect(46, BASE_H - 68, W - 92, 1);
+  g.fillText('TICKET · 存根', W / 2, BASE_H - 40);
   g.textAlign = 'left';
+
+  /* 便签：票根下方那张带胶带的小纸条（还原页面上的观感：微斜、米黄纸、右下落款） */
+  if (withNote){
+    const nw = 500, nh = noteH;
+    const cx = W / 2, cy = BASE_H + 46 + nh / 2;
+    g.save();
+    g.translate(cx, cy);
+    g.rotate(-1.2 * Math.PI / 180);
+    /* 纸（先画一层投影，让便签从底色上浮起来） */
+    g.shadowColor = 'rgba(60,50,34,.20)';
+    g.shadowBlur = 10;
+    g.shadowOffsetX = 3;
+    g.shadowOffsetY = 4;
+    g.fillStyle = '#f7efd8';
+    g.fillRect(-nw / 2, -nh / 2, nw, nh);
+    g.shadowColor = 'transparent';
+    g.shadowBlur = 0;
+    g.shadowOffsetX = 0;
+    g.shadowOffsetY = 0;
+    g.strokeStyle = '#d9cba8'; g.lineWidth = 1.5;
+    g.strokeRect(-nw / 2, -nh / 2, nw, nh);
+    /* 胶带（压在纸的上边缘正中） */
+    g.fillStyle = 'rgba(233,222,196,.95)';
+    g.fillRect(-30, -nh / 2 - 6, 60, 16);
+    g.strokeStyle = 'rgba(190,175,145,.9)'; g.lineWidth = 1;
+    g.strokeRect(-30, -nh / 2 - 6, 60, 16);
+    /* 留言正文 */
+    g.textAlign = 'center';
+    g.fillStyle = '#4e4636';
+    g.font = '22px "Songti SC", "Noto Serif SC", "STSong", serif';
+    let ly = -nh / 2 + 46;
+    noteLines.forEach(function(ln){ g.fillText(ln, 0, ly); ly += 34; });
+    /* 落款 */
+    g.textAlign = 'right';
+    g.fillStyle = '#7b6f56';
+    g.font = '17px "Songti SC", "Noto Serif SC", "STSong", serif';
+    g.fillText(noteSign, nw / 2 - 26, ly + 12);
+    g.restore();
+    g.textAlign = 'left';
+  }
+
   window.__lastExportCv = cv;   /* 调试用：导出画布句柄 */
-  const fname = (p.title || p.name) + '_No' + pad4(p.no) + '.png';
+  const fname = (p.title || p.name) + '_No' + pad4(p.no) + (withNote ? '_带留言' : '') + '.png';
   const dataUrl = cv.toDataURL('image/png');
   if (window.parent && window.parent !== window){
+    /* 交给父页面真正落盘（APK 写文档目录 / 网页触发下载），存完回执 season-save-done */
     window.parent.postMessage({ type: 'season-save-image', name: fname, dataUrl: dataUrl }, '*');
-    toast('已交给白日梦保存到手机');
+    toast('正在保存…');
+    setTimeout(function(){
+      if (!_saveDoneAt || Date.now() - _saveDoneAt > 12000){
+        toast('没能保存 · 请重试一次');
+      }
+    }, 12000);
   } else {
     const a = document.createElement('a');
     a.href = dataUrl; a.download = fname;
@@ -20391,6 +20573,7 @@ function exportTicket(p){
     toast('已开始下载 · ' + fname);
   }
 }
+
 
 /* ---- 星球印记：从这一轮九株算出 -- */
 const SEA_FLOWERS = {
@@ -21027,7 +21210,7 @@ window.addEventListener('load', () => { try { bindV5b(); } catch (e) { console.w
     const sv = $('#tkSave');
     if (sv) sv.addEventListener('click', () => {
       if (!curTicket){ toast('先打开一张书签'); return; }
-      exportTicket(curTicket);
+      saveTicketByChoice(curTicket);
     });
     const rn = $('#tkRename');
     if (rn) rn.addEventListener('click', () => {

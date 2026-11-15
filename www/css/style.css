@@ -741,6 +741,14 @@ select.input option:checked { color: #fff; }
   opacity: .55; pointer-events: none; filter: grayscale(.25);
 }
 
+/* 20261116（玩家定案）：结算页不再清屏 —— 上方角色名/标题/正文/寄语都要露出来。
+   但底部两个按钮是绝对定位（bottom:3vh + 44px 高），正压着寄语的落点，
+   所以把寄语视觉上移 48px、再用等量负 margin 抵消占位：
+   卡片不会被撑高，两个按钮的位置也一点不动。 */
+.festival-card.fx-game.fx-done .dream-fx-from {
+  transform: translateY(-56px);
+}
+
 /* 送给 TA 的选人弹窗（独立浮层，盖在入梦签之上；不能用 #modal 容器，否则卡片会被换掉） */
 .apg-mask {
   position: fixed; inset: 0; z-index: 800;
@@ -784,6 +792,56 @@ select.input option:checked { color: #fff; }
 }
 .apg-cell.on { border-color: var(--purple); background: rgba(167,139,250,.16); }
 .apg-cell span { font-size: 11px; color: var(--text-secondary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 20261116：送派时「写一句话给他」的输入框（可留空） */
+.apg-note { margin: 2px 0 16px; }
+.apg-note label {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 12.5px; color: var(--text-secondary); margin-bottom: 7px;
+}
+.apg-note label span { font-size: 11px; color: var(--text-tertiary); letter-spacing: .5px; }
+.apg-note textarea {
+  width: 100%; box-sizing: border-box; resize: none; padding: 11px 13px;
+  font-size: 14px; line-height: 1.6; font-family: inherit;
+  color: var(--text); background: var(--bg-elevated-2);
+  border: 1px solid var(--border); border-radius: 14px; outline: none;
+}
+.apg-note textarea:focus { border-color: var(--purple); }
+.apg-note textarea::placeholder { color: var(--text-tertiary); }
+
+/* 20261116：送出的苹果派卡片（落在聊天流里的一条消息）
+   图片是出炉那一帧的画布截图，自带深底；寄语用「」括起来，像写在卡片上的字。 */
+.msg-pie-card { max-width: 250px; padding: 11px 11px 13px; }
+.msg-pie-card .pie-card-img {
+  display: block; width: 100%; margin-top: 8px;
+  border-radius: 12px; background: #1a1226;
+}
+.msg-pie-card .pie-card-title {
+  margin-top: 10px; font-size: 13px; font-weight: 700;
+  color: var(--purple-soft); letter-spacing: .4px;
+}
+.msg-pie-card .pie-card-note {
+  margin-top: 6px; font-size: 12.5px; line-height: 1.62;
+  color: var(--text-secondary); word-break: break-word;
+}
+
+/* 20261116（玩家定）：TA 收到苹果派的回话 —— 也是卡片，不是裸气泡。
+   与上面那张派卡同款外壳，只是里面换成 2~3 张字卡拼成的一句话：
+   字号比正文大一点、行距松一点，读起来像一张回礼小卡；
+   左下角压一道很淡的糖色光，跟苹果派那张卡呼应。 */
+.msg-pie-reply {
+  max-width: 252px;
+  padding: 11px 13px 13px;
+  background:
+    radial-gradient(120% 90% at 0% 100%, rgba(232, 180, 90, .10), transparent 62%),
+    rgba(22, 20, 28, .78);
+}
+.msg-pie-reply .pie-reply-text {
+  font-size: 14.5px; line-height: 1.68;
+  color: var(--text-primary);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 .apg-tip { font-size: 12px; color: var(--text-tertiary); margin-top: 8px; line-height: 1.6; }
 
 /* 20261028：入梦签节气/节日调试器（开发者模式专属）选择器 */
@@ -2475,7 +2533,8 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
   border: 1px solid var(--purple-dim);
   border-bottom: none;
   border-radius: 14px 14px 0 0;
-  background: rgba(30, 25, 40, 0.96);
+  /* 20261115：跟随主题（浅色主题下变白底，深色预设跟各自的抬升色走） */
+  background: var(--bg-elevated);
 }
 #quote-bar.show { display: flex; }
 
@@ -2511,18 +2570,25 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
   max-width: 200px;
 }
 
-/* 右键/长按操作菜单（图标同 SVG 线性风格） */
+/* 右键/长按操作菜单（图标同 SVG 线性风格）
+   20261115：底色改由 --bg-elevated 决定 —— 以前写死深紫黑，换任何浅色预设都还是
+   一块死黑；现在深色主题取到 ≈ 原来的深紫黑，浅色主题自动变白，黑红/咖褐/系统灰
+   等深色预设也跟着各自的抬升色走。文字一律用 --text，对比度由主题自己保证。 */
 #ctx-menu {
   position: fixed;
   z-index: 400;
   min-width: 186px;
-  background: rgba(28, 24, 36, 0.98);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 6px;
   display: none;
   flex-direction: column;
   box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5);
+}
+/* 浅色主题：阴影不能还用死黑，白底上一圈黑雾像脏了 */
+body.theme-light #ctx-menu {
+  box-shadow: 0 12px 34px rgba(46, 36, 84, 0.16), 0 2px 6px rgba(46, 36, 84, 0.10);
 }
 #ctx-menu.show { display: flex; }
 .ctx-item {
@@ -2680,6 +2746,70 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
 .poke-anim .star { fill: #cfc2ff; stroke: none; }
 .poke-anim .puff { fill: #f6eef8; stroke: none; }
 .poke-anim .anger { fill: none; stroke: #ff4d6d; stroke-width: .22; stroke-linecap: round; }
+
+/* ================= 20261116：戳一戳「放大层」（双击垫片触发） =================
+   ★ 用户定：这一层**没有背景** —— 不铺遮罩、不垫卡片、不加文字，
+     就是那两颗球在画面正中放大演一遍；后面该显示什么照常显示，
+     只有球自己占住的那一点点地方被挡住。
+   所以整层透明且 pointer-events:none（连触摸都不拦），播完自己淡出。
+   用的还是同一套 .poke-anim + bmPokePlay，动作与垫片里那只完全一致。 */
+.poke-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;          /* 不遮挡、不拦截任何点击与滑动 */
+  opacity: 0;
+  transition: opacity .26s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.poke-zoom.on { opacity: 1; }
+
+/* 球本体：从垫片的 30px 放大到 220px，负边距一并归零 */
+.poke-zoom .poke-anim {
+  width: 220px;
+  height: 220px;
+  margin: 0;
+}
+/* 20261116（玩家要求）：这里得看得出是「从小球放大出来的」，不能凭空出现。
+   起手 0.62 倍、略带回弹地放到原尺寸；消失时顺着同一个过渡缩回去再淡掉。 */
+.poke-zoom .poke-anim,
+.poke-zoom .poke-fx {
+  transform: scale(.62);
+  transform-origin: 50% 50%;
+  transition: transform .34s cubic-bezier(.18, .82, .28, 1);
+}
+.poke-zoom.on .poke-anim,
+.poke-zoom.on .poke-fx { transform: scale(1); }
+/* 线宽在 .poke-anim 里是按 30px 补偿过的绝对值，放大 7 倍后会细成头发丝，
+   这里按比例补回来（只在大图层内覆盖，垫片里一行不动）。
+   20261116 玩家反馈手臂太粗：1.95 → 1.05，只收手臂这一条，
+   其余细节（腮红缝、领口、怒气线）保持原补偿量。 */
+.poke-zoom .poke-anim .arm { stroke-width: 1.05; }
+.poke-zoom .poke-anim .nestLip { stroke-width: 1.28; }
+.poke-zoom .poke-anim .poutseam { stroke-width: .30; }
+.poke-zoom .poke-anim .anger { stroke-width: .50; }
+.poke-zoom .poke-anim .shade { filter: blur(2.4px); }
+.poke-zoom .poke-anim .hrt { filter: drop-shadow(0 0 1.8px rgba(255, 90, 140, .85)); }
+
+/* 老消息的 squish 也支持双击放大：同样按 220px 重排 */
+.poke-zoom .poke-fx {
+  width: 220px;
+  height: 220px;
+  margin: 0;
+}
+
+/* 没有背景托底，浅色主题下那颗玩家的浅粉球（#f3b7cd）会糊在白底上 ——
+   只给轮廓补一道极细的深紫描边，属于球自身的边，不是背景。
+   深色主题本来就看得很清楚，不加。 */
+body.theme-light .poke-zoom .poke-anim .big,
+body.theme-light .poke-zoom .poke-anim .small {
+  stroke: rgba(92, 56, 132, .30);
+  stroke-width: .16;
+}
+
 
 /* 气泡感：0→12% 急速鼓起（不是线性放大），之后边升边继续胀，最后淡掉 */
 @keyframes pokeHeartBubble {
@@ -6081,10 +6211,12 @@ body.theme-light.tl-berryblue .func-note { color: #ffffff; }
 body.theme-light.tl-berryblue .stat-label,
 body.theme-light.tl-berryblue .func-arrow { color: rgba(255,255,255,.82); }
 body.theme-light.tl-berryblue .func-ic { background: #ffffff; color: #d5548a; }
-/* 蓝粉：底导航栏用浅一点的蓝，未激活图标浅蓝，激活图标红色高亮 */
+/* 蓝粉：底导航栏用浅一点的蓝，未激活图标浅蓝，激活图标红色高亮。
+   20261116：未激活图标 / 文字从 #3f74a8 压深到 #2f5d8a —— 原来压在 #9ec7ec 上只有 2.8:1，
+   图标几乎糊在底栏里（可读性兜底那一轮扫出来的）。 */
 body.theme-light.tl-berryblue .tabbar { background: rgba(158, 199, 236, 0.96); border-top-color: rgba(255,255,255,.30); }
-body.theme-light.tl-berryblue .tab-item { color: #3f74a8; }
-body.theme-light.tl-berryblue .tab-item .tab-icon { color: #3f74a8; }
+body.theme-light.tl-berryblue .tab-item { color: #2f5d8a; }
+body.theme-light.tl-berryblue .tab-item .tab-icon { color: #2f5d8a; }
 body.theme-light.tl-berryblue .tab-item.active { color: #d5548a; }
 body.theme-light.tl-berryblue .tab-item.active .tab-icon { color: #ffffff; background: #d5548a; }
 /* 蓝粉：顶部栏下滑浮现的昵称 + 头像首字改白色（雾粉背景上醒目） */
@@ -6130,6 +6262,37 @@ body.theme-light.tl-berryblue.glass-ui .moment-text { color: rgba(255,255,255,.9
 body.theme-light.tl-berryblue.glass-ui .moment-time { color: rgba(255,255,255,.85); }
 /* 蓝粉：聊天页底部输入栏改亮粉色（不再白色），呼应蓝粉主色 */
 body.theme-light.tl-berryblue .chat-input-bar { background: rgba(245, 175, 184, 0.94); border-top-color: rgba(255,255,255,.40); }
+
+/* 20261116（玩家反馈：蓝粉撞色下图标看不见）：可读性兜底
+   ------------------------------------------------------------
+   蓝粉主题里 --purple 和按钮底色 --bg-elevated-2 是同一个 #88b9e6，
+   于是「color:var(--purple) 的图标」压在「var(--bg-elevated-2) 的按钮」上整块隐形
+   （分享弹窗的「分享音乐 / 分享视频」两块就是这样）。
+   低饱和的马卡龙系（雾蓝/薄荷/杏黄/清荷/樱粉）也有同类问题：图标色与按钮底太接近，
+   只是没到隐形那么严重。
+   两条兜底：
+     ① 按钮内的图标一律跟随按钮文字色（currentColor）—— 图标永远和字一样清楚；
+     ② 正文/卡片里的紫色强调文字压深一档，浅底上不再发虚。 */
+body.theme-light.tl-berryblue [style*="color:var(--purple)"],
+body.theme-light.tl-sky [style*="color:var(--purple)"],
+body.theme-light.tl-mint [style*="color:var(--purple)"],
+body.theme-light.tl-cream [style*="color:var(--purple)"],
+body.theme-light.tl-lotus [style*="color:var(--purple)"],
+body.theme-light.tl-sakura [style*="color:var(--purple)"] {
+  color: #2f5080 !important;
+}
+body.theme-light.tl-berryblue .btn > span[style*="--purple"],
+body.theme-light.tl-sky .btn > span[style*="--purple"],
+body.theme-light.tl-mint .btn > span[style*="--purple"],
+body.theme-light.tl-cream .btn > span[style*="--purple"],
+body.theme-light.tl-lotus .btn > span[style*="--purple"],
+body.theme-light.tl-sakura .btn > span[style*="--purple"] {
+  color: currentColor !important;
+}
+
+/* 蓝粉：按钮内的图标跟随文字后，按钮底再压深一档 ——
+   #88b9e6 上压深蓝字仍有 4:1 上下，但整块偏「糊」，压到 #7fb3e0 更利落。 */
+body.theme-light.tl-berryblue .btn:not(.primary):not(.ghost) { background: #7fb3e0; }
 
 /* ============================================================
    20261031：夏日清荷（薄荷绿 × 樱花粉撞色，仿蓝粉撞色手法）
@@ -6484,12 +6647,12 @@ body.theme-light .call-float {
 }
 
 /* —— 20261001ch：固定深底浮层补漏（浅色主题下「深底深字」不可读）——
-   长按菜单/引用条/多选条/图片裁剪器/回信按钮的背景为硬编码深色（与主题无关），
+   多选条/图片裁剪器/回信按钮的背景仍为硬编码深色（与主题无关），
    浅色主题下内部 var(--text) 等解析为深色 → 深底深字。
    容器内统一还原深色变量；color: var(--text) 必须在此重新声明——
-   继承色不会因容器内变量重映射而重新解析（同 20260929bq 教训） */
-body.theme-light #ctx-menu,
-body.theme-light #quote-bar,
+   继承色不会因容器内变量重映射而重新解析（同 20260929bq 教训）
+   20261115：长按菜单 #ctx-menu 与引用条 #quote-bar 已改为跟随主题（见上方它们各自的
+   定义与浅色阴影），不再进这张表 —— 否则会把已经变白的底又翻回浅色文字。 */
 body.theme-light #multi-bar,
 body.theme-light #img-cropper,
 body.theme-light .letter-overlay .letter-reply {

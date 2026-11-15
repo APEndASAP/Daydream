@@ -16,9 +16,38 @@
 'use strict';
 
 /* 样式跟着层走，注进 #yy-root，不污染主项目全局 CSS */
-const CSS_TEXT = '\n#yy-root{position:fixed;inset:0;z-index:2147483020;pointer-events:none;}\n#yy-root .rl-layer{position:absolute;inset:0;z-index:2;pointer-events:none;overflow:visible;\n  transition:opacity .65s ease;}\n#yy-root .rl-layer .shadow{fill:none;stroke:#2a0710;stroke-width:3.4;opacity:.5;filter:blur(2.4px);}\n#yy-root .rl-layer .sheen{fill:none;stroke:#ffd2e4;stroke-width:.60;opacity:.09;}\n#yy-root .rl-layer .s1{fill:none;stroke:url(#rlGrad);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;\n  filter:drop-shadow(0 1px 2px rgba(40,0,10,.6));}\n#yy-root .rl-layer .s2{fill:none;stroke:#ff3d80;stroke-width:1.05;opacity:.46;stroke-linecap:round;\n  stroke-dasharray:11 13;filter:drop-shadow(0 0 2px rgba(255,60,120,.26));}\n#yy-root .rl-tp{fill:rgba(10,4,9,.70);}\n#yy-root .rl-t{font-family:"Songti SC","STSong","Noto Serif SC",serif;font-size:14.5px;font-weight:700;\n  fill:#ffa3bd;opacity:0;text-anchor:middle;dominant-baseline:middle;\n  paint-order:stroke;stroke:#1a0308;stroke-width:2.6;stroke-linejoin:round;\n  filter:drop-shadow(0 0 5px rgba(255,60,110,.40));}\n\n';
-/* 演出层的 SVG 骨架（跟预览稿完全一致，只是 id 收在 #yy-root 里） */
-const SVG_TPL = '<svg class="rl-layer" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">\n  <defs>\n    <linearGradient id="rlGrad" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#a81242"/><stop offset=".18" stop-color="#c41750"/>\n      <stop offset=".36" stop-color="#e0538c"/><stop offset=".54" stop-color="#b5134a"/>\n      <stop offset=".72" stop-color="#d94a80"/><stop offset=".88" stop-color="#a81242"/>\n      <stop offset="1" stop-color="#c41750"/>\n    </linearGradient>\n    <filter id="softOcc" x="-20%" y="-20%" width="140%" height="140%">\n      <feGaussianBlur stdDeviation=".7"/>\n    </filter>\n    <mask id="occl" maskUnits="userSpaceOnUse" x="0" y="0" width="360" height="740">\n      <rect class="occl-bg" x="0" y="0" width="360" height="740" fill="#fff"/>\n    </mask>\n    <path id="tp1" fill="none"/>\n  </defs>\n  <g id="maskTarget">\n    <path class="shadow"/><path class="s1"/><path class="sheen"/><path class="s2"/>\n  </g>\n  <g class="txt-layer"></g>\n</svg>';
+const CSS_TEXT = '\n#yy-root{position:fixed;inset:0;z-index:2147483020;pointer-events:none;}\n#yy-root .rl-layer{position:absolute;inset:0;z-index:2;pointer-events:none;overflow:visible;\n  transition:opacity .65s ease;}\n' +
+/* 20261115h：整层不再用任何 SVG filter。
+   原来 .shadow 用 blur(2.4px)、.s1/.s2 用 drop-shadow —— 安卓 WebView 上这三层滤镜极慢，
+   真机实测会把副股和泛光整条吞掉，严重时整个装饰层停止刷新（「线长到一半就没了」）。
+   泛光改成一条更宽的同色半透明描边，视觉几乎一样，开销接近零。 */
+'#yy-root .rl-layer .glow{fill:none;stroke:#ff2f74;stroke-width:5.6;opacity:.18;stroke-linecap:round;stroke-linejoin:round;}\n' +
+'#yy-root .rl-layer .shadow{fill:none;stroke:#2a0710;stroke-width:3.4;opacity:.50;filter:blur(2.4px);}\n' +
+'#yy-root .rl-layer .sheen{fill:none;stroke:#ffd2e4;stroke-width:.75;opacity:.10;stroke-linecap:round;}\n' +
+'#yy-root .rl-layer .s1{fill:none;stroke:url(#rlGrad);stroke-width:2.0;stroke-linecap:round;stroke-linejoin:round;}\n' +
+/* 20261115i：深线兜底。真机实测「深那根完全不画、浅的和阴影都在」——这是安卓 WebView
+   在 <mask> 内容里引用 linearGradient 的老毛病：渐变解析不到，整条 stroke 直接丢弃，
+   不报错也没有警告。所以同一段路径下面再垫一条**纯色**同宽描边：渐变能渲染时它被完全
+   盖住（观感与原来一模一样）；渐变被吞掉时由它顶上，深线一定在。 */
+'#yy-root .rl-layer .s1c{fill:none;stroke:#c81a52;stroke-width:2.0;stroke-linecap:round;stroke-linejoin:round;}\n' +
+'#yy-root .rl-layer .s2{fill:none;stroke:#ff3d80;stroke-width:1.4;opacity:.46;stroke-linecap:round;}\n' +
+'#yy-root .rl-tp{fill:rgba(10,4,9,.70);}\n' +
+'#yy-root .rl-t{font-family:"Songti SC","STSong","Noto Serif SC",serif;font-size:14.5px;font-weight:700;\n  fill:#ffa3bd;opacity:0;text-anchor:middle;dominant-baseline:middle;\n  paint-order:stroke;stroke:#1a0308;stroke-width:2.6;stroke-linejoin:round;}\n' +
+/* 浅色主题预设：红线本身就是红的，不因主题变色 —— 只把「底下那层阴影」换成浅底色该有的
+   淡玫瑰灰（深黑阴影落在白底上像脏边）。
+   沿线文字在白底上会偏淡，所以字色压深一档；描边用**同色系更深一档**的暗红，
+   绝不加白描边（白圈在浅底上像个套子，很难看），宽度也收窄 —— 同色描边要的是
+   「把字缘压实」，不是「给字镶一圈」。
+   细高光 sheen 同样不能用白：白叠在红线上会把线中缝洗淡，浅底主题改用浅粉。 */
+'body.theme-light #yy-root .rl-layer .shadow{stroke:#9c1030;opacity:.20;filter:blur(3.0px);}\n' +
+'body.theme-light #yy-root .rl-layer .sheen{stroke:#ffb0c8;opacity:.26;}\n' +
+'body.theme-light #yy-root .rl-layer .s1c{stroke:#b3123f;}\n' +
+'body.theme-light #yy-root .rl-layer .rl-t{fill:#a30d38;stroke:#6e0722;stroke-width:2.0;}\n' +
+'body.theme-light #yy-root .rl-layer .rl-tp{fill:rgba(255,255,255,.62);}\n';
+/* 演出层的 SVG 骨架（跟预览稿一致，只是 id 收在 #yy-root 里）。
+   双套渐变：深色主题用原来那套亮玫红，浅色主题用深一档的（详见 CSS_TEXT）。
+   .glow 是最外层泛光描边，与 .s1 共用一条 d，只靠宽度和透明度出光晕。 */
+const SVG_TPL = '<svg class="rl-layer" xmlns="http://www.w3.org/2000/svg">\n  <defs>\n    <linearGradient id="rlGrad" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#a81242"/><stop offset=".18" stop-color="#c41750"/>\n      <stop offset=".36" stop-color="#e0538c"/><stop offset=".54" stop-color="#b5134a"/>\n      <stop offset=".72" stop-color="#d94a80"/><stop offset=".88" stop-color="#a81242"/>\n      <stop offset="1" stop-color="#c41750"/>\n    </linearGradient>\n    <linearGradient id="rlGradLight" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#8c0a2c"/><stop offset=".18" stop-color="#b3123f"/>\n      <stop offset=".36" stop-color="#e01b5a"/><stop offset=".54" stop-color="#96102f"/>\n      <stop offset=".72" stop-color="#d61a55"/><stop offset=".88" stop-color="#8c0a2c"/>\n      <stop offset="1" stop-color="#b3123f"/>\n    </linearGradient>\n    <filter id="softOcc" x="-20%" y="-20%" width="140%" height="140%">\n      <feGaussianBlur stdDeviation=".7"/>\n    </filter>\n    <mask id="occl" maskUnits="userSpaceOnUse" x="0" y="0" width="360" height="740">\n      <rect class="occl-bg" x="0" y="0" width="360" height="740" fill="#fff"/>\n    </mask>\n    <path id="tp1" fill="none"/>\n  </defs>\n  <g id="maskTarget">\n    <path class="glow"/><path class="shadow"/><path class="s1c"/><path class="s1"/><path class="sheen"/><path class="s2"/>\n  </g>\n  <g class="txt-layer"></g>\n</svg>';
 
 const NS = 'http://www.w3.org/2000/svg';
 const DUR = 12400;          /* 整条线长满的时间 */
@@ -29,11 +58,12 @@ let TOPL = 96, BOTL = 652;      /* 文字禁区上下界（动态：头像下方
 let SAFE_T = 44;                /* 打结时的顶部安全区 */
 let nodes = [], totalS = 1, pxPerNode = 1;
 let knotZones = [], knotS = [], wrapFrom = 0, wrapTo = 0, wrapS = 0;
-let avUsed = null;              /* 本次建线时用到的头像矩形，用来发现「头部晚一步重排」 */
+let wrapMeta = null, wrapFromS = 0;   /* 缠头那一圈的几何参数 / 它在弧长上的起点 */
+let _runStart = 0, _lastFrame = 0;    /* 开演起点（看门狗重启时接着用）/ 最近一跳的时间 */
 let txtIdx = 0;
 let growT = 0;
 let root = null, rlLayer = null, txtLayer = null;
-let shadow = null, line1 = null, sheen = null, line2 = null, maskTarget = null;
+let shadow = null, glow = null, line1 = null, line1c = null, sheen = null, line2 = null, maskTarget = null;
 let settle = null;              /* 结束回调（回复后调用） */
 
 /* 真实视口坐标（root 是 fixed 覆盖整屏，所以不需要再减容器原点） */
@@ -226,7 +256,11 @@ function buildBase(){
   SAFE_T = Math.min(64, H * .075);
   const ccx = av.cx, ccy = av.cy;
   const arx = av.w / 2 + 3.6, ary = av.h / 2 + 4.0;
-  avUsed = { cx: ccx, cy: ccy, w: av.w || 38, h: av.h || 38 };
+  const WRAP_N = 88, wrapA0 = -Math.PI / 2, turns = 1.30;
+  /* 记下这一圈用到的几何参数：头像要是稍后又挪位了，
+     followHead() 只按这套参数把「缠头那一段」重算一遍，不重新随机整条线。 */
+  wrapMeta = { cx: ccx, cy: ccy, w: av.w || 38, h: av.h || 38,
+               arx: arx, ary: ary, a0: wrapA0, turns: turns };
 
   /* ① 从画面上方垂下来，落到头像顶上 */
   for (let i = 0; i <= 10; i++){
@@ -235,7 +269,6 @@ function buildBase(){
   }
   wrapFrom = pts.length;
   /* ② 缠住这个头像：绕 1.3 圈，从左下/右下顺出去（不多不少，刚好一圈多） */
-  const WRAP_N = 88, wrapA0 = -Math.PI / 2, turns = 1.30;
   for (let i = 1; i <= WRAP_N; i++){
     const a = wrapA0 + Math.PI * 2 * turns * (i / WRAP_N);
     pts.push([ccx + Math.cos(a) * arx, ccy + Math.sin(a) * ary]);
@@ -301,8 +334,55 @@ function nodesBase(){
   const raw = buildBase();
   /* 结 / 缠头像的「节点区间」换算成「弧长区间」，重采样后仍然准 */
   knotS = knotZones.map(([a, b]) => [sAt(raw, a), sAt(raw, b)]);
+  wrapFromS = sAt(raw, wrapFrom);
   wrapS = sAt(raw, wrapTo);
   return withArc(soften(resamplePath(raw, 2.7), 4));
+}
+
+/* 头像「晚一步」挪位（状态行/称号行插进来、群名换行、返回键动画收尾）时，
+   把缠着头像的那一段（下落 + 绕圈）按新位置重算，后面 90px 内的线用衰减位移顺接。
+   不重建整条线 —— 重建会换一套随机走势和一套文字，玩家会看到线当场变样子。 */
+function followHead(){
+  if (!wrapMeta || !nodes || nodes.length < 8) return false;
+  const el = document.getElementById('chat-avatar') ||
+             document.querySelector('#view-chat .topbar .avatar');
+  if (!el || !el.getBoundingClientRect) return false;
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const moved = Math.abs(cx - wrapMeta.cx) > 1.2 || Math.abs(cy - wrapMeta.cy) > 1.2 ||
+                Math.abs(r.width - wrapMeta.w) > 1.2 || Math.abs(r.height - wrapMeta.h) > 1.2;
+  if (!moved) return false;
+
+  const m = wrapMeta;
+  m.arx = r.width / 2 + 3.6;
+  m.ary = r.height / 2 + 4.0;
+  const blend = 90;                       /* 顺接长度：90px 内慢慢并回原来的走势 */
+  for (const nd of nodes){
+    const s = nd.s;
+    if (s <= wrapFromS){
+      const u = s / Math.max(1, wrapFromS);
+      nd.x = cx + 2.4 * u;
+      nd.y = -6 + (cy - m.ary + 6) * u;
+    } else if (s <= wrapS){
+      const u = (s - wrapFromS) / Math.max(1, wrapS - wrapFromS);
+      const a = m.a0 + Math.PI * 2 * m.turns * u;
+      nd.x = cx + Math.cos(a) * m.arx;
+      nd.y = cy + Math.sin(a) * m.ary;
+    } else {
+      const k = Math.max(0, 1 - (s - wrapS) / blend);
+      nd.x += (cx - m.cx) * k;
+      nd.y += (cy - m.cy) * k;
+    }
+  }
+  /* 法线跟着重算（strandD 靠它做副股的横向偏移），否则副股会在接头处扭一下 */
+  for (let i = 0; i < nodes.length; i++){
+    const a = nodes[Math.max(0, i - 1)], b = nodes[Math.min(nodes.length - 1, i + 1)];
+    const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+    nodes[i].nx = -dy / L; nodes[i].ny = dx / L;
+  }
+  m.cx = cx; m.cy = cy; m.w = r.width; m.h = r.height;
+  return true;
 }
 
 /* ---------------- 4. 遮挡 ---------------- */
@@ -569,16 +649,30 @@ const grow = p => {
   return Math.pow(p, 1.62) * (1 - .06 * p) + .06 * p;
 };
 
+/* 20261115h：路径字符串不再每帧重拼。
+   原来 45 帧/秒 × 4 条 path 各拼一遍 ~700 个节点的贝塞尔串，安卓 WebView 上直接把帧预算吃光 ——
+   真机表现就是掉帧、副股不重绘、甚至整层卡死。现在路径按 4Hz 重算（呼吸本来就慢，
+   sin 周期 2 秒上下，4Hz 完全看不出降频），其余帧只改 stroke-dashoffset（几乎零开销）。 */
+let _dCache = null, _dAt = -1e9;
 function draw(t, p) {
   const g = grow(p);
-  const d1 = strandD(nodes, 0, t, null);
-  line1.setAttribute('d', d1);
-  const d2 = strandD(nodes, Math.PI, t, s => s < .34 ? 0 : Math.pow((s - .34) / .66, 1.4) * 10);
-  line2.setAttribute('d', d2);
-  shadow.setAttribute('d', d1);
-  sheen.setAttribute('d', d1);
+  const now = performance.now();
+  if (!_dCache || now - _dAt > 250) {
+    const d1 = strandD(nodes, 0, t, null);
+    const d2 = strandD(nodes, Math.PI, t, s => s < .34 ? 0 : Math.pow((s - .34) / .66, 1.4) * 10);
+    _dCache = { d1: d1, d2: d2 };
+    _dAt = now;
+    if (glow) glow.setAttribute('d', d1);
+    shadow.setAttribute('d', d1);
+    if (line1c) line1c.setAttribute('d', d1);
+    line1.setAttribute('d', d1);
+    sheen.setAttribute('d', d1);
+    line2.setAttribute('d', d2);
+  }
 
   line1.style.strokeDashoffset = 1000 * (1 - g);
+  if (line1c) line1c.style.strokeDashoffset = line1.style.strokeDashoffset;
+  if (glow) glow.style.strokeDashoffset = line1.style.strokeDashoffset;
   shadow.style.strokeDashoffset = line1.style.strokeDashoffset;
   sheen.style.strokeDashoffset = line1.style.strokeDashoffset;
   line2.style.strokeDashoffset = 1000 * (1 - grow(Math.max(0, (p - .04) / .96)));
@@ -593,6 +687,7 @@ function rebuild() {
   nodes = nodesBase();
   totalS = nodes[nodes.length - 1].s || 1;
   pxPerNode = totalS / Math.max(1, nodes.length - 1);
+  _dCache = null; _dAt = -1e9;             /* 换了路径：下一帧必须重拼 */
   annotate();
   buildMask();
   txtIdx = Math.floor(Math.random() * TXT_SETS.length);
@@ -621,14 +716,18 @@ function buildDom() {
   root = host;
   rlLayer = svg;
   txtLayer = svg.querySelector('.txt-layer');
+  glow = svg.querySelector('.glow');
   shadow = svg.querySelector('.shadow');
   line1 = svg.querySelector('.s1');
+  line1c = svg.querySelector('.s1c');   /* 深线纯色兜底层（渐变被 WebView 吞掉时顶上） */
   sheen = svg.querySelector('.sheen');
   line2 = svg.querySelector('.s2');
   maskTarget = svg.querySelector('#maskTarget');
 
   maskTarget.setAttribute('mask', 'url(#occl)');
-  [shadow, line1, sheen, line2].forEach(el => {
+  _runStart = 0; _lastFrame = 0; _dCache = null; _dAt = -1e9;   /* 每次开演都从头算 */
+  [glow, shadow, line1c, line1, sheen, line2].forEach(el => {
+    if (!el) return;
     el.setAttribute('pathLength', '1000');
     el.style.strokeDasharray = '1000';
     el.style.strokeDashoffset = '1000';
@@ -637,14 +736,8 @@ function buildDom() {
 
 /* 量尺寸：每次开演都重新量（横竖屏、键盘弹出、不同机型都吃得下） */
 function measure() {
-  /* 20261115d：以**装饰层自己的像素尺寸**为准。
-     原来用 innerWidth/innerHeight，且 H 被 Math.max(420, ...) 夹着 ——
-     键盘弹出时 innerHeight 会掉到 500 以下，一夹就和图层对不上，
-     SVG 按 preserveAspectRatio 缩放+居中，缠头像那一圈整体偏位（玩家看到的「裹不住」）。 */
-  let lw = 0, lh = 0;
-  try { const r = rlLayer.getBoundingClientRect(); lw = r.width; lh = r.height; } catch (e) {}
-  W = Math.max(280, Math.round(lw || window.innerWidth || 360));
-  H = Math.max(280, Math.round(lh || window.innerHeight || 740));
+  W = Math.max(280, window.innerWidth || 360);
+  H = Math.max(420, window.innerHeight || 740);
   rlLayer.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   const mb = root.querySelector('.occl-bg');
   if (mb) { mb.setAttribute('width', W); mb.setAttribute('height', H); }
@@ -692,41 +785,54 @@ window.bmYinyuanPlay = function () {
       const t = getComputedStyle(view).transform;
       return !!t && t !== 'none';
     };
+    /* 20261115e：线是一条「一次生成、之后静止」的路径。
+       以前一开演就量、就建 —— 可头部会晚一步才排好（状态行/称号行插进来、
+       返回键动画收尾、群名换行），头像被挤下去十几像素，那一圈就裹歪了。
+       所以建线前先**实时抓头像位置**：连续 3 次采样都不动，才认定它站好了。
+       注意只抓这一次 —— 中途反复重算会重新随机走势，线会当场换样子。 */
     const start = function () {
-      measure();
-      rebuild();
-      run();
-      watchHead();
+      waitHeadSettled(function () {
+        measure();
+        rebuild();
+        run();
+      });
     };
-
-    /* 头部会「晚一步」重排：状态行/称号行到位、群名换行、返回键动画结束……
-       线是一条静止路径，头像一挪位，那一圈就裹不住了（玩家反馈「有时候裹不住」）。
-       开演后 6 秒内盯着头像矩形，只要挪了超过 1px 就按新位置重算一次。 */
-    function watchHead() {
+    function waitHeadSettled(cb) {
+      const pick = function () {
+        return document.getElementById('chat-avatar') ||
+               document.querySelector('#view-chat .topbar .avatar');
+      };
+      let last = null, same = 0;
       const t0 = performance.now();
-      const iv = setInterval(function () {
-        if (!root || performance.now() - t0 > 6000) { clearInterval(iv); return; }
-        const el = document.getElementById('chat-avatar') ||
-                   document.querySelector('#view-chat .topbar .avatar');
-        if (!el || !el.getBoundingClientRect || !avUsed) return;
-        const r = el.getBoundingClientRect();
-        if (!r.width || !r.height) return;
-        const dx = (r.left + r.width / 2) - avUsed.cx;
-        const dy = (r.top + r.height / 2) - avUsed.cy;
-        if (Math.abs(dx) > 1 || Math.abs(dy) > 1 ||
-            Math.abs(r.width - avUsed.w) > 1 || Math.abs(r.height - avUsed.h) > 1) {
-          measure();
-          rebuild();
+      const tick = function () {
+        const el = pick();
+        const r = (el && el.getBoundingClientRect) ? el.getBoundingClientRect() : null;
+        if (r && r.width > 0 && r.height > 0) {
+          if (last && Math.abs(r.left - last.l) < .6 && Math.abs(r.top - last.t) < .6 &&
+              Math.abs(r.width - last.w) < .6 && Math.abs(r.height - last.h) < .6) {
+            same++;
+          } else {
+            same = 0;
+          }
+          last = { l: r.left, t: r.top, w: r.width, h: r.height };
         }
-      }, 150);
+        /* 稳住 3 帧就走；万一一直动（极端重排），最多等 1 秒也别把演出拖死 */
+        if (same >= 2 || performance.now() - t0 > 1000) { cb(); return; }
+        setTimeout(tick, 70);
+      };
+      tick();
     }
     if (settling()) setTimeout(start, 340);
     else requestAnimationFrame(function () { requestAnimationFrame(start); });
 
     function run() {
-      const t0 = performance.now();
+      /* 开演起点只记一次：万一中途被看门狗重启，接着原来的进度长，不从头再来 */
+      if (!_runStart) _runStart = performance.now();
+      const t0 = _runStart;
+      _lastFrame = performance.now();
       clearInterval(growT);
       growT = setInterval(function () {
+        _lastFrame = performance.now();
         const ms = performance.now() - t0;
         if (ms < DUR) {
           draw(ms / 1000, Math.min(1, ms / DUR));
@@ -748,16 +854,31 @@ window.bmYinyuanPlay = function () {
         }, 260);
       };
       window.addEventListener('resize', onResize);
+      /* 开演后盯着头像：它一挪位就把那一圈跟过去（只动缠头那段，不重建整条线）。
+         6 秒后头部早就定了，停止盯。 */
+      const tHead = performance.now();
+      const headIv = setInterval(function () {
+        if (!root || performance.now() - tHead > 6000) { clearInterval(headIv); return; }
+        followHead();
+      }, 180);
       /* 玩家中途切去别的页面：线不该继续挂在别的页面上，直接散掉 */
       const iv = setInterval(function () {
         if (!root) {
           window.removeEventListener('resize', onResize);
           clearInterval(iv);
+          clearInterval(wdIv);
           return;
         }
         const v = document.body.dataset.view;
         if (v && v !== 'chat') { clearInterval(growT); growT = 0; finish(); }
       }, 700);
+      /* 看门狗：真机上偶发「线长到一半就不长了」——定时器被 WebView 节流/吞掉。
+         主循环超过 1.6 秒没跳帧、且页面在前台，就把它重新拉起来（进度接着走）。 */
+      const wdIv = setInterval(function () {
+        if (!root) { clearInterval(wdIv); return; }
+        if (document.hidden) return;
+        if (performance.now() - _lastFrame > 1600) run();
+      }, 1000);
     }
   });
 };

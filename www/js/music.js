@@ -7185,6 +7185,190 @@ window.bmMusicUI = (function () {
   }
 
   /* ============================================================
+     一起听歌 · 从歌词里采集字卡（20261116）
+     ------------------------------------------------------------
+     ★ 用户定案
+       · 角色在一听歌过程中，随机把某句歌词（或某句的一部分）收成字卡；
+       · 中／英／日／韩的歌，收下来的一律是**中文**字卡；
+       · 采集结果单独归一个分类（回复字卡里的「歌词采集」分组）；
+       · 角色聊天抽字卡时照常能抽到（drawReply 会汇总所有启用分组）；
+       · 不定概率、不加限制，完全随机；
+       · 进回复字卡时同样要去重 —— 采集时先跟整个字卡库比对，重复的不收。
+     实现要点
+       · 「在不在听」用 _livePlayback()（遥控外部 App 模式也能读到真实播放态）；
+       · 歌词按时间戳对齐，同一时间戳的第二行是中文翻译（parseLrc 已打 tr 标记）；
+       · 非中文行 → 用它的翻译行；连翻译都没有 → AI 模式翻一句，字卡模式这次跳过；
+       · 「整句 / 片段」五五开；片段按标点切开随机取一段，切不动就随机截 6~16 字。
+     数据落点
+       cards.customReplyGroups 里固定 id 的分组（src:'lyric'）。条目仍是纯字符串，
+       与现有字卡完全同构 —— 所以抽取、去重、禁用、导入导出全都自动兼容。
+     ============================================================ */
+  const LC_GROUP_ID = 'grp_lyric_collect';
+  const LC_GROUP_NAME = '歌词采集';
+  const LC_TICK_MS = 3000;     /* 每 3 秒看一次「在不在听歌」 */
+  const LC_CHANCE = 0.025;     /* 每次 2.5% → 平均约 2 分钟收一张，随机不固定 */
+  const LC_MAX_LEN = 24;       /* 字卡最长字数（聊天里能用得上的长度） */
+
+  let _lcTimer = null, _lcBusy = false;
+  /* 20261116 用户强调「不要影响一起听歌时的歌词和界面」：
+     采集全程**不碰任何 DOM、不改歌词框、不在播放页弹提示**。
+     只在有生以来第一次收到字卡时提示一条，之后完全静默（去字卡库才看得到）。 */
+  let _lcToastShown = (function () {
+    try { return localStorage.getItem('bmLyricCardToast') === '1'; } catch (e) { return false; }
+  })();
+
+  /* 是不是中文（日文里的汉字不算：假名一出现就判非中文，改走翻译行） */
+  function _lcIsChinese(s) {
+    const str = String(s || '');
+    const han = (str.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const kana = (str.match(/[\u3040-\u30ff]/g) || []).length;
+    const hangul = (str.match(/[\uac00-\ud7af]/g) || []).length;
+    const latin = (str.match(/[A-Za-z]/g) || []).length;
+    const total = han + kana + hangul + latin;
+    if (!total) return false;
+    if (kana > 0 || hangul > 0) return false;
+    return han / total >= 0.5;
+  }
+
+  /* 取（或建）「歌词采集」分组。返回 null 表示字卡库还没加载好。 */
+  function _lcGroup() {
+    let cds = null;
+    try { cds = cards; } catch (e) { return null; }
+    if (!cds || typeof cds !== 'object') return null;
+    if (!Array.isArray(cds.customReplyGroups)) cds.customReplyGroups = [];
+    let g = cds.customReplyGroups.find(x => x && x.id === LC_GROUP_ID);
+    if (!g) {
+      /* color 与字卡库里其它伪分组同一套色板，避免分组头的小圆点变成透明 */
+      g = { id: LC_GROUP_ID, name: LC_GROUP_NAME, items: [], src: 'lyric', color: '#7fb3c8' };
+      cds.customReplyGroups.push(g);
+    }
+    if (!Array.isArray(g.items)) g.items = [];
+    if (g.disabled === undefined) g.disabled = false;
+    g.src = 'lyric';   /* 打标记：字卡库据此显示来源 */
+    return g;
+  }
+
+  /* 当前正在唱的那一句（含它的中文翻译行） */
+  function _lcPickLine() {
+    const cur = M.state.current;
+    if (!cur) return null;
+    const raw = M.state.lyrics || cur.lrc || '';
+    if (!raw) return null;
+    const all = parseLrc(raw);
+    if (!all.length) return null;
+    const pos = _exactPos() || 0;
+    let idx = 0;
+    for (let i = 0; i < all.length; i++) { if (all[i].t <= pos) idx = i; else break; }
+    /* 在「正在唱的这句」前后各一行里随机挑（都是此刻耳朵里听到的段落，不会串到别处） */
+    const cand = [];
+    for (let d = -1; d <= 1; d++) {
+      const i = idx + d;
+      if (i >= 0 && i < all.length && !all[i].tr && all[i].text) cand.push(i);
+    }
+    const pick = cand.length ? cand[Math.floor(Math.random() * cand.length)] : idx;
+    const line = all[pick];
+    if (!line || !line.text) return null;
+    let tr = '';
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].t === line.t && all[i].tr && all[i].text) { tr = all[i].text; break; }
+    }
+    return { text: line.text, tr: tr, t: line.t };
+  }
+
+  /* 截取：整句 / 一句里的一段 */
+  function _lcFragment(text, whole) {
+    const s = String(text || '').replace(/^[\s\[\]【】()（）]+|[\s\[\]【】()（）]+$/g, '').trim();
+    if (!s) return '';
+    if (whole && s.length <= LC_MAX_LEN) return s;
+    /* 按标点切，取长度够用的一段（「某句的一部分」就是从这里来的） */
+    const segs = s.split(/[，。、；：！？…—·,.;:!?()（）\[\]【】"“”'‘’~～\/\s]+/)
+      .map(x => (x || '').trim())
+      .filter(x => x.length >= 4);
+    if (segs.length) {
+      let seg = segs[Math.floor(Math.random() * segs.length)];
+      if (seg.length > LC_MAX_LEN) seg = seg.slice(0, LC_MAX_LEN);
+      return seg;
+    }
+    if (s.length <= 6) return s;
+    const n = Math.min(LC_MAX_LEN, 6 + Math.floor(Math.random() * 11));
+    if (s.length <= n) return s;
+    const st = Math.floor(Math.random() * (s.length - n + 1));
+    return s.slice(st, st + n);
+  }
+
+  /* 外文行没有翻译行时：AI 模式让模型译成一句中文（字卡模式返回空 → 这次不采） */
+  async function _lcTranslateLine(c, text) {
+    try {
+      if (!c || typeof isCharAIMode !== 'function' || typeof loadAIConfig !== 'function' || typeof callAI !== 'function') return '';
+      if (!await isCharAIMode(c.id)) return '';
+      const cfg = await loadAIConfig();
+      if (!cfg || !cfg.chatApi || !cfg.chatApi.url || !cfg.chatApi.url.trim()) return '';
+      const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+        { role: 'system', content: '你是翻译。把下面这句歌词译成自然的中文，只输出译文一句，不要引号、不要解释、不要音译。' },
+        { role: 'user', content: String(text || '').slice(0, 120) },
+      ], { temperature: 0.3, maxTokens: 80 });
+      const t = (r && r.ok && r.text) ? String(r.text).trim().replace(/^["「『]+|["」』]+$/g, '').trim() : '';
+      return t || '';
+    } catch (e) { return ''; }
+  }
+
+  /* 采集一次。返回 true = 真的收下了一张 */
+  async function _lcCollectOnce() {
+    if (!M.state.charId) return false;                 /* 必须在一起听歌 */
+    const c = (typeof getCharById === 'function' ? getCharById(M.state.charId) : null) || null;
+    if (!c) return false;
+    const lb = _livePlayback();
+    if (!lb || !lb.playing) return false;              /* 没在播就不算「听到」 */
+    const cur = M.state.current;
+    if (!cur) return false;
+    const ln = _lcPickLine();
+    if (!ln) return false;
+
+    let text = _lcIsChinese(ln.text) ? ln.text : (ln.tr || '');
+    if (!text) text = await _lcTranslateLine(c, ln.text);
+    if (!text || !_lcIsChinese(text)) return false;    /* 兜底：不是中文就不收 */
+
+    const frag = _lcFragment(text, Math.random() < 0.5);
+    if (!frag || frag.length < 4) return false;
+
+    const g = _lcGroup();
+    if (!g || g.disabled) return false;
+
+    /* 去重：跟**整个回复字卡库**比对（未分组的 + 所有分组的），重复就不收。
+       这样既不会在采集阶段堆重复，进字卡库时也不会出现「同一句占了两个位置」。 */
+    const pool = [];
+    try {
+      (cards.customReplies || []).forEach(t => pool.push(t));
+      (cards.customReplyGroups || []).forEach(x => (x.items || []).forEach(t => pool.push(t)));
+    } catch (e) {}
+    if (pool.indexOf(frag) !== -1) return false;
+
+    g.items.push(frag);
+    try { await saveCards(cards); } catch (e) {}
+    /* 全局只提示一次，之后静默 —— 听歌时的界面（歌词/悬浮窗）一点不动 */
+    if (!_lcToastShown) {
+      _lcToastShown = true;
+      try { localStorage.setItem('bmLyricCardToast', '1'); } catch (e) {}
+      if (window.miniToast) miniToast(`${c.name || 'TA'} 从《${cur.name || '这首歌'}》里捡了一句，收进「歌词采集」字卡了`);
+    }
+    return true;
+  }
+
+  function _lcStart() {
+    if (_lcTimer) return;
+    _lcTimer = setInterval(function () {
+      if (_lcBusy) return;
+      if (Math.random() >= LC_CHANCE) return;
+      _lcBusy = true;
+      Promise.resolve()
+        .then(() => _lcCollectOnce())
+        .catch(function () {})
+        .then(function () { _lcBusy = false; });
+    }, LC_TICK_MS);
+  }
+  _lcStart();
+
+  /* ============================================================
      一起听歌悬浮窗（三级：dot → mini → card，只能收起不能关闭；
      仅在「聊天设置关悬浮窗」或「听音乐界面关悬浮窗」时才真正移除）
      ============================================================ */
@@ -8611,7 +8795,9 @@ window.bmMusicUI = (function () {
     playerAskSongSwap, charAskSongSwap, playPickedSong, declineSongSwap,
     charShareSong, playSongFromCard,
     // 20261110 新增：播放列表重抓 / 分享歌卡 / 角色评论（落库 + 随机 + 延迟补评）
-    refreshAllSongs, sendSongCard, charCommentPublish, charCommentMaybe, charCommentTick };
+    refreshAllSongs, sendSongCard, charCommentPublish, charCommentMaybe, charCommentTick,
+    // 20261116 新增：一起听歌·歌词采集字卡（暴露给调试/验证用，正常由定时器自己跑）
+    lyricCardCollect: _lcCollectOnce };
 })();
 
 /* app.js 引用的全局入口 */

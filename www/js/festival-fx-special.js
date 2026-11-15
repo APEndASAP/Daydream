@@ -212,9 +212,19 @@
        头像行、节气名、标题、寄语一起淡出，画布拿到整张卡，手指怎么划都不压字。
        只在 .fx-game（万圣节 / 平安夜 / 圣诞节这三张可玩卡）生效，
        普通节日/节气卡的文字一个字都不动。按钮保留，玩家随时能关掉这张卡。 */
-    const isGameCard = !!(host.classList && host.classList.contains('fx-game'));
+    /* 20261116（玩家定案，改动范围收窄）：
+       点空白清屏 **只给平安夜与圣诞节这两张卡**。
+       万圣节同样是 .fx-game（只是版式需要「文字在上、按钮钉底」），
+       但玩家明确要求它不许清屏 —— 所以这里不能再按 .fx-game 一刀切。
+       其余节日/节气卡本来就没有 .fx-game，一个字都不会动。 */
+    const canClear = !!(host.classList && (
+      host.classList.contains('fx-christmasEve') || host.classList.contains('fx-christmas')
+    ));
     const clearChrome = () => {
-      if (!isGameCard || host.classList.contains('fx-cleared')) return;
+      if (!canClear || host.classList.contains('fx-cleared')) return;
+      /* 结算页（.fx-done）已经把文字放回来了，这里不能再收掉，
+         否则玩家点一下屏幕，「是谁 / 哪一夜 / 说了什么」又没了。 */
+      if (host.classList.contains('fx-done')) return;
       host.classList.add('fx-cleared');
     };
     /* 20261115：把宿主卡片挂到状态上 —— 小游戏进入「结算」时要给卡片加个 class，
@@ -1944,7 +1954,7 @@
   }
 
   /* ---------- 评级小卡（出炉后用）：一条标题 + 一行明细 ---------- */
-  function drawResultText(ctx, W, H, S, title, sub, perfect, baseY) {
+  function drawResultText(ctx, W, H, S, title, sub, perfect, baseY, missTxt) {
     ctx.save();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -2009,6 +2019,21 @@
       lines.forEach((ln, i) => {
         ctx.fillText(ln, W * 0.5, y0 + i * lh);
       });
+      /* 20261116：没拿到完美时，挂一行「差一点完美：……」——
+         玩家能立刻知道自己少做了哪一步，而不是只看到「刚刚好的苹果派」。
+         字号比判定语小一档、颜色偏琥珀，不抢标题；太长就缩到放得下为止。 */
+      if (missTxt) {
+        const mMax = W * 0.90;
+        let mfs = 9.6 * S;
+        ctx.font = mfs + 'px system-ui, -apple-system, sans-serif';
+        const mw = ctx.measureText(missTxt).width;
+        if (mw > mMax) {
+          mfs = Math.max(7.6 * S, mfs * mMax / mw);
+          ctx.font = mfs + 'px system-ui, -apple-system, sans-serif';
+        }
+        ctx.fillStyle = 'rgba(255,214,150,0.72)';
+        ctx.fillText(missTxt, W * 0.5, y0 + lines.length * lh + 11 * S);
+      }
     }
     ctx.restore();
   }
@@ -2579,22 +2604,47 @@
         st.sliceScore = sliceScore;
         st.bakeScore = bakeScore;
         st.coatScore = Math.round(clamp(st.coat, 0, 1) * 20);
+        /* 20261116（玩家反馈「我抹匀了为什么不是满分」）：蛋液按「铺没铺满」判。
+           18 格刷到 90% 以上就算铺匀了，直接给满分 20 ——
+           旧算法要 0.975（几乎每格都刷到）才满分，少扫一格就只有 19 分，
+           等于用一条玩家完全看不见的隐藏条件把「完美」挡掉了。 */
+        if (st.coat >= 0.90) st.coatScore = 20;
         /* 20261116：没洗干净要真的扣分，否则「点空白跳过洗果」就是白赚时间。
            四档：干净 0 / 略脏 -4 / 没洗净 -9 / 带泥 -15。 */
         const washPenalty = [0, 4, 9, 15][clamp(st.dirty || 0, 0, 3)];
         st.washPenalty = washPenalty;
         st.total = clamp(sliceScore + st.sugarScore + st.coatScore + bakeScore - washPenalty, 0, 100);
-        /* 20261116：有坏果、或没洗干净，都绝不可能是「最完美的苹果派」。 */
+        /* 20261116：有坏果、或没洗干净，都绝不可能是「最完美的苹果派」。
+           20261116 第二版（玩家「我每一步都对还是不给完美」）：
+           · 去掉 trash === 0 —— 切到边报废的片本来就按每片 -3 分扣了总分，
+             再拿它一票否决「完美」属于同一件事罚两次，而且玩家完全看不见；
+             只要最后**送进派里的正好是一整颗苹果的 10 片**，就算你切得干净。
+           · 蛋液门槛跟着上面 0.90 的铺满线走（不再要求 0.975）。 */
         st.isPerfect = (st.cookResult === 'perfect' && inGold && n === EVE_FULL_SLICES &&
-          st.trash === 0 && st.sugarScore >= 20 && st.coatScore >= 20 &&
+          st.sugarScore >= 20 && st.coatScore >= 20 &&
           (st.badRatio || 0) <= 0 && (st.dirty || 0) === 0);
+        /* 20261116（玩家问「我每一步都对，为什么不是完美」）：
+           完美判定的门槛一直散在这个函数里，玩家看不到自己差在哪一条。
+           这里把没达成的条件逐条记下来，结算页会以一行小字报出来
+           （「差一点完美：蛋液没铺满 · 火候偏出白框」），绝不再闷着判。 */
+        st.perfectMiss = evePerfectMiss(st, inGold, n);
         st.phase = 'done'; st.phaseT = 0; st.doneK = 0; st.fade = 0;
-        // 结算：底部的寄语淡出，把这块地方让给画布上的结果文字
-        if (st.__host && st.__host.classList) st.__host.classList.add('fx-result');
+        /* 20261116 玩家定案：**结算这一页不再清屏**。
+           玩的时候点空白会把上方的角色名 / 节气名 / 标题 / 正文 / 寄语一起收掉（.fx-cleared），
+           出炉结算时必须把它们放回来 —— 玩家要能在结果页上再看一眼「是谁、哪一夜、说了什么」。
+           寄语也不再让位（原来 .fx-result 会把它藏掉）：它在 CSS 里上移 48px 让开底部两个按钮，
+           画布上那句「点一下重做」同时取消，否则两行字会叠在同一处。 */
+        if (st.__host && st.__host.classList) {
+          st.__host.classList.remove('fx-cleared');
+          st.__host.classList.remove('fx-result');
+        }
         // 20261116：派做好了 → 卡片上多出「送给 TA」按钮（.fx-done 控制显隐）
         if (st.__host && st.__host.classList) st.__host.classList.add('fx-done');
         // 把这一炉的结论挂到卡片上，送出时用它决定文案（完美 / 焦糖 / 生 / 焦…）
         if (st.__host && st.__host.dataset) {
+          /* 20261116：标题与副标也一并带出去 —— 送给 TA 的那张卡片上，
+             派图下面要写和结算页一模一样的评级，不能各说各的。 */
+          const _J = evePieJudge(st);
           st.__host.dataset.pie = JSON.stringify({
             perfect: !!st.isPerfect, cook: st.cookResult || '',
             slices: st.plated || 0, sweet: st.sugar || 0,
@@ -2602,6 +2652,7 @@
             badRatio: Number((st.badRatio || 0).toFixed(3)), badN: st.pickBadIn || 0,
             // 20261116：洗净档也带出去 —— 送派那句话要和结算页说的是同一件事
             dirty: clamp(st.dirty || 0, 0, 3), washP: Number((st.washP || 0).toFixed(3)),
+            title: _J.title || '', sub: _J.sub || '', kind: _J.kind || '',
           });
         }
         return;
@@ -4256,10 +4307,29 @@
    * 火候档优先（生、焦糖、糊、炭），因为那是整炉的定性。
    * flags 只给装饰用，和标题互不影响：塞满又能同时是甜美的（蝴蝶结 + 流心）。
    * ============================================================ */
+  /* 完美判定缺了哪几条（空数组＝真完美）。
+     20261116：判定条件一直写在两处（真玩 / 调试），玩家又看不到，
+     于是统一抽成这个函数 —— 结算页那行「差一点完美：……」就是它的输出。 */
+  function evePerfectMiss(st, inGold, n) {
+    const miss = [];
+    if (st.cookResult !== 'perfect') miss.push('火候不在「刚好」档');
+    else if (!inGold) miss.push('火候偏出了白框（3.9~4.6 秒）');
+    if (n !== EVE_FULL_SLICES) miss.push('片数不是一整颗苹果（' + n + ' 片，要 10 片）');
+    if (st.sugarScore < 20) miss.push('糖没停在绿区（0.42~0.66）');
+    if (st.coatScore < 20) miss.push('蛋液没铺满');
+    if ((st.badRatio || 0) > 0) miss.push('挑果时混进了坏果');
+    if ((st.dirty || 0) > 0) miss.push('苹果没洗干净');
+    return miss;
+  }
+
   function evePieJudge(st) {
     const n = st.plated || 0;
     const sugar = st.sugar || 0;
-    const sweet = sugar < 0.40 ? 0 : sugar <= 0.66 ? 1 : sugar <= 0.80 ? 2 : 3;
+    /* 20261116：绿区是 0.42~0.66（糖量条上画的就是这两根白线），
+       甜度分档以前从 0.40 起算「刚好」，和满分区间差 0.02 ——
+       停在 0.41 的玩家会看到「甜度刚好」却只拿 14 分、从而拿不到完美。
+       现在两者对齐：绿区内就是「刚好」+ 满分，区外一律「偏淡 / 甜美」。 */
+    const sweet = sugar < 0.42 ? 0 : sugar <= 0.66 ? 1 : sugar <= 0.80 ? 2 : 3;
     const amt = n < 5 ? 0 : n < 8 ? 1 : n <= 13 ? 2 : 3;
     const badN = clamp(Math.round(st.pickBadIn || 0), 0, 6);
     const bad = badN <= 0 ? 0 : ((badN / Math.max(1, st.pickOut || 1)) <= 0.34 ? 1 : 2);
@@ -4345,6 +4415,9 @@
       halo: !!st.isPerfect,
       bow: kind === 'sweet',                                  // 甜美 → 缎带蝴蝶结
       stream: amt === 3 && gd !== 'carbon',                   // 塞满 → 馅从边沿流出来
+      /* 没拿到完美时，把差的那几条直接写出来（完美时为空，结算页不显示这行） */
+      missTxt: (!st.isPerfect && st.perfectMiss && st.perfectMiss.length)
+        ? '差一点完美：' + st.perfectMiss.join(' · ') : '',
     };
   }
 
@@ -5538,8 +5611,10 @@
     /* 20261114：结算页三行字原来挤成两行 —— 副标题落点（y+19S）正好被底部的
        「点一下重做」提示条压住。现在标题上移到 0.772、提示条下移到 0.862，
        中间留出约一行半的空隙。 */
-    drawResultText(ctx, W, H, S, title, sub, !!J.halo, 0.772);
-    drawHint(ctx, '点一下重做', W, H, S, '#ffe9cf', 0.895);
+    drawResultText(ctx, W, H, S, title, sub, !!J.halo, 0.772, J.missTxt);
+    /* 20261116 玩家定案：结算页不再清屏 —— 寄语会回到画面底部，
+       原来钉在 0.895 的「点一下重做」正好压在寄语头上，这里取消。
+       重做仍然可用（点画布任意处 = 重开一炉），只是不再画那行字。 */
   }
 
 
@@ -6198,7 +6273,7 @@
         const inGold = st.bakeT >= EVE_GOLD_A && st.bakeT <= EVE_GOLD_B;
         st.sugarScore = opt.sugar == null ? 20 : opt.sugar;
         st.coat = opt.coat == null ? 1 : opt.coat;
-        st.coatScore = Math.round(st.coat * 20);
+        st.coatScore = st.coat >= 0.90 ? 20 : Math.round(st.coat * 20);   // 与真玩同一套：90% 以上算铺满
         st.bakeScore = st.cookResult === 'perfect' ? (inGold ? 30 : 26)
           : st.cookResult === 'caramel' ? 20 : st.cookResult === 'raw' ? 8 : st.cookResult === 'burnt' ? 5 : 0;
         st.sliceScore = SLICE_SCORE_TBL[Math.min(EVE_MAX_SLICES, Math.max(0, nc))];
@@ -6213,18 +6288,24 @@
         st.washPenalty = [0, 4, 9, 15][st.dirty];
         st.total = Math.max(0, st.sliceScore + st.sugarScore + st.coatScore + st.bakeScore - st.washPenalty);
         st.isPerfect = st.cookResult === 'perfect' && inGold && nc === EVE_FULL_SLICES &&
-          st.trash === 0 && st.sugarScore >= 20 && st.coatScore >= 20 &&
+          st.sugarScore >= 20 && st.coatScore >= 20 &&
           st.pickBadIn === 0 && st.dirty === 0;
+        st.perfectMiss = evePerfectMiss(st, inGold, nc);
         st.phase = 'done'; st.phaseT = 0; st.doneK = 1; st.fade = 1;
-        // 与真玩时一样：结算态让底部的寄语淡出
-        if (st.__host && st.__host.classList) st.__host.classList.add('fx-result');
+        /* 20261116 玩家定案：结算页不再清屏 —— 调试预览与真玩同一套（恢复上方文字、寄语回来） */
+        if (st.__host && st.__host.classList) {
+          st.__host.classList.remove('fx-cleared');
+          st.__host.classList.remove('fx-result');
+        }
         // 预览页也要看得到「送给 TA」按钮
         if (st.__host && st.__host.classList) st.__host.classList.add('fx-done');
         if (st.__host && st.__host.dataset) {
+          const _J = evePieJudge(st);
           st.__host.dataset.pie = JSON.stringify({
             perfect: !!st.isPerfect, cook: st.cookResult || '', slices: nc, sweet: st.sugar || 0,
             badRatio: Number(st.badRatio.toFixed(3)), badN: st.pickBadIn,
             dirty: st.dirty, washP: st.washP,
+            title: _J.title || '', sub: _J.sub || '', kind: _J.kind || '',
           });
         }
       }
