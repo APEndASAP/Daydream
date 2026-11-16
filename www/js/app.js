@@ -4605,14 +4605,16 @@ function msgBodyHtml(m, oneLine = false) {
     case 'music': {
       // 一起听歌卡片（玩家邀请访客一起听歌时发到聊天页）
       const mc = m.content || {};
-      const cover = mc.pic ? `<img src="${imgSrcAttr(mc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
+      /* 20261116：封面必须带 referrerpolicy —— 网易云的图直接请求会被防盗链打成破图，
+         歌名/歌手/封面都打上 data 钩子，切歌时由 music.js 就地改写这一张卡。 */
+      const cover = mc.pic ? `<img data-mc-cover src="${imgSrcAttr(mc.pic, true)}" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);">` : `<span data-mc-cover style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
       return `<div class="msg-card msg-music-card" data-music-card="${m.id}" style="cursor:pointer;">
         <span class="msg-card-tag"><i data-icon="music" data-size="16"></i> 一起听歌</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
           ${cover}
           <div style="min-width:0;">
-            <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(mc.name || '一起听歌')}</div>
-            <div style="font-size:12px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${escapeHtml(mc.artist || '')}</div>
+            <div data-mc-title style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(mc.name || '一起听歌')}</div>
+            <div data-mc-artist style="font-size:12px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">${escapeHtml(mc.artist || '')}</div>
           </div>
         </div>
         <div style="margin-top:6px;font-size:11.5px;color:var(--text-tertiary);">${mc.taName ? ('和 ' + escapeHtml(mc.taName) + ' 一起听') : '一起听歌'}</div>
@@ -4627,7 +4629,7 @@ function msgBodyHtml(m, oneLine = false) {
       /* 20261111：歌卡可以点开就播（角色主动分享的、玩家分享的都行）。
          「一起听歌已结束」那张（ended）不是歌，不给播放。 */
       const _playable = !mcc.ended && !!mcc.name;
-      const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
+      const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
       return `<div class="msg-card msg-music-card"${_playable ? ` data-song-play="${m.id}" style="cursor:pointer;"` : ''}>
         <span class="msg-card-tag">${_fromMe ? '<i data-icon="music" data-size="15"></i> 我把这首歌分享给你' : '<i data-icon="music" data-size="15"></i> 听到这首歌，TA 想对你说'}</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
@@ -4830,6 +4832,7 @@ function msgBodyHtml(m, oneLine = false) {
           <span class="msg-card-tag"><i data-icon="divination" data-size="16"></i> 占卜评价</span>
           ${dc.question ? `<div style="margin-top:6px;font-size:12px;color:var(--text-tertiary);">想问：${escapeHtml(dc.question)}</div>` : ''}
           <div style="margin-top:6px;font-size:12.5px;color:var(--text-secondary);">${cardLine}</div>
+          ${dc.diviSummary ? `<div style="margin-top:8px;font-size:12.5px;line-height:1.6;color:var(--text-secondary);">${escapeHtml(dc.diviSummary)}</div>` : ''}
           <div style="margin-top:10px;display:flex;align-items:center;gap:6px;">
             ${starHtml}
             <span style="font-size:15px;font-weight:700;color:var(--purple-soft);">${dc.score.toFixed(1)} 分</span>
@@ -31680,6 +31683,13 @@ function diviShuffleDeck() {
   return deck;
 }
 
+/* ★ 20261116：本次占卜的「会话」——牌、问题、每一版 AI 解牌、玩家的补充、发给了谁、角色评价。
+   存在的理由有两个，都是玩家这轮提的：
+     ①「存入记忆宫殿」按钮要存的是**完整一次占卜**（三张牌 + AI 解读 + 补充后的解牌 + 角色评价）；
+     ② 发给角色的那张卡片要带 AI 解读摘要，点开还能看到当时那份完整解读。
+   只在打开占卜弹窗时重建；关掉弹窗不清空 —— 角色评价是异步回来的，回来时还要写进记忆。 */
+let _diviLive = null;
+
 /* 占卜：三张牌时间流（过去/现在/未来），牌背→点击翻开牌面（正逆位随机），不记录任何历史 */
 async function showDivinationModal() {
   /* 20261115：打开弹窗时**一张都不抽**。
@@ -31687,6 +31697,7 @@ async function showDivinationModal() {
      已抽走的牌记在 drawn 里，后面几张从剩下的里抽 —— 不放回、不重复。 */
   const pick = [null, null, null];
   const drawn = [];
+  _diviLive = { pick: pick, question: '', rounds: [], sent: null, rated: null, savedId: '' };
   const drawOneCard = () => {
     const pool = TAROT_DECK.filter(c => !drawn.includes(c));
     const card = pool[_diviRandInt(pool.length)];
@@ -31719,7 +31730,12 @@ async function showDivinationModal() {
   openModal(`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <div style="font-size:18px;font-weight:600;">占卜 · 三张牌时间流</div>
-      <button class="icon-btn" id="divi-close"><i data-icon="close" data-size="17"></i></button>
+      <div style="display:flex;align-items:center;gap:4px;">
+        <!-- ★ 20261116：存入记忆宫殿做成标题栏图标，放在叉号左边（玩家要求，不再占底部一整行）。
+             没翻开牌 / 还没出解读时置灰，点了只提示不落库。 -->
+        <button class="icon-btn" id="divi-save" disabled title="存入记忆宫殿" style="opacity:.35;">${icon('memory', 17)}</button>
+        <button class="icon-btn" id="divi-close"><i data-icon="close" data-size="17"></i></button>
+      </div>
     </div>
     <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:10px;">韦特塔罗 78 张 · 正逆位 · 静下心来，想着要问的事，依次翻开三张牌</div>
     <div class="field" style="margin-bottom:10px;">
@@ -31760,12 +31776,45 @@ async function showDivinationModal() {
   // 20261103：询问访客——三张牌全翻开后才启用；把问题+三张牌+AI解牌发卡片，角色评价打分
   const askBtn = $('#divi-ask');
   let askEnabled = false;
-  const enableAsk = () => { askEnabled = true; if (askBtn) askBtn.disabled = false; };
+  const enableAsk = () => {
+    askEnabled = true;
+    if (askBtn) askBtn.disabled = false;
+    /* 20261116：三张牌翻开后，标题栏的「存入记忆宫殿」图标一起点亮 */
+    const sb = $('#divi-save');
+    if (sb) { sb.disabled = false; sb.style.opacity = '1'; }
+  };
+  /* ★ 20261116：占卜页的「存入记忆宫殿」——标题栏图标（叉号左边）。
+     之前 saveDiviToPalace() 早就写好了却从没绑过按钮，玩家根本没入口。
+     内容为空（没解牌、也没评价）时**不落库**，只提示。 */
+  const diviSaveBtn = $('#divi-save');
+  if (diviSaveBtn) diviSaveBtn.onclick = async () => {
+    if (!askEnabled) { miniToast('先把三张牌都翻开'); return; }
+    const L = _diviLive;
+    const hasRound = !!(L && Array.isArray(L.rounds) && L.rounds.length);
+    const hasRate = !!(L && L.rated);
+    if (!hasRound && !hasRate) { miniToast('还没有解读内容，解牌出来再存'); return; }
+    diviSaveBtn.disabled = true;
+    try { await saveDiviToPalace(); } finally { diviSaveBtn.disabled = false; }
+  };
   if (askBtn) askBtn.onclick = async () => {
     if (!askEnabled) { miniToast('先把三张牌都翻开'); return; }
     const qEl = $('#divi-question');
     const question = (qEl && qEl.value.trim()) || '';
-    await askDreamCharAboutDivination(pick, question);
+    /* 带上本次的解读（摘要 + 每一版全文）：卡片里要显示摘要、点开看全文，
+       角色评价时也得真读过这份解牌，否则它只是在瞎打分。 */
+    /* ★ 20261116 玩家澄清：占卜不是每一轮解牌都记住 ——
+       只有「发到聊天框里的那一份」和「主动存进记忆宫殿的那一份」才算记录。
+       所以这里只取**最新一版**（补充背景后重解的那版）随卡片一起走，
+       前面几版只是弹窗里给你对比用的，不落库、不进记忆。 */
+    const _latest = (_diviLive && _diviLive.rounds.length)
+      ? [_diviLive.rounds[_diviLive.rounds.length - 1]] : [];
+    const divi = _diviLive ? {
+      question: question,
+      rounds: _latest,
+      summary: _diviSummaryOf(_latest),
+      text: _diviFullTextOf(_latest),
+    } : null;
+    await askDreamCharAboutDivination(pick, question, divi);
     closeModal();
   };
   // AI 解牌开关（20260929ah）：即时持久化
@@ -31814,6 +31863,7 @@ function renderDivinationMeaning(pick) {
   const question = (qEl && qEl.value.trim()) || '';
   const useAiEl = $('#divi-useai');
   const useAI = useAiEl ? !!useAiEl.checked : true; // 弹窗已关则按默认开
+  if (_diviLive) _diviLive.question = question;   /* 存记忆 / 发卡片都要带这个问题 */
   box.innerHTML = `
     <div class="tarot-meaning">
       ${question ? `<div class="tm-row" style="color:var(--text-secondary);font-size:12.5px;">${icon('help', 12)} 想问：${escapeHtml(question)}</div>` : ''}
@@ -31860,6 +31910,16 @@ function renderDivinationMeaning(pick) {
     const no = st.round > 0 ? `<div class="divi-round-no">第 ${st.round + 1} 版</div>` : '';
     el.innerHTML = no + rel + secs.join('') + think;
     host.appendChild(el);
+    /* ★ 20261116：把这一版解牌记进本次占卜 —— 玩家点「存入记忆宫殿」时，
+       交出来的是「牌面 + AI 解读 + 补充后的解牌」，不是最后一句。 */
+    if (_diviLive){
+      _diviLive.rounds.push({
+        v: st.round + 1,
+        tone: data.tone || '', core: data.core || '', advice: data.advice || '',
+        think: data.think || '', relation: data.relation || '',
+        note: (opts && opts.note) || '',
+      });
+    }
     st.round++;
     scrollLast(el);
   }
@@ -31928,7 +31988,7 @@ function renderDivinationMeaning(pick) {
     if (opts.userNote) st.history.push({ role: 'user', text: '玩家的补充：' + opts.userNote });
     if (data.raw) st.history.push({ role: 'ai', text: data.raw });
 
-    renderRound(data, { openThink: !!opts.skipAsk });
+    renderRound(data, { openThink: !!opts.skipAsk, note: opts.userNote || '' });
     if (data.needInfo && data.ask && !opts.skipAsk) {
       renderAsk(data.ask);
       /* 滚动到输入条并聚焦 —— 这才有「AI 主动问你一句」的感觉 */
@@ -31979,21 +32039,34 @@ function renderDivinationMeaning(pick) {
    字卡模式：随机抽 2~3 张字卡（数量可配置）作为评价感想；AI 模式：AI 生成评价。
    打分：5 星、半星 1 分、满分 10 分，支持 6.5 等小数（半星点亮），星星颜色跟全局主题色。
    占卜牌随卡片消息一起发送（type='divination' 卡片）。 */
-async function askDreamCharAboutDivination(pick, question) {
+/* divi：调用处递进来的「本次解读」对象（{question, rounds, summary, text}）。
+   ★ 20261116 修复「占卜卡片点了没详细弹窗」：
+   之前这个函数只声明了两个参数，调用处的第三参数 divi 被签名直接吃掉，
+   于是消息 content 里从来没有 diviRounds → _diviCardHTML 的 hasDivi 恒为 false →
+   卡片不挂 data-divi-open，点了没反应，也没有「点击查看这次 AI 解牌的完整内容」那行。
+   现在把最新一版解读（摘要 + 全文）一并写进消息，弹窗 / 存入记忆宫殿才能取到。 */
+async function askDreamCharAboutDivination(pick, question, divi) {
   const c = characters.find(x => x.id === currentCharId) || characters[0];
   if (!c) { miniToast('先进入一个访客的聊天'); return; }
   const cardsDesc = (pick || []).map((p, i) => `${['过去', '现在', '未来'][i]}：${p.card.n}（${p.reversed ? '逆位' : '正位'}）`).join('；');
   // 只落一条「占卜询问」卡片消息（带实体牌面），角色评价返回后就地更新同一条，不新增第二条
   const msgId = uid('msg');
+  const _diviContent = {
+    question: question || '',
+    name: c.name,
+    cards: (pick || []).map(p => ({ name: p.card.n, sym: p.card.sym, realm: p.card.realm || '', reversed: p.reversed })),
+    cardsDesc,
+    state: 'asked',
+  };
+  // 只有真带着解读的那一份才写（没开 AI 解牌 / 没解出来的，就不写空壳，免得点开一片空白）
+  if (divi && Array.isArray(divi.rounds) && divi.rounds.length) {
+    _diviContent.diviRounds = divi.rounds;
+    _diviContent.diviSummary = divi.summary || '';
+    _diviContent.diviText = divi.text || '';
+  }
   const myMsg = {
     id: msgId, charId: c.id, from: 'me', type: 'divination', time: Date.now(),
-    content: {
-      question: question || '',
-      name: c.name,
-      cards: (pick || []).map(p => ({ name: p.card.n, sym: p.card.sym, realm: p.card.realm || '', reversed: p.reversed })),
-      cardsDesc,
-      state: 'asked',
-    },
+    content: _diviContent,
   };
   await idbPut('messages', myMsg);
   if (currentCharId === c.id && document.body.dataset.view === 'chat') appendMessage(myMsg);
@@ -32043,6 +32116,12 @@ async function askDreamCharAboutDivination(pick, question) {
       myMsg.content.verdict = verdict;
       myMsg.content.comment = comment;
       await idbPut('messages', myMsg);
+      /* 20261116：把评价记进本次会话；如果这条占卜已经存过记忆（不管在玩家夹还是角色夹），
+         把评价自动补进去 —— 玩家：先存了记忆宫殿、之后才发给角色的，评价也要补上。 */
+      if (_diviLive){
+        _diviLive.rated = { score: score, verdict: verdict, comment: comment, name: (c.name || 'TA'), charId: c.id };
+      }
+      try { await _diviUpdatePalaceRating(msgId); } catch (e) {}
       if (currentCharId === c.id && document.body.dataset.view === 'chat') {
         // 聊天页正在看：就地刷新该消息的居中卡片 DOM
         const row = document.querySelector(`.msg-row.divi-center-row[data-msgid="${msgId}"]`);
@@ -32066,6 +32145,300 @@ function _diviScoreVerdict(score) {
   if (s < 10) return '我的话终于可以被理解了吗！';
   return '这 ai 讲义气！';
 }
+
+/* ============================================================
+   20261116 占卜 → 记忆宫殿 / 卡片全文（玩家本轮需求）
+   ------------------------------------------------------------------
+   ① 占卜页新增「存入记忆宫殿」：把三张牌 + AI 解读 + 补充后的解牌 + 角色评价
+      存成一条记忆。发过角色 → 存进 TA 的记忆文件夹；没发过 → 存进玩家自己的。
+   ② 发给角色的卡片要带「AI 解读摘要」，点卡片能看到当时那份完整解读
+      （作为一条聊天记录存在消息里，不额外存一份记录）。
+   ============================================================ */
+function _diviSummaryOf(rounds){
+  const r = (rounds || [])[(rounds || []).length - 1];
+  if (!r) return '';
+  const base = String(r.core || r.tone || '').replace(/\s+/g, ' ').trim();
+  return base.length > 72 ? base.slice(0, 72) + '…' : base;
+}
+function _diviFullTextOf(rounds){
+  return (rounds || []).map(function(r, i){
+    const seg = [
+      r.tone ? ('牌面基调：' + r.tone) : '',
+      r.core ? ('核心解读：' + r.core) : '',
+      r.advice ? ('行动建议：' + r.advice) : '',
+    ].filter(Boolean).join('\n');
+    return ((rounds || []).length > 1 ? ('第 ' + (i + 1) + ' 版\n') : '') + seg;
+  }).join('\n\n');
+}
+function _diviFaceLine(pick){
+  const labels = ['过去', '现在', '未来'];
+  return (pick || []).map(function(p, i){
+    if (!p || !p.card) return labels[i] + '：—';
+    return labels[i] + '：' + p.card.n + '（' + (p.reversed ? '逆位' : '正位') + '）';
+  }).join('；');
+}
+
+/* ============================================================
+   20261116：一次占卜 → 一条记忆（玩家规则，逐条对应）
+   ------------------------------------------------------------------
+   · 只有「玩家点了存入记忆宫殿」或「发给角色（卡片进了聊天框）」才算记录；
+     只是解完牌、关掉弹窗，什么都不记。
+   · 文件夹归属由**第一次落库时**的处境决定，之后不再搬：
+       先发给角色 / 已经是发给角色之后存的 → 角色的记忆文件夹
+       没发过角色就先存了               → 玩家自己的记忆文件夹
+     先存进玩家夹、之后才发给角色的，**继续留在玩家夹**，只把角色的评价补进去。
+   · 反复点保存只更新同一条，不堆重复。
+   ============================================================ */
+async function _diviPersist(src) {
+  try {
+    /* ★ 20261116 玩家要求：内容为空绝不落库。
+       「AI 解读（rounds）」和「角色评价（rated）」都没有时，这条占卜没有任何可记的东西，
+       存进去只是记忆宫殿里一个空壳 —— 直接拦掉，只提示。 */
+    const _roundCnt = (src && Array.isArray(src.rounds)) ? src.rounds.length : 0;
+    if (!_roundCnt && !(src && src.rated)) {
+      miniToast('没有解读内容，先解牌再存入');
+      return null;
+    }
+    await palEnsureFolders();
+    const meName = (playerProfile.name || '我');
+    const now = Date.now();
+    const labels = ['过去', '现在', '未来'];
+    const cards = src.cards || [];
+    const faceLine = cards.map(function(cd, i){
+      return labels[i] + '：' + (cd.name || '—') + '（' + (cd.reversed ? '逆位' : '正位') + '）';
+    }).join('；');
+    const rounds = src.rounds || [];
+    const rated = src.rated || null;
+    const c = src.sentCharId ? characters.find(function(x){ return x.id === src.sentCharId; }) : null;
+
+    /* 记忆正文：问题 → 牌面 → 这一版 AI 解牌（含当时的补充）→ 角色评价 */
+    const msgs = [];
+    msgs.push({ from: 'me', type: 'text', name: meName, time: now,
+      content: '🔮 占卜：' + (src.question || '（这次没有写问题）') });
+    msgs.push({ from: 'them', type: 'text', name: '塔罗', time: now + 1,
+      content: '三张牌｜' + faceLine });
+    rounds.forEach(function(r){
+      const t = now + 10;
+      if (r.note) msgs.push({ from: 'me', type: 'text', name: meName, time: t, content: '补充：' + r.note });
+      const seg = [
+        r.tone ? ('牌面基调：' + r.tone) : '',
+        r.core ? ('核心解读：' + r.core) : '',
+        r.advice ? ('行动建议：' + r.advice) : '',
+      ].filter(Boolean).join('\n');
+      msgs.push({ from: 'them', type: 'text', name: '解牌', time: t + 1, content: 'AI 解牌\n' + seg });
+    });
+    if (rated && rated.score != null){
+      msgs.push({ from: 'them', type: 'text', name: (rated.name || (c && c.name) || 'TA'),
+        time: now + 1000, diviRating: true,
+        content: '对这份解牌的评价（' + Number(rated.score).toFixed(1) + ' 分）：「' + (rated.verdict || '') + '」' +
+                 (rated.comment ? ('\n' + rated.comment) : '') });
+    }
+
+    const title = '占卜 · ' + (src.question ? String(src.question).slice(0, 18)
+      : (cards.map(function(cd){ return cd.name; }).filter(Boolean).join('、') || '三张牌'));
+    const summary = _diviSummaryOf(rounds) || ('三张牌：' + faceLine);
+
+    let entry = src.savedId ? await idbGet('palace', src.savedId) : null;
+    const isNew = !entry;
+    if (!entry){
+      entry = {
+        id: uid('pal'), createdAt: now, allowAI: null, auto: false,
+        subFolderId: '', groupId: '',
+        /* 只有「第一次落库」才决定归属 —— 这时候是不是已经发给角色，就是玩家说的规则 */
+        folderId: c ? ('pf_char_' + c.id) : PAL_P,
+        charId: c ? c.id : '',
+      };
+    }
+    /* 已存在的条目：文件夹一个字都不动（先存玩家夹的，就一直在玩家夹） */
+    entry.kind = 'chat';
+    entry.messages = msgs;
+    entry.baseMsgId = src.sentMsgId || entry.baseMsgId || '';
+    entry.title = title;
+    entry.summary = summary;
+    entry.summaryByAI = false;
+    entry.text = '';
+    entry.img = null;
+    entry.dateLabel = palDateLabel(now);
+    entry.time = now;
+    entry.divi = {
+      question: src.question || '',
+      cards: faceLine,
+      rounds: rounds,
+      rated: rated || null,
+    };
+    await idbPut('palace', entry);
+
+    /* 把记忆 id 记回那条聊天消息，点卡片弹窗里再点保存时就能更新同一条 */
+    if (src.sentMsgId){
+      try {
+        const m = await idbGet('messages', src.sentMsgId);
+        if (m && m.content && m.content.palId !== entry.id){
+          m.content.palId = entry.id;
+          await idbPut('messages', m);
+        }
+      } catch (e) {}
+    }
+    if (_diviLive) _diviLive.savedId = entry.id;
+    miniToast(isNew
+      ? (c ? ('已存进「' + (c.name || 'TA') + '的记忆」') : '已存进你的记忆宫殿')
+      : '已更新这条占卜记忆');
+    return entry;
+  } catch (e) {
+    window.__lastPalErr = String((e && e.message) || e);
+    miniToast('存入失败：' + window.__lastPalErr);
+    return null;
+  }
+}
+
+/* 占卜页的按钮：用本次会话（_diviLive）里的最新一版 */
+async function saveDiviToPalace() {
+  const L = _diviLive;
+  if (!L || !L.pick || !L.pick[0]) { miniToast('先把三张牌都翻开'); return; }
+  const latest = (L.rounds || []).length ? L.rounds[L.rounds.length - 1] : null;
+  const cards = L.pick.map(function(p){
+    return { name: (p && p.card && p.card.n) || '', reversed: !!(p && p.reversed) };
+  });
+  await _diviPersist({
+    question: L.question || '',
+    cards: cards,
+    rounds: latest ? [latest] : [],
+    rated: L.rated || null,
+    sentCharId: (L.sent && L.sent.charId) || '',
+    sentMsgId: (L.sent && L.sent.msgId) || '',
+    savedId: L.savedId || '',
+  });
+}
+
+/* 聊天卡片弹窗里的按钮：直接用这条消息里存的内容（App 重开后 _diviLive 已经没了也能存） */
+async function saveDiviFromMessage(msgId) {
+  let m = null;
+  try { m = await idbGet('messages', msgId); } catch (e) {}
+  if (!m) return;
+  const dc = m.content || {};
+  await _diviPersist({
+    question: dc.question || '',
+    cards: (dc.cards || []).map(function(cd){ return { name: cd.name, reversed: !!cd.reversed }; }),
+    rounds: dc.diviRounds || [],
+    rated: (dc.state === 'rated' && dc.score != null)
+      ? { score: dc.score, verdict: dc.verdict || '', comment: dc.comment || '', name: dc.name || '' }
+      : null,
+    sentCharId: m.charId || '',
+    sentMsgId: m.id,
+    savedId: dc.palId || '',
+  });
+}
+
+/* 角色评价回来后，自动补进那条记忆（不管它在玩家夹还是角色夹） */
+async function _diviUpdatePalaceRating(msgId) {
+  const L = _diviLive;
+  const rated = L && L.rated;
+  if (!rated) return;
+  let palId = (L && L.savedId) || '';
+  if (!palId && msgId){
+    try {
+      const m = await idbGet('messages', msgId);
+      palId = (m && m.content && m.content.palId) || '';
+    } catch (e) {}
+  }
+  if (!palId) return;
+  try {
+    const e = await idbGet('palace', palId);
+    if (!e) return;
+    const t = Date.now();
+    e.messages = (e.messages || []).filter(function(m){ return !m.diviRating; });
+    e.messages.push({
+      from: 'them', type: 'text', name: (rated.name || 'TA'), time: t, diviRating: true,
+      content: '对这份解牌的评价（' + Number(rated.score).toFixed(1) + ' 分）：「' + (rated.verdict || '') + '」' +
+               (rated.comment ? ('\n' + rated.comment) : ''),
+    });
+    e.time = t;
+    e.divi = Object.assign({}, e.divi || {}, { rated: rated });
+    await idbPut('palace', e);
+  } catch (err) {}
+}
+
+/* 点占卜卡片 → 看当时那份完整解读（多版都在，含补充与评价） */
+async function showDiviDetailModal(msgId){
+  let m = null;
+  try { m = await idbGet('messages', msgId); } catch (e) {}
+  if (!m) return;
+  const dc = m.content || {};
+  const labels = ['过去', '现在', '未来'];
+  const faces = (dc.cards || []).map(function(cd, i){
+    return '<div style="display:flex;flex-direction:column;align-items:center;">' + _diviFaceHTML(cd) +
+      '<div class="divi-face-label">' + labels[i] + '</div></div>';
+  }).join('');
+  let rounds = dc.diviRounds || [];
+  /* 20261116：这版修复之前发出去的旧卡，content 里没存 diviRounds。
+     如果它当时存进过记忆宫殿，就从那条记忆里把解读全文捞回来，别让旧记录变空板。 */
+  if (!rounds.length) {
+    try {
+      let pe = dc.palId ? await idbGet('palace', dc.palId) : null;
+      if (!pe) {
+        const all = await idbGetAll('palace');
+        pe = (all || []).find(function(x){ return x && x.baseMsgId === msgId; }) || null;
+      }
+      if (pe && pe.divi && Array.isArray(pe.divi.rounds) && pe.divi.rounds.length) rounds = pe.divi.rounds;
+    } catch (err) {}
+  }
+  const body = rounds.length ? rounds.map(function(r, i){
+    const seg = [
+      r.tone ? ('<div class="divi-sec"><div class="divi-h">牌面基调</div><p>' + escapeHtml(r.tone).replace(/\n/g,'<br>') + '</p></div>') : '',
+      r.core ? ('<div class="divi-sec"><div class="divi-h">核心解读</div><p>' + escapeHtml(r.core).replace(/\n/g,'<br>') + '</p></div>') : '',
+      r.advice ? ('<div class="divi-sec"><div class="divi-h">行动建议</div><p>' + escapeHtml(r.advice).replace(/\n/g,'<br>') + '</p></div>') : '',
+    ].filter(Boolean).join('');
+    const note = r.note ? ('<div class="divi-note-me" style="margin:6px 0 10px;"><span>你的补充</span><p>' + escapeHtml(r.note) + '</p></div>') : '';
+    const no = rounds.length > 1 ? ('<div class="divi-round-no">第 ' + (i + 1) + ' 版</div>') : '';
+    return '<div class="divi-round">' + no + note + seg + '</div>';
+  }).join('') : '<div class="divi-round" style="color:var(--text-tertiary);">这条记录里没有保存解读全文。</div>';
+  const rated = (dc.state === 'rated' && dc.score != null)
+    ? ('<div class="divi-rate" style="margin-top:10px;">' +
+        '<div class="divi-stars">' + _diviStarsHTML(dc.score) +
+        '<span style="font-size:15px;font-weight:700;color:var(--purple-soft);">' + Number(dc.score).toFixed(1) + ' 分</span></div>' +
+        '<div class="divi-verdict">「' + escapeHtml(dc.verdict || '') + '」</div>' +
+        (dc.comment ? ('<div class="divi-comment">' + escapeHtml(dc.comment) + '</div>') : '') +
+      '</div>')
+    : '';
+  openModal(
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+      '<div style="font-size:17px;font-weight:600;">这次占卜的完整解读</div>' +
+      '<button class="icon-btn" id="divi-detail-close"><i data-icon="close" data-size="17"></i></button>' +
+    '</div>' +
+    (dc.question ? ('<div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:8px;">想问：' + escapeHtml(dc.question) + '</div>') : '') +
+    /* ★ 20261116：三张牌改成横排 —— 之前 .divi-faces 的横排样式只写在
+       `.divi-card` 容器下，弹窗里没有这个父级，三张牌就竖着排了一长条。 */
+    '<div class="divi-faces" style="margin:10px 0 14px;display:flex;justify-content:space-around;align-items:flex-start;gap:10px;">' + faces + '</div>' +
+    '<div class="divi-detail-body" style="max-height:52vh;overflow:auto;">' + body + '</div>' +
+    rated +
+    /* ★ 20261116：按钮常显 —— 之前只有存到解读全文（rounds.length）才出按钮，
+       修复前的旧记录永远没有按钮，玩家根本没地方点。 */
+    ('<button class="btn primary block" id="divi-detail-save" style="margin-top:12px;padding:11px;">' +
+        (window.icon ? window.icon('memory', 16) : '') + ' 存入记忆宫殿</button>' +
+     '<div style="margin-top:8px;font-size:11.5px;color:var(--text-tertiary);line-height:1.5;">' +
+        (rounds.length
+          ? (dc.name ? ('这条占卜是发给 ' + escapeHtml(dc.name) + ' 的，会存进 TA 的记忆文件夹') : '会存进你自己的记忆文件夹')
+          : '这条是修复前发出的旧记录，没存下解读全文，只能存牌面和评价') +
+     '</div>')
+  );
+  const b = $('#divi-detail-close');
+  if (b) b.onclick = closeModal;
+  const sb = $('#divi-detail-save');
+  if (sb) sb.onclick = async () => {
+    sb.disabled = true;
+    await saveDiviFromMessage(msgId);
+    sb.disabled = false;
+    const tip = sb.nextElementSibling;
+    if (tip) tip.textContent = '已存入，可反复点（只会更新同一条）';
+  };
+}
+
+/* 卡片点开详情：一次性委托，聊天流 / 列表里都生效 */
+document.addEventListener('click', function(ev){
+  const el = ev.target && ev.target.closest ? ev.target.closest('[data-divi-open]') : null;
+  if (!el) return;
+  const id = el.getAttribute('data-divi-open');
+  if (id) { ev.preventDefault(); showDiviDetailModal(id); }
+}, true);
 
 /* 5 星评分 HTML（半星 1 分、满分 10 分；星星颜色跟全局主题色 --purple） */
 function _diviStarsHTML(score) {
@@ -32220,10 +32593,24 @@ function _diviCardHTML(m) {
   } else {
     rateHtml = `<div class="divi-asking">${escapeHtml(dc.name || '梦角')} 正在解读这三张牌…</div>`;
   }
-  return `<div class="divi-card" data-divi-card="${m.id}">
+  /* ★ 20261116：发给角色的这张卡要带「AI 解读摘要」，点一下能看当时的完整解读
+     ——（玩家：发到聊天框的这条，应该带着解读摘要，点卡片可以查看当时具体解读的内容，
+     当成一条聊天记录来记录）。只有真带着解读的消息才可点、才显示摘要。 */
+  const hasDivi = Array.isArray(dc.diviRounds) && dc.diviRounds.length > 0;
+  /* 20261116：旧消息（这版修复之前发出去的）content 里没有 diviRounds，
+     但只要有牌面和评分，也应该能点开看「当时那三张牌 + 分数 + 评价」，
+     不能因为缺全文就变成一块点了没反应的死板。 */
+  const clickable = hasDivi || (dc.state === 'rated' && dc.score != null);
+  const sumHtml = dc.diviSummary
+    ? `<div class="divi-sum">${escapeHtml(dc.diviSummary)}</div>` : '';
+  const moreHtml = hasDivi
+    ? `<div class="divi-more">点击查看这次 AI 解牌的完整内容 ›</div>` : '';
+  return `<div class="divi-card" data-divi-card="${m.id}"${clickable ? ` data-divi-open="${m.id}" style="cursor:pointer;"` : ''}>
     <span class="divi-tag">${tag}</span>
     ${dc.question ? `<div class="divi-question">想问：${escapeHtml(dc.question)}</div>` : ''}
     <div class="divi-faces">${faces}</div>
+    ${sumHtml}
+    ${moreHtml}
     ${rateHtml}
   </div>`;
 }
