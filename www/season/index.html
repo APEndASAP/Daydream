@@ -9578,17 +9578,17 @@ function seasonFocusChar(id){
     return;
   }
   const changed = (PLANET.viewId !== c.id);
-  if (changed){
-    /* ① 先把老档里「所有人的株挤在一个数组」按 byId 归池，
-          否则切过去看到的是上一个人的株（这一步必须在换池之前做） */
-    try { migratePlanetPools(PLANET.viewId ? null : c.id); } catch(e){}
-    /* ② 走真正的「换星球」：把旧角色的池存回去、换成新角色的池，
-          底图/角色形态/植株列表/留言/画布一起重画 */
-    try { switchPlanetChar(c.id); } catch(e){}
-  } else {
-    PLANET.owner = c.name;
-    PLANET.ownerId = c.id;
-  }
+  /* ★ 20261116 深夜：不管换不换人，每次都按「这次进来的角色」归一次池。
+     归池是幂等的、只搬不丢，所以放在这里最安全 —— 老档（株全是 'me'）
+     一打开就自动按证据链分回各自星球，不用等玩家去切角色才修。
+     ★ 基准必须是 c.id（玩家真正点进来的角色），绝不能用存档里的 viewId：
+     那个值是「上次谁在看」，用它当基准就会把这次的人的数据判给别人。 */
+  try { migratePlanetPools(c.id); } catch(e){}
+  /* 归池已经把这个角色的池挂到 PLANET.plants 上了；换过人（changed）就强制
+     重画一遍底图/角色形态/列表/留言/画布，没换人就只把名字对齐。 */
+  try { switchPlanetChar(c.id, changed); } catch(e){}
+  PLANET.owner = c.name;
+  PLANET.ownerId = c.id;
   /* ③ 书签集「当前角色」的定格跟着换（换人只有一条路：退出四季、从别人的聊天框进来） */
   bookScopeCharId = c.id;
   bookScopeCharName = c.name;
@@ -10099,6 +10099,9 @@ function _seasonReadRaw(k, dflt){ try { const v = localStorage.getItem(k); retur
 function _seasonReadJson(k, dflt){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : dflt; } catch(e){ return dflt; } }
 /* 写盘：把当前内存态全部序列化进 bmSeasonSave */
 function seasonSave(){
+  /* ★ 20261116：存盘前最后过一遍硬闸门 —— 任何一条路径写歪了（老档 / 后台照料 /
+     导入备份 / 切角色），落盘的一定是「一株只属于一颗星球」的干净结构。 */
+  try { enforcePlanetIsolation(); } catch(e){}
   try { localStorage.setItem(SEASON_SAVE_KEY, JSON.stringify(seasonSerialize())); } catch(e){}
 }
 /* 读盘：启动时恢复 PHOTOS / PLANET / 各 bmSeason* 键 */
@@ -10283,6 +10286,23 @@ function _seasonApply(d){
       const _vid = gp.viewId || gp.ownerId || PLANET.viewId;
       if (_vid && PLANET.pool[_vid]) seasonMergeActs(PLANET.plants, PLANET.pool[_vid]);
     } catch(e){}
+    /* ★ 20261116：把「上次是谁在看这颗星球」也读回来。
+       以前故意不读（怕归池归错人），结果是读档后 viewId 一直是空：
+       · 存档里 planet.viewId 跟着写空 → 后台照料认不出正主，拿主池去给
+         别的角色浇水（互动记录里就出现「测试 浇了一次水」写在别人的株上）；
+       · 归池只能拿「这次进来的角色」当基准，玩家亲手种的株（老档 byId='me'）
+         就被第一个打开的角色领走 —— 玩家看到的正是「从 A 进来、却是 B 的数据」。
+       现在 viewId 跟着存档走，归池有真基准。 */
+    if (gp.viewId){
+      PLANET.viewId = gp.viewId;
+      if (!PLANET.ownerId) PLANET.ownerId = gp.viewId;
+    }
+    /* ★ 20261116 深夜：这里原有一段「老档救援」——把 pool['me'] 里的株搬进
+       PLANET.plants，并把它们的 byId 改成存档里的 viewId。
+       那正是「我只进过 2 号却看到 1 号的株」的作案工具：存档 viewId 是 1 号，
+       株被打上 1 号的名字、塞进 1 号的数组，永久错位。
+       现在统一交给 seasonFocusChar 里的 migratePlanetPools —— 它按证据链判归属
+       （株自己记的 id → 互动记录里的角色名 → 这次进来的角色），不会认错人。 */
     if (gp.skins) PLANET.skins = Object.assign({}, gp.skins);
     if (gp.skin) PLANET.skin = Object.assign({}, gp.skin);
     if (gp.round != null) PLANET.round = gp.round;
@@ -14002,9 +14022,17 @@ function drawPlantForm(g, x, y, k, sh, form, cols, light, pl, deco){
          标记先被置上、声音却没出来，之后整局再也不响 —— 这就是
          「最后一帧没有叮」的真正原因之一。suspended 时不置位，等解锁后补响。 */
       if (!pl._bloomAt) pl._bloomAt = nowMs;
-      if (!pl._bloomOn){
+      /* ★ 20261116 修「点一下响个没完」：
+         以前只有 _bloomOn 一个开关，而它的清位在下面的 else 分支里 ——
+         列表小图 / 详情页小画布也都是 drawPlantForm（deco 不传），
+         每 110ms 一次 renderPlantSheet 就会把 _bloomOn 清掉，
+         紧接着星球主画布那一帧又判定「没响过」→ 再响一声，
+         bloomChime 700ms 节流 → 听起来就是「叮…叮…叮…停不下来」。
+         现在：① 清位只认主画布（deco）这一路；② 再加一道 _chimeStage
+         盯着「响过的那一档」，同一档绝不重复响，退回苗/被铲才归零。 */
+      if (!pl._bloomOn && pl._chimeStage !== si.i){
         const ac0 = _tCtx();
-        if (ac0 && ac0.state === 'running'){ pl._bloomOn = 1; bloomChime(); }
+        if (ac0 && ac0.state === 'running'){ pl._bloomOn = 1; pl._chimeStage = si.i; bloomChime(); }
       }
     }
     let tY = -6;
@@ -14050,11 +14078,14 @@ function drawPlantForm(g, x, y, k, sh, form, cols, light, pl, deco){
         }
       }
     }
-  } else if (pl && (pl._bloomOn || pl._bloomAt)){
-    /* 还没到最后一帧 / 花谢 / 被铲 / 烧了 → 两个标记一起清，
-       下回再长到头要重新散星、重新叮。 */
+  } else if (deco && pl && (pl._bloomOn || pl._bloomAt || pl._chimeStage != null)){
+    /* 还没到最后一帧 / 花谢 / 被铲 / 烧了 → 标记一起清，
+       下回再长到头要重新散星、重新叮。
+       ★ 20261116：必须限定 deco（主画布），否则列表/详情的小图会把
+       主画布的「已经响过」清掉，导致反复重响（见上面那段注释）。 */
     pl._bloomOn = 0;
     pl._bloomAt = 0;
+    pl._chimeStage = -1;
   }
   g.restore();
 }
@@ -14148,16 +14179,32 @@ function drawPlanetFrame(){
    ------------------------------------------------------------
    老版本的株全塞在 PLANET.plants 一个数组里，没有按角色分池。
    一旦改成「各角色只看自己的星球」，这批株要么被当前角色独吞，
-   要么切过去就凭空消失。这里把它们按 byId 拆回各自的池，并按 id 去重
+   要么切过去就凭空消失。这里把它们按归属拆回各自的池，并按 id 去重
    （旧版存盘时把 pool[x] 和 plants 别名成同一个数组，同一株会存两份）。
-   幂等：跑几次结果都一样；没有 byId 的老株归当前视角的角色。 */
+
+   ★ 20261116 深夜重写 —— 玩家报「我只进过 2 号，却看到 1 号的株、1 号的互动记录，
+     数据还被改了」。根因就在上一版的这一句：把 byId='me' 的老株**一律**算成
+     「这次进来的角色」。老版本的株**全部**都是 'me'（plantSeedAt 里写死的），
+     于是覆盖安装后第一次从 2 号进去，历史上所有角色的株被一次性塞进 2 号名下，
+     株上留着的还是别人名字的记录 —— 从玩家眼里就是「数据串了、还被篡改」。
+
+   现在的规则是**证据链**，绝不再拿「谁先进来」当唯一依据：
+     ① 株自己记着 byId 且是真实角色 → 判给它（最强证据，不动）
+     ② 否则看互动记录（acts）里出现过的角色名：只出现一个角色 → 就是那个角色的
+        （株长在谁的星球上，就只有谁会给它浇水施肥，记录里的名字是硬痕迹）
+     ③ 一条痕迹都没有 → 归「这次进来的角色」
+   认下来就把 byId 写实（以后不再被任何人重新领走，也不会再来回漂）；
+   只在自己的池子里就地调整，**不删任何一株**，跑几次结果都一样（幂等）。 */
 function migratePlanetPools(fallbackId){
   try {
-    /* 读档时 PLANET.viewId 还是空的（要等 season-init 才知道是谁进来），
-       所以必须允许外部把「这次进来的角色」传进来当归属基准。 */
-    const viewId = String(fallbackId || PLANET.viewId || PLANET.ownerId || '');
-    if (!viewId) return;
+    const fb = String(fallbackId || PLANET.viewId || PLANET.ownerId || '');
+    if (!fb) return;
     PLANET.pool = PLANET.pool || {};
+    const hasChars = (typeof CHARS !== 'undefined') && CHARS && CHARS.length > 0;
+    const charOfId = function(id){
+      if (!id || !hasChars) return null;
+      return CHARS.filter(function(c){ return String(c.id) === String(id); })[0] || null;
+    };
     const seen = {}, all = [];
     const take = function(arr){
       (arr || []).forEach(function(pl){
@@ -14168,31 +14215,114 @@ function migratePlanetPools(fallbackId){
     };
     take(PLANET.plants);
     Object.keys(PLANET.pool).forEach(function(k){ take(PLANET.pool[k]); });
+
     const bag = {};
     all.forEach(function(pl){
-      /* ★ 20261116：老档里玩家亲手种的株 byId 写的是 'me'（见 plantSeedAt 旧注释）。
-         不认这个别名的话，它们会被归到 pool['me'] 这个假角色名下，
-         当前星球的池子空着 —— 表现就是「种下、刷新，00/9」。
-         这里把 'me' / 空归属都算成「这次进来的这个人」。 */
-      const _bid = (pl.byId && pl.byId !== 'me') ? pl.byId : '';
-      const owner = _bid || pl.ownerId || viewId;
-      (bag[owner] = bag[owner] || []).push(pl);
+      let own = '';
+      /* ① 株自己记得是谁的 */
+      if (charOfId(pl.byId)) own = String(pl.byId);
+      /* ② 互动记录里点名最多的角色（一株长在谁的星球上，就只有谁会照料它；
+            别的角色只会在数据串门的那段时间偶尔出现，次数上压不过主人） */
+      if (!own && hasChars){
+        const hit = {};
+        (pl.acts || []).forEach(function(a){
+          if (!a || !a.by) return;
+          const c = CHARS.filter(function(x){ return String(x.name) === String(a.by); })[0];
+          if (c) hit[String(c.id)] = (hit[String(c.id)] || 0) + 1;
+        });
+        const ks = Object.keys(hit).sort(function(x, y){ return hit[y] - hit[x]; });
+        /* 必须**严格多于**第二名才算证据，打平就是认不出来 → 交给 ③，不瞎猜 */
+        if (ks.length === 1 || (ks.length > 1 && hit[ks[0]] > hit[ks[1]])) own = ks[0];
+      }
+      /* ③ 真的没有痕迹 → 这次进来的角色 */
+      if (!own) own = fb;
+      /* 写实：'me' 这个假 id 从此不再出现，下次也不会被别人领走 */
+      if (pl.byId !== own) pl.byId = own;
+      (bag[own] = bag[own] || []).push(pl);
     });
-    if (!bag[viewId]) bag[viewId] = [];
+    if (!bag[fb]) bag[fb] = [];
     PLANET.pool = bag;
-    PLANET.plants = bag[viewId];        /* 与 pool[viewId] 同一引用，切池靠它 */
+    PLANET.plants = bag[fb];            /* 与 pool[fb] 同一引用，切池靠它 */
+    /* 归完池，视角必须跟着落到这个角色上 ——
+       否则 switchPlanetChar 那句「把当前池存回 pool[viewId]」会拿
+       **旧角色的键**去接收新角色的数组，一存就把别人的池冲掉。 */
+    PLANET.viewId = fb;
+    PLANET.ownerId = fb;
+    const _mc = (typeof charById === 'function') ? charById(fb) : null;
+    if (_mc && _mc.name) PLANET.owner = _mc.name;
+    /* 归完再走一遍硬闸门：池键必须是真角色、株的 byId 必须等于它的池键 */
+    enforcePlanetIsolation();
   } catch(e){}
 }
 
-function switchPlanetChar(id){
-  if (id === PLANET.viewId) return;
-  /* viewId 为空是「刚读档、还没告诉我是谁进来」的状态，别把池存成空键 */
-  if (PLANET.viewId) PLANET.pool[PLANET.viewId] = PLANET.plants;
+/* ★ 20261116 深夜：数据互斥的**硬闸门**（最后一道，改之前先读）
+   ------------------------------------------------------------------
+   玩家报过「我只进过 2 号，却看到 1 号的株和 1 号的记录，数据像被篡改」。
+   原因是历史上有好几条路都能把株塞进别人的池子（老档 byId='me'、后台照料
+   认错正主、导入备份、切换角色时把当前数组存回旧键……）。
+   光修每一条路不够 —— 这里是**不依赖任何一条路**的兜底，切角色 / 存盘前各跑一次：
+     ① 一株只出现在一个池子里（按 id 去重，绝不出现同一株两份）
+     ② 池子的键就是株的 byId（真角色 id），假键 'me' / 空键一律消化掉
+     ③ PLANET.plants 永遠是 pool[当前角色] 的**同一份引用**，不是副本
+   只归位、只搬迁，**一株都不删**；实在认不出的归当前角色。 */
+function enforcePlanetIsolation(){
+  try {
+    const hasChars = (typeof CHARS !== 'undefined') && CHARS && CHARS.length > 0;
+    if (!hasChars) return;                       /* 角色表还没到，判不了就先不动 */
+    const isChar = function(id){
+      return !!id && CHARS.some(function(c){ return String(c.id) === String(id); });
+    };
+    /* ★ 绝对不许拿 CHARS[0] 当兜底 —— 「谁先进来就归谁」正是当初串数据的根源。
+       连 viewId / ownerId 都判不出来（还没 init）时，宁可这次不动。 */
+    const _vi = isChar(PLANET.viewId) ? String(PLANET.viewId) : '';
+    const _oi = isChar(PLANET.ownerId) ? String(PLANET.ownerId) : '';
+    if (!_vi && !_oi) return;
+    const fb = _vi || _oi;
+    PLANET.pool = PLANET.pool || {};
+    const seen = {}, bag = {};
+    const eat = function(arr, key){
+      (arr || []).forEach(function(pl){
+        if (!pl || !pl.id || seen[pl.id]) return;   /* 同一株存了两份 → 只留第一份 */
+        seen[pl.id] = 1;
+        let own;
+        if (isChar(pl.byId)) own = String(pl.byId);        /* 株自己记的优先 */
+        else if (isChar(key)) own = String(key);           /* 其次：它躺在谁的池子里 */
+        else own = fb;                                     /* 假键 / 认不出 → 当前角色 */
+        pl.byId = own;
+        (bag[own] = bag[own] || []).push(pl);
+      });
+    };
+    /* 先吃池子（按池归属），再吃 PLANET.plants（有真 byId 的会自己认领） */
+    Object.keys(PLANET.pool).forEach(function(k){
+      eat(PLANET.pool[k], isChar(k) ? k : '');
+    });
+    eat(PLANET.plants, fb);
+    if (!bag[fb]) bag[fb] = [];
+    PLANET.pool = bag;
+    PLANET.plants = bag[fb];
+    PLANET.viewId = fb;
+    PLANET.ownerId = fb;
+    const _ch = (typeof charById === 'function') ? charById(fb) : null;
+    if (_ch && _ch.name) PLANET.owner = _ch.name;
+  } catch(e){}
+}
+
+function switchPlanetChar(id, force){
+  /* force：归池之后 viewId 已经等于 id 了，但底图/列表还得按新角色重画一次 */
+  if (id === PLANET.viewId && !force) return;
+  /* ★ 20261116 深夜：只有「当前池确实还是旧角色那一份」才存回去。
+     归池把 PLANET.plants 换成新角色的数组后，PLANET.viewId 在那一瞬间
+     可能还指着旧角色，无条件存回就会把旧角色的池整个覆盖掉（数据串门）。 */
+  if (PLANET.viewId && PLANET.pool[PLANET.viewId] !== PLANET.plants){
+    PLANET.pool[PLANET.viewId] = PLANET.plants;
+  }
   PLANET.viewId = id;
   PLANET.plants = PLANET.pool[id] || (PLANET.pool[id] = []);
   const ch = charById(id);
   PLANET.owner = (ch && ch.name) || PLANET.owner || 'TA';
   PLANET.ownerId = id;
+  /* 换完池马上过一遍硬闸门：千万别让「当前数组」跟别人的池子串上 */
+  enforcePlanetIsolation();
   closePlantSheet();
   /* 每个角色的星球形态是各自记的：换角色就得把底图重画一遍 */
   if (typeof rebuildPlanetBase === 'function') rebuildPlanetBase();
@@ -16773,7 +16903,30 @@ function agoStr(t){
 }
 /* 角色照料：定时浇水/松土/施肥，只记真实动作 */
 function plantEvents(pl){
-  return (pl.acts || []).slice().sort((a, b) => b.t - a.t);
+  /* ★ 20261116 数据互斥：一株只属于一颗星球，记录里也只该有这颗星球的主人。
+     旧版 viewId 读档不回填，后台照料认错正主，把 A 角色的浇水写进了 B 的株上，
+     玩家看到的就是「从 A 进来，记录里全是 B」。
+     这里只做**显示层**隔离：别人的动作不再出现，但一条都没有删 ——
+     万一以后要还原还有原始数据在。认不出主人（byId 对不上角色）时不过滤。 */
+  const _acts = (pl && pl.acts) || [];
+  let _own = '';
+  try {
+    const _cid = pl && pl.byId;
+    if (_cid && _cid !== 'me' && typeof CHARS !== 'undefined' && CHARS){
+      const _c = CHARS.filter(function(x){ return String(x.id) === String(_cid); })[0];
+      _own = (_c && _c.name) || '';
+    }
+  } catch(e){}
+  /* 老株 byId 是 'me'（认不出是谁）时，按「这颗星球现在的主人」算 ——
+     一株显示在哪颗星球上，它就该属于那颗星球，记录里也只该有那颗星球的人。 */
+  if (!_own){
+    try { _own = (typeof PLANET !== 'undefined' && PLANET && PLANET.owner) ? String(PLANET.owner) : ''; } catch(e){}
+  }
+  const _keep = _own ? _acts.filter(function(a){
+    if (!a || !a.by) return true;
+    return (a.by === '你' || a.by === '—' || a.by === '它自己' || a.by === _own);
+  }) : _acts;
+  return _keep.slice().sort((a, b) => b.t - a.t);
 }
 const EV_TX = {
   '种下':'找了个位置种下',
@@ -20284,7 +20437,9 @@ function plantSeedAt(item, slotIdx){
        读档后 viewId 还是空的，归池时 'me' 不等于任何角色 id，
        这株就被塞进 pool['me']，当前星球那一池是空的 → 刷新后「00/9」。
        种在谁的星球上就记谁。 */
-    byId: PLANET.viewId || PLANET.ownerId || 'me', by: '你',
+    /* ★ 20261116：绝不再写 'me'。没有角色上下文时写空串，由归池的硬闸门判给
+       真正进来的人 —— 'me' 这个假 id 一旦落盘，就会被下一个打开的人领走。 */
+    byId: PLANET.viewId || PLANET.ownerId || '', by: '你',
     acts: [{ t: Date.now(), k: '种下', by: '你' }],
     grow: 0, lastTick: Date.now(), t0: Date.now(), dur: dur
   };

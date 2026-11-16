@@ -2733,6 +2733,9 @@ body.theme-light #ctx-menu {
 .poke-anim .shade { fill: #000; filter: blur(.9px); pointer-events: none; }
 .poke-anim .nestLip { fill: none; stroke: rgba(255,255,255,.62); stroke-width: .56; pointer-events: none; }
 .poke-anim .pout { stroke: none; pointer-events: none; }
+/* 20261116（玩家定案：两个椭圆组成嘟嘴）：上唇 / 下唇各一个椭圆，
+   颜色与发丝描边由 JS 逐帧写入，这里只管不挡点击、不继承多余样式。 */
+.poke-anim .poutu, .poke-anim .poutl { pointer-events: none; }
 .poke-anim .poutseam { fill: none; stroke: rgba(38,20,42,.24); stroke-width: .13; stroke-linecap: round; pointer-events: none; }
 .poke-anim .pout-hi { fill: #fff; stroke: none; pointer-events: none; }
 .poke-anim .cheek { stroke: none; }
@@ -2789,7 +2792,7 @@ body.theme-light #ctx-menu {
    其余细节（腮红缝、领口、怒气线）保持原补偿量。 */
 .poke-zoom .poke-anim .arm { stroke-width: 1.05; }
 .poke-zoom .poke-anim .nestLip { stroke-width: 1.28; }
-.poke-zoom .poke-anim .poutseam { stroke-width: .30; }
+.poke-zoom .poke-anim .poutseam { stroke-width: .26; }
 .poke-zoom .poke-anim .anger { stroke-width: .50; }
 .poke-zoom .poke-anim .shade { filter: blur(2.4px); }
 .poke-zoom .poke-anim .hrt { filter: drop-shadow(0 0 1.8px rgba(255, 90, 140, .85)); }

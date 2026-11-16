@@ -13878,7 +13878,7 @@ function openSeasonLayer(cid) {
                     frame.contentWindow.document.body.children.length > 0);
   } catch (e) { frameAlive = false; }
   if (frame && (!_seasonFrameLoaded || !frameAlive)) {
-    frame.src = 'season/index.html?v=20261116e';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
+    frame.src = 'season/index.html?v=20261116h';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
     _seasonFrameLoaded = true;
   }
   layer.classList.add('show');
