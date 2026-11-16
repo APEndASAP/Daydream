@@ -395,15 +395,18 @@ window.__bmMakeCard = function __bmMakeCard(a, idx, card){
           '<ellipse class="nestLip" opacity="0"/>' +
         '</g>' +
         '<path class="small"/>' +
-        /* 嘟嘴：一颗跟球身同色的小圆，圆心压在球面上、只把外面那一小截露出来 ——
-           露出来的就是一个圆鼓鼓的小包；同色无描边，看不出是拼上去的。 */
-        /* ★ 20261116 玩家定案：「能不能让两个椭圆形组成一个嘟嘴，和大圆组合在一起？
-           中间加个凹，哪里像正常的嘟嘴？」—— 不再画圆环+凹槽+高光点，
-           就是**上下两个椭圆**：上唇小一点、下唇圆一点，中间留一道缝，
-           两个椭圆压在球面外侧，和大圆拼在一起就是嘟出来的嘴。 */
+        /* 嘟嘴（20261117 玩家定案）：**必须和球身同色**，不要玫瑰色、不要深色描边。
+           玩家原话：「两瓣唇你就不能给它用相同的球的颜色吗？你非得用不同的颜色，
+           我不是说让它们融合到一起吗？就和猫猫的那个嘴努子一样。」
+           —— 最终形态：**两颗很迷你的同色椭圆球贴在球面上**，上下排，
+             只把前缘探出一点点，中间留一条细缝（玩家原话：「整两个很迷你也
+             很迷你的小球，然后贴上去，两个椭圆的小球贴上去就行了」）。
+              .poutu / .poutl = 上、下那两颗小球
+              .poutseam = 两颗中间那条细缝
+           全部由 JS 逐帧按球身实际颜色上色，和球是同一个颜色、同一个形体。 */
         '<ellipse class="poutu" opacity="0"/>' +
         '<ellipse class="poutl" opacity="0"/>' +
-        '<ellipse class="pout" opacity="0"/>' +
+        '<path class="poutseam" opacity="0"/>' +
         /* 被扯出来的脸颊单独一层，压在小球上面 —— 不然扯到小球那侧就被小球盖住了 */
         '<g clip-path="url(#ck' + uid + ')"><path class="cheek"/></g>' +
         '<g class="arms"></g>' +
@@ -425,9 +428,9 @@ window.__bmMakeCard = function __bmMakeCard(a, idx, card){
     shades: [...svg.querySelectorAll('.shade')],
     bigClip: svg.querySelector('#bc' + uid + ' path'),
     nestLip: svg.querySelector('.nestLip'),
-    pout: svg.querySelector('.pout'),
     poutU: svg.querySelector('.poutu'),
     poutL: svg.querySelector('.poutl'),
+    poutSeam: svg.querySelector('.poutseam'),
     cheekG: svg.querySelector('.cheek'),
     cheekClip: svg.querySelector('#ck' + uid + ' circle'),
     arms: svg.querySelector('.arms'),
@@ -454,6 +457,28 @@ function layout(c){
   c.small.style.fill = sC;
   c.arms.innerHTML = '';
   c.armsB.innerHTML = '';
+}
+
+/* 把球身 fill 解析成 [r,g,b]：嘴要跟球同色，不能写死色值。
+   支持 '#abc' / '#aabbcc' / 'rgb(...)' / 'rgba(...)'，认不出就返回 null（走降级）。 */
+function poutRGB(fill){
+  if (!fill) return null;
+  let m = /^#([0-9a-f]{6})$/i.exec(fill);
+  if (m){
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  m = /^#([0-9a-f]{3})$/i.exec(fill);
+  if (m){
+    const h = m[1];
+    return [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)];
+  }
+  m = /^rgba?\(([^)]+)\)/i.exec(fill);
+  if (m){
+    const a = m[1].split(',').map(function(v){ return parseFloat(v); });
+    if (a.length >= 3) return [a[0], a[1], a[2]];
+  }
+  return null;
 }
 
 function render(c, t){
@@ -513,56 +538,77 @@ function render(c, t){
   c.big.setAttribute('d', bigD);
   if (c.bigClip) c.bigClip.setAttribute('d', bigD);
   c.small.setAttribute('d', blobD(s.ax, s.ay, s.sr, s.aAng, s.aDent, .012, s.aEx, s.aEy, s.aSig));
-  /* ★ 20261116 玩家定案：嘟嘴就是**两个椭圆 + 大圆**。
-     「你能不能两个椭圆形组成一个嘟嘴，和大圆组合在一起？中间加个凹，哪里像正常嘟嘴？」
-     —— 所以这一版彻底删掉「同色凸包 + 中间凹的上唇 + 唇缝」那套：
-       上唇：一个小而偏扁的椭圆（在球面外侧偏上）
-       下唇：一个略大略圆的椭圆（偏下）
-       两个椭圆之间留一道细缝，缝里透出球身 —— 天然的上下唇分界。
-     全部画在屏幕坐标系（不跟着径向旋转），侧着脸也一眼认得出是嘴。 */
-  if (c.pout){
+  /* ★ 20261117 玩家定案（最终口径）：嘟嘴必须**和球身同色**。
+     原话：「两瓣唇你就不能给它用相同的球的颜色吗？你非得用不同的颜色，
+     我不是说让它们融合到一起吗？就和猫猫的那个嘴努子一样。我是说那个形状。」
+     —— 玫瑰色 + 深色描边那套全部作废：不再有两块「贴上去的贴片」。
+       现在所有嘴部元素一律取球身实际颜色（c.small 的 fill，紫球就紫、粉球就粉），
+       只靠「探出球外的轮廓」+「一条同色系、只暗一点的浅沟」把两瓣读出来，
+       和大圆是同一个颜色、同一个形体，看起来就是球自己鼓出来的嘴努子。 */
+  if (c.poutU && c.poutL){
     const pt = s.pout;
     if (pt && pt.k > .02){
       const R = RS, k = pt.k;
-      const rr = R * .58 * k;                    /* 嘴的整体尺寸（两个椭圆的基准） */
+      /* ★ 20261117 玩家定案：嘴要**迷你**——「画的小一点，两个小小的稍微凸出来一点点，
+         然后中间有一点点缝就行」；所以整体尺度只有球半径的三成。 */
+      const rr = R * .30 * k;
       const ux = Math.cos(pt.ang), uy = Math.sin(pt.ang);
-      const p  = (v) => v.toFixed(2);
-      const opn = Math.min(1, k * 2.4);
-      /* 嘴唇中心压在球面外侧一点：两个椭圆一半贴在球上、一半探出去 */
-      const cx0 = s.ax + ux * (R + rr * .26);
-      const cy0 = s.ay + uy * (R + rr * .26);
-      const line = (R * .012).toFixed(2);
-      /* 上唇：宽 .78、高 .40，中心在上方 .50 */
-      const uw = rr * .82, uh = rr * .44, uyy = cy0 - rr * .54;
-      /* 下唇：宽 .94、高 .52，中心在下方 .52 → 中间留 .10 的缝 */
-      const lw = rr * .98, lh = rr * .56, lyy = cy0 + rr * .54;
-      if (c.poutU){
-        c.poutU.setAttribute('cx', p(cx0));
-        c.poutU.setAttribute('cy', p(uyy));
-        c.poutU.setAttribute('rx', p(uw));
-        c.poutU.setAttribute('ry', p(uh));
-        c.poutU.setAttribute('fill', 'rgba(198,90,120,.93)');
-        c.poutU.setAttribute('stroke', 'rgba(104,28,52,.50)');
-        c.poutU.setAttribute('stroke-width', line);
-        c.poutU.setAttribute('opacity', opn.toFixed(2));
+      const p  = v => v.toFixed(2);
+      const opn = Math.min(1, k * 2.6);
+      /* 球身颜色（绝不写死色值：紫球就取紫、粉球就取粉） */
+      const base = String(c.small.style.fill || '').trim() ||
+                   (function(){ try { return getComputedStyle(c.small).fill; } catch(e){ return ''; } })();
+      const rgb = poutRGB(base);
+      const fill   = rgb ? ('rgb(' + rgb.join(',') + ')') : base;
+      const shade  = function(f, al){
+        return rgb ? ('rgba(' + rgb.map(function(v){ return Math.round(v * f); }).join(',') + ',' + al + ')')
+                   : ('rgba(0,0,0,' + (al * .3).toFixed(2) + ')');
+      };
+      /* 吻部中心：压进球面一大半、只把前缘探出球外 —— 同色 + 无边界，
+         看起来就是球自己鼓出来的一块，而不是贴上去的东西。 */
+      /* 圆心压进球内一点：两颗小球是「贴在球面上」的，只把 .1R 左右探出来一点点 */
+      const d = R - rr * .26;
+      const cx0 = s.ax + ux * d, cy0 = s.ay + uy * d;
+      /* 沿「朝向的垂直方向」上下排两瓣（侧脸看就是上唇 / 下唇） */
+      const tx = -uy, ty = ux;
+      const ang = (pt.ang * 180 / Math.PI).toFixed(1);
+      const put = function(el, cx, cy, rx, ry){
+        if (!el) return;
+        el.setAttribute('cx', p(cx)); el.setAttribute('cy', p(cy));
+        el.setAttribute('rx', p(rx));  el.setAttribute('ry', p(ry));
+        el.setAttribute('fill', fill);
+        el.setAttribute('stroke', 'none');       /* 同色就不需要任何描边 */
+        /* 长轴（rx）转到「朝向」上：这样一片椭圆就是一片嘴唇沿嘴的方向伸出去 */
+        el.setAttribute('transform', 'rotate(' + ang + ' ' + p(cx) + ' ' + p(cy) + ')');
+        el.setAttribute('opacity', opn.toFixed(2));
+      };
+      const hide = function(el){ if (el) el.setAttribute('opacity', '0'); };
+
+        /* 上唇薄一点、下唇厚一点，两瓣在切向上略有重叠 → 天生连在一起 */
+        /* 就是两颗很小的椭圆球贴在球面上，上下排，中间留一条窄缝。
+           大半颗埋进球里（同色，看不出边界），只把前缘探出一点点。 */
+      const oU = .62, oL = .62;                /* 上/下瓣切向偏移（单位：rr）：中间留一条细缝 */
+      put(c.poutU, cx0 + tx * (-oU * rr), cy0 + ty * (-oU * rr), rr * .64, rr * .60);
+      put(c.poutL, cx0 + tx * ( oL * rr), cy0 + ty * ( oL * rr), rr * .66, rr * .62);
+      /* 两瓣之间的浅沟：沿「朝向」方向的一道短沟，同色系只暗一点点 ——
+         猫的嘴努子就是两团鼓包中间一道竖沟，而不是一道横着的分界线。 */
+      if (c.poutSeam){
+        const r0 = R - rr * .30, r1 = R + rr * .18;   /* 缝很短：就在两颗小球交界处 */
+        const sx = s.ax + ux * r0, sy = s.ay + uy * r0;
+        const ex = s.ax + ux * r1, ey = s.ay + uy * r1;
+        const mx = (sx + ex) / 2 + tx * (rr * .05), my = (sy + ey) / 2 + ty * (rr * .05);
+        c.poutSeam.setAttribute('d',
+          'M' + p(sx) + ' ' + p(sy) + 'Q' + p(mx) + ' ' + p(my) + ' ' + p(ex) + ' ' + p(ey));
+        /* 用内联样式而不是 attribute：样式表里优先级更高，attribute 会被 class 盖掉 */
+        c.poutSeam.style.fill = 'none';
+        c.poutSeam.style.stroke = shade(.82, .40);
+        c.poutSeam.style.strokeWidth = p(rr * .13);
+        c.poutSeam.style.strokeLinecap = 'round';
+        c.poutSeam.setAttribute('opacity', (opn * .95).toFixed(2));
       }
-      if (c.poutL){
-        c.poutL.setAttribute('cx', p(cx0));
-        c.poutL.setAttribute('cy', p(lyy));
-        c.poutL.setAttribute('rx', p(lw));
-        c.poutL.setAttribute('ry', p(lh));
-        c.poutL.setAttribute('fill', 'rgba(172,58,92,.95)');
-        c.poutL.setAttribute('stroke', 'rgba(96,24,46,.50)');
-        c.poutL.setAttribute('stroke-width', line);
-        c.poutL.setAttribute('opacity', opn.toFixed(2));
-      }
-      /* 原来那颗同色凸包不再参与 —— 嘴由两个椭圆自己长在球上，
-         省得再叠出一圈「圆环」的色差。 */
-      c.pout.setAttribute('opacity', '0');
     } else {
-      if (c.poutU) c.poutU.setAttribute('opacity', '0');
-      if (c.poutL) c.poutL.setAttribute('opacity', '0');
-      c.pout.setAttribute('opacity', '0');
+      hide(c.poutU); hide(c.poutL);
+      if (c.poutSeam) c.poutSeam.setAttribute('opacity', '0');
     }
   }
   /* 脸颊层：只有捏脸会用到 —— 把大球被扯出去的那一小块，裁一个小圆后重画在小球上方 */
