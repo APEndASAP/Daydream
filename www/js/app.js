@@ -6322,8 +6322,10 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
         if (i < parts.length - 1) await new Promise(r => setTimeout(r, randInt(1200, 3500)));
       }
       // 提示音：聊天页内仅当前角色响；不在聊天页且未关闭该访客提示音才响（20260930 统一 shouldDingFor）
-      if (shouldDingFor(curChar)) playDing();
-      notifyIncoming(curChar, lastMsg ? lastMsg.content : parts[0]); // 20260929bi：后台系统通知
+      if (parts.length){
+        if (shouldDingFor(curChar)) playDing();
+        notifyIncoming(curChar, lastMsg ? lastMsg.content : parts[0]); // 20260929bi：后台系统通知
+      }
       bmClearAlarm(charId, 'msg', __bmReplyDue); // 20261002ca：消息已送达 → 撤预排闹钟（防止已读后再弹）
       // 20261030：回复已成功落库 → 记录 taskId→msgId 映射 + 确认后台任务完成（撤原生任务）。
       // 这样若之后回前台 recoverDue 拉到该任务，bmTaskMsgGet 命中映射会直接补 confirm、不重复生成。
@@ -6395,6 +6397,10 @@ function combineCardEmoji(text) {
      20261001cs：每条落定时有概率组合一个表情字卡（combineCardEmoji）
    · AI 模式：按 AI 输出的换行分段拆条（最多 3 条，多余段落并回最后一条） */
 function splitReplyParts(gen, c) {
+  /* 20261116：数值修改申请只发卡片，不带开场话。
+     玩家原话：「把这句删了，发卡片消息就够了，不用发这句话。」
+     ⇒ 返回空数组，落库循环一次都不跑；卡片由 self-adjust.js 自己投递。 */
+  if (gen.type === 'selfadjust_card') return [];
   if (gen.type === 'ai') {
     const segs = String(gen.text || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
     if (segs.length <= 1) return [gen.text];
@@ -13872,7 +13878,7 @@ function openSeasonLayer(cid) {
                     frame.contentWindow.document.body.children.length > 0);
   } catch (e) { frameAlive = false; }
   if (frame && (!_seasonFrameLoaded || !frameAlive)) {
-    frame.src = 'season/index.html?v=20261116a';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
+    frame.src = 'season/index.html?v=20261116e';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
     _seasonFrameLoaded = true;
   }
   layer.classList.add('show');

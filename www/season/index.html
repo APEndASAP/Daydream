@@ -1448,7 +1448,10 @@ body{
 .pls-l{font-size:16px;transform:scale(.5);transform-origin:left top;color:#9fb0cc;
   letter-spacing:.4px;height:10px;margin-top:2px;white-space:nowrap;overflow:hidden}
 .pls-s{font-size:16px;transform:scale(.5);transform-origin:left top;color:#8fd08a;
-  letter-spacing:1px;margin-top:8px;white-space:nowrap}
+  letter-spacing:1px;margin-top:8px;white-space:normal;width:200%;line-height:1.5}
+/* 20261116：详情页状态徽标可点（列表里的不可点）——点开看这个状态什么意思、该怎么办 */
+.pls-n [data-st]{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pls-n [data-st]:active{filter:brightness(1.3)}
 .pls-x{flex:0 0 auto;width:26px;height:26px;border:2px solid #66738c;position:relative;cursor:pointer}
 .pls-x i{position:absolute;left:50%;top:50%;width:12px;height:2px;background:#cfd9ea;
   transform:translate(-50%,-50%) rotate(45deg)}
@@ -1781,6 +1784,8 @@ body{
   background:linear-gradient(180deg,rgba(255,255,255,.80),rgba(0,0,0,.05)),var(--paper);
   text-align:center;padding:12px;font-size:13px;letter-spacing:.22em;cursor:pointer;position:relative;}
 .pl-imprint.off{opacity:.38;pointer-events:none;}
+/* wait：九株齐了但还有在长的 —— 比 off 亮一点，而且**还能点**（点一下会说差几株） */
+.pl-imprint.wait{opacity:.58;}
 .pl-imprint small{display:block;font-size:9px;letter-spacing:.14em;margin-top:4px;opacity:.75;font-weight:400;}
 
 .bk-tools{flex:0 0 auto;display:flex;align-items:center;gap:5px;min-width:0;max-width:48%;}
@@ -2283,7 +2288,7 @@ body{
           <div class="dp-num" id="ipgNum">1 / 8</div>
           <div class="dp-btn" id="ipgNext">▶</div>
         </div>
-        <div class="dex-foot">※ 一轮种满九株后点「凝星」，星球会按这一轮的组合变成另一种样子，并印成一张书签。</div>
+        <div class="dex-foot">※ 九株的生长流程都走完（长成株，或烧苗 / 枯死停下）后点「凝星」，星球会按这一轮的组合变成另一种样子，并印成一张书签。</div>
       </div>
     </section>
 
@@ -2404,7 +2409,7 @@ body{
       <div class="btn ghost" id="plWater">浇 一 次 水</div>
       <!-- 换星球形态：只有玩家手里真有一颗「星球种子」时才出现（updateSkinBtn 控制显示） -->
       <div class="btn ghost" id="plSkin" style="display:none">换 星 球 形 态<small>SKIN · 用 TA 回赠的那颗星球</small></div>
-      <div class="hint">※ 送给角色的书签会变成一颗种子。满 9 株就可以「凝星」，这一轮的组合会变成一颗专属星球，印成书签收进书签集。</div>
+      <div class="hint">※ 送给角色的书签会变成一颗种子。种满 9 株、并且九株的生长流程都走完（长成株，或烧苗 / 枯死停下），才能「凝星」——这一轮的组合会变成一颗专属星球，印成书签收进书签集。</div>
     </section>
 
     <!-- ============ 拍照 ============ -->
@@ -11193,7 +11198,7 @@ const SEASON_RULES = {
      ---- 浇水档位（按这株当天合计次数）----
        1 ~ 6     有效，+waterDays
        7 ~ 12    不加速（浇了也白浇）
-       13 起     不加速 + 有概率进入「溢水」（叶尖挂水珠的形态）
+       13 起     不加速 + 每次 35% 掷骰 → 「溢水」（叶尖挂水珠的形态）
        溢水中再累计 > waterFloodN(10) 次 → 每次浇水有概率淹死
      ---- 施肥档位（同样按「谁施的」分开算，20261111 与浇水同规）----
        你 1 ~ 2 / TA 1 ~ 2   有效，+careDays×1.6
@@ -11211,7 +11216,7 @@ const SEASON_RULES = {
   waterSidePerDay: 3,
   waterSoftMax: 12,     /* 到这一次为止都不加速、但也不会出事 */
   waterFloodN: 10,      /* 已经溢水之后，再累计浇这么多次 → 开始有淹死概率 */
-  overflowRate: 0.35,   /* 第 13 次起，每次浇水进入「溢水」的概率 */
+  overflowRate: 0.35,   /* 第 (waterSoftMax+1) 次起，每次浇水泡出「溢水」的概率 */
   drownRate: 0.35,      /* 溢水中超限后，每次浇水被淹死的概率 */
   fertPerDay: 4,        /* 当天合计「有效施肥」次数（玩家 2 + 角色 2） */
   /* ★ 20261111 用户定案：施肥与浇水同规，有效次数按「谁施的」分开算 ★
@@ -11580,7 +11585,7 @@ function seasonRulesText(){
   return [
     '浇水：每株每天你 ' + w1 + ' 次 + TA ' + w1 + ' 次有效（各算各的，不能互相顶 —— 你浇满 ' +
       w1 + ' 次后，剩下 ' + w1 + ' 次要 TA 自己来浇才算数）；每次 +' +
-      R.waterDays + ' 天；超出自己的额度就白浇不长；合计第 ' + (soft + 1) + ' 次起 ' +
+      R.waterDays + ' 天；超出自己的额度就白浇不长；合计第 ' + (soft + 1) + ' 次起每次 ' +
       pc(R.overflowRate, 0.35) + '% 溢水；溢水后再浇 ' + flood + ' 次以上，每次 ' +
       pc(R.drownRate, 0.35) + '% 被淹死。',
     '施肥：每株每天你 ' + f1 + ' 次 + TA ' + f1 + ' 次有效（同样各算各的 —— 你施满 ' +
@@ -14165,7 +14170,12 @@ function migratePlanetPools(fallbackId){
     Object.keys(PLANET.pool).forEach(function(k){ take(PLANET.pool[k]); });
     const bag = {};
     all.forEach(function(pl){
-      const owner = pl.byId || pl.ownerId || viewId;
+      /* ★ 20261116：老档里玩家亲手种的株 byId 写的是 'me'（见 plantSeedAt 旧注释）。
+         不认这个别名的话，它们会被归到 pool['me'] 这个假角色名下，
+         当前星球的池子空着 —— 表现就是「种下、刷新，00/9」。
+         这里把 'me' / 空归属都算成「这次进来的这个人」。 */
+      const _bid = (pl.byId && pl.byId !== 'me') ? pl.byId : '';
+      const owner = _bid || pl.ownerId || viewId;
       (bag[owner] = bag[owner] || []).push(pl);
     });
     if (!bag[viewId]) bag[viewId] = [];
@@ -14644,14 +14654,22 @@ function renderPlanetList(){
     /* 缺水优先于生长阶段显示：这是玩家唯一能在主列表上看到「该浇水了」的地方。
        天数实时算（dryDaysOf），不依赖 tickGrow 有没有刚好跑过。 */
     const dd = dryDaysOf(pl);
+    /* 20261116：长完了就直说「已长成」，状态挂在后面 ——
+       以前成株带溢水时这里只写「溢水 · 明天别浇它」，玩家会以为这株还没长完、
+       凝星被它卡住了。其实判定早就把「长完 + 溢水/肥伤/卷边」算作走完了，
+       只是列表没说清。状态本身不藏，照旧提示该不该浇水。 */
+    const _doneTag = pl.fertCurl ? ' · 卷边'
+      : pl.fertBurn ? ' · 肥伤'
+      : pl.overflow ? ' · 溢水' : '';
     pg.textContent = pl.burned ? '已烧苗'
       : pl.dead ? '已枯死'
       : (dd >= SEASON_RULES.dryWarnDays)
         ? ('缺水 · 已 ' + Math.floor(dd) + ' 天没浇')
-        : pl.overflow ? '溢水 · 明天别浇它'
-        : (pl.fertCurl && s.k >= 1)
-          ? '卷边 · 还在长'
-          : (s.k >= 1 ? '已长成' : s.name + ' ' + (s.i + 1) + '/' + s.n);
+        : (s.k >= 1)
+          ? ('已长成' + _doneTag)
+          : (pl.overflow ? '溢水 · 还在长'
+            : (pl.fertCurl ? '卷边 · 还在长'
+              : (pl.fertBurn ? '肥伤 · 还在长' : s.name + ' ' + (s.i + 1) + '/' + s.n)));
     const iw = document.createElement('div');
     iw.className = 'pl-iw';
     iw.appendChild(nm); iw.appendChild(sub);
@@ -14730,14 +14748,7 @@ function openPlantList(kind){
       const s = stageInfoOf(pl);
       const nm = document.createElement('div');
       nm.className = 'plb-n';
-      nm.innerHTML = nxEsc(pl.name) +
-        (pl.mutantAt ? '<span class="pl-mut">变异</span>' : '') +
-        (pl.burned ? '<span class="pl-burn">烧苗</span>' : '') +
-        (pl.fertBurn ? '<span class="pl-burn">肥伤</span>' : '') +
-        (pl.overflow && !pl.dead ? '<span class="pl-wet">溢水</span>' : '') +
-        (pl.dead ? '<span class="pl-dead">枯死</span>' : '') +
-        /* 缺水但不致命：只做提示（tickGrow 每轮刷新 pl.dry），烧苗/枯死的优先级更高 */
-        (!pl.burned && !pl.dead && pl.dry === 1 ? '<span class="pl-dry">缺水</span>' : '');
+      nm.innerHTML = nxEsc(pl.name) + plantBadgesHtml(pl, false);
       const sub = document.createElement('div');
       sub.className = 'plb-s';
       sub.textContent = (pl.by || PLANET.owner) + ' 种下 · ' + (pl.climate || '');
@@ -15250,6 +15261,10 @@ function startPlanet(){
   try { taSeedTick(); } catch(e){};
   if (!plTimer) plTimer = setInterval(() => {
     drawPlanetFrame();
+    /* 20261116：按钮跟着生长走 —— 苗长到成株那一刻，凝星按钮要立刻从
+       「还有 N 株在长」变成可凝，不能等玩家手动切页才刷新。
+       内部有状态签名，没变化就立刻 return，不会每 110ms 重排 DOM。 */
+    try { if (typeof updateImprintBtn === 'function') updateImprintBtn(); } catch (e) {}
     if (sheetPlant) renderPlantSheet();
     /* TA 自己种种子：约 1 秒查一次就够 —— taPlanAt 是分钟级的，不必每帧算 */
     if ((++_taTickN % 9) === 0) taSeedTick();
@@ -15296,8 +15311,19 @@ function careQuotaOf(pl){
   if (typeof q.fertC !== 'number') q.fertC = 0;
   return q;
 }
-function careCapOf(kind){
-  return (kind === '施肥') ? (SEASON_RULES.fertPerDay || 0) : (SEASON_RULES.waterPerDay || 0);
+/* 20261116：同一株、同一天，「次数超了」只解释一次。
+   玩家原话：「这个提示只要第一次超过 3 次的时候提醒一下就可以了，后面没有必要再提醒了。」
+   ⇒ 第一次给完整说明（额度用完了、要等 TA 来浇/施），之后只留一行「今天已经够了（第 N 次）」。
+   每天 0 点自动重来（跟额度账本同一个 todayStr）。 */
+function overTipFirst(pl, kind){
+  if (!pl) return false;
+  const d = todayStr();
+  if (!pl._tipDay || pl._tipDay.d !== d) pl._tipDay = { d: d };
+  if (pl._tipDay[kind]) return false;
+  pl._tipDay[kind] = 1;
+  return true;
+}
+function careCapOf(kind){  return (kind === '施肥') ? (SEASON_RULES.fertPerDay || 0) : (SEASON_RULES.waterPerDay || 0);
 }
 /* 这一笔是谁做的：by 为空或者是「你」→ 玩家；带角色名 → 角色。
    20261111：浇水要分账，所以每个入口都必须把 by 传进来。 */
@@ -15431,15 +15457,14 @@ function waterOnePlant(pl, now, by){
   }
 
   /* ---- tier === 'over'：浇过头了 —— 先出「溢水」，再往上才是水淹 ---- */
-  if (!pl.overflow){
-    if (Math.random() < (SEASON_RULES.overflowRate || 0.35)){
-      pl.overflow = true;
-      pl.overflowAt = t;
-      pl.overflowN = 0;
-      res.overflowed = true;
-      pl.acts.push({ t: t, k: '溢水', by: '—' });
-    }
-  } else {
+  /* 第 (waterSoftMax+1) 次（13 次）起，每次浇水掷一次 35% 的骰 —— 中了才有溢水标签 */
+  if (!pl.overflow && Math.random() < (SEASON_RULES.overflowRate || 0.35)){
+    pl.overflow = true;
+    pl.overflowAt = t;
+    pl.overflowN = 0;
+    res.overflowed = true;
+    pl.acts.push({ t: t, k: '溢水', by: '—' });
+  } else if (pl.overflow){
     /* 溢水状态下**再**累计浇 waterFloodN 次以上，才开始有淹死的可能 */
     pl.overflowN = (pl.overflowN || 0) + 1;
     if (pl.overflowN > (SEASON_RULES.waterFloodN || 5) &&
@@ -15548,7 +15573,7 @@ function waterPlanet(){
      用户原话：「凝星下方那个按钮是全局浇水，相当于给所有植物一起浇上水，
               也计生长次数，和单株的数据是互通的」 */
   const now = Date.now();
-  let grew = 0, flat = 0, over = 0;
+  let grew = 0, flat = 0, over = 0, spill = 0;
   const drowning = [];
   alive.forEach(function(pl){
     const r = waterOnePlant(pl, now);
@@ -15556,7 +15581,7 @@ function waterPlanet(){
     if (r.drowned) drowning.push(pl.name);
     else if (r.tier === 'ok') grew++;
     else if (r.tier === 'flat') flat++;
-    else over++;
+    else { over++; if (r.overflowed) spill++; }   /* 超了 ≠ 泡住了：只有真掷中才算 */
   });
   drawPlanetFrame();
   renderPlanetList();
@@ -15570,7 +15595,10 @@ function waterPlanet(){
   const parts = [];
   if (grew) parts.push(grew + ' 株长高了一点');
   if (flat) parts.push(flat + ' 株你的额度已经浇满（白浇，等 TA 来浇）');
-  if (over) parts.push(over + ' 株浇超了，叶子上挂着水');
+  /* 20261116：超限只是「不再长」，泡没泡水要按真实结果说 ——
+     以前只要 tier=over 就报「叶子上挂着水」，可溢水是每次 35% 掷骰子，
+     没中就说挂着水，玩家会去满星球找那个根本不存在的标签。 */
+  if (over) parts.push(over + ' 株浇过头了' + (spill ? ('（' + spill + ' 株泡住了水）') : '（这次没泡住）'));
   toast('浇了一遍水 · ' + (parts.length ? parts.join('；') : '都浇过了'));
 }
 
@@ -15857,7 +15885,7 @@ function rulesBodyHTML(){
     '（烧苗是爱意浇多了烧的，<b>跟施肥无关</b>；施肥烧的是肥伤，另算。）');
   h += sec('生 长 与 凝 星', 'GROW',
     '不照料它也会按时间慢慢长（挂在后台时按六成效率算），照料只是让它更快。' +
-    '<br>星球满 9 株，就可以「凝星」，把这一轮的组合印成一张专属星球书签。');
+    '<br>种满 9 株、且九株的生长流程都走完（长成株，或烧苗 / 枯死停下），就可以「凝星」，把这一轮的组合印成一张专属星球书签。');
   /* ★ 20261112 用户要求：「把规则都放进详情里，另外角色也可以看到规则」★
      角色那边看到的是同一份文字（buildAiContext.rules），这边也要写清楚它会怎么动。 */
   h += sec('TA 怎 么 照 料', 'TA',
@@ -16759,6 +16787,32 @@ const EV_TX = {
   '卷边':'肥伤攒满，叶缘卷了边',
   '缓过来了':'自己缓过来了'
 };
+/* 20261116：状态徽标改成**一份共用清单** —— 列表抽屉和详情页不能再各写一套。
+   玩家反馈：列表里有「溢水」、详情里没有；详情里有「肥伤」、列表里没有「卷边」。
+   详情页的徽标可点（data-st），点开看这个状态是什么意思、该怎么办。 */
+const PL_ST_DOC = {
+  '变异': ['长成了另一个样子', '外观定型了，不影响生长 —— 该浇的水、该施的肥照旧。'],
+  '烧苗': ['被爱浇过了头', '停在那儿不再长，也开不了花。浇点水、几天别再浇爱意，它会自己缓过来。'],
+  '肥伤': ['叶缘被肥烧焦了', '浇点水缓几天 —— 肥伤不会弄死苗，第二天不再施肥就恢复。'],
+  '卷边': ['肥伤攒满定型的卷边', '这一卷收不回来了，之后长出来的叶子也一直是卷的。只是外观，照常长、照常开花。'],
+  '溢水': ['土里泡着水', '今天浇太多了。明天别再浇它、也别施肥，它自己会缓过来；泡着水再猛浇可能被淹死。'],
+  '枯死': ['已经枯死', '浇也浇不回来了。铲掉可以重种；留着不动，九株全废也许能凝出别的星。'],
+  '缺水': ['好几天没浇了', '再拖下去会枯死 —— 赶紧浇一次。']
+};
+function plantBadgesHtml(pl, clickable){
+  if (!pl) return '';
+  const b = function(cls, st){
+    return '<span class="' + cls + '"' + (clickable ? ' data-st="' + st + '"' : '') + '>' + st + '</span>';
+  };
+  return (pl.mutantAt ? b('pl-mut', '变异') : '') +
+         (pl.burned ? b('pl-burn', '烧苗') : '') +
+         (pl.fertBurn ? b('pl-burn', '肥伤') : '') +
+         (pl.fertCurl ? b('pl-burn', '卷边') : '') +
+         (pl.overflow && !pl.dead ? b('pl-wet', '溢水') : '') +
+         (pl.dead ? b('pl-dead', '枯死') : '') +
+         /* 缺水但不致命：只做提示（tickGrow 每轮刷新 pl.dry），烧苗/枯死的优先级更高 */
+         (!pl.burned && !pl.dead && pl.dry === 1 ? b('pl-dry', '缺水') : '');
+}
 /* 日志里 tag 的配色类：卷边/缓过来都归到「肥」那档（f），别落到 undefined */
 PL_KCN['卷边'] = 'f'; PL_KCN['缓过来了'] = 't';
 
@@ -16773,29 +16827,38 @@ function renderPlantSheet(){
   g.fillStyle = '#22303f'; g.fillRect(0, 58, 72, 14);
   g.fillStyle = '#2c3f31'; g.fillRect(0, 61, 72, 11);
   drawPlantForm(g, 36, 62, k, 0, pl.form, plCols(pl), 1, pl);
-  $('#plsName').innerHTML = nxEsc(pl.name) +
-    (pl.mutantAt ? '<span class="pl-mut">变异</span>' : '') +
-    (pl.burned ? '<span class="pl-burn">烧苗</span>' : '') +
-    (pl.fertBurn ? '<span class="pl-burn">肥伤</span>' : '') +
-    (pl.fertCurl ? '<span class="pl-burn">卷边</span>' : '') +
-    (pl.dead ? '<span class="pl-dead">枯死</span>' : '') +
-    /* 缺水但不致命：只做提示，烧苗/枯死的优先级更高 */
-    (!pl.burned && !pl.dead && pl.dry === 1 ? '<span class="pl-dry">缺水</span>' : '');
+  /* 详情页的徽标可点（列表里的不可点，这也正是玩家要的「只有详细页面才能查看」） */
+  $('#plsName').innerHTML = nxEsc(pl.name) + plantBadgesHtml(pl, true);
   $('#plsLatin').textContent = pl.latin || '—';
   const s = stageInfoOf(pl);
-  $('#plsStage').textContent = pl.fertBurn
-    ? ('肥伤 · 叶缘灼伤，浇点水缓几天' +
-       (pl.fertBurnCount ? '（这株已烧 ' + pl.fertBurnCount + ' / ' +
-        (SEASON_RULES.fertCurlTimes || 3) + ' 次）' : ''))
-    : pl.fertCurl
-      ? '卷边 · 肥伤攒满了，这一卷收不回来'
-      : pl.burned
-      ? ((pl.burnAt && Date.now() - pl.burnAt >= (SEASON_RULES.burnRecoverDays || 3) * 86400000)
-          ? '烧苗 · 缓得差不多了，别再施肥'
-          : '烧苗 · 被爱浇过头了，浇点水等几天')
-      : pl.dead
-        ? '已枯死 · 停止生长'
-        : (s.name + ' ' + (s.i + 1) + '/' + s.n + ' · ' + Math.round(k*100) + '%');
+  /* 20261116：这行以前是「肥伤 ? … : 卷边 ? … : 烧苗 ? …」一站到底，
+     溢水根本没写进来 —— 玩家刚浇了一堆水，徽标变了、这行小字却还停在「肥伤」。
+     现在把当前**所有**状态都列出来（和头上的徽标同一份来源），浇完/施完立刻跟着变。 */
+  const _segs = [];
+  if (pl.burned){
+    const _pass = (pl.burnAt && Date.now() - pl.burnAt >= (SEASON_RULES.burnRecoverDays || 3) * 86400000);
+    _segs.push(_pass ? '烧苗 · 缓得差不多了，别再施肥' : '烧苗 · 被爱浇过头了，浇点水等几天');
+  }
+  if (pl.fertBurn) _segs.push('肥伤 · 叶缘灼伤，浇点水缓几天' +
+      (pl.fertBurnCount ? '（肥伤累计 ' + pl.fertBurnCount + ' / ' + (SEASON_RULES.fertCurlTimes || 3) + ' 次，烧满就卷边）' : ''));
+  if (pl.fertCurl) _segs.push('卷边 · 肥伤攒满了，这一卷收不回来');
+  if (pl.overflow) _segs.push('溢水 · 土里泡着水，明天别浇它');
+  /* 20261116：浇过软上限但还没掷中溢水时，把「今天一共浇了几次」如实写出来 ——
+     玩家看到的数字才对得上自己点了几下（以前这行只有状态、没有次数，
+     连浇十几次也只显示上一档的旧状态，看起来就像「次数没更新」）。
+     规则不动：第 13 次起每次 35% 才泡水，这里只负责把次数显示清楚。 */
+  const _q = careQuotaOf(pl);
+  const _soft = SEASON_RULES.waterSoftMax || 12;
+  if (!pl.dead && _q.water > _soft){
+    _segs.push('今天已浇 ' + _q.water + ' 次 · ' + (pl.overflow
+      ? '泡住了，明天别再浇'
+      : '每次 ' + Math.round((SEASON_RULES.overflowRate || 0.35) * 100) + '% 会泡住'));
+  }
+  if (pl.dead) _segs.push('已枯死 · 停止生长');
+  else if (!pl.burned && pl.dry === 1) _segs.push('缺水 · 好几天没浇了');
+  $('#plsStage').textContent = _segs.length
+    ? _segs.join('　')
+    : (s.name + ' ' + (s.i + 1) + '/' + s.n + ' · ' + Math.round(k*100) + '%');
   $('#plsBar').style.width = Math.round(k*100) + '%';
   const nat = pl.nat || nativeLat(pl.name);
   $('#plsPos').textContent = latStr(pl.lat) + '  ' + lonStr(pl.lon) +
@@ -16841,9 +16904,24 @@ function renderPlantSheet(){
   if (typeof updateCareBtns === 'function') updateCareBtns();
 }
 
+let _plsBadgeBound = false;
 function openPlantSheet(pl){
   sheetPlant = pl;
   renderPlantSheet();
+  /* 状态徽标点开看说明：绑一次就够（innerHTML 重绘不会把监听器洗掉） */
+  if (!_plsBadgeBound){
+    _plsBadgeBound = true;
+    const nmEl = $('#plsName');
+    if (nmEl) nmEl.addEventListener('click', function(e){
+      const el = (e.target && e.target.closest) ? e.target.closest('[data-st]') : null;
+      if (!el) return;
+      const st = el.getAttribute('data-st');
+      const doc = PL_ST_DOC[st];
+      if (!doc) return;
+      if (e.stopPropagation) e.stopPropagation();
+      toast(st + ' · ' + doc[0], doc[1]);
+    });
+  }
   $('#plSheet').classList.add('on');
   $('#phone').classList.add('sheeting');
   drawPlanetFrame();
@@ -16901,11 +16979,22 @@ function sheetAct(kind){
     } else if (r.overflowed){
       toast('「' + pl.name + '」的叶子开始往下滴水了（你这株第 ' + r.myN + ' 次）',
             '水浇多了 —— 明天别再浇它、也别施肥，它自己会缓过来');
+    } else if (pl.overflow){
+      /* 已经在溢水里，再浇只报一句，不再念规则（见 overTipFirst） */
+      const _f = overTipFirst(pl, 'water');
+      const _t = '「' + pl.name + '」还泡在水里（第 ' + r.myN + ' 次）';
+      if (_f) toast(_t, '别再浇了 —— 明天不浇它，它自己会缓过来；泡着水再浇还可能被淹死');
+      else toast(_t);
     } else if (r.tier === 'ok'){
       toast('你给它浇了一次水（你这株第 ' + r.myN + ' 次 · 有效 ' + careSideCapOf('浇水') + ' 次）');
     } else {
-      toast('浇是浇了，但它今天已经喝够了（你这株第 ' + r.myN + ' 次）',
-            '你的 ' + careSideCapOf('浇水') + ' 次已经浇满 —— 另外 ' + careSideCapOf('浇水') + ' 次要等 TA 自己来浇才会长');
+      /* 超额（flat 白浇 / over 但还没溢水）：第一次讲清楚，后面只报一句 */
+      const _f = overTipFirst(pl, 'water');
+      const _t = '浇是浇了，但它今天已经喝够了（你这株第 ' + r.myN + ' 次）';
+      if (_f) toast(_t,
+            '你的 ' + careSideCapOf('浇水') + ' 次已经浇满 —— 另外 ' +
+            careSideCapOf('浇水') + ' 次要等 TA 自己来浇才会长；再浇下去会溢水');
+      else toast(_t);
     }
     return;
   }
@@ -16941,11 +17030,16 @@ function sheetAct(kind){
     toast('你给它施了一点肥（你这株第 ' + r.myN + ' 次）',
           '它叶子已经卷了，别再猛施 —— 卷边的形收不回来');
   } else if (r.tier === 'flat'){
-    toast('施是施了，但它今天已经吃够了（你这株第 ' + r.myN + ' 次）',
+    const _f = overTipFirst(pl, 'fert');
+    const _t = '施是施了，但它今天已经吃够了（你这株第 ' + r.myN + ' 次）';
+    if (_f) toast(_t,
           '你的 ' + myCapF + ' 次已经施满 —— 另外 ' + myCapF + ' 次要等 TA 自己来施才会长');
+    else toast(_t);
   } else {
-    toast('施是施了，但它今天已经吃够了（这株今天第 ' + r.nth + ' 次）',
-          '再多施也不会长 —— 叶子已经开始焦边了');
+    const _f = overTipFirst(pl, 'fert');
+    const _t = '施是施了，但它今天已经吃够了（这株今天第 ' + r.nth + ' 次）';
+    if (_f) toast(_t, '再多施也不会长 —— 叶子已经开始焦边了');
+    else toast(_t);
   }
 }
 /* 铲掉：位置空出来可以种别的；种子返还给玩家（回到种子库）
@@ -19701,7 +19795,7 @@ function impCondText(d){
   /* 逐颗条件表优先：134 颗星球各写各的（见上方 IMP_COND）。
      只有初见 / 枯亡 / 赤心 / 初垦这 4 颗没有条目，往下走固定句。 */
   if (typeof IMP_COND !== 'undefined' && IMP_COND[d.k]) return IMP_COND[d.k];
-  if (d.k === 'first_till') return '九株都下了地、一株都没长成株、也没有一株枯死 —— 这一轮只凝得出它。';
+  if (d.k === 'first_till') return '九株都下了地、一株都没长成株、也没有一株枯死 —— 这一轮只凝得出它；但它只此一次，凝过之后这条路就永久关上了。';
   if (d.t === 'origin') return '不必凝星 —— 你睁开眼的时候，脚下站着的就是它。';
   if (d.t === 'wither') return '九株里枯死五株及以上、又没有铲掉重种，这一轮凝星就只能凝出它。';
   if (d.t === 'burn')   return '九株全部烧苗、一株都没能留下来 —— 爱意浇过了头，这一轮只会凝出它。';
@@ -20185,7 +20279,12 @@ function plantSeedAt(item, slotIdx){
        旧存档里的数字 slot 仍然保留可读 */
     slot: (typeof slotIdx === 'object' ? -1 : slotIdx),
     climate: cl.k, cnote: cl.note, ccolor: cl.c,
-    byId: 'me', by: '你',
+    /* ★ 20261116 修「种下 → 刷新就没了」：
+       这里原写死 byId:'me'，而 migratePlanetPools 按 byId 归池 ——
+       读档后 viewId 还是空的，归池时 'me' 不等于任何角色 id，
+       这株就被塞进 pool['me']，当前星球那一池是空的 → 刷新后「00/9」。
+       种在谁的星球上就记谁。 */
+    byId: PLANET.viewId || PLANET.ownerId || 'me', by: '你',
     acts: [{ t: Date.now(), k: '种下', by: '你' }],
     grow: 0, lastTick: Date.now(), t0: Date.now(), dur: dur
   };
@@ -20613,6 +20712,40 @@ function isMature(pl){
   if (!pl || pl.burned || pl.dead) return false;
   return isGrown(pl);
 }
+/* ============================================================
+   凝星总门槛（20261116 用户定案）：九株的**生长流程都得走完**
+   ------------------------------------------------------------
+   ★ 用户原话 ★
+     「这九株还没有长全呢，为什么我就可以点凝星这个按钮了……
+       凝星一定要是它们的生长流程走完了，不一定是成株，
+       必须是有的株已经停止生长，就是它们的生长流程已经走完了。
+       不一定非得是九株全都成株了才能够凝星，但也不是说这九株还没有长完
+       就可以凝星了……可能因为溢水、可能因为烧苗，这株植物它停止成长了，
+       所以它没有长大。所以可以凝星是这种情况，但是他其实生命流程已经走完了。
+       凝星只能说是九株的生命流程全都走完了才能凝结的，
+       不能说我随便种上九株、它们全都是种子我就可以凝结了。」
+   ⇒ 一株算「走完」只有两种情形：
+      ① 已经长到「成株」这一档（含开花）—— 长全了；
+      ② 已经彻底停下、再也长不动了 —— 枯死 / 淹死（dead）、烧苗（burned）。
+   ⇒ 「溢水」「肥伤」**不算**走完：这两个是当天的临时状态（第二天不浇就退），
+      代码里也明确「不停长」（见 stageNameOf 注释），所以不能拿来当凝星资格。
+      溢水真把苗淹死了才落到 dead，那时才算。
+   ⇒ 这一条是**总门槛**，比下面 imprintReady() 的星级门槛更早判：
+      星级门槛管「能不能凝出这一族」，这条管「现在准不准凝」。
+   ============================================================ */
+function isLifeDone(pl){
+  if (!pl) return false;
+  if (pl.dead || pl.burned) return true;     /* 枯死 / 淹死 / 烧苗：真的停长了 */
+  const s = stageInfoOf(pl);
+  /* 已经站到「成株」那一档就算长全 —— 这里不用 isGrown()，
+     因为它还会卡 loveCount（没浇爱意的株不算成株）。
+     没浇爱意的株只是「不能开花/不算成株」，但它的生长流程确实已经走到成株档了，
+     卡在这里会让玩家看着九株都写着「成株」却凝不了星，那是另一种坑。 */
+  return s.i >= s.n - 2;
+}
+function lifeDoneCount(list){
+  return (list || []).filter(isLifeDone).length;
+}
 function imprintReady(imp, list){
   if (!imp) return { ok: false, need: '' };
   const k = imp.k || '';
@@ -20657,10 +20790,31 @@ function computeImprint(){
       换壳/清缓存会让它重新可拿一次；这里跟着 bmSeasonImpFound 一起用同一套存法。 */
 const FIRST_TILL_KEY = 'bmSeasonFirstTill';
 function firstTillGot(){
-  try { return localStorage.getItem(FIRST_TILL_KEY) === '1'; } catch(e){ return false; }
+  try { if (localStorage.getItem(FIRST_TILL_KEY) === '1') return true; } catch(e){}
+  /* 双保险：图鉴里已经解锁过初垦星（bmSeasonImpFound 里记着 first_till）也算拿过了。
+     这样即使那条单独的 flag 被清掉，也不会让人再白拿一次。 */
+  try { if (IMP_FOUND.has('first_till')) return true; } catch(e){}
+  return false;
 }
 function firstTillMark(){
   try { localStorage.setItem(FIRST_TILL_KEY, '1'); } catch(e){}
+}
+/* ============================================================
+   初垦星例外（20261116 用户定案）
+   ------------------------------------------------------------
+   ★ 用户原话 ★
+     「初垦星是单独的，就是说这是一次性的凝星，它这颗星球只能凝结一次。
+       只有第一次的时候可以，后面就不行了。」
+   ⇒ 九株都下了地、但一株都没长成（也没死没烧）时，**只这一次**允许凝星，
+     凝出来的就是初垦星；拿过之后这个口子永久关闭，再种满九颗种子也凝不了。
+   ⇒ 条件与 computeImprintRaw 里 ④ 段完全一致，别在两处写岔：
+     九株齐、无 burned、无 dead、无 isMature。
+   ============================================================ */
+function firstTillOpen(){
+  const list = PLANET.plants;
+  if (list.length < PL_MAX) return false;
+  if (firstTillGot()) return false;
+  return list.every(p => p && !p.burned && !p.dead && !isMature(p));
 }
 
 /* ============================================================
@@ -20841,14 +20995,31 @@ function computeImprintRaw(){
   const lv2 = avg2 >= 3.1 ? 3 : avg2 >= 2.2 ? 2 : 1;
   return IMPRINTS.find(d => d.k === main + '_' + fam + '_' + lv2) || null;
 }
+let _impBtnSig = '', _impBtnEl = null;
 function updateImprintBtn(){
   const b = $('#plImprint');
   if (!b) return;
-  const full = PLANET.plants.length >= PL_MAX;
+  const n = PLANET.plants.length;
+  const full = n >= PL_MAX;
+  const done = lifeDoneCount(PLANET.plants);
+  /* 初垦星那一次例外也要让按钮亮起来，否则玩家永远点不到它（firstTillOpen 只开一次） */
+  const readyNow = done >= n || (full && firstTillOpen());
+  /* 这颗按钮现在被 plTimer 每 110ms 喊一次（见 startPlanet），
+     状态没变就别重写 innerHTML —— 否则每 110ms 拆一次 DOM，手机会发烫。 */
+  const sig = n + '|' + done + '|' + (full ? 1 : 0) + '|' + (readyNow ? 1 : 0);
+  if (b === _impBtnEl && sig === _impBtnSig) return;
+  _impBtnEl = b; _impBtnSig = sig;
+  /* 20261116：三种状态
+     · 不够 9 株 → off（灰着、指不动，因为没有可凝的东西）
+     · 够 9 株但有株还在长 → wait（灰一点但**点得动**，点一下会说差几株，不装死）
+     · 九株都走完 → 正常亮着 */
   b.classList.toggle('off', !full);
-  b.innerHTML = '凝 星<small>' + (full
-    ? 'NINE · 把这一轮印成一张书签'
-    : 'NINE · 还差 ' + (PL_MAX - PLANET.plants.length) + ' 株') + '</small>';
+  b.classList.toggle('wait', full && !readyNow);
+  b.innerHTML = '凝 星<small>' + (!full
+    ? 'NINE · 还差 ' + (PL_MAX - n) + ' 株'
+    : !readyNow
+      ? 'NINE · 还有 ' + (n - done) + ' 株在长'
+      : 'NINE · 把这一轮印成一张书签') + '</small>';
 }
 
 /* ============================================================
@@ -21023,6 +21194,16 @@ function impUnlockPop(imp, onClose){
 function doImprint(){
   const list = PLANET.plants;
   if (list.length < PL_MAX){ toast('要种满 ' + PL_MAX + ' 株才能凝星'); return; }
+  /* 20261116：总门槛 —— 九株的生长流程必须都走完（长成株，或烧苗/枯死停下）。
+     以前这里只看「够不够 9 株」，所以九颗种子刚下地就能凝星（凝出初垦星）。
+     唯一的例外是初垦星：它本身就是一颗「一次性凝星」，第一次允许在没长成时凝，
+     拿过之后 firstTillOpen() 就永久返回 false，照样拦住。 */
+  const _done = lifeDoneCount(list);
+  if (_done < list.length && !firstTillOpen()){
+    toast('还有 ' + (list.length - _done) + ' 株没长完 · 现在凝不了',
+          '要等它们长到成株，或者烧苗 / 枯死停下来 —— 凝星是这一轮的收尾，不是开局');
+    return;
+  }
   /* 定向星种免门槛；否则看组合 + 是否开满 */
   const forced = list.find(p => p && p.forceImp);
   let imp = null;

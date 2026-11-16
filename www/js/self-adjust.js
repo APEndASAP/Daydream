@@ -611,21 +611,14 @@
    * 演出动画不在这里（见 __selfadj_preview.html），主项目只出卡片和清单。
    * ══════════════════════════════════════════════════════════ */
 
-  /* 开场话：不说「我要改设置」，只说 TA 心里那点小念头 */
-  const SA_OPENERS = [
-    '我刚刚盯着那些数字看了好久，越看越觉得有一两个不太对。',
-    '有件事想跟你商量。你可能会皱眉，但我还是想问。',
-    '我数了数，你设的那些间隔里，有几项好像不是你想要的样子。',
-    '可以让我动一动你的设置吗？就几项，我不会乱来。',
-    '别笑我，我有时候会偷偷看你给我留的那些数字。',
-    '我把想改的地方列出来了。你要是不同意，就当没看见。'
-  ];
+  /* 20261116：开场话整段删掉 —— 玩家定案「发卡片消息就够了，不用发这句话」。
+     以前这里是 6 句随机开场白，现在申请就是一张卡，落屏即完了。 */
 
   /* 申请登记簿：id → { charId, changes, n, at, done }
      只在内存里（刷新后点老卡片会提示已过期）；改过的值本身是落库的。 */
   const _pending = Object.create(null);
 
-  /* 判定：抽不中返回 null；抽中返回 { type:'card', text:'开场话', selfAdjust:{...} } */
+  /* 判定：抽不中返回 null；抽中返回 { type:'selfadjust_card' }（不带任何文字气泡） */
   async function bmSelfAdjustMaybe(charId) {
     try {
       if (typeof currentGroupId !== 'undefined' && currentGroupId) return null;   // 群聊完全不碰
@@ -649,14 +642,13 @@
       const id = saNewId();
       saRemember(id, c, changes, nRows);
 
-      /* 开场话走正常回复管道（就是这一条）；申请卡在它落屏之后作为下一条消息投进聊天流 */
+      /* 20261116：只发卡，不发开场话。
+         卡片在 700ms 后自己投进聊天流（先让「正在输入」闪一下，不像凭空冒出来的）；
+         返回的 selfadjust_card 会让主链一条文字都不落库。 */
       setTimeout(() => {
         try { bmSelfAdjustCardDeliver(c, { n: nRows, id: id, done: false }); } catch (e) {}
-      }, 1250);
-      return {
-        type: 'card',
-        text: SA_OPENERS[Math.floor(Math.random() * SA_OPENERS.length)],
-      };
+      }, 700);
+      return { type: 'selfadjust_card', text: '' };
     } catch (e) {
       return null;
     }
@@ -1440,11 +1432,7 @@
     const id = saNewId();
     saRemember(id, c, changes, n);
 
-    const opener = SA_OPENERS[Math.floor(Math.random() * SA_OPENERS.length)];
-    if (typeof deliverCharMessage === 'function') {
-      await deliverCharMessage(c, opener, 'text');
-      await new Promise((r) => setTimeout(r, 620));
-    }
+    /* 20261116：开发者命令也照玩家的规矩 —— 不发开场话，直接一张卡 */
     await bmSelfAdjustCardDeliver(c, { n: n, id: id, done: false });
     if (typeof miniToast === 'function') miniToast('开发者模式：' + (c.name || 'TA') + ' 发来修改申请（' + n + ' 处）');
   }

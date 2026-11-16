@@ -47,7 +47,11 @@ const CSS_TEXT = '\n#yy-root{position:fixed;inset:0;z-index:2147483020;pointer-e
 /* 演出层的 SVG 骨架（跟预览稿一致，只是 id 收在 #yy-root 里）。
    双套渐变：深色主题用原来那套亮玫红，浅色主题用深一档的（详见 CSS_TEXT）。
    .glow 是最外层泛光描边，与 .s1 共用一条 d，只靠宽度和透明度出光晕。 */
-const SVG_TPL = '<svg class="rl-layer" xmlns="http://www.w3.org/2000/svg">\n  <defs>\n    <linearGradient id="rlGrad" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#a81242"/><stop offset=".18" stop-color="#c41750"/>\n      <stop offset=".36" stop-color="#e0538c"/><stop offset=".54" stop-color="#b5134a"/>\n      <stop offset=".72" stop-color="#d94a80"/><stop offset=".88" stop-color="#a81242"/>\n      <stop offset="1" stop-color="#c41750"/>\n    </linearGradient>\n    <linearGradient id="rlGradLight" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#8c0a2c"/><stop offset=".18" stop-color="#b3123f"/>\n      <stop offset=".36" stop-color="#e01b5a"/><stop offset=".54" stop-color="#96102f"/>\n      <stop offset=".72" stop-color="#d61a55"/><stop offset=".88" stop-color="#8c0a2c"/>\n      <stop offset="1" stop-color="#b3123f"/>\n    </linearGradient>\n    <filter id="softOcc" x="-20%" y="-20%" width="140%" height="140%">\n      <feGaussianBlur stdDeviation=".7"/>\n    </filter>\n    <mask id="occl" maskUnits="userSpaceOnUse" x="0" y="0" width="360" height="740">\n      <rect class="occl-bg" x="0" y="0" width="360" height="740" fill="#fff"/>\n    </mask>\n    <path id="tp1" fill="none"/>\n  </defs>\n  <g id="maskTarget">\n    <path class="glow"/><path class="shadow"/><path class="s1c"/><path class="s1"/><path class="sheen"/><path class="s2"/>\n  </g>\n  <g class="txt-layer"></g>\n</svg>';
+/* 20261116：viewBox 必须与图层像素尺寸一一对应。
+   默认的 preserveAspectRatio="xMidYMid meet" 会在「量的尺寸」和「实际盒子」差一点点时
+   把整幅画缩放并居中 —— 手机上就表现为「缠头那圈比头像大一圈、还整体偏下、头顶露空」。
+   这里直接 none：一个用户单位 = 一个 CSS 像素，画到哪儿就是哪儿。 */
+const SVG_TPL = '<svg class="rl-layer" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">\n  <defs>\n    <linearGradient id="rlGrad" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#a81242"/><stop offset=".18" stop-color="#c41750"/>\n      <stop offset=".36" stop-color="#e0538c"/><stop offset=".54" stop-color="#b5134a"/>\n      <stop offset=".72" stop-color="#d94a80"/><stop offset=".88" stop-color="#a81242"/>\n      <stop offset="1" stop-color="#c41750"/>\n    </linearGradient>\n    <linearGradient id="rlGradLight" x1="0" y1="0" x2="0" y2="1">\n      <stop offset="0" stop-color="#8c0a2c"/><stop offset=".18" stop-color="#b3123f"/>\n      <stop offset=".36" stop-color="#e01b5a"/><stop offset=".54" stop-color="#96102f"/>\n      <stop offset=".72" stop-color="#d61a55"/><stop offset=".88" stop-color="#8c0a2c"/>\n      <stop offset="1" stop-color="#b3123f"/>\n    </linearGradient>\n    <filter id="softOcc" x="-20%" y="-20%" width="140%" height="140%">\n      <feGaussianBlur stdDeviation=".7"/>\n    </filter>\n    <mask id="occl" maskUnits="userSpaceOnUse" x="0" y="0" width="360" height="740">\n      <rect class="occl-bg" x="0" y="0" width="360" height="740" fill="#fff"/>\n    </mask>\n    <path id="tp1" fill="none"/>\n  </defs>\n  <g id="maskTarget">\n    <path class="glow"/><path class="shadow"/><path class="s1c"/><path class="s1"/><path class="sheen"/><path class="s2"/>\n  </g>\n  <g class="txt-layer"></g>\n</svg>';
 
 const NS = 'http://www.w3.org/2000/svg';
 const DUR = 12400;          /* 整条线长满的时间 */
@@ -95,8 +99,50 @@ function curveTo(pts, target, sag){
               u*u*prev[1] + 2*u*t*my + t*t*target[1]]);
   }
 }
-/* 椭圆环：用来「绕输入栏一圈」 */
-function ovalLoop(pts, cx, cy, rx, ry, turns, startAng, wob){
+/* 三次贝塞尔：给「从画面上方落到缠头起点」那一截用。
+   控制点按椭圆在入口处的切线摆，落点和环的走向严丝合缝，接口不会崩出折角。 */
+function cubicTo(pts, p0, c1, c2, p1, n){
+  n = n || 20;
+  for (let i = 1; i <= n; i++){
+    const t = i / n, u = 1 - t;
+    pts.push([
+      u*u*u*p0[0] + 3*u*u*t*c1[0] + 3*u*t*t*c2[0] + t*t*t*p1[0],
+      u*u*u*p0[1] + 3*u*u*t*c1[1] + 3*u*t*t*c2[1] + t*t*t*p1[1]
+    ]);
+  }
+}
+/* 缠头几何：入口角 a0、方向 dir、圈数 turns、空隙 gapX/gapY 都是每场随机的参数，
+   这里只负责按这套参数算出椭圆、入口点、上方的落点和入口切线。
+   buildBase 与 followHead 共用同一份算法 —— 头像晚一步挪位时重算，也不会跟原来打架。 */
+function headWrapGeom(m, cx, cy, hr, hrx){
+  const arx = hrx + m.gapX;
+  let ary = hr + m.gapY;
+  if (cy - ary < 10) ary = Math.max(hr + 3.6, cy - 10);   /* 圈顶不许顶出屏幕：拉高，不下移 */
+  const sx = cx + Math.cos(m.a0) * arx;
+  const sy = cy + Math.sin(m.a0) * ary;
+  let tx = -Math.sin(m.a0) * arx * m.dir, ty = Math.cos(m.a0) * ary * m.dir;
+  const L = Math.hypot(tx, ty) || 1; tx /= L; ty /= L;
+  const p0y = Math.max(-10, (cy - hr) - 18);
+  /* 控制臂只取「落点到头顶点」这段距离的一半以内 —— 取太长会越过落点再绕回来，画出来是个环 */
+  const drop = Math.max(10, Math.abs(sy - p0y));
+  /* 落点必须落在椭圆的**外侧**（左缠就往左让、右缠就往右让）。
+     上一版让它跟着入口随机左右偏，结果从上方垂下来的那截直接横穿线圈 —— 一眼就是 bug。
+     放到最外侧再多让 0~8px，然后由曲线拐进入口，全程都在圈外。 */
+  const p0x = cx + (m.dir < 0 ? -1 : 1) * (arx + 6 + (m.dxOff || 0));
+  return { arx: arx, ary: ary, sx: sx, sy: sy, tx: tx, ty: ty,
+           p0x: p0x, p0y: p0y,
+           c1dy: Math.max(12, drop * .5), c2len: Math.min(54, Math.max(16, drop * .45)) };
+}
+/* 落点曲线上 u 处的位置（u: 0=上方落点, 1=缠头入口） */
+function headWrapPoint(g, u){
+  const s = 1 - u, t = g.c2len || 54;
+  const c2x = g.sx - g.tx * t, c2y = g.sy - g.ty * t;
+  return [
+    s*s*s*g.p0x + 3*s*s*u*g.p0x + 3*s*u*u*c2x + u*u*u*g.sx,
+    s*s*s*g.p0y + 3*s*s*u*(g.p0y + g.c1dy) + 3*s*u*u*c2y + u*u*u*g.sy
+  ];
+}
+/* 椭圆环：用来「绕输入栏一圈」 */function ovalLoop(pts, cx, cy, rx, ry, turns, startAng, wob){
   const n = 96;
   for (let i = 1; i <= n; i++){
     const a = startAng + turns * Math.PI * 2 * (i / n);
@@ -255,39 +301,64 @@ function buildBase(){
   BOTL = bar.y - 14;
   SAFE_T = Math.min(64, H * .075);
   const ccx = av.cx, ccy = av.cy;
-  const arx = av.w / 2 + 3.6, ary = av.h / 2 + 4.0;
-  const WRAP_N = 88, wrapA0 = -Math.PI / 2, turns = 1.30;
-  /* 记下这一圈用到的几何参数：头像要是稍后又挪位了，
-     followHead() 只按这套参数把「缠头那一段」重算一遍，不重新随机整条线。 */
-  wrapMeta = { cx: ccx, cy: ccy, w: av.w || 38, h: av.h || 38,
-               arx: arx, ary: ary, a0: wrapA0, turns: turns };
+  /* 20261116：缠头参数改成**每一场都随机**（玩家原话：
+     「这个红线不能每次都是固定开始缠绕这个头像的，必须是每次随机生成的」）
+     随机的是四件事：从左边还是右边落下来、入口落在头顶哪个角度、绕几圈、离头像多远。
+     约束不变（这些是底线，不能为了随机牺牲）：
+       ① 入口、出口的切线都必须朝下，线才是「垂下来 → 缠住 → 往下走」，不会横穿头像；
+       ② 圈数 ≥1.08 圈，头顶一定被压过；
+       ③ 入口用三次贝塞尔接，落点切线跟椭圆一致，接口不会有折角。 */
+  const _hr = (av.h || 38) / 2, _hrx = (av.w || 38) / 2;
+  const gapX = 5.2 + Math.random() * 3.2;      /* 5.2 ~ 8.4 */
+  const gapY = 6.0 + Math.random() * 3.4;      /* 6.0 ~ 9.4 */
+  /* 从左边还是右边落下来，每场随机；落点再抖 ±18°。
+     为什么只抖这两侧：椭圆在 9 点 / 3 点的切线是**竖直**的，和「从上面垂下来」那一截
+     天然同向，接口平滑；抖在头顶（切线是水平）就必然要拐一个直角，画出来是个套索。
+     —— 上一版试过随机到头顶，实测在头像上方甩出一个小圈，玩家一眼就看出来是 bug。 */
+  const side = Math.random() < .5 ? -1 : 1;    /* -1 左（9 点） / +1 右（3 点） */
+  const dir = side;                            /* 左侧逆时针 / 右侧顺时针，出口都朝下 */
+  const jit = (Math.random() * 36 - 18) * Math.PI / 180;
+  const wrapA = (side < 0 ? Math.PI : 0) + jit;
+  /* 圈数 1.02~1.18：一定裹满一整圈（头顶必被压过），又不会缠成弹簧 */
+  const _turns = 1.02 + Math.random() * 0.16;
 
-  /* ① 从画面上方垂下来，落到头像顶上 */
-  for (let i = 0; i <= 10; i++){
-    const u = i / 10;
-    pts.push([ccx + 2.4 * u, -6 + (ccy - ary + 6) * u]);
-  }
-  wrapFrom = pts.length;
-  /* ② 缠住这个头像：绕 1.3 圈，从左下/右下顺出去（不多不少，刚好一圈多） */
+  const _m = { gapX: gapX, gapY: gapY, dir: dir, a0: wrapA, turns: _turns,
+               dxOff: Math.random() * 8,                /* 落点再往外让 0~8px */
+               cx: ccx, cy: ccy, w: av.w || 38, h: av.h || 38 };
+  const _g = headWrapGeom(_m, ccx, ccy, _hr, _hrx);
+  _m.arx = _g.arx; _m.ary = _g.ary;
+  wrapMeta = _m;
+  const WRAP_N = 110;
+
+  /* ① 从画面上方落到入口（三次贝塞尔，落点贴合椭圆切线） */
+  pts.push([_g.p0x, _g.p0y]);
+  cubicTo(pts, [_g.p0x, _g.p0y],
+          [_g.p0x, _g.p0y + _g.c1dy],
+          [_g.sx - _g.tx * _g.c2len, _g.sy - _g.ty * _g.c2len],
+          [_g.sx, _g.sy], 22);
+  wrapFrom = pts.length - 1;
+  /* ② 缠住这个头像：从随机入口角出发，绕 1 圈多一点，随机出口角顺出去 */
   for (let i = 1; i <= WRAP_N; i++){
-    const a = wrapA0 + Math.PI * 2 * turns * (i / WRAP_N);
-    pts.push([ccx + Math.cos(a) * arx, ccy + Math.sin(a) * ary]);
+    const a = wrapA + dir * Math.PI * 2 * _turns * (i / WRAP_N);
+    pts.push([ccx + Math.cos(a) * _g.arx, ccy + Math.sin(a) * _g.ary]);
   }
   wrapTo = pts.length;
   const exit = pts[pts.length - 1];
   const startX = exit[0], startY = exit[1];
 
   const yBot = bar.y + bar.h * .5;
-  const amp = 68 + Math.random() * 30;               /* 横向摆幅 */
+  /* 20261116：拐弯幅度加大并**每场随机**（玩家要求「幅度再大一点、大小也要随机」）。
+     86~126 是安全上限：再大就会被左右边界软饱和吃成一段竖直直线，反而不像挥手。 */
+  const amp = 86 + Math.random() * 40;               /* 横向摆幅 */
   const ph  = Math.random() * Math.PI * 2;
-  const freq = 1.35 + Math.random() * .55;           /* 往下走几个来回 */
+  const freq = 1.25 + Math.random() * .55;           /* 往下走几个来回 */
   const N = 190;
   for (let i = 0; i <= N; i++){
     const t = i / N;
     const y = startY + (yBot - startY) * t;
     const env = Math.sin(Math.PI * Math.min(1, .06 + t * .94));
     let x = W / 2 + 2 + amp * env * Math.sin((t * freq + ph / (Math.PI * 2)) * Math.PI * 2)
-              + 18 * Math.sin(t * 6.3 + ph * 1.7);
+              + 20 * Math.sin(t * 6.3 + ph * 1.7);
     /* 开头 18%：从头像身上先直着垂下来，再慢慢摆开，不凭空出现、也不在头像上打结 */
     const w = eInOut(Math.min(1, t / .18));
     x = startX + (x - startX) * w;
@@ -302,7 +373,9 @@ function buildBase(){
   const knots = NO_LOOP ? 0 : (Math.random() < .45 ? 2 : 1);
   const used = [];
   /* 结只能落在主 S 段上：落进「缠头像」那圈会把整段搅乱，落得太靠后会吃掉绕输入栏的收尾 */
-  const kMin = Math.min(pts.length - 110, wrapTo + 22);
+  /* 20261116：结离头像再远一点（wrapTo+45 点 ≈ 头下方 140px）。
+     以前 +22 点，半径 60 的圈会顶到下巴上，看着像头发打结。 */
+  const kMin = Math.min(pts.length - 110, wrapTo + 45);
   const kMax = Math.max(kMin + 12, pts.length - 96);
   for (let k = 0; k < knots; k++){
     let idx = 0, tries = 0;
@@ -311,8 +384,8 @@ function buildBase(){
       tries++;
     } while (tries < 40 && used.some(u => Math.abs(u - idx) < 170));
     used.push(idx);
-    /* 结的半径 54~68（直径 108~136）：之前 31~40 太小，圈缩成一个小尖，看着像线断了一半 */
-    const len = addLoop(pts, idx, (54 + Math.random() * 14) * Math.min(1.12, W / 360), bar.y, Math.random() * 6.283);
+    /* 结的半径 56~74（直径 112~148）：玩家要「拐弯幅度更大」，圈也跟着大一号 */
+    const len = addLoop(pts, idx, (56 + Math.random() * 18) * Math.min(1.12, W / 360), bar.y, Math.random() * 6.283);
     if (len) knotZones.push([idx, idx + len]);
   }
 
@@ -355,18 +428,22 @@ function followHead(){
   if (!moved) return false;
 
   const m = wrapMeta;
-  m.arx = r.width / 2 + 3.6;
-  m.ary = r.height / 2 + 4.0;
+  const hr = r.height / 2, hrx = r.width / 2;
+  /* 用与 buildBase 完全同一套随机参数重算这一圈（不再写死 9 点钟 / 固定圈数）。
+     头像挪位只影响圆心和半径，随机留下的形状（入口角、圈数、空隙、落点偏移）保持不动。 */
+  const g = headWrapGeom(m, cx, cy, hr, hrx);
+  m.arx = g.arx; m.ary = g.ary;
   const blend = 90;                       /* 顺接长度：90px 内慢慢并回原来的走势 */
   for (const nd of nodes){
     const s = nd.s;
     if (s <= wrapFromS){
       const u = s / Math.max(1, wrapFromS);
-      nd.x = cx + 2.4 * u;
-      nd.y = -6 + (cy - m.ary + 6) * u;
+      const p = headWrapPoint(g, u);
+      nd.x = p[0];
+      nd.y = p[1];
     } else if (s <= wrapS){
       const u = (s - wrapFromS) / Math.max(1, wrapS - wrapFromS);
-      const a = m.a0 + Math.PI * 2 * m.turns * u;
+      const a = m.a0 + Math.PI * 2 * m.turns * m.dir * u;
       nd.x = cx + Math.cos(a) * m.arx;
       nd.y = cy + Math.sin(a) * m.ary;
     } else {
