@@ -547,6 +547,13 @@ function render(c, t){
        和大圆是同一个颜色、同一个形体，看起来就是球自己鼓出来的嘴努子。 */
   if (c.poutU && c.poutL){
     const pt = s.pout;
+    /* ★ 20261117 修「点戳一戳整段动画不播」的真凶：
+       hide() 以前只在 if 分支里声明，动作结束（k 回到 0）走 else 分支调它，
+       直接抛 ReferenceError: hide is not defined —— 异常从 render() 里冒出来，
+       requestAnimationFrame 循环当场断掉，表现就是「点了没反应」。
+       （真机实测：hug / pat 报错，kiss 不经过嘴巴所以正常。）
+       现在把 hide 提到 if 外面，两个分支共用。 */
+    const hide = function(el){ if (el) el.setAttribute('opacity', '0'); };
     if (pt && pt.k > .02){
       const R = RS, k = pt.k;
       /* ★ 20261117 玩家定案：嘴要**迷你**——「画的小一点，两个小小的稍微凸出来一点点，
@@ -582,7 +589,6 @@ function render(c, t){
         el.setAttribute('transform', 'rotate(' + ang + ' ' + p(cx) + ' ' + p(cy) + ')');
         el.setAttribute('opacity', opn.toFixed(2));
       };
-      const hide = function(el){ if (el) el.setAttribute('opacity', '0'); };
 
         /* 上唇薄一点、下唇厚一点，两瓣在切向上略有重叠 → 天生连在一起 */
         /* 就是两颗很小的椭圆球贴在球面上，上下排，中间留一条窄缝。

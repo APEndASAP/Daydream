@@ -30072,7 +30072,7 @@ async function graySectionDetail(gh, sec, idx) {
         <div style="font-size:15px;font-weight:600;margin-bottom:10px;line-height:1.5;">${escapeHtml(palWithPlayerName(it.title || '（无题）'))}</div>
         ${it.img ? `<img src="${imgSrcAttr(it.img)}" style="max-width:100%;max-height:240px;border-radius:12px;border:1px solid rgba(255,255,255,.16);display:block;margin-bottom:12px;">` : ''}
         ${it.text ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap;word-break:break-word;">${escapeHtml(palWithPlayerName(it.text))}</div>` : ''}
-        ${it.kind === 'chat' && it.messages && it.messages.length ? `<div style="margin-top:12px;">${palSnapHtml(it)}</div>` : ''}
+        ${it.divi ? `<div style="margin-top:12px;">${palDiviCardHtml(it)}</div>` : (it.kind === 'chat' && it.messages && it.messages.length ? `<div style="margin-top:12px;">${palSnapHtml(it)}</div>` : '')}
         ${(it.images || []).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">${it.images.map(im => `<img src="${imgSrcAttr(im, true)}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,.16);">`).join('')}</div>` : ''}
         ${!it.text && !it.img && !(it.messages && it.messages.length) && !(it.images || []).length ? '<div style="font-size:12px;color:var(--text-tertiary);">（无正文）</div>' : ''}`;
     }
@@ -30389,7 +30389,7 @@ async function showPalaceFolder(fid, opts = {}) {
 
   const entryRow = (e) => {
     const ic = e.kind === 'video' ? icon('video', 17) : (e.kind === 'chat' ? icon('chatset', 17) : (e.kind === 'letter' ? icon('letter', 17) : (e.kind === 'manual' ? icon('image', 17) : icon('moments', 17))));
-    const kindLabel = e.kind === 'video' ? '视频' : (e.kind === 'chat' ? `${(e.messages || []).length} 条对话` : (e.kind === 'letter' ? '信件' : (e.kind === 'manual' ? '手记' : '朋友圈收藏')));
+    const kindLabel = e.divi ? ('占卜 · 三张牌') : (e.kind === 'video' ? '视频' : (e.kind === 'chat' ? `${(e.messages || []).length} 条对话` : (e.kind === 'letter' ? '信件' : (e.kind === 'manual' ? '手记' : '朋友圈收藏'))));
     // 20260929be：隐藏夹条目单条显式授权后显示实际权限（可读/指定n人），未授权仍显示绝密
     const tag = (isHidden && !palEntryAllow(e, folders)) ? '绝密' : palPermTagText(e, folders);
     const sf = e.subFolderId ? folders.find(x => x.id === e.subFolderId) : null;
@@ -30808,9 +30808,13 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
   let idx = list.findIndex(x => x.id === eid);
   if (idx < 0) { showPalaceFolder(backFid); return; }
 
-  const kindLabelOf = (e) => e.kind === 'video' ? '视频' : (e.kind === 'chat' ? `对话 ${(e.messages || []).length} 条` : (e.kind === 'letter' ? '信件' : (e.kind === 'manual' ? '手记' : '朋友圈收藏')));
+  const kindLabelOf = (e) => e.divi ? '占卜 · 三张牌' : (e.kind === 'video' ? '视频' : (e.kind === 'chat' ? `对话 ${(e.messages || []).length} 条` : (e.kind === 'letter' ? '信件' : (e.kind === 'manual' ? '手记' : '朋友圈收藏'))));
 
   function entryBody(e) {
+    /* ★ 20261117：占卜条目优先画成卡片（玩家投诉「怎么是以聊天信息的方式存进去」） */
+    if (e.divi) {
+      return `<div class="pal-card-snap">${palDiviCardHtml(e)}</div>`;
+    }
     if (e.kind === 'chat') {
       return `<div class="pal-card-snap">${palSnapHtml(e)}</div>`;
     }
@@ -32263,6 +32267,12 @@ async function _diviPersist(src) {
     entry.divi = {
       question: src.question || '',
       cards: faceLine,
+      /* ★ 20261117 玩家要求：记忆宫殿里要存成「卡片」，能点开看完整解读。
+         卡片要画三张牌面，就必须留结构化牌面（name / sym / realm / reversed），
+         只存一行汉字 faceLine 是画不出牌的。老条目没有 faces 时用 cards 字符串兜底。 */
+      faces: cards.map(function(cd){
+        return { name: cd.name || '', sym: cd.sym || '', realm: cd.realm || '', reversed: !!cd.reversed };
+      }),
       rounds: rounds,
       rated: rated || null,
     };
@@ -32358,29 +32368,77 @@ async function _diviUpdatePalaceRating(msgId) {
 }
 
 /* 点占卜卡片 → 看当时那份完整解读（多版都在，含补充与评价） */
-async function showDiviDetailModal(msgId){
-  let m = null;
-  try { m = await idbGet('messages', msgId); } catch (e) {}
-  if (!m) return;
-  const dc = m.content || {};
+/* ★ 20261117 玩家要求：占卜存进记忆宫殿后，要显示成「卡片」而不是一长串聊天记录。
+   卡片内容与聊天里的占卜卡一致：三张牌横排 + 摘要 + 「点击查看完整解读」，
+   点一下弹 showDiviDetailModal(id, true) 看当时那一版完整解读。
+   老条目没有 faces（结构化牌面）就退化成一行文字，不至于空白。 */
+function palDiviCardHtml(e) {
+  const d = e.divi || {};
+  const labels = ['过去', '现在', '未来'];
+  const cs = Array.isArray(d.faces) ? d.faces : [];
+  const faces = cs.length ? cs.map(function(cd, i){
+    return '<div style="display:flex;flex-direction:column;align-items:center;">' + _diviFaceHTML(cd) +
+      '<div class="divi-face-label">' + labels[i] + '</div></div>';
+  }).join('') : '';
+  const q = d.question ? String(d.question) : '';
+  const sum = e.summary || (d.cards || '');
+  return '<div class="divi-card" data-divi-pal="' + escapeHtml(e.id) + '" style="cursor:pointer;">' +
+      '<div class="divi-q-line" style="font-size:13.5px;font-weight:600;line-height:1.55;margin-bottom:2px;">' +
+        (window.icon ? window.icon('moon', 14) : '🔮') + ' 占卜' + (q ? ' · ' + escapeHtml(q) : '') +
+      '</div>' +
+      (faces ? '<div class="divi-faces" style="margin:8px 0 10px;display:flex;justify-content:space-around;align-items:flex-start;gap:10px;">' + faces + '</div>' : '') +
+      (sum ? '<div class="divi-sum">' + escapeHtml(palWithPlayerName ? palWithPlayerName(sum) : sum) + '</div>' : '') +
+      '<div class="divi-more">点击查看完整解读 ›</div>' +
+    '</div>';
+}
+
+async function showDiviDetailModal(msgId, fromEntry){
+  let dc = null, rounds = [], __fromPalace = false;
+  if (fromEntry) {
+    /* ★ 20261117 玩家要求：记忆宫殿里的占卜要存成「卡片」，点开就是完整解读。
+       palace 条目不是聊天消息（没有 messages 记录），所以单独走这一支，
+       把 entry.divi 还原成弹窗需要的 dc 结构。 */
+    let e = null;
+    try { e = await idbGet('palace', msgId); } catch (err) {}
+    if (!e || !e.divi) return;
+    const d = e.divi;
+    const ch = e.charId ? characters.find(function(x){ return x.id === e.charId; }) : null;
+    dc = {
+      question: d.question || '',
+      name: ch ? (ch.name || '') : '',
+      cards: Array.isArray(d.faces) ? d.faces : [],
+      faceLine: d.cards || '',   // 老条目只有这行汉字，画不出牌时就显示它
+      state: d.rated ? 'rated' : 'asked',
+      score: d.rated ? d.rated.score : null,
+      verdict: d.rated ? (d.rated.verdict || '') : '',
+      comment: d.rated ? (d.rated.comment || '') : '',
+    };
+    rounds = Array.isArray(d.rounds) ? d.rounds : [];
+    __fromPalace = true;
+  } else {
+    let m = null;
+    try { m = await idbGet('messages', msgId); } catch (e) {}
+    if (!m) return;
+    dc = m.content || {};
+    rounds = dc.diviRounds || [];
+    /* 20261116：这版修复之前发出去的旧卡，content 里没存 diviRounds。
+       如果它当时存进过记忆宫殿，就从那条记忆里把解读全文捞回来，别让旧记录变空板。 */
+    if (!rounds.length) {
+      try {
+        let pe = dc.palId ? await idbGet('palace', dc.palId) : null;
+        if (!pe) {
+          const all = await idbGetAll('palace');
+          pe = (all || []).find(function(x){ return x && x.baseMsgId === msgId; }) || null;
+        }
+        if (pe && pe.divi && Array.isArray(pe.divi.rounds) && pe.divi.rounds.length) rounds = pe.divi.rounds;
+      } catch (err) {}
+    }
+  }
   const labels = ['过去', '现在', '未来'];
   const faces = (dc.cards || []).map(function(cd, i){
     return '<div style="display:flex;flex-direction:column;align-items:center;">' + _diviFaceHTML(cd) +
       '<div class="divi-face-label">' + labels[i] + '</div></div>';
   }).join('');
-  let rounds = dc.diviRounds || [];
-  /* 20261116：这版修复之前发出去的旧卡，content 里没存 diviRounds。
-     如果它当时存进过记忆宫殿，就从那条记忆里把解读全文捞回来，别让旧记录变空板。 */
-  if (!rounds.length) {
-    try {
-      let pe = dc.palId ? await idbGet('palace', dc.palId) : null;
-      if (!pe) {
-        const all = await idbGetAll('palace');
-        pe = (all || []).find(function(x){ return x && x.baseMsgId === msgId; }) || null;
-      }
-      if (pe && pe.divi && Array.isArray(pe.divi.rounds) && pe.divi.rounds.length) rounds = pe.divi.rounds;
-    } catch (err) {}
-  }
   const body = rounds.length ? rounds.map(function(r, i){
     const seg = [
       r.tone ? ('<div class="divi-sec"><div class="divi-h">牌面基调</div><p>' + escapeHtml(r.tone).replace(/\n/g,'<br>') + '</p></div>') : '',
@@ -32407,7 +32465,9 @@ async function showDiviDetailModal(msgId){
     (dc.question ? ('<div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:8px;">想问：' + escapeHtml(dc.question) + '</div>') : '') +
     /* ★ 20261116：三张牌改成横排 —— 之前 .divi-faces 的横排样式只写在
        `.divi-card` 容器下，弹窗里没有这个父级，三张牌就竖着排了一长条。 */
-    '<div class="divi-faces" style="margin:10px 0 14px;display:flex;justify-content:space-around;align-items:flex-start;gap:10px;">' + faces + '</div>' +
+    '<div class="divi-faces" style="margin:10px 0 14px;display:flex;justify-content:space-around;align-items:flex-start;gap:10px;">' +
+      (faces || (dc.faceLine ? '<div style="font-size:13px;line-height:1.8;color:var(--text-secondary);">' + escapeHtml(dc.faceLine) + '</div>' : '')) +
+    '</div>' +
     '<div class="divi-detail-body" style="max-height:52vh;overflow:auto;">' + body + '</div>' +
     rated +
     /* ★ 20261116：按钮常显 —— 之前只有存到解读全文（rounds.length）才出按钮，
@@ -32423,17 +32483,34 @@ async function showDiviDetailModal(msgId){
   const b = $('#divi-detail-close');
   if (b) b.onclick = closeModal;
   const sb = $('#divi-detail-save');
-  if (sb) sb.onclick = async () => {
-    sb.disabled = true;
-    await saveDiviFromMessage(msgId);
-    sb.disabled = false;
-    const tip = sb.nextElementSibling;
-    if (tip) tip.textContent = '已存入，可反复点（只会更新同一条）';
-  };
+  if (sb) {
+    if (__fromPalace) {
+      /* 已经躺在记忆宫殿里的条目：不用再存，按钮位置改成一句说明 */
+      sb.style.display = 'none';
+      const tip = sb.nextElementSibling;
+      if (tip) tip.textContent = '这条占卜已存在记忆宫殿里，这里可以直接看完整解读。';
+    } else {
+      sb.onclick = async () => {
+        sb.disabled = true;
+        await saveDiviFromMessage(msgId);
+        sb.disabled = false;
+        const tip = sb.nextElementSibling;
+        if (tip) tip.textContent = '已存入，可反复点（只会更新同一条）';
+      };
+    }
+  }
 }
 
 /* 卡片点开详情：一次性委托，聊天流 / 列表里都生效 */
 document.addEventListener('click', function(ev){
+  /* ★ 20261117：记忆宫殿里的占卜卡片（palace 表，不是消息） */
+  const pe = ev.target && ev.target.closest ? ev.target.closest('[data-divi-pal]') : null;
+  if (pe) {
+    ev.preventDefault();
+    const pid = pe.getAttribute('data-divi-pal');
+    if (pid) showDiviDetailModal(pid, true);
+    return;
+  }
   const el = ev.target && ev.target.closest ? ev.target.closest('[data-divi-open]') : null;
   if (!el) return;
   const id = el.getAttribute('data-divi-open');
