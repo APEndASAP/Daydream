@@ -10449,6 +10449,8 @@ function updateAppFullBg() {
 /* ---------- 弹窗 ---------- */
 function openModal(html, opts) {
   _diviReturn = null;   // 20261117：任何新弹窗都清掉「关掉要回宫殿」的记录，避免串到别的页
+  // 20261117：清掉上一个弹窗声明的「不选择时的默认动作」，避免残留到别的弹窗上
+  window.__bmModalOnDismiss = null;
   const box = $('#modal-content');
   const o = opts || {};
   // 20260929bk：软件声明未同意期间（_noticeGate），任何非声明的弹窗一律抑制——
@@ -10496,6 +10498,8 @@ function stopVideoPlayers() {
 }
 
 function closeModal() {
+  // 20261117：弹窗已真正关闭，清掉「不选择时的默认动作」标记，防残留到下一次
+  window.__bmModalOnDismiss = null;
   const wasOpen = $('#modal-mask').classList.contains('show');
   // 20261031 白露音频残留修复：停动画+停背景音效必须放在所有 early return 之前——
   // 否则从访客主页(_charProfileActive)/总设置(_settingsActive)进入入梦签后，关闭弹窗会
@@ -10573,6 +10577,14 @@ $('#modal-mask').addEventListener('click', (e) => {
     if (t && (Date.now() - t) < 600) return;
   } catch (e) {}
   if (typeof _diviReturn !== 'undefined' && _diviReturn) { _palBackFromDivi(); return; }   // 20261117：点遮罩关详情也回宫殿
+  // 20261117：弹窗若声明了「不选择时的默认动作」（如添加字卡不选分组 = 存入未分组），
+  // 先执行它再关——否则点遮罩会把已经输入好的内容直接丢掉。
+  if (window.__bmModalOnDismiss) {
+    const fn = window.__bmModalOnDismiss;
+    window.__bmModalOnDismiss = null;
+    try { fn(); } catch (err) {}
+    return;
+  }
   closeModal();
 });
 
@@ -19000,7 +19012,7 @@ function showCardsModal() {
           await saveCards(cards);
           miniToast(`已导入 ${added} 条${added < lines.length ? `（跳过重复 ${lines.length - added} 条）` : ''}`);
           showCardsModal();
-        });
+        }, false, () => showCardsModal());   // 20261117：取消 / 点空白 → 回字卡库（上一级）
       };
     }
     return;
@@ -19216,28 +19228,8 @@ function showCardsPlusMenu() {
     </div>
   `);
   $('#cp-close').onclick = () => showCardsModal();
-  $('#cp-addgroup').onclick = () => showCardGroupModal();
-  $('#cp-add').onclick = () => showCardInputModal('添加字卡', '', (text) => {
-    // 20261104：按行拆成多个字卡（每行一个字卡），空行忽略
-    const lines = String(text).split(/\r?\n/).map(s => s.trim()).filter(s => s.length > 0);
-    if (!lines.length) return;
-    // 20261105：与已有字卡对照去重（含分组里的字卡），提示「成功 N 条、去重 M 条」
-    const existing = new Set((cards.customReplies || []).concat(
-      (cards.customReplyGroups || []).flatMap(g => (g.items || []))
-    ));
-    let added = 0, deduped = 0;
-    for (const ln of lines) {
-      if (existing.has(ln)) { deduped++; continue; }
-      existing.add(ln);
-      cards.customReplies.push(ln);
-      added++;
-    }
-    saveCards(cards).then(() => {
-      if (added > 0) miniToast(deduped > 0 ? `已添加 ${added} 条字卡，去重 ${deduped} 条` : `已添加 ${added} 条字卡`);
-      else if (deduped > 0) miniToast(`这 ${deduped} 条字卡已存在，未重复添加`);
-      showCardsModal();
-    });
-  }, true);
+  $('#cp-addgroup').onclick = () => showCardGroupModal('customReplyGroups', null, () => showCardsPlusMenu());
+  $('#cp-add').onclick = () => startAddCardsFlow('');
   $('#cp-dedupe').onclick = () => {
     const { removed } = dedupeCards(cards);
     saveCards(cards).then(() => {
@@ -19247,6 +19239,139 @@ function showCardsPlusMenu() {
     });
   };
   $('#cp-banwords').onclick = () => showGlobalBanWordsModal();
+}
+
+/* 20261117：添加字卡 → 输入完点「确定」不再直接进未分组，先弹「存入哪个分组」。
+   流程：输入弹窗 → 去重 → 存入位置弹窗（已有分组 / 新建分组 / 未分组）。
+   initialText：从「返回修改」回来时带上的原文，避免内容丢失。 */
+function startAddCardsFlow(initialText, onCancel) {
+  // 取消 / 点空白处关掉输入弹窗 → 回到上一级（默认回「字卡功能」菜单）
+  const back = typeof onCancel === 'function' ? onCancel : () => showCardsPlusMenu();
+  showCardInputModal('添加字卡', initialText || '', (text) => {
+    // 20261104：按行拆成多个字卡（每行一个字卡），空行忽略
+    const lines = String(text).split(/\r?\n/).map(s => s.trim()).filter(s => s.length > 0);
+    if (!lines.length) return;
+    // 20261105：与已有字卡对照去重（含分组里的字卡）
+    const existing = new Set((cards.customReplies || []).concat(
+      (cards.customReplyGroups || []).flatMap(g => (g.items || []))
+    ));
+    const fresh = [];
+    let deduped = 0;
+    for (const ln of lines) {
+      if (existing.has(ln)) { deduped++; continue; }
+      existing.add(ln);
+      fresh.push(ln);
+    }
+    // 全是重复的，就没必要再让人选位置了
+    if (!fresh.length) {
+      miniToast(`这 ${deduped} 条字卡已存在，未重复添加`);
+      showCardsModal();
+      return;
+    }
+    showCardStorePickerModal(fresh, deduped, text, back);
+  }, true, back);
+}
+
+/* 存入位置弹窗：选已有分组 / 新建分组并存入 / 存入未分组字卡
+   onCancel：从「返回修改」回到输入弹窗时，输入弹窗关闭仍回同一级 */
+function showCardStorePickerModal(fresh, deduped, draftText, onCancel) {
+  const groups = cards.customReplyGroups || [];
+  const colors = ['#a78bfa', '#f472b6', '#60a5fa', '#34d399', '#fbbf24', '#fb7185'];
+  let pickedColor = colors[0];
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div style="font-size:18px;font-weight:600;">存入哪个分组</div>
+      <button class="icon-btn" id="store-close"><i data-icon="close" data-size="17"></i></button>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:16px;line-height:1.6;">
+      本次将添加 <b style="color:var(--purple-soft);">${fresh.length}</b> 条字卡${deduped > 0 ? `（已跳过重复 ${deduped} 条）` : ''}
+      <br><span style="color:var(--text-tertiary);">不选分组也行，直接点 × 或点空白处关掉，就存进未分组。</span>
+    </div>
+
+    ${groups.length ? `
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">存入已有分组</div>
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:200px;overflow-y:auto;margin-bottom:18px;">
+        ${groups.map((g, i) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;" data-storegroup="${i}">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${g.color || '#a78bfa'};"></span>
+            <div style="flex:1;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(g.name || '未命名分组')}</div>
+            <div style="font-size:12px;color:var(--text-tertiary);flex:0 0 auto;">${(g.items || []).length} 条</div>
+            <span style="color:var(--purple-soft);flex:0 0 auto;">›</span>
+          </div>`).join('')}
+      </div>
+    ` : `
+      <div style="font-size:12.5px;color:var(--text-tertiary);margin-bottom:18px;">还没有分组，可以在下面新建一个</div>
+    `}
+
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px;">新建分组并存入</div>
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <input class="input" id="store-new-name" placeholder="输入新分组名字…" style="flex:1;">
+      <button class="btn primary" id="store-new-btn" style="flex:0 0 auto;">新建</button>
+    </div>
+    <div style="font-size:11.5px;color:var(--text-tertiary);margin-bottom:8px;">分组颜色</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:20px;">
+      ${colors.map((c, i) => `<div data-storecolor="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-sizing:border-box;border:2px solid transparent;${i === 0 ? 'box-shadow:0 0 0 2px var(--text-primary);' : ''}"></div>`).join('')}
+    </div>
+
+    <div style="display:flex;gap:10px;">
+      <button class="btn" style="flex:1;" id="store-back">返回修改</button>
+      <button class="btn" style="flex:1;" id="store-ungrouped">存入未分组</button>
+    </div>
+  `);
+
+  // 落库：group 为 null 表示未分组
+  let committed = false;
+  const commit = (group) => {
+    if (committed) return;   // 防连点重复入库
+    committed = true;
+    if (group) {
+      group.items = group.items || [];
+      group.items.push(...fresh);
+    } else {
+      cards.customReplies = cards.customReplies || [];
+      cards.customReplies.push(...fresh);
+    }
+    saveCards(cards).then(() => {
+      const base = group ? `已添加 ${fresh.length} 条字卡到「${group.name}」` : `已添加 ${fresh.length} 条未分组字卡`;
+      miniToast(deduped > 0 ? `${base}，跳过重复 ${deduped} 条` : base);
+      showCardsModal();
+    });
+  };
+
+  // 20261117：不选分组、不新建分组直接关掉弹窗（× / 点空白处），默认还是存进未分组，不丢已输入内容
+  $('#store-close').onclick = () => commit(null);
+  window.__bmModalOnDismiss = () => commit(null);
+  // 选已有分组（按索引取，避免分组名含特殊字符时匹配不上）
+  document.querySelectorAll('[data-storegroup]').forEach(el => {
+    el.onclick = () => commit(cards.customReplyGroups[parseInt(el.dataset.storegroup, 10)]);
+  });
+  // 分组颜色选择
+  document.querySelectorAll('[data-storecolor]').forEach(el => {
+    el.onclick = () => {
+      pickedColor = el.dataset.storecolor;
+      document.querySelectorAll('[data-storecolor]').forEach(x => {
+        x.style.boxShadow = x === el ? '0 0 0 2px var(--text-primary)' : 'none';
+      });
+    };
+  });
+  // 新建分组并存入
+  const createAndCommit = () => {
+    const name = $('#store-new-name').value.trim();
+    if (!name) { showToast('请填写新分组名字'); return; }
+    cards.customReplyGroups = cards.customReplyGroups || [];
+    if (cards.customReplyGroups.some(g => g.name === name)) {
+      miniToast('已有同名分组，可直接选上面那个');
+      return;
+    }
+    const g = { id: uid('group'), name, color: pickedColor, disabled: false, _collapsed: false, items: [] };
+    cards.customReplyGroups.push(g);
+    commit(g);
+  };
+  $('#store-new-btn').onclick = createAndCommit;
+  $('#store-new-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') createAndCommit(); });
+  // 返回修改：带回已输入内容，重新走输入弹窗（关闭时仍回同一级）
+  $('#store-back').onclick = () => startAddCardsFlow(draftText, onCancel);
+  $('#store-ungrouped').onclick = () => commit(null);
 }
 
 /* 移动字卡弹窗：选择已有分组 或 新建分组（可输入名字） */
@@ -19298,8 +19423,10 @@ function showCardMoveModal(onOpen, onMove) {
 
 /* 字卡输入弹窗（添加/编辑字卡文本）。
    20261104：allowUpload=true 时显示「上传文件」按钮 + 每行一个字卡小注释；
-   上传 .txt 直接读文本、.docx 走内置解压解析，按行拆进输入框。 */
-function showCardInputModal(title, initial, onSave, allowUpload) {
+   上传 .txt 直接读文本、.docx 走内置解压解析，按行拆进输入框。
+   20261117：新增 onCancel —— 关闭子页（取消按钮 / 点空白处）要回到上一级界面，
+   不传则维持原行为（直接关掉整个弹窗）。 */
+function showCardInputModal(title, initial, onSave, allowUpload, onCancel) {
   openModal(`
     <div style="font-size:18px;font-weight:600;margin-bottom:16px;">${title}</div>
     <div class="field">
@@ -19317,7 +19444,13 @@ function showCardInputModal(title, initial, onSave, allowUpload) {
       <button class="btn primary" style="flex:1;" id="card-input-save">确定</button>
     </div>
   `);
-  $('#card-input-cancel').onclick = closeModal;
+  // 20261117：关闭子页统一回上一级（有 onCancel 就回上一级，没有才真关）
+  const back = () => {
+    if (typeof onCancel === 'function') { try { onCancel(); return; } catch (e) {} }
+    closeModal();
+  };
+  $('#card-input-cancel').onclick = back;
+  if (typeof onCancel === 'function') window.__bmModalOnDismiss = back;  // 点空白处也算关闭子页
   // 上传文件（仅在 allowUpload 时存在）
   if (allowUpload) {
     const fileInput = $('#card-input-file');
@@ -19358,7 +19491,7 @@ function showCardInputModal(title, initial, onSave, allowUpload) {
 /* 新建分组弹窗（groupsKey 默认 customReplyGroups；非 replies 模块传入对应分组字段）
    onCreated(新建的分组对象)：可选回调，在创建后、落库前调用（用于把勾选内容移入新分组）。
    取消/创建后都回到字卡库弹窗（showCardsModal），不直接退出。 */
-function showCardGroupModal(groupsKey = 'customReplyGroups', onCreated = null) {
+function showCardGroupModal(groupsKey = 'customReplyGroups', onCreated = null, onCancel = null) {
   openModal(`
     <div style="font-size:18px;font-weight:600;margin-bottom:16px;">新建分组</div>
     <div class="field">
@@ -19374,7 +19507,13 @@ function showCardGroupModal(groupsKey = 'customReplyGroups', onCreated = null) {
       <button class="btn primary" style="flex:1;" id="group-save">创建</button>
     </div>
   `);
-  $('#group-cancel').onclick = () => showCardsModal();  // 取消 → 回到字卡库，不退出
+  // 20261117：取消 / 点空白处关闭子页 → 回到打开它的上一级界面
+  const back = () => {
+    if (typeof onCancel === 'function') { try { onCancel(); return; } catch (e) {} }
+    showCardsModal();   // 默认：回到字卡库，不退出
+  };
+  $('#group-cancel').onclick = back;
+  if (typeof onCancel === 'function') window.__bmModalOnDismiss = back;
   $('#group-save').onclick = () => {
     const name = $('#group-name').value.trim();
     if (!name) { showToast('请填写分组名称'); return; }
@@ -19523,7 +19662,9 @@ function showGlobalBanWordsModal() {
     </div>
   `);
 
-  $('#ban-close').onclick = closeModal;
+  // 20261117：关闭禁词子页回到「字卡功能」菜单（上一级），点空白处同理
+  $('#ban-close').onclick = () => showCardsPlusMenu();
+  window.__bmModalOnDismiss = () => showCardsPlusMenu();
   $('#ban-batch').onclick = () => { window._banBatch = !batch; showGlobalBanWordsModal(); };
 
   if (batch) {
@@ -19649,7 +19790,9 @@ function showCardImportModal() {
       <button class="btn primary" style="flex:1;" id="import-go">导入</button>
     </div>
   `);
-  $('#import-cancel').onclick = closeModal;
+  // 20261117：取消 / 点空白 → 回字卡库（上一级），不再一路关掉所有弹窗
+  $('#import-cancel').onclick = () => showCardsModal();
+  window.__bmModalOnDismiss = () => showCardsModal();
 
   const getMode = () => {
     const r = document.querySelector('input[name="card-import-mode"]:checked');
