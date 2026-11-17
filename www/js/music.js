@@ -21,8 +21,13 @@ window.bmMusic = (function () {
       name: '路径 F（酷狗·整首）',
       search: (kw) => `https://api.kfjie.me/music?server=kugou&type=search&id=${encodeURIComponent(kw)}`,
       song: (song) => `https://api.kfjie.me/music?server=kugou&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
-      // 歌词：优先用搜索时拿到的 lrc 转发地址（带 auth），没有再按歌名重搜
-      lrc: (song) => song._lrcUrl || `https://api.kfjie.me/music?server=kugou&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
+      /* 20261117 修「镜像抓到封面却没歌词」（真机实测）：
+         原来只认 _lrcUrl，而 parseSong 把搜索返回里那条带 auth 的 type=lrc 地址丢了，
+         于是这里退回「按歌名重搜」的 search 地址 —— 那是个 JSON 数组，一行歌词都解析不出来。
+         现在三级优先：_lrcUrl → song.lrc（若本身就是 type=lrc 转发地址）→ 才按歌名重搜。 */
+      lrc: (song) => song._lrcUrl
+        || ((song && song.lrc && /type=lrc/i.test(song.lrc)) ? song.lrc : '')
+        || `https://api.kfjie.me/music?server=kugou&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
       parseSearch: (j) => Array.isArray(j) ? j.map(x => ({
         id: (String(x.url || '').match(/[?&]id=([^&]+)/) || [])[1] || '',
         name: x.title || x.name || '',
@@ -33,7 +38,8 @@ window.bmMusic = (function () {
         lrc: '',
         _lrcUrl: x.lrc || '',
       })).filter(x => x.name) : [],
-      parseSong: (j) => { const d = Array.isArray(j) ? j[0] : null; return d ? { url: d.url || '', pic: d.pic || '', lrc: '' } : null; },
+      /* 20261117：把 d.lrc（带 auth 的 type=lrc 转发地址）带出去，否则上层拿不到歌词地址 */
+      parseSong: (j) => { const d = Array.isArray(j) ? j[0] : null; return d ? { url: d.url || '', pic: d.pic || '', lrc: '', _lrcUrl: d.lrc || '' } : null; },
       parseLrc: () => '',
     },
     // 主源：qijieya Meting 镜像（网易云），搜索一步返回 url/lrc/pic，带 CORS，长期稳定
@@ -274,7 +280,9 @@ window.bmMusic = (function () {
       // 同站 server=netease（酷狗线是 server=kugou，见数组开头）；url/lrc/pic 都带 auth 签名
       search: (kw) => `https://api.kfjie.me/music?server=netease&type=search&id=${encodeURIComponent(kw)}`,
       song: (song) => `https://api.kfjie.me/music?server=netease&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
-      lrc: (song) => song._lrcUrl || `https://api.kfjie.me/music?server=netease&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
+      lrc: (song) => song._lrcUrl
+        || ((song && song.lrc && /type=lrc/i.test(song.lrc)) ? song.lrc : '')
+        || `https://api.kfjie.me/music?server=netease&type=search&id=${encodeURIComponent(((song.name || '') + ' ' + (song.artist || '')).trim())}`,
       parseSearch: (j) => Array.isArray(j) ? j.map(x => ({
         id: (String(x.url || '').match(/[?&]id=([^&]+)/) || [])[1] || '',
         name: x.title || x.name || '',
@@ -285,7 +293,8 @@ window.bmMusic = (function () {
         lrc: '',
         _lrcUrl: x.lrc || '',
       })).filter(x => x.name) : [],
-      parseSong: (j) => { const d = Array.isArray(j) ? j[0] : null; return d ? { url: d.url || '', pic: d.pic || '', lrc: '' } : null; },
+      /* 20261117：把 d.lrc（带 auth 的 type=lrc 转发地址）带出去，否则上层拿不到歌词地址 */
+      parseSong: (j) => { const d = Array.isArray(j) ? j[0] : null; return d ? { url: d.url || '', pic: d.pic || '', lrc: '', _lrcUrl: d.lrc || '' } : null; },
       parseLrc: () => '',
     },
   ];
@@ -572,8 +581,10 @@ window.bmMusic = (function () {
             song.url = real;
           }
           // song.lrc 是 type=lrc 转发地址 → 跟随拿 LRC 文本
+          // 20261117：统一走 _fetchLrcText（它现在能分辨 JSON / 纯文本两种返回），
+          //   以前这里直接 _fetchText 塞进 song.lrc，GD 的 JSON 会被原样当歌词。
           if (!song.lrc || song.lrc.indexOf('type=lrc') >= 0) {
-            const txt = await _fetchText(src.lrc(song));
+            const txt = await _fetchLrcText(src, song);
             if (txt) song.lrc = txt;
           }
           /* 20261116：这条分支以前直接 return，封面全靠搜索接口施舍 ——
@@ -587,6 +598,10 @@ window.bmMusic = (function () {
         if (d && d.url) {
           song.url = d.url;
           if (d.pic) song.pic = d.pic;
+          /* 20261117：把这一步解析出的歌词转发地址接到 song 上，
+             否则 _fetchLrcText 只能退回 src.lrc() 的「按歌名重搜」兜底（拿不到歌词）。 */
+          if (d._lrcUrl) song._lrcUrl = d._lrcUrl;
+          if (d.lrc) song.lrc = d.lrc;
           /* 20261116：统一走 _ensureCover —— 先问官方 song/detail（最准），
              再退 GD 的 types=pic，且必须用 search 回来的 pic_id（用歌曲 id 是 404 旧地址）。 */
           await _ensureCover(song, true);
@@ -637,23 +652,36 @@ window.bmMusic = (function () {
 
   // 统一拉歌词：优先按「转发地址文本」抓，失败再走 JSON 解析
   async function _fetchLrcText(src, song) {
-    /* 20261116 修「GD 源有的歌有歌词、有的没有」根因：
-       以前第一步用 _fetchJSON 去请求 lrc 地址 —— 但 GD/Meting 的 lrc 接口返回的是
-       **纯文本 LRC**，r.json() 直接抛错返回 null，parseLrc(null)=''，整首歌词就丢了。
-       现在先按文本抓，只有文本不像 LRC 时才回退 JSON 解析。 */
+    /* 20261117 修「镜像搜索一首歌都抓不到歌词」（真机实测结论）：
+       上一版改成「文本优先 + 用 /\\[\\d{1,2}:\\d{1,2}/ 判断是不是 LRC」，
+       但 GD 的 lrc 接口返回的是 **JSON**：{"lyric":"[00:00.000] 作曲 …"} ——
+       JSON 字符串里本身就有时间戳，正则一命中就把整段 JSON 当歌词返回了，
+       parseLrc 解析 JSON 自然一行都出不来 → 表现为「有封面、没歌词」。
+       现在顺序改成：**先看首字符是不是 { / [，是就当 JSON 解析**；解析不出再按纯文本 LRC。 */
+    const url = src.lrc(song);
+    if (!url) return '';
     try {
-      const txt = await _fetchText(src.lrc(song));
-      if (txt && /\[\d{1,2}:\d{1,2}/.test(txt)) return txt;
-      // 文本不像歌词：可能这家的 lrc 接口返回的是 JSON，交给下面解析
-      if (txt && txt.trim().charAt(0) === '{') {
-        try { const jj = JSON.parse(txt); const p = src.parseLrc(jj); if (p) return p; } catch (e) {}
+      const txt = await _fetchText(url);
+      if (txt) {
+        const t = txt.trim();
+        // 1) JSON 形态（GD / 部分自建源）：交给该源自己的 parseLrc 取 lyric 字段
+        if (t.charAt(0) === '{' || t.charAt(0) === '[') {
+          try {
+            const jj = JSON.parse(t);
+            const p = src.parseLrc(jj);
+            if (p && /\[\d{1,2}:\d{1,2}/.test(p)) return p;
+          } catch (e) { /* 不是 JSON（比如 Meting 直接回的 [00:00.00] 歌词）→ 往下走 */ }
+        }
+        // 2) 纯文本 LRC（Meting / 祈杰的 type=lrc 就是这种）
+        if (/\[\d{1,2}:\d{1,2}/.test(t)) return t;
       }
     } catch (e) {}
+    // 3) 兜底：用 JSON 通道再试一次（有的源按 Accept 返回不同格式）
     try {
-      const lj = await _fetchJSON(src.lrc(song));
-      if (typeof lj === 'string' && lj) return lj;   // 已经是 LRC 文本
+      const lj = await _fetchJSON(url);
+      if (typeof lj === 'string' && /\[\d{1,2}:\d{1,2}/.test(lj)) return lj;
       const parsed = src.parseLrc(lj);
-      if (parsed) return parsed;
+      if (parsed && /\[\d{1,2}:\d{1,2}/.test(parsed)) return parsed;
     } catch (e) {}
     return '';
   }
@@ -2451,15 +2479,20 @@ window.bmMusicUI = (function () {
       const target = cand[Math.floor(Math.random() * cand.length)];
       // 执行
       if (target === 'mirror') {
-        if (_netEaseDirect) { await _netEaseSetDirect(false); }
-        setMode('mirror');
+        if (_netEaseDirect) { await _netEaseSetDirect(false, { keepBranch: true }); }
+        await setMode('mirror');
       } else if (target === 'local') {
-        if (_netEaseDirect) { await _netEaseSetDirect(false); }
-        setMode('local');
+        if (_netEaseDirect) { await _netEaseSetDirect(false, { keepBranch: true }); }
+        await setMode('local');
       } else if (target === 'remote') {
-        setMode('remote');            // setMode 内部会自动关掉直连
+        /* 20261117：直连是「后台遥控」下的一个分支，不再靠 setMode 隐式关直连。
+           角色要「遥控外部 App」就把分支明确切到 external。 */
+        await setMode('remote');
+        await _netEaseSetDirect(false);
       } else if (target === 'direct') {
-        setMode('mirror');            // 先把 mode 归位，再开直连
+        /* 同上：直连 = remote 模式 + direct 分支，绝不把 mode 改成 mirror
+           （改成 mirror 就是玩家看到的「一点直连就跳回镜像搜索」）。 */
+        await setMode('remote');
         await _netEaseSetDirect(true);
       }
       // 落库（顶替玩家上次记忆）
@@ -3722,7 +3755,7 @@ window.bmMusicUI = (function () {
     // 三模式切换：按钮永远可点、可自由切换；「选中」只是高亮当前模式，
     // 另外两个模式的功能面板（搜索/遥控/本地）自动隐藏，但按钮本身不灰、不锁。
     const modeBtns = overlay.querySelectorAll('.bm-mode');
-    function setMode(mode) {
+    async function setMode(mode) {
       // 20261109：网页端不能切「后台遥控」。该模式依赖原生 BmRemoteControl（读系统媒体会话 +
       //   发 MediaSession 指令），浏览器里没有插件，切过去只会「按钮亮着但什么都不动」。
       //   直接拒绝并提示；若残留遥控态（如从 App 端同步过来的会话），强制回镜像搜索。
@@ -3740,14 +3773,24 @@ window.bmMusicUI = (function () {
         b.disabled = false;              // 按钮永远可点
         b.title = isOn ? '当前模式' : '切换到「' + modeLabel(b.dataset.mode) + '」';
       });
-      // 20261106 互斥：切到「后台遥控」时强制关掉网易云直连（两套状态真互斥，
-      //   否则 _netEaseDirect 残留 true 会让所有遥控分支失效、角色互动权重归零）。
-      //   切到 mirror/local 时也同步清掉遥控态心跳。
+      /* 20261117 修玩家两条投诉：
+         ①「我一点后台遥控，弹出来的又是遥控后台 APP」——
+            以前这里无条件 _netEaseSetDirect(false) 把分支记忆清掉了。
+            现在进 remote 时按上次记住的分支恢复（直连就还是直连）。
+         ② 切去镜像/本地时，只把直连关掉、但**保留分支记忆**（keepBranch），
+            下次回后台遥控仍是你上次选的那一支。 */
       if (mode === 'remote') {
-        if (_netEaseDirect) { _netEaseSetDirect(false); }
+        if (M.isApp && M.isApp()) {
+          try { await _netEaseSetDirect(_netEaseBranch === 'direct', { keepBranch: true }); } catch (e0) {}
+        }
+      } else {
+        if (_netEaseDirect) {
+          try { await _netEaseSetDirect(false, { keepBranch: true }); } catch (e1) {}
+        }
       }
       // 20261106：remote 模式启动「真实态」心跳，其余模式停止
-      if (mode === 'remote') { _startLiveExternalHeartbeat(); }
+      //   20261117：直连分支下外部 App 没在看，绝不能开心跳（否则会把外部歌名/歌词推上去）
+      if (mode === 'remote' && !_netEaseDirect) { _startLiveExternalHeartbeat(); }
       else { _stopLiveExternalHeartbeat(); _liveExternal = null; _liveExternalAt = 0; }
       // 20261106：切换模式立即落库，重进记住上次选的模式
       M.saveSession();
@@ -5116,42 +5159,56 @@ window.bmMusicUI = (function () {
   }
   // 是否处于「网易云直连」模式（持久化，默认 false=遥控）
   let _netEaseDirect = false;
+  /* ★ 20261117 玩家定案：「后台遥控」下面有两个分支 ——
+         · 遥控外部 App（_netEaseDirect=false）
+         · 网易云直连（_netEaseDirect=true）
+     玩家上次选了哪个分支，下次进来还得是那个。所以分支单独记一份（neteaseBranch），
+     即使中途切去「镜像搜索 / 本地」把直连关掉，回来时也能恢复上次的分支。 */
+  let _netEaseBranch = 'external';   // 'external' | 'direct'
   async function _netEaseLoadDirect() {
     try { _netEaseDirect = (await getSetting('neteaseDirect', false)) === true; } catch (e) {}
+    try {
+      const br = await getSetting('neteaseBranch', _netEaseDirect ? 'direct' : 'external');
+      _netEaseBranch = (br === 'direct') ? 'direct' : 'external';
+    } catch (e) { _netEaseBranch = _netEaseDirect ? 'direct' : 'external'; }
     return _netEaseDirect;
   }
-  async function _netEaseSetDirect(v) {
+  /* 20261117 修「一点直连就跳回镜像搜索 / 一点后台遥控就变回遥控外部 App」：
+     老代码在这里硬改 M.state.mode（开直连 → mirror；关直连 → remote），
+     把「模式」和「分支」混成一个变量，于是
+       · 面板里点直连 → 整个页面被踢回镜像搜索；
+       · 顶部点一次「后台遥控」→ 被强制 setDirect(false)，分支记忆被清。
+     现在：直连只是 remote 模式下的一条分支，绝不改 mode；
+     切进/切出 remote 时按 _netEaseBranch 恢复上次的分支。 */
+  async function _netEaseSetDirect(v, opts) {
+    const keepBranch = !!(opts && opts.keepBranch);
     _netEaseDirect = !!v;
+    if (!keepBranch) _netEaseBranch = _netEaseDirect ? 'direct' : 'external';
     try { await setSetting('neteaseDirect', _netEaseDirect); } catch (e) {}
-    // 20261106 互斥：开直连时反向清掉「后台遥控」态（mode 离开 remote），
-    //   并停掉遥控心跳。两套状态真互斥，避免「直连 + 遥控」同时成立导致角色互动权重归零、
-    //   遥控分支失效、进度条双源打架。
+    try { await setSetting('neteaseBranch', _netEaseBranch); } catch (e) {}
     if (_netEaseDirect) {
-      if (M.state.mode === 'remote') { M.state.mode = 'mirror'; try { M.saveSession(); } catch (e2) {} }
+      // 直连 = 内置播放器唱网易云，外部遥控心跳必须停（两个声源真互斥）
       _stopLiveExternalHeartbeat();
       _liveExternal = null; _liveExternalAt = 0;
       _lastExternalKey = ''; _lastExternalPlaying = null;
+      // 清掉外部歌残留的歌词，否则直连歌会顶着上一首外部歌的词
+      M.state.lyrics = '';
     } else {
-      // 20261107 修复互斥 bug：关直连（回到「遥控外部 App」）时，若 mode 还是 mirror
-      //   （即之前开直连时被 _netEaseSetDirect 从 remote 改成了 mirror），必须把它拉回
-      //   remote，否则 _isRemoteMode()=(mode==='remote') 恒 false，点播放/暂停只控内置播放器，
-      //   只有「盲抽一首」因直接 bridge.next() 不看 mode 还能遥控——正是用户复现的现象。
-      if (M.state.mode === 'mirror') { M.state.mode = 'remote'; try { M.saveSession(); } catch (e2) {} }
-      /* 20261116 双声源修复：切回「遥控外部 App」时，把内置播放器停掉。
-         玩家在直连里放了一首歌，没点暂停就切遥控 —— 以前内置那首继续响，
-         外面 App 也在响，两首歌叠在一起。互斥就该真的互斥。 */
+      /* 切回「遥控外部 App」：把内置播放器停掉，免得两边一起响；
+         但仍留在 remote 模式（不改 mode），由 panel 显示外部遥控分支。 */
       try { if (M.state.audio) M.state.audio.pause(); } catch (e3) {}
       M.state.playing = false;
       _lastExternalKey = '';        // 让下一拍心跳重新认「当前外部是哪首」
       _lastExternalPlaying = null;
+      if (M.state.mode === 'remote') { try { _startLiveExternalHeartbeat(); } catch (e5) {} }
     }
-    /* 20261116：模式变了必须同步 UI。以前只重画了遥控面板那块，顶部模式按钮还高亮
-       「后台遥控」，玩家看着是遥控、内部其实已经是直连 —— 点盲抽自然还会去遥控外部。 */
+    try { M.saveSession(); } catch (e6) {}
     try { _syncModeUi(); } catch (e4) {}
   }
 
-  /* 20261116：把「当前真实模式」同步到音乐页的模式按钮与面板。
-     直连在逻辑上等价 mirror（内置播放器 + 网易云接口），所以高亮 mirror。 */
+  /* 20261117：把「当前真实模式」同步到音乐页的模式按钮与面板。
+     注意：直连不是独立模式，而是 remote 下的一条分支 —— 所以这里高亮的就是
+     M.state.mode 本身（remote 就亮「后台遥控」，面板自己会把开关画成直连态）。 */
   function _syncModeUi() {
     const m = M.state.mode || 'mirror';
     try {
@@ -5231,6 +5288,11 @@ window.bmMusicUI = (function () {
     if (!j || !j.result || !j.result.songs) return [];
     return j.result.songs.map(s => ({
       id: String(s.id),
+      /* 20261117 修「直连搜出来的歌其实走了镜像」（真机实测）：
+         fetchSongDetail 的直连分支硬性要求 song._neteaseId，而搜索结果只带 id，
+         于是直连搜到的每首歌都被判成「不是直连」→ 退回镜像按歌名重搜，
+         可能拿到翻唱/别的版本（歌词封面跟着不对）。补上 _neteaseId 让它真走直连。 */
+      _neteaseId: String(s.id),
       name: s.name || '',
       artist: (s.artists && s.artists.length) ? s.artists.map(a => a.name).join(' / ') : '',
       pic: (s.album && s.album.picUrl) ? s.album.picUrl : '',
@@ -9291,7 +9353,8 @@ window.bmMusicUI = (function () {
   (async () => {
     try {
       await _netEaseLoadDirect();
-      if (M.state.mode === 'remote') { _startLiveExternalHeartbeat(); _refreshLiveExternal(true); }
+      // 20261117：直连分支下外部没有在播，不能起遥控心跳（否则会拿外部空态覆盖直连歌名/歌词）
+      if (M.state.mode === 'remote' && !_netEaseDirect) { _startLiveExternalHeartbeat(); _refreshLiveExternal(true); }
     } catch (e) {}
   })();
 
