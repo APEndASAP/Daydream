@@ -64,7 +64,7 @@ window.bmMusic = (function () {
           album: x.album || '',
           pic: x.pic || '',
           url: x.url || '',
-          lrc: x.lrc || '',
+          lrc: '', _lrcUrl: x.lrc || '',
         };
       }).filter(x => x.name) : [],
       parseSong: (j) => {
@@ -155,7 +155,7 @@ window.bmMusic = (function () {
           album: x.album_name || x.album || '',
           pic: x.pic || x.cover || '',
           url: x.url || x.song_url || '',
-          lrc: x.lrc || '',
+          lrc: '', _lrcUrl: x.lrc || '',
         })).filter(x => x.name);
       },
       parseSong: (j) => { const d = Array.isArray(j) ? j[0] : (j && (j.data && j.data[0])); return d ? { url: d.url || d.song_url || d.playUrl || '', pic: d.pic || '', lrc: '' } : null; },
@@ -232,7 +232,7 @@ window.bmMusic = (function () {
           album: x.album || '',
           pic: x.pic || '',
           url: x.url || '',
-          lrc: x.lrc || '',
+          lrc: '', _lrcUrl: x.lrc || '',
         };
       }).filter(x => x.name) : [],
       parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' } : (typeof j === 'string' && j ? { url: j, pic: '', lrc: '' } : null),
@@ -416,7 +416,7 @@ window.bmMusic = (function () {
       parseSearch: (j) => Array.isArray(j) ? j.map(x => {
         let id = x.id || '';
         if (!id && x.url) { try { id = new URL(x.url, 'https://x').searchParams.get('id') || ''; } catch (e) {} }
-        return { id, name: x.name || x.title || '', artist: x.artist || x.singer || '', album: x.album || '', pic: x.pic || '', url: x.url || '', lrc: x.lrc || '' };
+        return { id, name: x.name || x.title || '', artist: x.artist || x.singer || '', album: x.album || '', pic: x.pic || '', url: x.url || '', lrc: '', _lrcUrl: x.lrc || '' };
       }).filter(x => x.name) : [],
       parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' } : null,
       parseLrc: (j) => (j && j.lrc) ? j.lrc : (typeof j === 'string' ? j : ''),
@@ -527,6 +527,9 @@ window.bmMusic = (function () {
     } catch (e) { return ''; }
   }
   async function fetchSongDetail(song) {
+    /* 20261117：进来的 song.lrc 若其实是「歌词接口地址」，先清成空 ——
+       这样即使后面所有源都抓词失败，也不会把地址留在 lrc 里当成歌词显示「暂无」。 */
+    if (song) song.lrc = _cleanLrc(song.lrc);
     // 20261105 修复「导入歌单无法播放」：netease-direct 源（导入的网易云歌单歌曲，
     //   url 为空、带 _neteaseId）必须走网易云官方接口拿真实直链 + 封面 + 滚动歌词，
     //   不能落回镜像源（镜像源搜不到网易云 id，导致「未获取到播放直链」）。
@@ -553,6 +556,7 @@ window.bmMusic = (function () {
         if (!song.lrc) { const lrc = await _netEaseLyric(id); if (lrc) song.lrc = lrc; }
         song.source = 'netease-direct';
         await _ensureCover(song, true);   // 20261116：直连也一样，空封面统一补
+        if (!song.lrc) { const alt = await _lrcFromAnySource(song, ''); if (alt) song.lrc = alt; }
         return song;
       }
       // 直连拿不到（无登录态/VIP），再落回镜像源按名搜兜底
@@ -590,6 +594,7 @@ window.bmMusic = (function () {
           /* 20261116：这条分支以前直接 return，封面全靠搜索接口施舍 ——
              搜到的是空/失效地址时就是「能播没图」。统一兜一层。 */
           await _ensureCover(song, _NETEASE_ID_SOURCES.indexOf(src.key) >= 0);
+          if (!song.lrc) { const alt = await _lrcFromAnySource(song, src.key); if (alt) song.lrc = alt; }
           return song;
         }
         const j = src.native ? await _nativeReq(src.song(song), src.headers)
@@ -601,13 +606,21 @@ window.bmMusic = (function () {
           /* 20261117：把这一步解析出的歌词转发地址接到 song 上，
              否则 _fetchLrcText 只能退回 src.lrc() 的「按歌名重搜」兜底（拿不到歌词）。 */
           if (d._lrcUrl) song._lrcUrl = d._lrcUrl;
-          if (d.lrc) song.lrc = d.lrc;
+          /* 20261117 修「切歌第二秒变暂无歌词」（真机复现：700ms 有 1683 字真词，
+             1200ms 变成 67 字的接口地址）：
+             parseSong 给的 lrc 可能是**地址**（Meting 系），绝不能直接塞进 song.lrc ——
+             地址只配进 _lrcUrl，文本才进 lrc。 */
+          if (d.lrc) {
+            if (/^https?:\/\//i.test(String(d.lrc).trim())) { if (!song._lrcUrl) song._lrcUrl = d.lrc; }
+            else song.lrc = d.lrc;
+          }
           /* 20261116：统一走 _ensureCover —— 先问官方 song/detail（最准），
              再退 GD 的 types=pic，且必须用 search 回来的 pic_id（用歌曲 id 是 404 旧地址）。 */
           await _ensureCover(song, true);
           // 歌词单独拉（Meting 系 lrc 转发地址用文本抓取，其余用 JSON 解析）
           const lrc = await _fetchLrcText(src, song);
           if (lrc) song.lrc = lrc;
+          if (!song.lrc) { const alt = await _lrcFromAnySource(song, src.key); if (alt) song.lrc = alt; }
           return song;
         }
       } catch (e) { /* 换下一个源 */ }
@@ -684,6 +697,67 @@ window.bmMusic = (function () {
       if (parsed && /\[\d{1,2}:\d{1,2}/.test(parsed)) return parsed;
     } catch (e) {}
     return '';
+  }
+
+  /* 20261117 新增：歌词多源兜底。
+     真机实测：fetchSongDetail 只要第一个源（祈杰）解析出 url 就直接 return，
+     歌词跟着只问那一个源；而酷狗/其它曲库的 id 拿去请求祈杰的 type=lrc 必然为空，
+     于是「有地址、没歌词」。这里在拿不到词时依次问其余源，最后兜官方接口（仅数字 id）。 */
+  async function _lrcFromAnySource(song, skipKey) {
+    if (!song) return '';
+    try {
+      const srcs = await getActiveSources();
+      for (const s of srcs) {
+        if (skipKey && s.key === skipKey) continue;
+        try { const t = await _fetchLrcText(s, song); if (t) return t; } catch (e) {}
+      }
+    } catch (e) {}
+    if (/^\d+$/.test(String(song.id || ''))) {
+      try { const t = await _netEaseLyric(song.id); if (t) return t; } catch (e) {}
+    }
+    return '';
+  }
+
+  /* 20261117：歌词缓存 + 补词自愈。
+     必须定义在本模块（bmMusic）内 —— 调用方 play() / _swapAndReplay() 都在这里。
+     之前这几个函数被写在下方 bmMusicUI 模块里，两个 IIFE 互相不可见，
+     真机实测调用直接抛 ReferenceError（_healLyricOnce is not defined）并被 try 吞掉，
+     导致「切歌后从不补词」，表现就是镜像源歌曲永远显示暂无歌词。 */
+  let _healLrcTried = {};
+  /* 按歌曲 id 缓存已拿到的歌词文本：换源重播会用新对象整体替换 current，
+     对象上的 lrc 就丢了；有这层缓存，同一首歌的词一旦拿到就不会再变回「暂无」。 */
+  const _lrcCache = new Map();
+  function _lrcCached(song) {
+    if (!song) return '';
+    const k = String(song.id || '');
+    if (!k) return '';
+    return _lrcCache.get(k) || '';
+  }
+  /* 重抓完把自愈额度清零，否则之后切到这些歌时不再补词 */
+  function _resetHealQuota() { _healLrcTried = {}; }
+  async function _healLyricOnce(song) {
+    const key = String((song && (song.id || song.name)) || '');
+    if (!key) return;
+    const n = _healLrcTried[key] || 0;
+    if (n >= 3) return;
+    _healLrcTried[key] = n + 1;
+    try {
+      const full = await fetchSongDetail(song);
+      const txt = _cleanLrc(full && full.lrc);
+      if (!txt) return;
+      delete _healLrcTried[key];
+      song.lrc = txt;
+      /* 20261117：play() 之后还有一次异步补全会把 state.current 整体换成新对象，
+         此时这里的 song 已是被弃用的旧引用 —— 只写 song 会出现「数据有词、界面暂无」。
+         同一首歌就把歌词同步写回当前真正在播的那个对象。 */
+      const _curNow = state.current;
+      if (_curNow && String(_curNow.id) === String(song.id) && _curNow !== song) _curNow.lrc = txt;
+      try { _lrcCache.set(String(song.id || key), txt); } catch (e3) {}
+      if (state.current && String(state.current.id) === String(song.id)) state.lyrics = '';
+      try { saveSession(); } catch (e1) {}
+      /* 渲染层在另一个 IIFE（bmMusicUI），只能通过挂载点调用 */
+      try { if (window.bmMusicUI && window.bmMusicUI.refreshPlayerUI) window.bmMusicUI.refreshPlayerUI(); } catch (e2) {}
+    } catch (e) {}
   }
 
   /* ---------- 本地曲库（模式三） ---------- */
@@ -966,6 +1040,14 @@ window.bmMusic = (function () {
     if (!u) return u;
     return String(u).replace(/^http:\/\//i, 'https://');
   }
+  /* 20261117 新增：防「歌词字段里塞的是接口地址」（真机实测根因）
+     —— Meting 系镜像（qijieya / kfjie / meting）的搜索接口里，lrc 字段是**歌词转发地址**
+     （`...type=lrc&id=xxx`），而旧代码把它原样当歌词存进 song.lrc。
+     播放时 parseLrc 找不到任何时间轴 → 界面永远是「暂无歌词」。
+     真机证据：切歌 700ms 时 current.lrc 是 2473 字真词，1400ms 被镜像结果覆盖成
+     `https://api.qijieya.cn/meting/?server=netease&type=lrc&id=1945806442`（68 字符）→ 变暂无。 */
+  function _lrcIsUrl(x) { return /^https?:\/\//i.test(String(x || '').trim()); }
+  function _cleanLrc(x) { return /^https?:\/\//i.test(String(x || '').trim()) ? '' : (x || ''); }
   // 用「歌名+歌手」重新搜索取新直链重播（兜底，解决过期直链/失效 id）
   function _reloadByName(cur) {
     if (!cur || _reloadRetry >= 2) { _reloadRetry = 0; return; }
@@ -992,6 +1074,18 @@ window.bmMusic = (function () {
   }
   // 用新歌曲对象替换当前曲并重播（同步更新播放列表里的旧条目）
   function _swapAndReplay(oldSong, newSong) {
+    if (!newSong) return;
+    /* 20261117 修「切歌第一秒有歌词、下一秒变暂无」（真机调用栈定位：这里）：
+       _onAudioError → _reloadByName 用歌名重搜换源，newSong 是**搜索结果对象**，
+       而 Meting 系（祈杰/kfjie）把 lrc 字段填成**歌词接口地址**；
+       直接当 current 后 parseLrc 解析不出任何时间轴 → 界面「暂无歌词」。
+       这里洗掉地址，并异步补词后回写（同类问题在 play() 入口也做了清洗）。 */
+    newSong.lrc = _cleanLrc(newSong.lrc);
+    /* 20261117：换源用的搜索结果对象常没词，先从缓存补回来（有就立刻恢复，不再「暂无」） */
+    try {
+      if (!newSong.lrc) { const _c1 = _lrcCached(newSong); if (_c1) newSong.lrc = _c1; }
+      else if (newSong.id) _lrcCache.set(String(newSong.id), newSong.lrc);
+    } catch (e0) {}
     state.current = newSong;
     const idx = state.playlist.findIndex(s => String(s.id) === String(oldSong.id));
     if (idx >= 0) state.playlist[idx] = newSong;
@@ -999,6 +1093,11 @@ window.bmMusic = (function () {
     a.src = _normUrl(newSong.url);
     state.loadedId = newSong.id;
     a.play().then(() => { state.playing = true; _reloadRetry = 0; onStateChange(); }).catch(() => { _reloadRetry = 0; });
+    // 换源后原歌的歌词可能丢了：等音频起来再补（800ms 一次、3s 再补一次，最多两次）
+    if (!newSong.lrc) {
+      setTimeout(() => { try { _healLyricOnce(newSong); } catch (e) {} }, 800);
+      setTimeout(() => { try { if (!newSong.lrc) _healLyricOnce(newSong); } catch (e) {} }, 3000);
+    }
   }
   /* 20261113：30 秒试听自动换源（逐个候选试，不用一次就放弃）
      公开镜像（包括清羽、kfjie 的网易云线）对 VIP 歌普遍只给 30 秒。播放器拿到 metadata
@@ -1085,6 +1184,15 @@ window.bmMusic = (function () {
     //   加载 http 音频会被「混合内容」策略拦截 → 无声、进度不动。这里统一把播放直链
     //   http→https（music.126.net 支持 https），根治直连模式播放失败。
     song.url = _normUrl(song.url);
+    /* 20261117：切歌瞬间若这首歌的 lrc 还是「接口地址」，清成空并让下面的补词逻辑
+       重新抓文本 —— 真机复现的就是「第一秒有词、下一秒变暂无」。 */
+    song.lrc = _cleanLrc(song.lrc);
+    /* 20261117：先看缓存（换源/重搜会把对象换掉），再给这首歌重开自愈额度 */
+    try {
+      if (!song.lrc) { const _c0 = _lrcCached(song); if (_c0) song.lrc = _c0; }
+      else if (song.id) _lrcCache.set(String(song.id), song.lrc);
+    } catch (e0) {}
+    try { if (song && song.id) delete _healLrcTried[String(song.id)]; } catch (e0) {}
     state.current = song;
     // 20261111（清单第十三节）：一切播放入口都在这里统一回写播放列表 ——
     //   角色分享卡片选歌 / 角色随机换歌 / 角色主动搜到的歌，以前有的只写 current、
@@ -1135,6 +1243,9 @@ window.bmMusic = (function () {
       const retry = () => { try { a.play().then(() => { state.playing = true; onStateChange(); }).catch(() => {}); } catch (e2) {} };
       a.addEventListener('canplay', retry, { once: true });
     });
+    /* 20261117：播放起来 1.5s 后若还没词，主动补一次 ——
+       不依赖「界面渲染到暂无」这条路径（真机上有的歌渲染晚，等不到自愈）。 */
+    if (song && song.id) setTimeout(() => { try { if (!song.lrc) _healLyricOnce(song); } catch (e9) {} }, 1500);
     // 20261104 统一记录播放历史（此前只在 playSong 里记，悬浮窗/角色主动等路径漏记，导致"播放了但没记录"）
     addHistory({ kind: 'history', charId: state.charId, songId: song.id, name: song.name, artist: song.artist || '', album: song.album || '', pic: song.pic || '' });
     // 20261105 修复「网易云直连歌词/封面不显示」：直连播放（搜歌点播/歌单点播/导入歌单）时
@@ -1250,6 +1361,8 @@ window.bmMusic = (function () {
     fetchSongDetail(state.current).then((full) => {
       if (full && full.url) {
         state.current = full;
+        // 20261117：补全对象若没词，立刻排一次自愈（否则界面停在「暂无歌词」）
+        if (!full.lrc) { setTimeout(() => { try { _healLyricOnce(full); } catch (e) {} }, 700); }
         const a = rebuildCleanAudio();
         const vol = getVolume();
         a.src = full.url;
@@ -1475,6 +1588,9 @@ window.bmMusic = (function () {
       if (!d) return;
       if (Array.isArray(d.playlist) && d.playlist.length) {
         state.playlist = d.playlist;
+        /* 20261117：历史会话里可能存着「lrc = 接口地址」的脏数据，恢复时先洗干净，
+           否则一进 App 就是一堆「暂无歌词」，重抓也救不回这几首。 */
+        state.playlist.forEach(s => { if (s) s.lrc = _cleanLrc(s.lrc); });
         state.playIndex = (typeof d.playIndex === 'number' && d.playIndex >= 0 && d.playIndex < d.playlist.length) ? d.playIndex : 0;
       }
       if (d.current) {
@@ -1484,6 +1600,7 @@ window.bmMusic = (function () {
           state.playIndex = 0;
         }
         state.current = d.current;
+        if (state.current) state.current.lrc = _cleanLrc(state.current.lrc);
       }
       if (d.playMode) state.playMode = d.playMode;
       if (typeof d.crossfade === 'boolean') state.crossfade = d.crossfade;   // 20261106：恢复智能过渡开关
@@ -1506,6 +1623,9 @@ window.bmMusic = (function () {
   return {
     state,
     isApp,
+    /* 20261117：歌词缓存与补词自愈 —— 本模块内 play/_swapAndReplay 直接用，
+       渲染模块 bmMusicUI 通过 window.bmMusic 调用（跨 IIFE 只能走挂载点）。 */
+    _healLyricOnce, _lrcCached, _resetHealQuota,
     setNeteaseBridge,   // 20261106 方案A：闭包2 注入网易云直连函数（修跨闭包 ReferenceError）
     _netEaseLyric,      // 20261107 暴露给闭包2：后台遥控模式拿外部 title/artist 搜歌后补拉歌词
     search,
@@ -1593,7 +1713,9 @@ window.bmMusicUI = (function () {
 
   /* ---------- 解析 LRC 文本 → 时间标签数组 ---------- */
   function parseLrc(lrc) {
-    if (!lrc) return [];
+    // 20261117：传进来的是接口地址（镜像搜索的 lrc 字段）→ 等于没有歌词，别当歌词解析
+    // （这里内联判断，不依赖其它辅助函数，避免作用域问题导致整个渲染抛错）
+    if (!lrc || /^https?:\/\//i.test(String(lrc).trim())) return [];
     const lines = [];
     const re = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
     lrc.split('\n').forEach(line => {
@@ -3318,19 +3440,18 @@ window.bmMusicUI = (function () {
        · 网易云直连：只碰 source==='netease-direct' 的
        · 镜像搜索：只碰镜像搜来的（排除以上两类）
        遥控外部 App 在上面已单独处理：只重抓当前那一首外部歌曲，不碰播放列表。 */
-    const _curMode = _netEaseDirect ? 'direct' : (M.state.mode || 'mirror');
-    const _mine = (s) => {
-      const src = (s && s.source) || '';
-      if (_curMode === 'local') return src === 'local' && !!s._neteaseId;
-      if (_curMode === 'direct') return src === 'netease-direct';
-      return src !== 'local' && src !== 'netease-direct';
-    };
-    const pl = (M.state.playlist || []).slice().filter(_mine);
+    /* 20261117 修「30 首只抓 10 首」（真机实测：列表 31 首，toast 只报「正在重抓 27 首」）：
+       原来这里按当前模式过滤，只有当前模式那一部分歌会被重抓，另一半永远补不上词 ——
+       玩家的观感就是「列表 30 首只抓 10 首」，而且「重抓了还是没歌词」。
+       现在重抓 = **整个播放列表**，只跳过纯本地文件（source==='local' 且没有网易云 id，
+       那种没有可重抓的线上地址）。 */
+    const pl = (M.state.playlist || []).slice()
+      .filter(s => !(s && s.source === 'local' && !s._neteaseId));
     const cur = M.state.current;
-    const _nm = ({ local: '本地与解析', direct: '网易云直连', mirror: '镜像搜索' })[_curMode] || '当前模式';
-    if (cur && _mine(cur) && !pl.some(s => String(s.id) === String(cur.id))) pl.push(cur);
+    const _nm = '整个播放列表';
+    if (cur && !pl.some(s => String(s.id) === String(cur.id))) pl.push(cur);
     if (!pl.length) {
-      if (window.miniToast) miniToast(_nm + ' 下没有可重抓的歌（重抓只作用于当前模式）');
+      if (window.miniToast) miniToast('播放列表里没有可重抓的歌（纯本地文件不需要重抓）');
       return;
     }
     _refreshBusy = true;
@@ -3377,6 +3498,8 @@ window.bmMusicUI = (function () {
       }
     } catch (e6) {}
     try { refreshPlayerUI(); } catch (e) {}
+    /* 20261117：重抓完把自愈额度清零，否则之后切到这些歌时不再补词 */
+    try { if (window.bmMusic && window.bmMusic._resetHealQuota) window.bmMusic._resetHealQuota(); } catch (e7) {}
     if (window.miniToast) miniToast(`${_nm} · 重抓完成 ${ok}/${pl.length} 首 · 歌词 ${lrcOk} · 地址 ${urlOk}`);
   }
 
@@ -7217,6 +7340,7 @@ window.bmMusicUI = (function () {
   function stopPlanetAnimation() { if (_planetRaf) cancelAnimationFrame(_planetRaf); _planetRaf = null; }
 
   /* ---------- 刷新播放器 UI（页面 + 悬浮窗） ---------- */
+
   function refreshPlayerUI() {
     /* 20261116：App 重开后一起听状态是恢复的，但「跟随轮询」不会自动回来 ——
        这里补一次惰性启动，保证遥控外部 App 时卡片依旧跟着换歌，不会停在上次那首。 */
@@ -7268,8 +7392,15 @@ window.bmMusicUI = (function () {
     // 歌词
     const lyricBox = document.getElementById('bm-music-lyric');
     if (lyricBox) {
-      const lines = parseLrc(M.state.lyrics || (cur && cur.lrc) || '');
-      if (!lines.length) { lyricBox.innerHTML = '<div class="bm-music-empty">暂无歌词</div>'; }
+      const _rawLrc = M.state.lyrics || (cur && cur.lrc) || (window.bmMusic && window.bmMusic._lrcCached ? window.bmMusic._lrcCached(cur) : '') || '';
+      const lines = parseLrc(_rawLrc);
+      if (!lines.length) {
+        lyricBox.innerHTML = '<div class="bm-music-empty">暂无歌词</div>';
+        /* 20261117：渲染时没词 → 补抓一次（每首只试一次，避免死循环）。
+           真机上「切歌第一秒有词、下一秒暂无」就是 current 被换成 lrc=接口地址 的对象，
+           这里顺手把它救回来。 */
+        try { if (cur && cur.name && window.bmMusic && window.bmMusic._healLyricOnce) window.bmMusic._healLyricOnce(cur); } catch (eH) {}
+      }
       else { lyricBox.innerHTML = lines.map(l => `<div class="bm-lrc-line${l.tr ? ' bm-lrc-tr' : ''}" data-t="${l.t}">${esc(l.text)}</div>`).join(''); startLyricScroll(); }
     }
     // 悬浮窗同步

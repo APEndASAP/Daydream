@@ -10448,6 +10448,7 @@ function updateAppFullBg() {
 
 /* ---------- 弹窗 ---------- */
 function openModal(html, opts) {
+  _diviReturn = null;   // 20261117：任何新弹窗都清掉「关掉要回宫殿」的记录，避免串到别的页
   const box = $('#modal-content');
   const o = opts || {};
   // 20260929bk：软件声明未同意期间（_noticeGate），任何非声明的弹窗一律抑制——
@@ -10571,6 +10572,7 @@ $('#modal-mask').addEventListener('click', (e) => {
     const t = window.__bmSplashEndAt;
     if (t && (Date.now() - t) < 600) return;
   } catch (e) {}
+  if (typeof _diviReturn !== 'undefined' && _diviReturn) { _palBackFromDivi(); return; }   // 20261117：点遮罩关详情也回宫殿
   closeModal();
 });
 
@@ -30213,7 +30215,34 @@ function grayMomentDetail(gh, posts, idx) {
   render(idx, 0);
 }
 
+/* 20261117：记忆宫殿的「子页面」返回机制。
+   玩家要求：从宫殿里点开的占卜详情、条目详情等，关掉之后必须**回到宫殿原来的页面**，
+   不能一关就整层退出回到聊天。宫殿所有视图都共用一个 #modal-content，
+   所以这里记下当前视图，关闭子页面时按记录重绘回去。 */
+let _palView = null;      // {kind:'root'|'folder'|'sub'|'entry', ...}
+let _diviReturn = null;   // 占卜详情是从宫殿里打开的 → 记下当时的宫殿视图
+
+function _palRestoreView(v) {
+  if (!v) return false;
+  try {
+    if (v.kind === 'folder') { showPalaceFolder(v.fid, v.opts || {}); return true; }
+    if (v.kind === 'sub') { showPalaceSubFolder(v.fid, v.sid, v.opts || {}); return true; }
+    if (v.kind === 'entry') { showPalaceEntry(v.eid, v.backFid, v.opts || {}); return true; }
+    if (v.kind === 'root') { showMemoryPalaceModal(v.opts || {}); return true; }
+  } catch (e) {}
+  return false;
+}
+
+/* 关闭「宫殿里打开的占卜详情」：回到上一层宫殿页面；实在没有记录才真关弹窗 */
+function _palBackFromDivi() {
+  const v = _diviReturn;
+  _diviReturn = null;
+  if (_palRestoreView(v)) return;
+  closeModal();
+}
+
 async function showMemoryPalaceModal(opts = {}) {
+  _palView = { kind: 'root' };
   await palMigrateOldPosts();
   const folders = await palEnsureFolders();
   const pf = folders.find(x => x.id === PAL_P);
@@ -30364,6 +30393,7 @@ let _palBatch = new Set();
 let _palBatchMode = false;
 
 async function showPalaceFolder(fid, opts = {}) {
+  _palView = { kind: 'folder', fid: fid, opts: { q: opts.q || '', keepBatch: !!opts.keepBatch } };
   const folders = await palEnsureFolders();
   const f = folders.find(x => x.id === fid);
   if (!f) { showMemoryPalaceModal(); return; }
@@ -30591,6 +30621,7 @@ async function showPalaceFolder(fid, opts = {}) {
 
 /* 子文件夹视图：只显示该子文件夹下的条目（20260929x：行尾权限按钮 + 批量管理 + ✕ 回上一页） */
 async function showPalaceSubFolder(fid, sid, opts = {}) {
+  _palView = { kind: 'sub', fid: fid, sid: sid, opts: { q: opts.q || '' } };
   const folders = await palFolders();
   const sf = folders.find(x => x.id === sid);
   if (!sf) { showPalaceFolder(fid); return; }
@@ -30798,6 +30829,7 @@ function palManualModal(fid, sid) {
    约 1.24s 重叠动画（power3.inOut / power3.in / power3.out），慢、优雅、有重量感；
    新主卡片出现时高斯模糊背景同步交叉切换。保留全部功能：AI 权限（盾）、移动、删除、查看列表 */
 async function showPalaceEntry(eid, backFid, opts = {}) {
+  _palView = { kind: 'entry', eid: eid, backFid: backFid, opts: {} };
   const folders = await palFolders();
   let list = Array.isArray(opts.list) && opts.list.length ? opts.list : null;
   if (!list) {
@@ -32394,6 +32426,7 @@ function palDiviCardHtml(e) {
 
 async function showDiviDetailModal(msgId, fromEntry){
   let dc = null, rounds = [], __fromPalace = false;
+  let _palSnap = null;   // 20261117：从宫殿进来时记下当时的宫殿视图，关闭后要退回去
   if (fromEntry) {
     /* ★ 20261117 玩家要求：记忆宫殿里的占卜要存成「卡片」，点开就是完整解读。
        palace 条目不是聊天消息（没有 messages 记录），所以单独走这一支，
@@ -32415,6 +32448,7 @@ async function showDiviDetailModal(msgId, fromEntry){
     };
     rounds = Array.isArray(d.rounds) ? d.rounds : [];
     __fromPalace = true;
+    _palSnap = _palView;   // 进入详情前先抄一份宫殿当前视图
   } else {
     let m = null;
     try { m = await idbGet('messages', msgId); } catch (e) {}
@@ -32480,8 +32514,10 @@ async function showDiviDetailModal(msgId, fromEntry){
           : '这条是修复前发出的旧记录，没存下解读全文，只能存牌面和评价') +
      '</div>')
   );
+  /* 20261117：从宫殿打开的详情，关闭 = 回到宫殿原页面（不能整层退出） */
+  if (__fromPalace) _diviReturn = _palSnap || { kind: 'root' };
   const b = $('#divi-detail-close');
-  if (b) b.onclick = closeModal;
+  if (b) b.onclick = __fromPalace ? _palBackFromDivi : closeModal;
   const sb = $('#divi-detail-save');
   if (sb) {
     if (__fromPalace) {
