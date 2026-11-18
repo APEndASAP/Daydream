@@ -336,6 +336,7 @@ async function init() {
   if (isLowEndDevice()) document.body.classList.add('low-end');
   await initGlassLevel(); // 20260929bh：玻璃三档精度——读上次的自动降级档位（避免每次会话重走降级）
   await initTypecardFloatGlass(); // 20261009：悬浮窗玻璃精度三档（独立于全局玻璃拟态，默认跟随系统）
+  await initCallGlassLevel(); // 20261118：模拟通话玻璃精度三档（默认高精度，不受卡顿自动降档影响）
   await initGlassPresets(); // 20261011：液态玻璃美化预设（悬浮窗/气泡/通话 1号纯CSS/2号真折射，默认1号）
   await loadGlobalTheme(); // 20260929bo：全局色彩预设（先于 applyChatTheme，浅色主题 class 一次到位）
   applyChatTheme();
@@ -599,6 +600,10 @@ function isLowEndDevice() {
    降级结果持久化（kv glassAutoLevel），下次启动直接沿用；手动切换玻璃开关时清除重判。 */
 let _glassLevel = 'hi';    // hi | mid | low（当前生效档位）
 let _glassManual = '';      // 20260929bj：手动选择的档位 hi|mid|low；''=跟随系统自动
+// 20261118：本次会话内「因卡顿自动关闭玻璃」的临时标记。
+//   只存在于内存，不写 kv、不写 chatTheme —— 刷新/重开 App 必定恢复玩家原本的玻璃设置。
+//   旧实现是把 chatTheme.glassUI 直接改成 false 并存库，导致卡一次之后永远回不到磨砂。
+let _glassAutoOff = false;
 let _tcFloatGlass = 'hi';   // 20261009：悬浮窗（召唤+非召唤）玻璃精度当前生效档位 hi|mid|low
 let _tcFloatGlassManual = ''; // 20261009：悬浮窗玻璃精度手动档位 hi|mid|low；''=跟随系统自动
 // 20261011：液态玻璃美化预设（1号=纯CSS磨砂 / 2号=hyalite真折射），三入口独立记忆、默认1号。
@@ -606,6 +611,13 @@ let _tcFloatGlassManual = ''; // 20261009：悬浮窗玻璃精度手动档位 hi
 let _floatPreset = '1';    // 悬浮窗（碎梦重拼/召唤）预设
 let _bubblePreset = '1';   // 气泡预设
 let _callPreset = '1';     // 模拟通话预设
+// 20261118：模拟通话界面的独立玻璃精度（跟随系统 | hi | mid | low）。与全局玻璃拟态三档完全解耦——
+//   全局那套会因为帧率不足自动往下降，最终连磨砂都关掉；通话是核心视觉场景，
+//   默认「跟随系统」（按设备内存/核心数判定一次），不参与帧率自动降档。
+//   _callGlassManual = '' 表示跟随系统；非空表示玩家亲手锁定某一档。
+//   取值来源：kv callGlassLevel（缺省 ''=跟随系统）；只在玩家手动选择时写库。
+let _callGlassManual = '';
+let _callGlassLevel = 'hi';   // 实际生效档位（手动值，或跟随系统时由 glassBaseLevel 判定）
 let _noticeGate = false;    // 20260929bk：软件声明弹窗显示期间=true，抑制来电/超频/书信等打断弹窗，保证声明始终在最前
 let _glassFpsState = null; // { raf, frames, winStart, lowSec }
 let _glassFpsDelay = null;
@@ -635,8 +647,11 @@ async function initGlassLevel() {
       _glassLevel = manual;
       return;
     }
-    const saved = await getSetting('glassAutoLevel');
-    if (saved === 'mid' || saved === 'low') _glassLevel = saved;
+    // 20261118：这里以前会读 kv glassAutoLevel（上次自动降档的结果）并直接沿用，
+    //   导致「卡顿降一档 → 写库 → 下次启动还是低档」，一次卡顿之后永远回不到高精度。
+    //   现在刻意不读：每次启动都从设备判定 glassBaseLevel() 重新开始，
+    //   自动降档只在本次会话内生效，刷新即恢复；只有再次实测卡顿才会再降。
+    //   玩家手动锁定的档位仍保存在 glassManualLevel，不受本次改动影响。
   } catch (e) {}
 }
 
@@ -773,12 +788,45 @@ function syncFloatHyalite() {
 
 /* 统一应用玻璃档位：glass-ui 总开关 + glass-mid/glass-low 档位类 + 帧率监测启停 */
 function applyGlassMode() {
-  const on = !!chatTheme.glassUI;
+  // 20261118：_glassAutoOff = 本次会话因卡顿临时关闭，只影响渲染，不改玩家的开关状态
+  const on = !!chatTheme.glassUI && !_glassAutoOff;
   document.body.classList.toggle('glass-ui', on);
   document.body.classList.toggle('glass-mid', on && _glassLevel === 'mid');
   document.body.classList.toggle('glass-low', on && _glassLevel === 'low');
   if (on && !document.body.classList.contains('low-end')) _glassFpsStart();
   else _glassFpsStop();
+}
+
+/* ============================================================
+   20261118：模拟通话玻璃精度（独立三档 hi / mid / low）
+   —— 作用范围只有通话玻璃：#call-box.call-glass、.modal.call-glass、.call-float。
+      不碰全局 glass-ui 开关，不碰其它弹窗，也不参与帧率自动降档。
+   —— 实现：给 body 挂 callg-mid / callg-low，CSS 里覆盖 .call-glass 的
+      backdrop-filter 与底色（见 style.css「模拟通话玻璃精度」段）。
+      hi 档不挂任何类，直接用原始写法 blur(28px) saturate(160%)。
+   —— 为什么默认 hi：通话是核心视觉场景，全局那套「卡了就降一档、最后连磨砂一起关」
+      的策略不该把通话一起吃进去。玩家想省电可以自己在美化设置里选低/中。
+   ============================================================ */
+/* 初始化通话玻璃档位：
+   —— 读 kv callGlassLevel：'hi'/'mid'/'low' = 玩家手动锁定的档位；'' 或没有 = 跟随系统。
+   —— 跟随系统时不写死 'hi'，而是用 glassBaseLevel()（按设备内存/核心数判定一次），
+      与全局玻璃三档的「设备基准」同一套标准；区别只是通话这一项**不参与帧率自动降档**。
+   —— 注意：这里刻意不读 chatTheme.glassUI / _glassLevel —— 通话玻璃与玻璃拟态总开关无关。 */
+async function initCallGlassLevel() {
+  try {
+    const v = await getSetting('callGlassLevel');
+    _callGlassManual = (v === 'hi' || v === 'mid' || v === 'low') ? v : '';
+  } catch (e) {
+    _callGlassManual = '';
+  }
+  _callGlassLevel = _callGlassManual || glassBaseLevel();
+  applyCallGlass();
+}
+
+/* 应用通话玻璃档位：mid/low 挂 body 类，hi 清除（回到原始 CSS） */
+function applyCallGlass() {
+  document.body.classList.toggle('callg-mid', _callGlassLevel === 'mid');
+  document.body.classList.toggle('callg-low', _callGlassLevel === 'low');
 }
 
 /* 帧率监测：rAF 每秒结算一次 fps；启动延迟 4 秒（避开启动重负载误判）；连续 3 秒 <45 触发降档 */
@@ -823,12 +871,14 @@ async function _glassDegrade() {
     applyGlassMode();
     miniToast('为保持流畅，磨砂效果已降低一档');
   } else {
-    chatTheme.glassUI = false;
-    try { await setSetting('chatTheme', chatTheme); } catch (e) {}
+    // 20261118：以前这里会把 chatTheme.glassUI 改成 false 并写进数据库，
+    //   于是“卡一次 → 永久普通模式”。现在只在本次会话打标记，玩家原本的开关不动。
+    _glassAutoOff = true;
     applyGlassMode();
-    miniToast('为了保持流畅，已为你切换至普通模式');
+    miniToast('为了保持流畅，本次已暂时关闭磨砂（刷新或重新勾选玻璃拟态即恢复）');
   }
-  try { await setSetting('glassAutoLevel', _glassLevel); } catch (e) {}
+  // 20261118：不再持久化降档结果（原 setSetting('glassAutoLevel', _glassLevel)），
+  //   刷新后一律回到设备判定档位，只有本次会话内再次卡顿才会再降。
 }
 
 /* ---------- 星光背景（11：保留星点动态效果；挑几颗做成大号四芒星，大小错落不一） ---------- */
@@ -3849,6 +3899,8 @@ function chatLoadOlder() {
     }
     // 哨兵重插（在最顶，锚点其后，不影响上面的补偿）
     chatRenderSentinel(scroll);
+    /* 20261118：补载上来的历史歌卡也要补封面。放在补偿之后调用，异步排队不会打断滚动锚点。 */
+    _paintSongCovers(scroll);
   } finally {
     w.busy = false;
   }
@@ -3885,6 +3937,7 @@ async function chatLoadOlderFromDB(w) {
     w.all = older.concat(w.all);
     w.end += older.length;
     chatRenderSentinel(scroll);
+    _paintSongCovers(scroll);   // 20261118：从库里补读上来的历史歌卡也要补封面
     scroll.scrollTop = top0 + (scroll.scrollHeight - h0);   // 内容长高了，视口跟着下移，视觉不动
   } finally {
     w.busy = false;
@@ -3959,6 +4012,7 @@ function maybeReclaimTop(scroll, w, force) {
      再减一次就会把视口推到离底部很远的地方，回收随即被「贴底」判断拦住、永远删不干净。 */
   scroll.scrollTop = Math.max(0, st0 - (h0 - scroll.scrollHeight));
   chatRenderSentinel(scroll);
+  _paintSongCovers(scroll);   // 20261118：底部补载的新歌卡也补封面（有缓存，不会重复请求）
   if (scroll.querySelectorAll('.msg-row').length > CHAT_MAX_DOM) {
     // 用定时器而不是 rAF：后台/省电模式下 rAF 会被节流甚至不触发，回收就会停在半路
     setTimeout(() => {
@@ -3970,6 +4024,96 @@ function maybeReclaimTop(scroll, w, force) {
 
 /* preMsgs：openChat 提前读好的该角色消息（20261112 消白屏用）。
    传了就不再重复读库；没传（或读失败传 null）就走原来的 await 读取。 */
+/* ============================================================
+   20261118：聊天页「音乐类卡片」封面补全（一起听歌 / 分享歌曲 / TA 想对你说 /
+   换歌候选 / 这首歌送给你 这几种卡，共用同一套封面位）
+   —— 问题背景：这些卡片的封面直接读消息 content.pic。而老歌单导入时 pic 就是空的，
+      或者歌是从音源搜来的、pic 只是转发地址，于是卡片永远只显示一个音符占位。
+   —— 做法：渲染时在「没有封面」的占位上打 data-need-cover + 歌名/歌手/可选网易云 id
+      （这三项是取图的全部线索）；消息挂进 DOM 之后统一扫一遍，逐个问 music.js 要封面。
+   —— 走哪条路取图由 music.js 内部的 ensureCover 按「当前模式」决定，本文件不重复判断：
+        后台遥控·直连 → 玩家自己的网易云账号（song/detail）
+        镜像搜索 / 本地 → 音源（GD 等）
+      这样「在相应模式下走相应的路子」这条规则只维护一份，不会两处判断跑偏。
+   —— 取到就地把占位换成 <img>；取不到原样保留音符占位，绝不出现破图。
+   —— 缓存：同名同歌手只查一次（失败也缓存），翻历史消息/切页重渲染不会反复打接口。
+   ============================================================ */
+const _coverPainted = new Map();   // '歌名|歌手' → 封面地址（'' 表示查过但没有，同样缓存）
+let _coverPainting = false;
+const _coverQueue = [];            // 待补封面的 DOM 节点队列（串行处理 + 轻限速）
+
+function _coverKeyOf(name, artist) {
+  return String(name || '').trim() + '|' + String(artist || '').trim();
+}
+
+/* 为一个占位节点取封面地址：先按 id，再按「歌名 + 歌手」搜一次 */
+async function _fetchCoverFor(node) {
+  const name = node.getAttribute('data-cv-name') || '';
+  const artist = node.getAttribute('data-cv-artist') || '';
+  const nid = node.getAttribute('data-cv-id') || '';
+  if (!name && !nid) return '';
+  const key = _coverKeyOf(name, artist);
+  if (_coverPainted.has(key)) return _coverPainted.get(key);
+  const M = window.bmMusic;
+  if (!M || typeof M.ensureCover !== 'function') return '';
+  let pic = '';
+  try {
+    // ① 有网易云 id：直接按 id 取（直连模式走账号，镜像模式走音源，由 ensureCover 内部决定）
+    if (nid) {
+      const s = await M.ensureCover({ id: nid, _neteaseId: nid, name, artist, pic: '' });
+      pic = (s && s.pic) || '';
+    }
+    // ② 没 id，或 ① 没拿到：按「歌名 歌手」搜一次，拿搜到的结果再取图
+    if (!pic && name && typeof M.search === 'function') {
+      const list = await M.search((name + ' ' + artist).trim());
+      const hit = Array.isArray(list) ? list[0] : null;
+      if (hit) {
+        const s2 = await M.ensureCover(hit);
+        pic = (s2 && s2.pic) || (hit.pic || '');
+      }
+    }
+  } catch (e) { pic = ''; }
+  _coverPainted.set(key, pic || '');
+  return pic || '';
+}
+
+/* 把占位换成真正的图片；尺寸由模板用 data-cv-style 传进来（一起听歌 44px、候选歌 36px） */
+function _applyCover(node, pic) {
+  if (!node || !pic || !node.parentNode) return;
+  const img = document.createElement('img');
+  img.src = pic;
+  img.setAttribute('referrerpolicy', 'no-referrer');   // 网易云图有防盗链，必须带
+  img.style.cssText = node.getAttribute('data-cv-style')
+    || 'width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);';
+  img.onerror = () => { img.style.visibility = 'hidden'; };   // 死链就藏起来，不留破图
+  node.replaceWith(img);
+}
+
+/* 扫描一棵子树里所有待补封面的占位，排队处理（root 省略 = 全文档） */
+function _paintSongCovers(root) {
+  const host = root || document;
+  let nodes;
+  try { nodes = Array.from(host.querySelectorAll('[data-need-cover]')); } catch (e) { return; }
+  if (!nodes.length) return;
+  // 先摘掉标记再排队，保证同一节点不会被重复处理
+  nodes.forEach(n => n.removeAttribute('data-need-cover'));
+  _coverQueue.push(...nodes);
+  if (_coverPainting) return;
+  _coverPainting = true;
+  (async () => {
+    let guard = 0;
+    while (_coverQueue.length && guard++ < 60) {   // 上限保护：一次最多 60 张，避免历史消息过多时刷接口
+      const n = _coverQueue.shift();
+      if (!n || !n.isConnected) continue;          // 已经被重新渲染掉的节点直接跳过
+      const pic = await _fetchCoverFor(n);
+      if (pic) _applyCover(n, pic);
+      await new Promise(r => setTimeout(r, 120));  // 轻限速：约每秒 8 个，避免撞网易云/音源频控
+    }
+    _coverQueue.length = 0;
+    _coverPainting = false;
+  })();
+}
+
 async function renderMessages(charId, preMsgs) {
   const scroll = $('#chat-scroll');
   // 数据乱串根治（用户 20260925 反馈）：群聊消息落库带 charId+groupId，之前这里只按 charId 取，
@@ -4007,6 +4151,7 @@ async function renderMessages(charId, preMsgs) {
   _chatWin.suspend = false;
   scrollToBottom();
   syncBubbleHyalite(); // 20261011：按气泡预设 2号挂 hyalite（watch 接管消息气泡）
+  _paintSongCovers(scroll); // 20261118：整屏渲染完统一给音乐类卡片补封面（异步排队，不阻塞首屏）
 }
 
 /* 消息头像（5.2/22：气泡旁显示发送者头像） */
@@ -4609,7 +4754,11 @@ function msgBodyHtml(m, oneLine = false) {
       const mc = m.content || {};
       /* 20261116：封面必须带 referrerpolicy —— 网易云的图直接请求会被防盗链打成破图，
          歌名/歌手/封面都打上 data 钩子，切歌时由 music.js 就地改写这一张卡。 */
-      const cover = mc.pic ? `<img data-mc-cover src="${imgSrcAttr(mc.pic, true)}" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);">` : `<span data-mc-cover style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
+      /* 20261118：没有封面时不再只丢一个音符占位——占位带上歌名/歌手/歌曲id，
+         交给 _paintSongCovers 在消息渲染后按当前模式补图（直连走账号、镜像走音源）。 */
+      const _cvStyle = 'width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);';
+      const cover = mc.pic ? `<img data-mc-cover src="${imgSrcAttr(mc.pic, true)}" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" style="${_cvStyle}">`
+        : `<span data-mc-cover data-need-cover data-cv-name="${escapeHtml(mc.name || '')}" data-cv-artist="${escapeHtml(mc.artist || '')}" data-cv-id="${escapeHtml(String(mc._neteaseId || mc.songId || ''))}" data-cv-style="${_cvStyle}" style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
       return `<div class="msg-card msg-music-card" data-music-card="${m.id}" style="cursor:pointer;">
         <span class="msg-card-tag"><i data-icon="music" data-size="16"></i> 一起听歌</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
@@ -4631,7 +4780,11 @@ function msgBodyHtml(m, oneLine = false) {
       /* 20261111：歌卡可以点开就播（角色主动分享的、玩家分享的都行）。
          「一起听歌已结束」那张（ended）不是歌，不给播放。 */
       const _playable = !mcc.ended && !!mcc.name;
-      const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" style="width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);">` : `<span style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
+      /* 20261118：分享歌曲卡 / 「TA 想对你说」卡 —— 这两张是同一条模板的两个文案分支，
+         封面位同样要能补：没有 pic 就把歌名/歌手/id 挂在占位上，渲染后统一补图。 */
+      const _mccStyle = 'width:44px;height:44px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);';
+      const cover = mcc.pic ? `<img src="${imgSrcAttr(mcc.pic, true)}" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" style="${_mccStyle}">`
+        : `<span data-need-cover data-cv-name="${escapeHtml(mcc.name || '')}" data-cv-artist="${escapeHtml(mcc.artist || '')}" data-cv-id="${escapeHtml(String(mcc._neteaseId || mcc.songId || ''))}" data-cv-style="${_mccStyle}" style="width:44px;height:44px;border-radius:8px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;"><i data-icon="music" data-size="19"></i></span>`;
       return `<div class="msg-card msg-music-card"${_playable ? ` data-song-play="${m.id}" style="cursor:pointer;"` : ''}>
         <span class="msg-card-tag">${_fromMe ? '<i data-icon="music" data-size="15"></i> 我把这首歌分享给你' : '<i data-icon="music" data-size="15"></i> 听到这首歌，TA 想对你说'}</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
@@ -4656,9 +4809,12 @@ function msgBodyHtml(m, oneLine = false) {
       const done = !!sp.answered;
       const pickedName = sp.pickedName || '';
       const rowHtml = songs.map((s, i) => {
+        /* 20261118：候选歌卡的封面同样要补——这种卡的歌是角色临时挑的，
+           多半没有 pic，占位上带歌名/歌手/id，渲染后由 _paintSongCovers 统一取图。 */
+        const _spStyle = 'width:36px;height:36px;border-radius:7px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);';
         const cover = s.pic
-          ? `<img src="${escapeHtml(imgSrc(s.pic, true))}" referrerpolicy="no-referrer" style="width:36px;height:36px;border-radius:7px;object-fit:cover;flex-shrink:0;background:var(--purple-glow);">`
-          : `<span style="width:36px;height:36px;border-radius:7px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i data-icon="music" data-size="13"></i></span>`;
+          ? `<img src="${escapeHtml(imgSrc(s.pic, true))}" referrerpolicy="no-referrer" style="${_spStyle}">`
+          : `<span data-need-cover data-cv-name="${escapeHtml(s.name || '')}" data-cv-artist="${escapeHtml(s.artist || '')}" data-cv-id="${escapeHtml(String(s._neteaseId || s.id || ''))}" data-cv-style="${_spStyle}" style="width:36px;height:36px;border-radius:7px;background:var(--purple-glow);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;"><i data-icon="music" data-size="13"></i></span>`;
         const isPicked = done && sp.picked === i;
         return `<div data-songidx="${i}" style="display:flex;align-items:center;gap:9px;margin-top:8px;padding:6px;border-radius:9px;background:${isPicked ? 'var(--purple-glow)' : 'transparent'};${done ? 'opacity:.62;' : 'cursor:pointer;'}">
             ${cover}
@@ -5354,7 +5510,12 @@ function appendMessage(m, scroll = true, container = null) {
     }
   }
 
-  if (scroll) scrollToBottom();
+  if (scroll) {
+    scrollToBottom();
+    /* 20261118：新消息（角色刚发的歌卡 / 玩家刚分享）挂上后立刻补封面。
+       传 scrollEl 而不是单条 row：批量补载时旧消息也会一起被扫到，统一走缓存不会重复请求。 */
+    _paintSongCovers(scrollEl);
+  }
 }
 
 /* ---------- 气泡操作菜单（引用 / 删除 / 转发 / 多选 / 撤回） ---------- */
@@ -20143,6 +20304,18 @@ async function showChatThemeModal() {
         <button class="btn call-preset-btn" data-p="2" style="padding:7px 13px;font-size:12px;">2号 · 液态玻璃</button>
       </div>
     </div>
+
+    <div class="field">
+      <label>模拟通话玻璃精度</label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">只控制模拟通话界面的磨砂强度，<b>与上方「玻璃拟态模式」完全无关</b>：那个是全局开关、卡顿会自动往下降；这一项默认「跟随系统」（按设备内存/核心数判定），也可以自己锁定。高=全磨砂 blur(28px)；中=模糊降到 14px；低=不用模糊、改半透明纯色卡片（最省电）。选 2号液态玻璃时本项不参与</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;" id="call-glass-pick">
+        <button class="btn call-glass-btn" data-tier="" style="padding:7px 13px;font-size:12px;">跟随系统</button>
+        <button class="btn call-glass-btn" data-tier="hi" style="padding:7px 13px;font-size:12px;">高精度</button>
+        <button class="btn call-glass-btn" data-tier="mid" style="padding:7px 13px;font-size:12px;">中精度</button>
+        <button class="btn call-glass-btn" data-tier="low" style="padding:7px 13px;font-size:12px;">低精度</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;" id="call-glass-now">当前：跟随系统</div>
+    </div>
     </section>
 
     <section class="dt-panel" data-dt-panel="气泡">
@@ -20323,6 +20496,7 @@ async function showChatThemeModal() {
   // 玻璃拟态模式开关（20260929bh：手动开启时清除自动降级记录，从设备判定重新开始）
   $('#theme-glass-ui').onchange = async () => {
     chatTheme.glassUI = $('#theme-glass-ui').checked;
+    _glassAutoOff = false; // 20261118：玩家手动操作开关，清掉"本次会话临时关闭"标记
     await setSetting('chatTheme', chatTheme);
     if (chatTheme.glassUI) {
       try { await setSetting('glassAutoLevel', ''); } catch (e) {}
@@ -20439,6 +20613,41 @@ async function showChatThemeModal() {
     };
   });
   _refreshAllPresets();
+
+  // 20261118：模拟通话玻璃精度四选一（跟随系统 / 高 / 中 / 低）。
+  //   与全局玻璃拟态完全独立：这里的类挂在 body 上的 callg-*，CSS 只作用于通话那三处玻璃。
+  const _callGlassTierName = (lv) => lv === 'hi' ? '高精度' : lv === 'mid' ? '中精度' : (lv === 'low' ? '低精度' : '跟随系统');
+  const refreshCallGlassUI = () => {
+    $$('#call-glass-pick .call-glass-btn').forEach(b => {
+      // data-tier="" 代表「跟随系统」；选中判定比的是玩家手动值（空=跟随系统）
+      const tier = b.dataset.tier || '';
+      const on = tier === (_callGlassManual || '');
+      b.style.outline = on ? '2px solid var(--purple-soft)' : 'none';
+      b.style.background = on ? 'var(--purple-soft)' : '';
+      b.style.color = on ? '#fff' : '';
+      b.style.fontWeight = on ? '600' : '400';
+    });
+    const now = $('#call-glass-now');
+    if (now) {
+      // 跟随系统时把「实际判成了哪一档」也写出来，玩家不用猜
+      const eff = _callGlassManual ? '' : ('（本机判定为' + _callGlassTierName(_callGlassLevel) + '）');
+      now.textContent = '当前：' + _callGlassTierName(_callGlassManual || '') + eff
+        + (_callPreset === '2' ? '（2号液态玻璃由源码驱动，本项不参与）' : '');
+    }
+  };
+  $$('#call-glass-pick .call-glass-btn').forEach(b => {
+    b.onclick = async () => {
+      const tier = b.dataset.tier || '';
+      _callGlassManual = tier;
+      _callGlassLevel = tier || glassBaseLevel();   // 跟随系统 → 现场按设备重新判一次
+      try { await setSetting('callGlassLevel', tier); } catch (e) {}
+      applyCallGlass();
+      refreshCallGlassUI();
+      miniToast('模拟通话玻璃已设为' + _callGlassTierName(tier || '')
+        + (tier ? '' : '（本机判定为' + _callGlassTierName(_callGlassLevel) + '）'));
+    };
+  });
+  refreshCallGlassUI();
 
   // 聊天字体（20260929af）：打开更换字体窗口
   $('#theme-font-btn').onclick = () => showChatFontModal('chat');
