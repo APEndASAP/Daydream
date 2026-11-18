@@ -2285,7 +2285,11 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
    ============================================================ */
 .call-float {
   position: fixed;
-  z-index: 300;
+  /* 20261117 修「进入音乐界面后模拟通话悬浮窗不见了」：
+     原来是 300，而听歌页 .bm-music-page 的 z-index 是 2147482990（全屏层），
+     相差七个数量级 → 通话小窗被音乐页整块盖住，看起来像"不显示"。
+     通话小窗是独立于音乐页的常驻浮层，必须压在音乐页之上（仍低于弹窗/提示层）。 */
+  z-index: 2147483012;
   background: rgba(28, 24, 36, 0.55);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
@@ -8975,6 +8979,15 @@ body.theme-light .bm-music-float .bm-float-mini {
 }
 body.theme-light .bm-music-float .bm-float-title { text-shadow: none; }
 body.theme-light .bm-music-float .bm-fly-line.on { text-shadow: none; }
+/* 20261117：浅色主题下「一级圆点」几乎看不见——
+   原来圆点底色取 --bm-ink-faint(#b8b2a2)，压在听歌页米色底(#f5f1e6)上对比度不到 1.3:1，
+   玩家反馈「音乐界面里根本没有悬浮窗」，实测它一直在，只是融进背景了。
+   浅色下改成强调紫底 + 白图标 + 白描边（有封面时封面图照样铺满，同一条规则不影响），任何底色都跳得出来。 */
+body.theme-light .bm-music-float.dot .bm-float-dot {
+  background: var(--bm-accent);
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(0,0,0,.28), 0 0 0 2px rgba(255,255,255,.9), 0 0 0 3px rgba(42,42,40,.10);
+}
 /* 20261104 修复「拖动悬浮窗把图片拖走」：悬浮窗/音乐页内所有图片禁止原生拖拽 + 禁止选中 */
 .bm-music-float img,
 .bm-music-page img {
@@ -9037,6 +9050,13 @@ body.theme-light .bm-music-float .bm-fly-line.on { text-shadow: none; }
 .bm-music-float.dot .bm-float-dot { display: flex; align-items: center; justify-content: center; font-size: 24px; color: var(--bm-ink); background: var(--bm-ink-faint); }
 .bm-music-float.dot .bm-float-card, .bm-music-float.dot .bm-float-mini { display: none; }
 @keyframes bm-dot-in { from { opacity: 0; transform: scale(.5); } to { opacity: 1; transform: scale(1); } }
+/* 20261117d：非「首次创建」的重建一律静音入场动画。
+   根因：renderFloat 每次都 fw.innerHTML 重建浮窗，圆点的 bm-dot-in 会随元素重建
+   从 opacity:0 重播；播放器每刷新一次就重播一次 → 玩家看到「悬浮窗一直在闪 / 像没有窗」。
+   由 music.js 在 !wasNew 时给容器加 .bm-float-noin。 */
+.bm-music-float.bm-float-noin .bm-float-dot,
+.bm-music-float.bm-float-noin .bm-float-mini,
+.bm-music-float.bm-float-noin .bm-float-card { animation: none; }
 
 /* 小卡（mini）：封面 + 歌名 + 滚动歌词 + 播放/暂停 + 关闭 */
 .bm-music-float.mini .bm-float-dot { display: none; }

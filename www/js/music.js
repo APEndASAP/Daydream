@@ -50,23 +50,41 @@ window.bmMusic = (function () {
          VIP 歌同样给整首，且响应头 Access-Control-Allow-Origin: *（WebView 里 fetch 不会被 CORS 拦）。
          20261105 那次「返回空数组」是它临时抽风，本轮已恢复，重新提回主源。 */
       name: '镜像路径 A（网易云·祈杰·整首）',
-      search: (kw) => `https://api.qijieya.cn/meting/?type=search&id=${encodeURIComponent(kw)}&limit=20&server=netease`,
+      /* 20261117：祈杰的**搜索**接口已死（实测任何关键词都返回 []，但 type=url / type=lrc 仍正常）。
+         搜索改走网易云官方 cloudsearch（App 内经 _nativeReq 原生 HTTP，绕 CORS），
+         取链与歌词继续用祈杰——这样「搜索」和「取链」解耦，祈杰不再拖累搜索。 */
+      search: (kw) => `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(kw)}&type=1&limit=20`,
       song: (song) => `https://api.qijieya.cn/meting/?server=netease&type=url&id=${encodeURIComponent(song.id)}`,
       lrc: (song) => `https://api.qijieya.cn/meting/?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
-      parseSearch: (j) => Array.isArray(j) ? j.map(x => {
-        // qijieya 的 id 藏在 url 参数里
-        let id = x.id || '';
-        if (!id && x.url) { try { id = new URL(x.url, 'https://x').searchParams.get('id') || ''; } catch (e) {} }
-        return {
-          id: id,
-          name: x.name || x.title || '',
-          artist: x.artist || x.singer || '',
-          album: x.album || '',
-          pic: x.pic || '',
-          url: x.url || '',
-          lrc: '', _lrcUrl: x.lrc || '',
-        };
-      }).filter(x => x.name) : [],
+      parseSearch: (j) => {
+        // 官方 cloudsearch：result.songs[]，字段是 ar / al，封面在 al.picUrl（http → https）
+        if (j && j.result && Array.isArray(j.result.songs)) {
+          return j.result.songs.map(x => ({
+            id: String(x.id || ''),
+            name: x.name || '',
+            artist: (x.ar || []).map(a => a.name).filter(Boolean).join(' / '),
+            album: (x.al && x.al.name) || '',
+            pic: String((x.al && x.al.picUrl) || '').replace(/^http:\/\//i, 'https://'),
+            url: '',
+            lrc: '',
+          })).filter(x => x.name && x.id);
+        }
+        // 兼容旧的 Meting 数组返回（万一上游恢复）
+        return Array.isArray(j) ? j.map(x => {
+          // qijieya 的 id 藏在 url 参数里
+          let id = x.id || '';
+          if (!id && x.url) { try { id = new URL(x.url, 'https://x').searchParams.get('id') || ''; } catch (e) {} }
+          return {
+            id: id,
+            name: x.name || x.title || '',
+            artist: x.artist || x.singer || '',
+            album: x.album || '',
+            pic: x.pic || '',
+            url: x.url || '',
+            lrc: '', _lrcUrl: x.lrc || '',
+          };
+        }).filter(x => x.name) : [];
+      },
       parseSong: (j) => {
         // type=url 返回 302 跳转，实际 fetch 会跟随到 mp3；这里兼容返回对象或字符串
         if (j && j.url) return { url: j.url, pic: '', lrc: '' };
@@ -111,34 +129,49 @@ window.bmMusic = (function () {
       parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' } : null,
       parseLrc: (j) => (j && j.lyric) ? j.lyric : (typeof j === 'string' ? j : ''),
     },
-    /* ========== 网易云第三源：Huibq（洛雪社区维护，SVIP 号池） ==========
-       来自洛雪音乐（LX Music）社区音源 huibq/latest.js，后端 lxmusicapi.onrender.com。
-       20261113 实测（320k 直链真实下载量字节）：
-         孤勇者(VIP) 10002KB / 词不达意 10411KB / 起风了 12732KB —— 全部整首；
-         晴天 这家回退成 155KB 短链，属个别歌缺失，不影响整体。
-       它只提供「按网易云歌曲 id 取直链」，没有搜索接口，所以搜索借祈杰的（同一套网易云 id 体系），
-       取链走它自己的号池——这正是备用链接的意义：祈杰取链被限时，搜索还在，直链可以绕到这家。
-       注意：后端跑在 onrender 免费实例，冷启动可能等十几秒且有限流（返回 code 5），
-       所以给 10s 超时、只做第二顺位，失败立即跳下一源。 */
+    /* ========== 网易云第四源：amarea（公开 Meting 部署，长期在线） ==========
+       20261117 逐首下载字节实测（同一首《孤勇者》VIP）：
+         qijieya 10,242,285 B 整首 ／ GD 10,242,285 B 整首 ／
+         amarea   720,813 B = 网易云官方 30 秒试听。
+       原因：能不能放 VIP 整首，取决于**服务端有没有配网易云 MUSIC_U cookie**。
+         qijieya 与 GD 都配了（qijieya 还带灰歌自动解灰），amarea 没配，只能拿官方试听。
+       所以定位很明确：**只做最后兜底**（排在 order 末位），普通歌它能给整首（实测 13.9MB），
+       VIP 歌给试听——有声音总比上一源彻底失败、整首播不了要好。
+       能力实测：CORS 已放开（Access-Control-Allow-Origin: *，网页端也能用）；
+         type=url 是 302 转发，必须跟到真实 mp3（所以标 needsResolve，由源循环统一解析）；
+         type=lrc 返回纯文本 LRC；type=search 该实例不支持（返回 unknown type），
+         搜索借官方 cloudsearch（同一套网易云 id 体系）。 */
     {
-      key: 'huibq',
-      timeout: 10000,
-      native: true,          // 只能走原生 HTTP：该后端不给 CORS 头，fetch 必被拦
-      headers: { 'X-Request-Key': 'share-v3' },
-      name: '镜像路径 C（网易云·Huibq·整首）',
-      search: (kw) => `https://api.qijieya.cn/meting/?type=search&id=${encodeURIComponent(kw)}&limit=20&server=netease`,
-      song: (song) => `https://lxmusicapi.onrender.com/url/wy/${encodeURIComponent(song.id)}/320k`,
-      lrc: (song) => `https://api.qijieya.cn/meting/?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
-      parseSearch: (j) => Array.isArray(j) ? j.map(x => {
-        let id = x.id || '';
-        if (!id && x.url) { try { id = new URL(x.url, 'https://x').searchParams.get('id') || ''; } catch (e) {} }
-        return { id, name: x.name || x.title || '', artist: x.artist || x.singer || '',
-                 album: x.album || '', pic: x.pic || '', url: '', lrc: '' };
-      }).filter(x => x.name) : [],
-      // code 0 才是成功；限流/取不到（code 2/5 等）一律当失败，交给下一个源
-      parseSong: (j) => (j && j.url && (j.code === 0 || j.code === undefined)) ? { url: j.url, pic: '', lrc: '' } : null,
+      key: 'amarea',
+      timeout: 8000,
+      needsResolve: true,      // type=url 是 302，必须解析成真实 mp3
+      name: '镜像路径 D（网易云·amarea·公用兜底）',
+      search: (kw) => `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(kw)}&type=1&limit=20`,
+      song: (song) => `https://api.amarea.cn/meting/?server=netease&type=url&id=${encodeURIComponent(song.id)}&br=320`,
+      lrc: (song) => `https://api.amarea.cn/meting/?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
+      parseSearch: (j) => {
+        if (j && j.result && Array.isArray(j.result.songs)) {
+          return j.result.songs.map(x => ({
+            id: String(x.id || ''),
+            name: x.name || '',
+            artist: (x.ar || []).map(a => a.name).filter(Boolean).join(' / '),
+            album: (x.al && x.al.name) || '',
+            pic: String((x.al && x.al.picUrl) || '').replace(/^http:\/\//i, 'https://'),
+            url: '', lrc: '',
+          })).filter(x => x.name && x.id);
+        }
+        return [];
+      },
+      parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' }
+        : (typeof j === 'string' && j ? { url: j, pic: '', lrc: '' } : null),
       parseLrc: (j) => (j && j.lrc) ? j.lrc : (typeof j === 'string' ? j : ''),
     },
+    /* ========== 20261117 已下线：Huibq（洛雪社区号池） ==========
+       实测 https://lxmusicapi.onrender.com/ 返回 503 + 页面文字
+       「This service has been suspended by its owner.」——**后端已被所有者停用**，
+       不是限流、也不是冷启动，任何 id 都取不到直链；它的搜索又借祈杰（同期也挂了），
+       等于搜索与取链双失效。整源移除，避免播放列表里出现「选了它永远播不了」的死源。
+       若日后恢复，可以从 .workbuddy/backup/20261117_音源修复/music.js.before 里取回原定义。 */
     // 副源：tang s01s（QQ 音乐开放接口），长期维护
     {
       key: 'tang',
@@ -446,7 +479,7 @@ window.bmMusic = (function () {
        paugram(link 即官方匿名地址)、qjqq(403)、tunefree(CF 拦)、vkeys(url 为 null)、
        nanorocky(418)、injahow、i-meto(401)。
        20261106：iTunes 只给 30 秒试听（full:false），不参与自动容灾，仅在玩家手动选源时使用。 */
-    const order = ['qijieya', 'huibq', 'gdstudio', 'kugou', 'kuwo', 'tang', 'qingyu', 'kfjie-wy'];
+    const order = ['qijieya', 'gdstudio', 'kugou', 'kuwo', 'tang', 'qingyu', 'kfjie-wy', 'amarea'];   // 20261117：huibq 停用；amarea 作最后兜底（无 cookie，VIP 仅试听）
     const sorted = order.map(k => all.find(s => s.key === k)).filter(Boolean);
     // 追加任何不在 order 里的源（如自定义源）；但 full:false 的 30 秒试听源(iTunes)自动模式跳过
     all.forEach(s => { if (order.indexOf(s.key) < 0 && s.full !== false) sorted.push(s); });
@@ -601,7 +634,13 @@ window.bmMusic = (function () {
                             : await _fetchJSON(src.song(song), src.timeout, src.headers);
         const d = src.parseSong(j);
         if (d && d.url) {
-          song.url = d.url;
+          /* 20261117：amarea 这类 Meting 源的 type=url 是 302 转发地址，
+             必须跟到真实 mp3 再交给播放器（WebView 对跨域 302 的跟随行为不统一）。 */
+          let _realUrl = d.url;
+          if (src.needsResolve) {
+            try { const r = await _resolveUrl(_realUrl); if (r) _realUrl = r; } catch (e) {}
+          }
+          song.url = _realUrl;
           if (d.pic) song.pic = d.pic;
           /* 20261117：把这一步解析出的歌词转发地址接到 song 上，
              否则 _fetchLrcText 只能退回 src.lrc() 的「按歌名重搜」兜底（拿不到歌词）。 */
@@ -637,10 +676,36 @@ window.bmMusic = (function () {
      所以顺序固定为：官方 song/detail（最准）→ GD types=pic（必须用 pic_id）。
      注意：只有网易云 id 体系的源才能问 detail，酷狗/酷我 的纯数字 id 是另一套，
            拿它问网易云会串成**别的歌的封面**（比没图更糟），所以用 isNetease 把关。 */
-  async function _ensureCover(song, isNetease) {
+  async function _ensureCover(song, isNetease, force) {
     if (!song) return song;
-    if (String(song.pic || '').trim()) return song;   // 已有封面先信它（坏图由 _toNativeImg 的失败缓存处理）
+    /* force = true 时不信任现有 pic（重抓封面用：旧地址可能早就 404 了） */
+    if (!force && String(song.pic || '').trim()) return song;
     const nid = String(song._neteaseId || (isNetease ? song.id : '') || '').trim();
+    /* 20261117e 修「导入的新歌单没有封面，歌词/播放都正常」：
+       导入歌单存的是「网易云歌曲 id」，没有搜索才有的 _picId，所以原来只能落到官方
+       song/detail（要登录态那条桥），这条一旦不通用就永远没封面。
+       实测 GD 的 types=pic 直接吃**歌曲 id**：types=pic&source=netease&id=186016&size=600
+       → p2.music.126.net/…/186016.jpg?param=600y600，不需要登录态。
+       所以先按歌曲 id 问 GD，拿到就返回，任何模式/任何来源都能出封面。 */
+    if (nid && /^\d+$/.test(nid)) {
+      try {
+        const pj = await _fetchJSON(`https://music-api.gdstudio.xyz/api.php?types=pic&source=netease&id=${encodeURIComponent(nid)}&size=600`, 5000);
+        if (pj && pj.url) {
+          song.pic = String(pj.url).replace(/^http:\/\//i, 'https://');
+          return song;
+        }
+      } catch (e) {}
+    }
+    const picId = String(song._picId || '').trim();
+    if (picId) {
+      try {
+        const pj = await _fetchJSON(`https://music-api.gdstudio.xyz/api.php?types=pic&source=netease&id=${encodeURIComponent(picId)}&size=600`, 5000);
+        if (pj && pj.url) {
+          song.pic = String(pj.url).replace(/^http:\/\//i, 'https://');
+          return song;
+        }
+      } catch (e) {}
+    }
     if (nid) {
       try {
         const dj = await _netEaseReq('https://music.163.com/api/song/detail?ids=[' + encodeURIComponent(nid) + ']');
@@ -651,17 +716,10 @@ window.bmMusic = (function () {
         }
       } catch (e) {}
     }
-    const picId = String(song._picId || '').trim();
-    if (picId) {
-      try {
-        const pj = await _fetchJSON(`https://music-api.gdstudio.xyz/api.php?types=pic&source=netease&id=${encodeURIComponent(picId)}&size=300`, 5000);
-        if (pj && pj.url) song.pic = String(pj.url).replace(/^http:\/\//i, 'https://');
-      } catch (e) {}
-    }
     return song;
   }
   /* 这些源的 id 就是网易云歌曲 id，可以直接问网易云接口 */
-  const _NETEASE_ID_SOURCES = ['qijieya', 'meting', 'gdstudio', 'huibq', 'qingyu', 'kfjie-wy', 'netease-direct'];
+  const _NETEASE_ID_SOURCES = ['qijieya', 'meting', 'gdstudio', 'qingyu', 'kfjie-wy', 'amarea', 'netease-direct'];   // 20261117：huibq 已下线，amarea 补入
 
   // 统一拉歌词：优先按「转发地址文本」抓，失败再走 JSON 解析
   async function _fetchLrcText(src, song) {
@@ -861,21 +919,42 @@ window.bmMusic = (function () {
         // 网易云歌单：qijieya Meting playlist 接口（近期搜索/直链接口不稳，playlist 仍可用）
         const j = await _fetchJSON(`https://api.qijieya.cn/meting/?server=netease&type=playlist&id=${encodeURIComponent(id)}`);
         if (Array.isArray(j) && j.length) {
-          return j.map(x => ({
+          const tracks = j.map(x => ({
             id: 'pl_' + uid('mh'),
             name: x.name || '',
             artist: x.artist || '',
             album: x.album || '',
-            pic: '',   // qijieya pic 转发地址已失效，留空，播放时按名重搜
+            pic: '',   // qijieya pic 转发地址已失效，留空；下面导入时统一按歌曲 id 补封面
             url: '',   // 播放时按「歌名+歌手」用酷我源搜真实直链
             lrc: '',
             _neteaseId: extractNeteaseId(x),
           })).filter(x => x.name);
+          /* 20261117e 修「导入的新歌单能播、有词、就是没封面」根因：
+             这条歌单接口只给歌名/歌手，pic 一直是空的（原来的注释就写着「留空」）。
+             实测 GD 的 types=pic 直接吃歌曲 id（不需要登录态），所以导入时就把封面补上，
+             不用等玩家点重抓，也不管他之后用镜像/直连/本地哪个模式。 */
+          await _fillCoversForImport(tracks);
+          return tracks;
         }
       }
       // 其他平台暂未接入歌单接口，返回空
       return [];
     } catch (e) { return []; }
+  }
+  /* 20261117e：导入歌单时批量补封面（并发 6，几十首也就一两秒）。
+     只对「有网易云 id、当前没封面」的曲目发请求；失败静默跳过，之后重抓还能补。 */
+  async function _fillCoversForImport(tracks) {
+    const list = (tracks || []).filter(t => t && !String(t.pic || '').trim() && String(t._neteaseId || t.id || '').trim());
+    if (!list.length) return;
+    let idx = 0;
+    const worker = async () => {
+      while (idx < list.length) {
+        const t = list[idx++];
+        try { await _ensureCover(t, true, true); } catch (e) {}
+      }
+    };
+    const n = Math.min(6, list.length);
+    await Promise.all(Array.from({ length: n }, worker));
   }
   function extractNeteaseId(x) {
     // 从 qijieya 的 url/lrc 转发地址里挖出网易云歌曲 id（用于后续拉歌词）
@@ -1558,9 +1637,18 @@ window.bmMusic = (function () {
   function saveSession() {
     try {
       const cur = state.current;
+      /* 20261117g：会话存档必须保留「来源」与「网易云 id」。
+         原来这里只存 id/name/artist/album/pic/url/lrc，把 source、_neteaseId、_picId 全丢了。
+         后果：重启后列表里的歌再也认不出是镜像还是直连、也没有可用的网易云 id，
+         补封面/补歌词/重抓全部失效 —— 这就是「重抓一次好了，退出重进又没封面」的根因之一。 */
+      const keep = (s) => ({
+        id: s.id, name: s.name, artist: s.artist || '', album: s.album || '',
+        pic: s.pic || '', url: s.url || '', lrc: s.lrc || '',
+        source: s.source || '', _neteaseId: s._neteaseId || s._picId || '', needResolve: !!s.needResolve,
+      });
       const data = {
-        current: cur ? { id: cur.id, name: cur.name, artist: cur.artist || '', album: cur.album || '', pic: cur.pic || '', url: cur.url || '', lrc: cur.lrc || '' } : null,
-        playlist: (state.playlist || []).map(s => ({ id: s.id, name: s.name, artist: s.artist || '', album: s.album || '', pic: s.pic || '', url: s.url || '', lrc: s.lrc || '' })),
+        current: cur ? keep(cur) : null,
+        playlist: (state.playlist || []).map(keep),
         playIndex: state.playIndex,
         playMode: state.playMode,
         crossfade: !!state.crossfade,   // 20261106：智能过渡开关持久化
@@ -1630,6 +1718,7 @@ window.bmMusic = (function () {
     _netEaseLyric,      // 20261107 暴露给闭包2：后台遥控模式拿外部 title/artist 搜歌后补拉歌词
     search,
     fetchSongDetail,
+    ensureCover: _ensureCover,   // 20261117e：暴露给渲染模块（重抓时统一补封面，跨 IIFE 只能走挂载点）
     parsePlaylistLink,
     expandNeteaseShortLink,
     extractNeteasePlaylistId,
@@ -3428,7 +3517,16 @@ window.bmMusicUI = (function () {
       const et = String(((_liveExternal && _liveExternal.title) || '')).trim();
       const ea = String(((_liveExternal && _liveExternal.artist) || '')).trim();
       if (et) { try { await _refreshExternalLyric(et, ea, { force: true }); } catch (e2) {} }
-      const cov = String(((_liveExternal && _liveExternal.cover) || ''));
+      let cov = String(((_liveExternal && _liveExternal.cover) || ''));
+      /* 20261117e：外部 App 的媒体会话常常不带封面（很多播放器不回 artwork），
+         这时改用「重抓时搜到的网易云歌曲 id」补一张 —— 和直连/镜像用的是同一个 600 图。 */
+      if (!cov && _extSongMeta && _extSongMeta.id) {
+        try {
+          const tmp = { _neteaseId: String(_extSongMeta.id), pic: _extSongMeta.pic || '' };
+          if (M.ensureCover) await M.ensureCover(tmp, true, true);
+          if (tmp.pic) { cov = tmp.pic; _extSongMeta.pic = tmp.pic; }
+        } catch (eC) {}
+      }
       if (cov) { try { _pushNativeCoverOnly(cov); } catch (e3) {} }
       try { if (nativeFloat()) pushNativeState(false); } catch (e4) {}
       try { refreshPlayerUI(); } catch (e5) {}
@@ -3460,28 +3558,40 @@ window.bmMusicUI = (function () {
     const slow = setTimeout(() => {
       if (_refreshBusy && window.miniToast) miniToast(`正在重抓 ${pl.length} 首歌的歌词与播放地址…`);
     }, 700);
-    let ok = 0, lrcOk = 0, urlOk = 0, curFull = null;
+    let ok = 0, lrcOk = 0, urlOk = 0, picOk = 0, curFull = null;
     for (let i = 0; i < pl.length; i++) {
       const s = pl[i];
       try {
         const hadUrl = s.url || '';
         s.lrc = '';                        // 清掉旧歌词，逼 fetchSongDetail 重抓
-        /* 20261116：网易云直连的歌把 pic 也清掉 —— 旧歌单里存的是失效封面地址
-           （实测 404），不清就永远不会重取 detail 的正确图。 */
-        if (s.source === 'netease-direct' || s._neteaseId) s.pic = '';
+        /* 20261117e：封面也一并重抓 —— 每个模式、每一首，不再只清 netease-direct。
+           玩家实测：新导入的歌单能播、有词，就是没封面；点重抓也只补词和地址。 */
+        s.pic = '';
         const full = await M.fetchSongDetail(s);
         if (full) {
           ok++;
           if (full.url) urlOk++;
           if (full.lrc) lrcOk++;
+          /* 详情里没带封面（导入歌单很常见）→ 单独走统一补封面（GD 按歌曲 id 取，无需登录态）。
+             force=true：不信旧 URL，一律重新取一次。 */
+          if (!s.pic && window.bmMusic && typeof window.bmMusic.ensureCover === 'function') {
+            try { await window.bmMusic.ensureCover(s, true, true); } catch (eC) {}
+          }
+          if (s.pic) picOk++;
           if (M.state.current && String(M.state.current.id) === String(s.id)) {
             if (full.lrc) M.state.current.lrc = full.lrc;
             if (full.url) M.state.current.url = full.url;
-            if (full.pic) M.state.current.pic = full.pic;
+            if (s.pic) M.state.current.pic = s.pic;   // 用实际补到的封面（可能是 ensureCover 的结果）
             M.state.lyrics = '';           // 清掉遥控/旧歌残留的歌词缓存
             curFull = full;
           }
-        } else if (hadUrl) { ok++; urlOk++; }
+        } else if (hadUrl) {
+          ok++; urlOk++;
+          if (!s.pic && window.bmMusic && typeof window.bmMusic.ensureCover === 'function') {
+            try { await window.bmMusic.ensureCover(s, true, true); } catch (eC2) {}
+          }
+          if (s.pic) picOk++;
+        }
       } catch (e) {}
       if (pl.length > 5 && (i + 1) % 5 === 0 && i + 1 < pl.length) {
         if (window.miniToast) miniToast(`重抓中… ${i + 1}/${pl.length}`);
@@ -3498,9 +3608,39 @@ window.bmMusicUI = (function () {
       }
     } catch (e6) {}
     try { refreshPlayerUI(); } catch (e) {}
+    /* 20261117g：重抓只改内存 = 白抓。
+       以前这里没有任何持久化，玩家退出音乐页/重启 App 后 playlist 从 bmMusicSession 恢复，
+       重抓到的封面/歌词全没了 —— 观感就是「点了重抓还是没封面」。
+       这里补一次会话存档。 */
+    try { if (M.saveSession) M.saveSession(); } catch (e8) {}
+    /* 20261117g：音乐库（收藏的曲库）也要补封面与歌词。
+       重抓此前只遍历「播放列表」，库里的歌永远补不到（玩家要求：音乐库每首歌都要有封面）。
+       只处理缺封面或缺词的记录，已有内容不动；用 addLocalTrack 按 id 覆盖回库。 */
+    let libDone = 0, libTotal = 0;
+    try {
+      const pool = [];
+      for (const src of ['mirror', 'local', 'visitor']) {
+        try { const l = await M.getLocalLibrary(src); if (l && l.length) pool.push(...l); } catch (e0) {}
+      }
+      const need = pool.filter(x => x && x.name && (!String(x.pic || '').trim() || !String(x.lrc || '').trim()));
+      libTotal = need.length;
+      for (let i = 0; i < need.length; i++) {
+        const s = need[i];
+        try {
+          if (!String(s.url || '').trim() || !String(s.lrc || '').trim()) {
+            try { const f = await M.fetchSongDetail(s); if (f && f.lrc) s.lrc = f.lrc; if (f && f.url) s.url = f.url; } catch (e1) {}
+          }
+          if (!String(s.pic || '').trim() && M.ensureCover) {
+            try { await M.ensureCover(s, true, false); } catch (e2) {}
+          }
+          if (String(s.pic || '').trim() || String(s.lrc || '').trim()) { await M.addLocalTrack(s); libDone++; }
+        } catch (e3) {}
+        if (need.length > 8 && (i + 1) % 8 === 0 && window.miniToast) miniToast(`重抓中… 音乐库 ${i + 1}/${need.length}`);
+      }
+    } catch (e) {}
     /* 20261117：重抓完把自愈额度清零，否则之后切到这些歌时不再补词 */
     try { if (window.bmMusic && window.bmMusic._resetHealQuota) window.bmMusic._resetHealQuota(); } catch (e7) {}
-    if (window.miniToast) miniToast(`${_nm} · 重抓完成 ${ok}/${pl.length} 首 · 歌词 ${lrcOk} · 地址 ${urlOk}`);
+    if (window.miniToast) miniToast(`${_nm} · 重抓完成 ${ok}/${pl.length} 首 · 歌词 ${lrcOk} · 封面 ${picOk} · 地址 ${urlOk}${libTotal ? ` · 音乐库 ${libDone}/${libTotal}` : ''}`);
   }
 
   /* 20261104：「邀请一起听」按钮——不依赖当前有没有歌，直接弹角色选择器，
@@ -4011,6 +4151,17 @@ window.bmMusicUI = (function () {
       showFloatPanel(floatBtn);
     };
     syncFloatBtn();
+    /* 20261117b：进听歌页时主动把悬浮窗补一次。
+       以前这一页完全不管悬浮窗状态：只要浮窗在别处被收起/被系统杀掉/原生切档失败，
+       进音乐页后就一直空着（玩家反馈「音乐界面里软件内那个窗就是不显示」）。
+       renderFloat 是幂等的：该在就在、该走原生就走原生、原生不可用还会回落软件内。 */
+    setTimeout(function () { try { renderFloat(); } catch (e) {} }, 60);
+    /* 20261117c：光补一次还不够 —— 玩家实测「进了听歌页浮窗就没了，退出页面它自己又回来」，
+       说明有某个时机在页面打开后把它收走了（或摆到了看不见的地方），而退出时又被重新渲染。
+       这里加一个只在听歌页存续期间运行的看守：每 1.5 秒核对一次浮窗是否「真的看得见」
+       （在 DOM、有尺寸、在视口内、层级高过听歌页），不合格就重新渲染。
+       页面一关看守自动停，不影响其它页面。 */
+    _startFloatWatchdog();
     // 评论按钮：弹评论面板（角色点评 + 玩家写评论）
     overlay.querySelector('#bm-music-comment').onclick = () => showCommentPanel();
     // 分享按钮：把当前这首歌**分享给某个梦角**（发一张歌卡到聊天里，20261110 改）
@@ -5454,16 +5605,65 @@ window.bmMusicUI = (function () {
     return j.playlist.map(p => ({ id: String(p.id), name: p.name || '', cover: String(p.coverImgUrl || '').replace(/^http:\/\//i, 'https://'), count: p.trackCount || 0 }));
   }
   // 直连读某张歌单的歌曲列表
-  async function _netEasePlaylistTracks(pid) {
+  /* 20261117i：导入专用「一次抓全」——网易云直连歌的三件套并行取：
+     直链（本闭包 _netEaseSongUrl，有无 VIP 整首取决于登录态）+ 封面（song/detail）+ 歌词（闭包1 的 _netEaseLyric）。
+     三路 Promise.all 并行，单首约 300ms；任一路失败不影响另外两路，封面最后再走 ensureCover 兜一层。
+     ⚠️ 必须走 M.xxx 挂载点，不能直接写 _fillCoversForImport / _netEaseLyric ——
+     它们定义在闭包1（bmMusic，行 8-1751），这个闭包看不见，裸调只会抛 ReferenceError 并被 catch 吞掉。
+     这正是以前「导入后整张歌单没封面」的隐藏原因之一。 */
+  async function _fetchDirectMeta(song) {
+    if (!song) return song;
+    const id = String(song._neteaseId || '').trim();
+    if (!id) return song;
+    const jobs = [];
+    jobs.push((async () => {
+      try { const u = await _netEaseSongUrl(id); if (u && u.url) song.url = u.url; } catch (e) {}
+    })());
+    jobs.push((async () => {
+      try {
+        const dj = await _netEaseReq('https://music.163.com/api/song/detail?ids=[' + id + ']');
+        const s0 = dj && dj.songs && dj.songs[0];
+        const dp = s0 && s0.album && s0.album.picUrl;
+        if (dp) song.pic = String(dp).replace(/^http:\/\//i, 'https://');
+      } catch (e) {}
+    })());
+    jobs.push((async () => {
+      try { const t = await M._netEaseLyric(id); if (t) song.lrc = t; } catch (e) {}
+    })());
+    await Promise.all(jobs);
+    if (!String(song.pic || '').trim()) { try { await M.ensureCover(song, true, true); } catch (e) {} }
+    if (song.pic) song.pic = String(song.pic).replace(/^http:\/\//i, 'https://');
+    return song;
+  }
+
+  async function _netEasePlaylistTracks(pid, opts) {
     const j = await _netEaseReq('https://music.163.com/api/playlist/detail?id=' + pid);
     if (!j || !j.result || !j.result.tracks) return [];
-    return j.result.tracks.map(t => ({
+    const list = j.result.tracks.map(t => ({
       id: String(t.id),
       name: t.name || '',
       artist: (t.ar && t.ar.length) ? t.ar.map(a => a.name).join(' / ') : '',
       pic: (t.al && t.al.picUrl) ? String(t.al.picUrl).replace(/^http:\/\//i, 'https://') : '',
       source: 'netease-direct',
     }));
+    /* 20261117i 修跨闭包 ReferenceError：_fillCoversForImport 定义在闭包1（bmMusic），
+       这个闭包根本看不见它 —— 这一行以前每次都抛错并被 catch 吞掉，等于封面从来没被补过。
+       现在改走挂载点 M.ensureCover（闭包1 已导出），6 路并发。
+       20261117i：导入流程自己会 _fetchDirectMeta 一次抓全，传 skipFill 就跳过这里。 */
+    if (!(opts && opts.skipFill)) {
+      try {
+        const need = list.filter(x => x && !String(x.pic || '').trim() && x.id);
+        let c = 0;
+        const w = async () => {
+          while (c < need.length) {
+            const it = need[c++];
+            try { await M.ensureCover(it, true, true); } catch (e) {}
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(6, need.length) }, w));
+      } catch (e) {}
+    }
+    return list;
   }
   // 20261107：weapi 加密请求（POST + params/encSecKey），用于网易云「每日推荐/私人FM」等
   //   需要登录 + weapi 加密的 /weapi/ 接口。原生插件 weapiEncrypt 做加密，neteaseRequest 发 POST。
@@ -5546,6 +5746,13 @@ window.bmMusicUI = (function () {
               <div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.name)}</div><div style="font-size:11px;color:var(--text-tertiary);">${p.count} 首</div></div>
             </label>`).join('')}
         </div>
+        <!-- 20261117i 导入进度条：逐首抓取时实时推进，切后台也继续（网络回调驱动，不依赖定时器） -->
+        <div id="bm-neimport-prog" style="display:none;margin-top:12px;">
+          <div style="height:6px;background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden;">
+            <div id="bm-neimport-bar" style="height:100%;width:0%;background:var(--purple,#7c5cf0);transition:width .25s;"></div>
+          </div>
+          <div id="bm-neimport-tip" style="font-size:11px;color:var(--text-tertiary);margin-top:6px;line-height:1.5;"></div>
+        </div>
         <div style="display:flex;gap:10px;margin-top:12px;">
           <button class="btn" style="flex:1;" id="bm-neimport-cancel">取消</button>
           <button class="btn primary" style="flex:1;" id="bm-neimport-ok">导入</button>
@@ -5567,34 +5774,70 @@ window.bmMusicUI = (function () {
       const checked = Array.from(listBox.querySelectorAll('.bm-neimport-cb:checked'));
       if (!checked.length) { if (window.miniToast) miniToast('请先勾选要导入的歌单'); return; }
       const btn = sub.querySelector('#bm-neimport-ok'); btn.disabled = true; btn.textContent = '导入中…';
-      let imported = 0, failed = 0;
+      const progWrap = sub.querySelector('#bm-neimport-prog');
+      const bar = sub.querySelector('#bm-neimport-bar');
+      const tip = sub.querySelector('#bm-neimport-tip');
+      if (progWrap) progWrap.style.display = '';
+      /* 20261117i 导入改造（玩家本轮要求）：
+         ① 进度条实时推进，不再只有一句「导入中…」；
+         ② 3 路并发，旧实现逐首串行；
+         ③ 一次抓全：封面 + 直链 + 歌词在导入阶段就取好并落库 ——
+            以前只补封面，直链和歌词要等「播放那一刻」才抓，所以会出现「有封面但点了才转圈」；
+         ④ 后台继续：全程靠网络回调推进，不用短定时器，切后台/锁屏也照跑；
+         ⑤ 结果如实报「封面 / 可播 / 歌词」，没会员拿不到直链的算进「暂无直链」，不假装全能放。 */
+      const job = { total: 0, done: 0, pic: 0, url: 0, lrc: 0 };
+      const paint = () => {
+        const pct = job.total ? Math.round(job.done * 100 / job.total) : 0;
+        if (bar) bar.style.width = pct + '%';
+        if (tip) tip.textContent = `${job.done}/${job.total} 首 · 封面 ${job.pic} · 可播 ${job.url} · 歌词 ${job.lrc}`;
+      };
+      const groups = [];
+      let failedPl = 0;
+      if (tip) tip.textContent = '正在读取歌单曲目…';
+      // 第一段：读全曲目列表（决定进度条分母）
       for (const cb of checked) {
         const pid = cb.dataset.id, name = cb.dataset.name, cover = cb.dataset.cover || '';
         try {
-          const tracks = await _netEasePlaylistTracks(pid);
-          if (!tracks || !tracks.length) { failed++; continue; }
-          // 每首歌存进音乐库曲库（kind:'local'，source:'netease-direct'，播放时联网取直链）
-          const rec = await M.createPlaylist(name + '（网易云）', cover);
-          if (!rec) { failed++; continue; }
-          for (const t of tracks) {
-            // 20261106 修复「导入歌单无封面」：网易云 playlist/detail 老接口返回的 al.picUrl
-            //   可能为空或字段缺失，这里逐首用 song/detail 接口兜底补封面，导入后列表即有封面。
-            let pic = t.pic || '';
-            if (!pic && t.id) {
-              try {
-                const dj = await _netEaseReq('https://music.163.com/api/song/detail?ids=[' + t.id + ']');
-                const s0 = dj && dj.songs && dj.songs[0];
-                if (s0 && s0.album && s0.album.picUrl) pic = String(s0.album.picUrl).replace(/^http:\/\//i, 'https://');
-              } catch (e) {}
-            }
-            const saved = await M.addLocalTrack({ name: t.name, artist: t.artist, pic: pic, url: '', source: 'netease-direct', _neteaseId: t.id });
-            if (saved) await M.addToPlaylist(rec.id, saved.id);
+          const tracks = await _netEasePlaylistTracks(pid, { skipFill: true });
+          if (!tracks || !tracks.length) { failedPl++; continue; }
+          groups.push({ name, cover, tracks });
+          job.total += tracks.length;
+        } catch (e) { failedPl++; }
+      }
+      paint();
+      // 第二段：每张歌单建好后，3 路并发逐首抓全并入曲库
+      let imported = 0;
+      for (const g of groups) {
+        const rec = await M.createPlaylist(g.name + '（网易云）', g.cover);
+        if (!rec) { failedPl++; continue; }
+        let cursor = 0;
+        const worker = async () => {
+          for (;;) {
+            const i = cursor++;
+            if (i >= g.tracks.length) return;
+            const t = g.tracks[i];
+            try {
+              const meta = { name: t.name, artist: t.artist, pic: t.pic || '', url: '', lrc: '', source: 'netease-direct', _neteaseId: String(t.id) };
+              await _fetchDirectMeta(meta);
+              if (meta.pic) job.pic++;
+              if (meta.url) job.url++;
+              if (meta.lrc) job.lrc++;
+              const saved = await M.addLocalTrack(meta);
+              if (saved) await M.addToPlaylist(rec.id, saved.id);
+            } catch (e) {}
+            job.done++; paint();
           }
-          imported++;
-        } catch (e) { failed++; }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+        imported++;
       }
       sub.remove();
-      if (window.miniToast) miniToast(`已导入 ${imported} 张歌单` + (failed ? `，${failed} 张失败` : '') + '，可在音乐库「歌单」里查看');
+      if (window.miniToast) {
+        const bad = job.total - job.url;
+        miniToast(`已导入 ${imported} 张歌单 · 共 ${job.total} 首 · 封面 ${job.pic} · 歌词 ${job.lrc}` +
+          (bad > 0 ? ` · ${bad} 首暂无直链（可能需网易云会员）` : ' · 全部可播') +
+          (failedPl ? ` · ${failedPl} 张歌单读取失败` : ''));
+      }
     };
   }
 
@@ -5761,7 +6004,125 @@ window.bmMusicUI = (function () {
     M.state.playIndex = 0;
     try { await M.play(fulls[0]); } catch (e) {}
     if (say) say(`开启了音乐漫游，随机漫游 ${fulls.length} 首`);
+    // 20261117：开漫游即挂上「无限续推」——播到列表末尾附近自动再抓一批新歌追加。
+    _roamOn = true;
+    _roamRef = M.state.playlist;
+    _roamKeepAlive();
   }
+
+  /* 20261117 修「网易云直连的漫游只在一批里循环、不续推新歌」
+     原因：原 _roamPlay 一次只抓 15 首塞进 state.playlist 就收工，之后不管是随机、
+     顺序还是循环，都只在这 15 首里打转，永远不会有新歌。
+     事实：网易云「私人FM」接口（/v1/radio/get）本来就是无限推送的，每次调用都给一批新歌。
+     做法：漫游开启后每 3 秒看一眼播放位置，快到列表末尾（还剩 ≤2 首）就异步再抓一批 append 进去。
+       · 去重：已经在列表里的 id 不再加
+       · 私人FM 拿不到（未登录/取链失败）时落回官方榜单歌单，和首次开漫游同一套来源
+       · 单曲循环是玩家主动选择，不续拉
+       · 全程不阻塞播放：续拉在后台跑，抓完只是把列表变长，当前这首照常播 */
+  let _roamOn = false;
+  let _roamRefilling = false;
+  let _roamTimer = null;
+  let _roamRef = null;      // 开启漫游时的列表引用：一旦被换成别的歌单（引用变了）就自动停续拉
+  /* 20261117f 耗电根因（漫游）：续拉失败时列表长度不变，「快播到末尾」条件永远成立，
+     于是每 3 秒重跑一整圈（4 轮私人FM + 逐首取直链 + 3 个歌单×20 首），几十个请求永不停止。
+     真机上这就是「多耗 200mA」的持续电流，还会被服务端限流，越拉越拉不到。
+     下面两个变量用于「失败后退避」，并且连续失败若干次就彻底停掉，不再打网络。 */
+  let _roamEmptyStreak = 0;         // 连续「一首新歌都没拉到」的次数
+  let _roamCooldownUntil = 0;       // 退避截止时间戳：未到点不重试
+  async function _roamRefill() {
+    if (_roamRefilling) return;
+    _roamRefilling = true;
+    try {
+      const seen = new Set((M.state.playlist || []).map(s => String(s.id)));
+      const got = [];
+      /* 20261117f：单次续拉的「取直链」总次数上限。
+         以前只要拿不到直链就把 FM 返回的每一首都试一遍（20 首 × 4 轮），
+         再叠加兜底歌单 3×20 首 —— 一次续拉最多几十上百个请求。
+         真正能播的歌通常前几首就命中，试到 12 次还没有就本轮放弃，交给退避。 */
+      const URL_TRY_MAX = 12;
+      let urlTries = 0;
+      for (let round = 0; round < 4 && got.length < 8; round++) {
+        let fm = [];
+        try { fm = await _netEasePersonalFm(); } catch (e) { fm = []; }
+        if (!fm || !fm.length) break;
+        for (const s of fm) {
+          if (got.length >= 8 || urlTries >= URL_TRY_MAX) break;
+          if (seen.has(String(s.id))) continue;
+          urlTries++;
+          const u = await _netEaseSongUrl(s.id);
+          if (u && u.url) { seen.add(String(s.id)); got.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' }); }
+        }
+        if (urlTries >= URL_TRY_MAX) break;
+      }
+      if (!got.length) {
+        const ids = [..._roamOfficialIds];
+        for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+        for (const pid of ids.slice(0, 3)) {
+          if (urlTries >= URL_TRY_MAX) break;      // 20261117f：兜底分支同样受总次数上限约束
+          let tracks = [];
+          try { tracks = await _netEasePlaylistTracks(pid); } catch (e) { tracks = []; }
+          if (!tracks || !tracks.length) continue;
+          for (const s of tracks.slice(0, 12)) {
+            if (got.length >= 8 || urlTries >= URL_TRY_MAX) break;
+            if (seen.has(String(s.id))) continue;
+            urlTries++;
+            const u = await _netEaseSongUrl(s.id);
+            if (u && u.url) { seen.add(String(s.id)); got.push({ id: s.id, name: s.name, artist: s.artist, pic: s.pic, url: u.url, source: 'netease-direct' }); }
+          }
+          if (got.length) break;
+        }
+      }
+      if (got.length) {
+        // 用 push 保持数组引用不变，续拉标记才能继续认得出「还是这个漫游列表」
+        if (!M.state.playlist) M.state.playlist = [];
+        for (const g of got) M.state.playlist.push(g);
+        try { if (typeof M.saveSession === 'function') M.saveSession(); } catch (e) {}
+        _roamEmptyStreak = 0;                 // 20261117f：拉到了就清空退避
+        _roamCooldownUntil = 0;
+      } else {
+        /* 20261117f：一首都没拉到 —— 关键修复。
+           以前这里什么都不做，3 秒后又满足「快播到末尾」→ 再跑一整圈，
+           形成「几十个请求 / 3 秒」的永久循环（耗电、耗流量、被限流）。
+           现在指数退避：10s → 20s → 40s → 80s → 160s，上限 300s。 */
+        _roamEmptyStreak++;
+        const wait = Math.min(300000, 10000 * Math.pow(2, Math.min(_roamEmptyStreak - 1, 5)));
+        _roamCooldownUntil = Date.now() + wait;
+      }
+    } catch (e) {
+      // 异常也算失败，同样退避，不许变成快速重试
+      _roamEmptyStreak++;
+      _roamCooldownUntil = Date.now() + Math.min(300000, 15000 * Math.pow(2, Math.min(_roamEmptyStreak - 1, 4)));
+    } finally { _roamRefilling = false; }
+  }
+  function _roamKeepAlive() {
+    if (_roamTimer) return;
+    _roamEmptyStreak = 0;              // 20261117f：新一轮漫游从零计
+    _roamCooldownUntil = 0;
+    _roamTimer = setInterval(() => {
+      if (!_roamOn) { clearInterval(_roamTimer); _roamTimer = null; return; }
+      // 列表被换成别的歌单（用户点了别的歌单/搜索结果）→ 漫游结束，停掉续拉
+      if (_roamRef && M.state.playlist !== _roamRef) { _roamOn = false; clearInterval(_roamTimer); _roamTimer = null; return; }
+      const pl = M.state.playlist || [];
+      if (!pl.length) return;
+      if (M.state.playMode === 'one') return;          // 单曲循环：玩家自己要重复，不续拉
+      if (M.state.playIndex >= pl.length - 2) {
+        /* 20261117f：这段判空以前没有 —— 拉不到新歌时每 3 秒重跑一整圈请求，
+           就成了真机上「一直在耗电」的根因。现在：
+           ① 退避期内连试都不试；
+           ② 连续失败 6 次（约 5 分钟都拉不到）就彻底停掉，不再打网络，
+              提示一次让玩家知道是「服务端暂时给不出新歌」，而不是干耗电池。 */
+        if (Date.now() < _roamCooldownUntil) return;
+        if (_roamEmptyStreak >= 6) {
+          clearInterval(_roamTimer); _roamTimer = null; _roamOn = false;
+          try { if (window.miniToast) miniToast('漫游暂时拿不到新歌了，先在当前列表里播'); } catch (e) {}
+          return;
+        }
+        _roamRefill();
+      }
+    }, 3000);
+  }
+  // 离开漫游（点歌单/结束一起听等）时调用，停掉续拉
+  function _roamStop() { _roamOn = false; }
 
   /* 20261105：未登录时搜歌结果浮层（复用 bm-netease-result 样式，渲染在 import-row 之后）。
      走镜像搜索结果，点一首走 M.fetchSongDetail 拿直链后播放。 */
@@ -6375,7 +6736,7 @@ window.bmMusicUI = (function () {
           //   「本地模式 url 为空 → 播放报未获取到播放直链」的问题。
           const src = M.state.mode === 'mirror' ? 'mirror' : 'local';
           for (const t of tracks) {
-            await M.addLocalTrack({ id: t.id, name: t.name, artist: t.artist, album: t.album, pic: t.pic, url: t.url || '', lrc: '', source: src, _neteaseId: t._neteaseId });
+            await M.addLocalTrack({ id: t.id, name: t.name, artist: t.artist, album: t.album, pic: t.pic, url: t.url || '', lrc: '', source: src, _neteaseId: t._neteaseId, _picId: t._picId });
             imported++;
           }
           parseTip.textContent = `已解析并导入 ${imported} 首歌曲到${src === 'mirror' ? '镜像收藏库' : '本地音乐库'}`;
@@ -6828,7 +7189,7 @@ window.bmMusicUI = (function () {
         else {
           let imported = 0;
           for (const t of tracks) {
-            await M.addLocalTrack({ id: t.id, name: t.name, artist: t.artist, album: t.album, pic: t.pic, url: '', lrc: '', source: 'local', _neteaseId: t._neteaseId });
+            await M.addLocalTrack({ id: t.id, name: t.name, artist: t.artist, album: t.album, pic: t.pic, url: '', lrc: '', source: 'local', _neteaseId: t._neteaseId, _picId: t._picId });
             imported++;
           }
           parseTip.textContent = `已解析并导入 ${imported} 首歌曲到本地音乐库`;
@@ -7186,6 +7547,9 @@ window.bmMusicUI = (function () {
   function closeMusicPage() {
     const page = document.getElementById('bm-music-page');
     if (page) page.remove();
+    _stopFloatWatchdog();   // 20261117c：页面关掉，看守一起停
+    // 20261117：退出听歌页后把浮窗位置还原（听歌页里默认被抬高了 78px 让开控制栏）
+    try { const fw0 = document.getElementById('bm-music-float'); if (fw0) positionFloat(fw0); } catch (e) {}
     stopPlanetAnimation();
     stopLyricScroll();   /* 20261111：歌词 rAF 也一起停，别在后台 60fps 空转 */
     // 20261110：页面关掉就停「待补评论」的定时检查，别在后台空转
@@ -7985,6 +8349,15 @@ window.bmMusicUI = (function () {
      仅在「聊天设置关悬浮窗」或「听音乐界面关悬浮窗」时才真正移除）
      ============================================================ */
   let _floatClosedByUser = false;   // 用户主动关闭后，不再自动弹出（换歌重新播放才恢复）
+  /* 20261117b：原生悬浮窗「本轮已判定不可用」。
+     插件对象存在但原生调用失败（未注册/权限被收回/空转）时置真，
+     之后 renderFloat 直接走软件内渲染，保证不会两边都没有窗；
+     玩家重新切换「悬浮方式」时会清掉它重试。 */
+  let _nativeBroken = false;
+  let _nativeFallbackToasted = false;   // 回落提示只弹一次，避免刷屏
+  let _floatWatchdogTimer = null;       // 20261117c：听歌页悬浮窗看守定时器
+  let _floatWatchdogFixes = 0;          // 20261117c：看守自愈次数（排查用 window.__bmFwFixes）
+  let _lastFloatRenderAt = 0;           // 20261117d：上次渲染时间戳（看守冷却用，防止自己闪自己）
   let _floatDragging = false;       // 拖拽中标记（hover 展开/缩回在拖拽中禁止）
   let _floatLyricTimer = null;      // 悬浮窗歌词滚动定时器（防重复堆积导致卡死）
   let _floatSeeking = false;        // 20261104：悬浮窗进度条拖动中标记（拖动时暂停进度条自动刷新，避免回跳）
@@ -8639,12 +9012,40 @@ window.bmMusicUI = (function () {
   // 悬浮方式切换（软件内 / 其他应用）——音乐页按钮、聊天设置共用。
   //   切到 overlay：移除 DOM 悬浮、走原生系统层（含权限自动检测，未授权自动跳系统设置页，失败回退软件内）。
   //   切回 inApp：隐藏原生、重建 DOM 悬浮。
+  /* 20261117g：把浮窗「当前实际位置」立刻落盘（切换悬浮方式前调用）。
+     之前切到其他应用悬浮会直接把软件内浮窗 remove，切回来时位置按默认值重算，
+     玩家看到的就是「我的悬浮窗位置被刷新了」。这里先存住真实 rect，切回原位。 */
+  function _saveFloatPosNow(fw) {
+    try {
+      if (!fw) return;
+      const r = fw.getBoundingClientRect();
+      if (!(r.width > 0) || !(r.height > 0)) return;
+      const inMusic = !!document.getElementById('bm-music-page');
+      const p = { x: Math.round(r.left), y: Math.round(r.top) };
+      localStorage.setItem(inMusic ? 'bmFloatPosMusic' : 'bmFloatPos', JSON.stringify(p));
+      if (inMusic) _musicFloatPos = p;
+    } catch (e) {}
+  }
+
   async function setFloatScopeAndApply(ns) {
     const target = ns === 'overlay' ? 'overlay' : 'inApp';
+    /* 20261117g 网页端缺陷修复（玩家实测：在预览里点「其他应用悬浮」没有任何提示，
+       软件内浮窗却消失、位置也被刷新）。
+       原因：这一支原来无条件 setFloatScope('overlay') → fw.remove() → 再调
+       window.Capacitor.Plugins.BmMusicFloat，网页端根本没有 Capacitor，异常被吞掉，
+       最后调用方还弹「已切到其他应用悬浮」—— 全是假的。
+       现在：没有原生插件就当场拒绝，不写设置、不动现有浮窗，明确告诉玩家只能在 APP 内用。 */
+    if (target === 'overlay' && !nativeFloat()) {
+      if (window.miniToast) miniToast('其他应用悬浮只能在 APP 内使用');
+      return false;
+    }
     await setFloatScope(target);
+    // 20261117b：玩家手动切换悬浮方式 = 明确要重试原生，清掉「已判定不可用」标记
+    _nativeBroken = false;
+    _nativeFallbackToasted = false;
     if (target === 'overlay') {
       const fw = document.getElementById('bm-music-float');
-      if (fw) fw.remove();
+      if (fw) { _saveFloatPosNow(fw); fw.remove(); }   // 20261117g：切走前存住位置
       bindNativeFloat();
       // 20261109 修复「切到外部悬浮窗卡好几秒才出来」根因：
       //   原来直接 pushNativeState(true) → buildNativeState() 要把封面/头像/播放列表
@@ -8679,6 +9080,7 @@ window.bmMusicUI = (function () {
       setTimeout(function(){ try { hideNativeFloat(); } catch (e) {} }, 420);
       renderFloat();
     }
+    return true;   // 20261117g：调用方据此决定要不要弹「已切换」（失败时上面已给过原因）
   }
 
   // 20261105：合并面板——一个「悬浮窗」图标承载「开启/关闭悬浮窗」+「悬浮方式」两个功能。
@@ -8745,8 +9147,8 @@ window.bmMusicUI = (function () {
     pop.querySelectorAll('.fsp-scope').forEach(b => {
       b.onclick = async () => {
         const ns = b.dataset.scope;
-        await setFloatScopeAndApply(ns);
-        if (window.miniToast) miniToast(ns === 'overlay' ? '已切到其他应用悬浮' : '已切回软件内悬浮');
+        const ok = await setFloatScopeAndApply(ns);
+        if (ok && window.miniToast) miniToast(ns === 'overlay' ? '已切到其他应用悬浮' : '已切回软件内悬浮');
         pop.remove();
       };
     });
@@ -8784,8 +9186,8 @@ window.bmMusicUI = (function () {
       pop.querySelectorAll('.fsp-opt').forEach(b => {
         b.onclick = async () => {
           const ns = b.dataset.scope;
-          await setFloatScopeAndApply(ns);
-          if (window.miniToast) miniToast(ns === 'overlay' ? '已切到其他应用悬浮' : '已切回软件内悬浮');
+          const ok = await setFloatScopeAndApply(ns);
+          if (ok && window.miniToast) miniToast(ns === 'overlay' ? '已切到其他应用悬浮' : '已切回软件内悬浮');
           pop.remove();
         };
       });
@@ -8803,33 +9205,55 @@ window.bmMusicUI = (function () {
     let fw = document.getElementById('bm-music-float');
     const cur = M.state.current;
     // 20261105：悬浮方式 = 其他应用（overlay）时，不渲染 DOM 悬浮窗，改走原生系统层悬浮。
-    if (floatScopeNow() === 'overlay') {
+    /* 20261117 修「软件内悬浮窗彻底不见了」：
+       原写法只要设置是 overlay 就 fw.remove() + return，**完全不管原生插件在不在**。
+       于是在浏览器/网页端（没有 BmMusicFloat 插件）这一支会「删掉 DOM 浮窗、又建不出原生窗」，
+       结果浮窗两边都是空的 —— 表现为音乐页里看不到任何悬浮窗。
+       现在：有插件才走原生分支；没有插件就继续往下走软件内渲染，任何环境都看得到浮窗。 */
+    /* 20261117b 修「音乐界面里软件内/软件外两个悬浮窗都没有」：
+       overlay 档原先要求「插件对象在 + checkPermission 返回 granted」两步全对才做事，
+       任何一步失败（Java 端没注册导致调用抛错、权限被系统收回、插件对象空转返回 undefined）
+       都只是**静默什么都不做** —— 而上面已经先把 DOM 悬浮窗 remove() 掉了。
+       → 玩家看到的正是「软件内没有窗、软件外也没有窗，音乐页里空空的」。
+       现在：原生这条路一旦走不通就立刻回落软件内渲染（_nativeBroken 记住失败，不再每帧重试），
+       保证任何环境下至少有一扇窗；玩家重新切换悬浮方式时会清标记重试。 */
+    if (floatScopeNow() === 'overlay' && nativeFloat() && !_nativeBroken) {
       if (fw) fw.remove();
       bindNativeFloat();
       // 若原生态尚未显示（首次/被杀），先 show；否则 update
-      if (nativeFloat()) {
-        (async () => {
+      (async () => {
+          const fallback = (why) => {
+            _nativeBroken = true;
+            try { if (!_nativeFallbackToasted && typeof miniToast === 'function') { _nativeFallbackToasted = true; miniToast('原生悬浮窗不可用，已切回软件内悬浮窗'); } } catch (e0) {}
+            try { renderFloat(); } catch (e1) {}
+          };
           try {
             const p = window.Capacitor.Plugins.BmMusicFloat;
             const chk = await p.checkPermission();
-            if (chk && chk.granted) {
-              /* 20261110 补漏：这一支原来只 update。原生窗口不在时 update 会回 no_window，
-                 然后什么都不做 → 「切到其他应用悬浮后原生窗迟迟不出现」（只剩心跳慢半拍自愈）。
-                 这里 update 拿不到窗口就立刻补一份 show。 */
-              const r0 = await p.update(await buildNativeState()).catch(() => null);
-              if (r0 && r0.ok === false && r0.reason === 'no_window') {
-                await p.show(await buildNativeState()).catch(() => null);
-              }
+            if (!(chk && chk.granted)) { fallback('no_perm'); return; }
+            /* 20261110 补漏：这一支原来只 update。原生窗口不在时 update 会回 no_window，
+               然后什么都不做 → 「切到其他应用悬浮后原生窗迟迟不出现」（只剩心跳慢半拍自愈）。
+               这里 update 拿不到窗口就立刻补一份 show。 */
+            const r0 = await p.update(await buildNativeState()).catch(() => null);
+            if (r0 && r0.ok === false && r0.reason === 'no_window') {
+              const r1 = await p.show(await buildNativeState()).catch(() => null);
+              if (r1 && r1.ok === false) { fallback('show_fail'); return; }
+            } else if (r0 && r0.ok === false && r0.reason !== 'no_window') {
+              // 除「窗口不存在」之外的其他失败（插件未注册/空转/异常返回）同样判为不可用
+              fallback('update_fail');
+              return;
             }
-          } catch (e) {}
+            // 20261106 根因修复：原生悬浮窗进度/歌词此前只在 renderFloat 时 update 一次，
+            //   之后原生层 startTicking 用本地 elapsedRealtime 每秒 +1 自增，与 JS 端真实
+            //   audio.currentTime（受暂停/seek/缓冲/后台挂起影响）逐渐错位 → 进度条、滚动歌词、
+            //   播放条三者脱节。这里加一个 500ms 心跳，把真实 position 持续推给原生层，
+            //   原生层收到 position 即校准（见 applyState 里 positionSec = position）。
+            _startNativeHeartbeat();
+          } catch (e) {
+            // 插件对象在、但原生调用直接抛错（壳里没注册这个插件）→ 判为不可用，回落软件内
+            fallback('throw');
+          }
         })();
-        // 20261106 根因修复：原生悬浮窗进度/歌词此前只在 renderFloat 时 update 一次，
-        //   之后原生层 startTicking 用本地 elapsedRealtime 每秒 +1 自增，与 JS 端真实
-        //   audio.currentTime（受暂停/seek/缓冲/后台挂起影响）逐渐错位 → 进度条、滚动歌词、
-        //   播放条三者脱节。这里加一个 500ms 心跳，把真实 position 持续推给原生层，
-        //   原生层收到 position 即校准（见 applyState 里 positionSec = position）。
-        _startNativeHeartbeat();
-      }
       return;
     }
     // 20261104：悬浮窗显隐唯一依据 = 开关状态 + 用户是否主动关闭。
@@ -8868,7 +9292,17 @@ window.bmMusicUI = (function () {
     const song = (lpNow.isExternal && (lpNow.name || lpNow.cover))
       ? { name: lpNow.name || '未知歌曲', artist: lpNow.artist || '', pic: lpNow.cover || '' }
       : (cur || { name: '去点首歌吧', artist: '播放列表里的歌都能点', pic: '' });
-    fw.innerHTML = `
+    /* 20261117d 修「悬浮窗高频闪 / 看起来根本没有窗」根因：
+       .bm-float-dot 自带入场动画 bm-dot-in（opacity 0 → 1，scale .5 → 1，0.3s）。
+       而 renderFloat 每次调用都 fw.innerHTML = ... 重建整个浮窗 —— 动画随元素重建从头重播。
+       只要播放器在频繁刷新（进度/歌词/主题/看守自愈都会调 renderFloat），
+       圆点就一直在「透明 → 显示」之间循环：看上去就是「一直在闪，或者根本没有悬浮窗」。
+       现在：只有元素刚创建（wasNew）那一次播放入场动画，后续重建一律静音动画，
+       内容照常更新，但不再从 opacity:0 重来。 */
+    if (!wasNew) fw.classList.add('bm-float-noin');
+    /* 20261117e：拖拽过程中不重建 DOM。重建会销毁正在被按住拖动的圆点节点，
+       pointer 捕获随之丢失 → 表现为「一拖就闪、还拖不走」。松手后的下次渲染仍会正常更新内容。 */
+    if (!(_floatDragging && !wasNew)) fw.innerHTML = `
       <div class="bm-float-dot" id="bm-float-dot">
         ${song.pic ? coverImgHTML(song.pic) : window.icon('music', 16)}
       </div>
@@ -9145,12 +9579,76 @@ window.bmMusicUI = (function () {
     }
     // 位置错开打字圆点：默认右下角，打字圆点在右下时会往上避让；支持拖拽 + 持久化
     positionFloat(fw);
+    /* 20261117b 兜一道「浮窗坐标坏掉 → 整扇窗看不见」：
+       位置是从 localStorage(bmFloatPos) 恢复的，换窗口尺寸/横竖屏/分屏后旧坐标可能整个落在视口外，
+       此时浮窗还在 DOM 里、样式也正常，但玩家眼里就是「没有悬浮窗」。
+       这里渲染后量一次真实矩形：完全在视口外就丢掉坏坐标、归位右下角。 */
+    requestAnimationFrame(() => {
+      try {
+        if (_floatDragging) return;   // 拖拽中别动它
+        const r = fw.getBoundingClientRect();
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const offscreen = (r.right <= 2) || (r.bottom <= 2) || (r.left >= vw - 2) || (r.top >= vh - 2);
+        if (offscreen) {
+          try { localStorage.removeItem('bmFloatPos'); } catch (e0) {}
+          fw.style.left = 'auto'; fw.style.top = 'auto';
+          fw.style.bottom = '20px'; fw.style.right = '16px';
+        }
+      } catch (e) {}
+    });
     enableFloatDrag(fw);
     enableFloatResize(fw);
     // 悬浮窗内播放模式按钮同步当前模式图标
     updateCtrlState();
+    _lastFloatRenderAt = Date.now();   // 20261117d：记下渲染时间，供看守冷却判断
     // 悬浮窗渲染/移除后，同步音乐页开关按钮的开/关印记
     syncFloatBtn();
+  }
+
+  /* 20261117c：听歌页悬浮窗看守（只在 bm-music-page 存在期间运行）
+     背景：玩家实测「进听歌页浮窗不显示、退出页面又出现」，说明浮窗在页面打开后被某个时机
+     收掉/摆到看不见的地方，而退出时又被重渲染。逐一排查了所有 fw.remove() 调用点都对不上，
+     改用兜底看守：每 1.5 秒核对一次「浮窗是否真的看得见」，不合格就重渲染。
+     合格 = 元素在 DOM + display/visibility/opacity 正常 + 有实际尺寸 + 与视口有交集 + 层级压过听歌页。 */
+  function _stopFloatWatchdog() {
+    if (_floatWatchdogTimer) { clearInterval(_floatWatchdogTimer); _floatWatchdogTimer = null; }
+  }
+  function _startFloatWatchdog() {
+    _stopFloatWatchdog();
+    _floatWatchdogFixes = 0;
+    const tick = () => {
+      try {
+        if (!document.getElementById('bm-music-page')) { _stopFloatWatchdog(); return; }   // 页面已退出，停
+        let on = true;
+        try { if (typeof chatSettings !== 'undefined' && chatSettings && chatSettings.musicFloatOn === false) on = false; } catch (e) {}
+        if (!on) return;   // 玩家把开关关了，尊重开关
+        // 原生档且原生可用：窗口在系统层，DOM 这边本来就不该有窗，交给心跳自愈，别抢
+        if (floatScopeNow() === 'overlay' && nativeFloat() && !_nativeBroken) return;
+        const fw = document.getElementById('bm-music-float');
+        const vw = window.innerWidth, vh = window.innerHeight;
+        let bad = !fw;
+        if (!bad) {
+          const cs = getComputedStyle(fw), r = fw.getBoundingClientRect();
+          /* 20261117d：只看「结构性不可见」——被 display/visibility 收掉、尺寸塌成 0、整个在视口外。
+             ⚠️ 特意不再检查 opacity：圆点入场动画本身就是 opacity 0→1，
+             检查它会和「重建 → 动画重播」互相触发，变成看守自己把浮窗闪成
+             「消失出现」的死循环（玩家实测的高频闪动）。 */
+          if (cs.display === 'none' || cs.visibility === 'hidden') bad = true;
+          else if (r.width < 8 || r.height < 8) bad = true;
+          else if (r.right <= 2 || r.bottom <= 2 || r.left >= vw - 2 || r.top >= vh - 2) bad = true;
+        }
+        if (bad) {
+          // 刚渲染过就别拆掉重建，否则会形成「渲染 → 看守判坏 → 再渲染」的高频闪
+          if (Date.now() - _lastFloatRenderAt < 2500) return;
+          _floatWatchdogFixes++;
+          try { window.__bmFwFixes = _floatWatchdogFixes; } catch (e0) {}
+          _floatClosedByUser = false;   // 开关是开着的，就不该被「用户关闭」标记挡住
+          try { renderFloat(); } catch (e1) {}
+        }
+      } catch (e) {}
+    };
+    tick();
+    _floatWatchdogTimer = setInterval(tick, 1500);
   }
 
   /* 同步音乐页「一起听悬浮窗」开关按钮的开/关印记 */
@@ -9266,8 +9764,32 @@ window.bmMusicUI = (function () {
     fw.style.bottom = 'auto';
   }
 
+  /* 20261117：听歌页底部有一条控制栏（播放/上一首/下一首/播放列表），
+     浮窗默认停在右下角时会正好骑在最右边那个按钮上：看着像控制栏的一部分（玩家以为浮窗没出来），
+     按钮也被挡着点不到。这里把「视口底部 96px」视为禁停带，浮窗落进去就抬到它上面。 */
+  function _liftAboveMusicBar(fw) {
+    if (_floatDragging) return;   // 拖拽中别抢位置
+    try {
+      const r = fw.getBoundingClientRect();
+      const bandTop = window.innerHeight - 96;
+      if (r.bottom > bandTop) {
+        fw.style.left = Math.max(6, Math.min(r.left, window.innerWidth - r.width - 6)) + 'px';
+        fw.style.top = Math.max(6, bandTop - r.height - 8) + 'px';
+        fw.style.right = 'auto';
+        fw.style.bottom = 'auto';
+      }
+    } catch (e) {}
+  }
+
   function positionFloat(fw) {
-    // 优先恢复用户上次拖动的位置
+    /* 20261117e：拖拽进行中绝不抢位置 —— 以前 pointermove 里刚写好的 left/top，
+       会被并发的 renderFloat（进度/歌词刷新）立刻按默认位置改回去，
+       玩家看到的就是「一拖就闪、还拖不走」。 */
+    if (_floatDragging) return;
+    const inMusicPage = !!document.getElementById('bm-music-page');
+    /* 20261117e：**一个位置，全场景记住**。
+       玩家要求「拖到哪就记到哪，下次还是那」。所以不再区分听歌页/页面外两套坐标，
+       统一读写 bmFloatPos；没拖过才用默认位（听歌页在控制栏上方，其它页面右下角）。 */
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem('bmFloatPos') || 'null'); } catch (e) {}
     if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
@@ -9275,15 +9797,18 @@ window.bmMusicUI = (function () {
       fw.style.top = saved.y + 'px';
       fw.style.right = 'auto';
       fw.style.bottom = 'auto';
-      // 20261107：恢复位置后按当前窗口/形态尺寸钳制回可视区（防止窗口变窄或换形态导致出屏）
-      requestAnimationFrame(() => clampFloatToViewport(fw));
+      requestAnimationFrame(() => {
+        try { clampFloatToViewport(fw); } catch (e) {}
+        // 只有听歌页需要「别骑在底部控制栏上」；拖到别处就不动它
+        if (inMusicPage && !_floatDragging) _liftAboveMusicBar(fw);
+      });
       return;
     }
-    // 否则默认右下，与「碎梦重拼」打字圆点错开（它在右下时上移）
+    // 没拖过：默认位置。听歌页抬到控制栏上方（78px），其它页面右下角
     const dot = document.querySelector('[data-typecard-float-dot], .tc-float-dot, .typecard-float-drag');
     fw.style.left = 'auto';
     fw.style.top = 'auto';
-    fw.style.bottom = dot ? '92px' : '20px';
+    fw.style.bottom = inMusicPage ? '78px' : (dot ? '92px' : '20px');
     fw.style.right = '16px';
   }
 
@@ -9326,6 +9851,7 @@ window.bmMusicUI = (function () {
     const savePos = () => {
       try {
         const r = fw.getBoundingClientRect();
+        /* 20261117e：一个位置全场景通用，拖到哪记到哪（页面外/听歌页同一份）。 */
         localStorage.setItem('bmFloatPos', JSON.stringify({ x: r.left, y: r.top }));
       } catch (err) {}
     };

@@ -4431,7 +4431,9 @@ function _checkinCardHTML(m) {
   const textHtml = c.text ? `<div style="margin-top:2px;">${escapeHtml(c.text)}</div>` : '';
   const replyBtn = (m.from === 'them' && !isReport && !checkinAnswered(m))
     ? `<button class="btn primary" style="margin-top:8px;padding:6px 12px;font-size:12px;" data-checkin-reply="${m.id}">回复查岗</button>` : '';
-  return `${quoteHtml(m.quote)}<div class="msg-card" data-checkin-card="${m.id}"><span class="msg-card-tag">${tag}</span>${textHtml}${locHtml}${replyHtml}${replyBtn}</div>`;
+  /* 20261117：位置区块外面包一层空容器。回复查岗时先把文字上屏、定位回来再往里填，
+     避免「点了发送还要等定位」。display:contents 不产生额外盒子，不影响原排版。 */
+  return `${quoteHtml(m.quote)}<div class="msg-card" data-checkin-card="${m.id}"><span class="msg-card-tag">${tag}</span>${textHtml}<div data-checkin-loc-host="${m.id}" style="display:contents">${locHtml}</div>${replyHtml}${replyBtn}</div>`;
 }
 
 /* 查岗是否已完成一轮应答（20260925i：角色已回应过玩家的回复）。
@@ -6991,13 +6993,16 @@ async function bmCompressOneExportImage(im, readFsFile) {
 
 /* 并发压缩全部图片。onProgress(done, total) 每张都回调（进度条持续可见地推进）。
    readFsFile(ref) 由 APP 端传入（FS.readFile → Uint8Array），网页端传 null。 */
-async function bmCompressExportImages(images, onProgress, readFsFile) {
+async function bmCompressExportImages(images, onProgress, readFsFile, gate) {
   const total = images.length;
   if (!total) return;
   let cursor = 0;
   let done = 0;
   const worker = async () => {
     for (;;) {
+      /* 20261117h：gate = 自动备份的暂停闸门（手动导出不传 → 全程不停，玩家手动操作必须最快完成）。
+         挂在这里而不是挂在 for 里面：暂停期间绝不推进 cursor，恢复后从同一张继续，不重头。 */
+      if (gate) await gate();
       const i = cursor++;
       if (i >= total) return;
       const im = images[i];
@@ -9006,6 +9011,10 @@ async function bmBgTick() {
   try { await requestProactiveScan(); } catch (e) {}   // 超频/主动消息/查岗/通话/红包 到期检查（经统一入口，并发锁保护）
   try { await deliverDueLetterReplies(); } catch (e) {} // 到期回信投递
   try { await groupAutoChatTick(); } catch (e) {}  // 20261005ds：后台群聊自主聊天（60s 级，复用本低频调度，不新增高频 timer）
+  /* 20261117h 自动备份兜底：个别 ROM（如部分 ColorOS 版本）锁屏不触发 appStateChange，
+     靠这条 60 秒巡检补上。autoBackup 第一道是轻量 kv 判断（本时段已覆盖就立刻 return），
+     不会每 60 秒重读全库；备份正在跑时被 _autoBackupRunning 直接挡住。 */
+  try { await autoBackup(); } catch (e) {}
 }
 
 /* ---------- 原生精确闹钟（AlarmManager 预排程）：调度时已知 dueAt 的事件都来注册 ----------
@@ -9128,8 +9137,8 @@ function markAppBackground() {                  // 挂后台：复位去重标�
 }
 document.addEventListener('visibilitychange', () => {
   try {
-    if (document.hidden) { bmSetBgState(true); markAppBackground(); }
-    else { restoreAppState(true); }
+    if (document.hidden) { bmSetBgState(true); markAppBackground(); bmBackupOnBackground(); }
+    else { bmBackupGatePause(); restoreAppState(true); }   // 20261117h 回前台=备份暂停（保留进度）
   } catch (e) {}
 });
 try {
@@ -9137,8 +9146,8 @@ try {
   if (Cap && Cap.Plugins && Cap.Plugins.App && typeof Cap.Plugins.App.addListener === 'function') {
     Cap.Plugins.App.addListener('appStateChange', (st) => {
       try {
-        if (!st.isActive) { bmSetBgState(true); markAppBackground(); }
-        else { restoreAppState(true); }
+        if (!st.isActive) { bmSetBgState(true); markAppBackground(); bmBackupOnBackground(); }
+        else { bmBackupGatePause(); restoreAppState(true); }   // 20261117h 回前台=备份暂停（保留进度）
       } catch (e) {}
     });
   }
@@ -16352,46 +16361,53 @@ function openCheckinReplyModal(charId, checkinMsg = null) {
     if (!text) { miniToast('请填写你的回复'); return; }
     const wantLoc = $('#ckr-loc') && $('#ckr-loc').checked;
     closeModal();
-    // 可选：获取玩家真实定位（可拒绝）
-    let loc = null, weather = null;
-    if (wantLoc) {
-      const locRes = await _getPlayerLocation();
-      if (locRes.ok) {
-        loc = { lat: locRes.lat, lng: locRes.lng, dim: 0 };
-        const city = await _reverseGeo(locRes.lat, locRes.lng);
-        if (city) loc.city = city;
-        weather = await _fetchWeather(locRes.lat, locRes.lng) || _randWeather();
-      } else {
-        miniToast('未获取到定位，仅发送文字回复');
-      }
-    }
-    // 玩家的回复引用角色的查岗卡片，在聊天里可见地对应这次查岗
+    /* 20261117 修「回复查岗点发送要卡一下才发出去」：
+       原来是 取定位 → 逆地理 → 天气 → 写库 → 上屏，勾了「附带位置」时这三步串行网络
+       全部压在上屏之前，点发送后看着像没反应。现在改成：先把文字写库并立即上屏，
+       定位/天气放后台补，拿到后再把位置区块填进同一张卡片，并把距离补进卡片回复条目。 */
     const myMsg = {
       id: uid('msg'), charId, from: 'me', type: 'checkin', time: Date.now(),
-      content: { report: true, text, doing: text, location: loc, weather, marker: '你', replies: [] },
+      content: { report: true, text, doing: text, location: null, weather: null, marker: '你', replies: [] },
       quote: { name: c ? c.name : 'TA', content: checkinText, msgId: checkinMsg ? checkinMsg.id : undefined },
     };
-    await idbPut('messages', myMsg);
-    if (currentCharId === charId) appendMessage(myMsg);
-    // 玩家回复也写进查岗卡片
+    // ① 卡片里的这条回复先落库（此时可能还没位置）
+    const replyEntry = { who: playerProfile.name || '我', text };
     if (checkinMsg) {
       checkinMsg.content.replies = checkinMsg.content.replies || [];
-      const replyEntry = { who: playerProfile.name || '我', text };
-      // 若玩家带了位置，且角色卡片有位置，则计算距离附在回复里
-      /* 20261114：任一端在 1~11 虚构维度 → 距离不可测，不编数字，标记成「未知」 */
-      const otherDim = (checkinMsg.content.location && checkinMsg.content.location.dim)
-        ? Number(checkinMsg.content.location.dim) : 0;
-      const myDim = (loc && loc.dim) ? Number(loc.dim) : 0;
-      const dimSide = (otherDim >= 1 && otherDim <= 11) || (myDim >= 1 && myDim <= 11);
-      if (dimSide) {
-        replyEntry.dimUnknown = true;
-      } else if (loc && checkinMsg.content.location && !loc.denied) {
-        const d = _distKm(loc.lat, loc.lng, checkinMsg.content.location.lat, checkinMsg.content.location.lng);
-        replyEntry.dist = d;
-      }
       checkinMsg.content.replies.push(replyEntry);
       await idbPut('messages', checkinMsg);
       refreshCheckinCardReplies(checkinMsg);
+    }
+    // ② 聊天里立刻上屏
+    await idbPut('messages', myMsg);
+    if (currentCharId === charId) appendMessage(myMsg);
+    // ③ 位置在后台补，不挡发送
+    if (wantLoc) {
+      (async () => {
+        try {
+          const locRes = await _getPlayerLocation();
+          if (!locRes.ok) { miniToast('未获取到定位，仅发送文字回复'); return; }
+          const loc2 = { lat: locRes.lat, lng: locRes.lng, dim: 0 };
+          try { const city = await _reverseGeo(locRes.lat, locRes.lng); if (city) loc2.city = city; } catch (e) {}
+          let w = null;
+          try { w = (await _fetchWeather(locRes.lat, locRes.lng)) || _randWeather(); } catch (e) { w = _randWeather(); }
+          myMsg.content.location = loc2;
+          myMsg.content.weather = w;
+          /* 20261114：任一端在 1~11 虚构维度 → 距离不可测，不编数字，标「未知」 */
+          const otherDim = (checkinMsg && checkinMsg.content.location && checkinMsg.content.location.dim)
+            ? Number(checkinMsg.content.location.dim) : 0;
+          if (otherDim >= 1 && otherDim <= 11) {
+            replyEntry.dimUnknown = true;
+          } else if (checkinMsg && checkinMsg.content.location && !loc2.denied) {
+            try { replyEntry.dist = _distKm(loc2.lat, loc2.lng, checkinMsg.content.location.lat, checkinMsg.content.location.lng); } catch (e) {}
+          }
+          try { await idbPut('messages', myMsg); } catch (e) {}
+          if (checkinMsg) { try { await idbPut('messages', checkinMsg); refreshCheckinCardReplies(checkinMsg); } catch (e) {} }
+          // 位置区块补进聊天里那张卡片（发送时预留了空容器）
+          const host = document.querySelector('[data-checkin-loc-host="' + myMsg.id + '"]');
+          if (host) { try { host.innerHTML = _locInfoHTML(loc2, w, text, '你', myMsg.content.distKm); } catch (e) {} }
+        } catch (e) {}
+      })();
     }
     miniToast('已回复查岗，TA 正在看你发来的消息…');
     // 角色对玩家回复的应答也引用玩家这条回复，并把应答写进查岗卡片（quick：2~4 秒内及时反馈）
@@ -22697,13 +22713,19 @@ function bindChatSettings(s, onSave, tcChar) {
   const fsScopeSel = $('#cs-music-floatscope');
   if (fsScopeSel) fsScopeSel.onchange = async () => {
     const v = fsScopeSel.value === 'overlay' ? 'overlay' : 'inApp';
-    await setSetting('musicFloatScope', v);
-    if (window.bmMusicUI) {
-      try {
-        // 同步到音乐模块：更新悬浮方式缓存 + 触发原生悬浮窗切换（含权限自动检测/跳转）
-        if (window.bmMusicUI.setFloatScopeAndApply) window.bmMusicUI.setFloatScopeAndApply(v);
-      } catch (e) {}
+    /* 20261117g：以前是「先写设置 → 再切换 → 无条件弹已切换」。
+       网页端没有原生插件时，切换必然失败，但设置已经落库、提示还在说谎，
+       下次进 App/网页就直接按 overlay 走，浮窗两边都没有。
+       现在先切换，成功才落库并提示；失败由 music 模块给出原因，这里把下拉框退回原位。 */
+    let ok = true;
+    if (window.bmMusicUI && window.bmMusicUI.setFloatScopeAndApply) {
+      try { const r = await window.bmMusicUI.setFloatScopeAndApply(v); if (r === false) ok = false; } catch (e) {}
     }
+    if (!ok) {
+      fsScopeSel.value = 'inApp';
+      return;
+    }
+    await setSetting('musicFloatScope', v);
     miniToast(v === 'overlay' ? '一起听悬浮窗：其他应用悬浮' : '一起听悬浮窗：软件内悬浮');
   };
   // 20261104：角色主动搜歌/切歌的总开关 + 随机间隔（全局设置，即时生效落库）。
@@ -25145,6 +25167,9 @@ function showImportModal(back = null) {
   $('#import-go').onclick = async () => {
     const file = $('#import-file').files[0];
     if (!file) { showToast('请先选择备份文件'); return; }
+    /* 20261117h：手动恢复同样最高优先级 —— 玩家在等数据回来，绝不能让自动备份插进来抢主线程 */
+    _manualIOBusy = true;
+    try { bmBackupGatePause(); } catch (e) {}
     const mode = (document.querySelector('input[name="import-mode"]:checked') || {}).value || 'merge';
     // 20261011：四阶段进度面板（读取文件 → 解析数据 → 还原图片 → 写入数据库），
     // 分块读取文件并实时刷新进度，根治「导入全局点确定就卡死/像假死」的观感。
@@ -25471,7 +25496,7 @@ async function doImport(data, mode = 'overwrite', onStage = null, readImageV4 = 
     setTimeout(() => location.reload(), 800);
   } catch (e) {
     miniToast('导入失败：' + (e && e.message ? e.message : '未知错误'));
-  }
+  } finally { _manualIOBusy = false; }
 }
 
 /* ---------- 20261101/02：恢复自动备份（数据安全兜底） ----------
@@ -26522,7 +26547,7 @@ function packContainerFile(data, images) {
    20261031 流式化：collectImagesV4 已不再累积 base64，这里逐张 blobToDataURL 转码 →
    立即 append 写盘 → 释放该张引用，JS 堆任何时刻只保留单张 base64（最大 ~5.8MB）。
    根治「一次性把 1999 张图（~700MB）全转成 base64 累积进 JS 堆 → OOM 崩溃（真机 pid died IMPF）」。 */
-async function writeContainerFile(path, data, images, directory, onProgress = null) {
+async function writeContainerFile(path, data, images, directory, onProgress = null, gate = null) {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   if (!FS || typeof FS.writeFile !== 'function') throw new Error('文件系统不可用');
   const CHUNK = 4 * 1024 * 1024; // 4MB base64 字符
@@ -26555,7 +26580,7 @@ async function writeContainerFile(path, data, images, directory, onProgress = nu
     for (let k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k);
     return out;
   };
-  await bmCompressExportImages(images, (done) => reportCompress(done), readFsFile);
+  await bmCompressExportImages(images, (done) => reportCompress(done), readFsFile, gate);
   if (compressTotal > 0) reportCompress(compressTotal);
   // ② 写 JSON 头（含分隔符）
   const head = packContainerFile(data, images);
@@ -27255,7 +27280,16 @@ async function showExportAllModal(back = null) {
   };
 }
 
+/* 20261117h 手动操作优先级最高：手动导出期间自动备份一律让路（正在跑的备份就地挂起）。
+   导出结束后只清「手动中」标记、**保持暂停** —— 玩家此时还在前台，等下次切后台才续备份。 */
 async function exportAll(opts = {}) {
+  _manualIOBusy = true;
+  try { bmBackupGatePause(); } catch (e) {}
+  try { return await _exportAllInner(opts); }
+  finally { _manualIOBusy = false; }
+}
+
+async function _exportAllInner(opts = {}) {
   /* 20261116：玩家在导出弹窗里勾选「连四季一起带走」。
      勾了 → 同一个 .ocdata 尾部追加四季段；不勾 → 就是纯全局包（默认）。 */
   const withSeason = !!(opts && opts.withSeason);
@@ -27664,6 +27698,80 @@ async function bmImportSeasonPayload(payload, opt) {
 }
 
 let _autoBackupRunning = false; // 20261006：防重入锁——写几百张图要几十秒，期间切后台补备+40s首备可能并发触发，防重复写/重复清理
+/* ============ 20261117h 自动备份「六时段记账 + 前台暂停 / 后台续跑」============
+   玩家规则（20261117 逐条确认）：
+   ① 一天按软件内部六个时段（凌晨0-6 / 上午6-11 / 中午11-14 / 下午14-17 / 傍晚17-20 / 深夜20-24），
+      每段最多允许备一次；
+   ② 前台一律不备 —— 一切等玩家切到后台或锁屏时才动手，绝不占用玩家正在用手机的时间；
+   ③ 备份途中玩家切回前台 → 暂停，已压好的图保留，再切后台从原处接着做（不重头）；
+   ④ 暂停超过 10 分钟 → 放弃本次并释放内存（几十 MB Blob 长挂在前台容易被系统连进程一起杀）；
+   ⑤ 写盘阶段一旦开始就不暂停（写到一半停会留半截文件，而写盘本身只需几秒）；
+   ⑥ 备份跨进下一个时段 → 照常写完，跨过的时段全部计入「已覆盖」，下一次等再下一段；
+   ⑦ 玩家手动导入/导出优先级最高：它一开始，正在跑的备份立刻暂停，手动做完才谈继续。
+   另外：进程被划掉导致的漏备，靠「coveredSlot 记账」自动兜住 —— 下次打开 App 第一次切后台时，
+   当前 slot 远大于记账值，自然就补一次，且合并成一次，不会按段补多次。 */
+
+/* 时段序号：本地日期序号 × 6 + 段序号，单调递增的整数，跨日跨段都能直接比大小 */
+function bmSlotIndex(ts) {
+  const d = new Date(typeof ts === 'number' ? ts : Date.now());
+  const h = d.getHours();
+  let seg = 0;                                  // 0~6 点 = 凌晨
+  if (h >= 6 && h < 11) seg = 1;                // 上午
+  else if (h >= 11 && h < 14) seg = 2;          // 中午
+  else if (h >= 14 && h < 17) seg = 3;          // 下午
+  else if (h >= 17 && h < 20) seg = 4;          // 傍晚
+  else if (h >= 20) seg = 5;                    // 深夜
+  const dayNo = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+  return dayNo * 6 + seg;
+}
+
+let _bmBackupPaused = false;        // 备份闸门：true = 已暂停（玩家在前台 / 手动导入导出中）
+let _bmBackupAbort = false;         // 暂停超时后置 true → 让等待中的压缩任务抛错退出、释放内存
+let _bmBackupWaiters = [];          // 停在闸门上的压缩 worker
+let _bmBackupPauseTimer = null;
+let _manualIOBusy = false;          // 玩家手动导入/导出进行中（优先级最高的标记）
+const BM_BACKUP_PAUSE_MAX_MS = 10 * 60 * 1000;
+
+function bmBackupGatePause() {
+  if (_bmBackupPaused) return;
+  _bmBackupPaused = true;
+  _bmBackupAbort = false;
+  if (_bmBackupPauseTimer) clearTimeout(_bmBackupPauseTimer);
+  _bmBackupPauseTimer = setTimeout(() => {
+    _bmBackupAbort = true;
+    bmBackupGateResume();
+  }, BM_BACKUP_PAUSE_MAX_MS);
+}
+function bmBackupGateResume() {
+  if (_bmBackupPauseTimer) { clearTimeout(_bmBackupPauseTimer); _bmBackupPauseTimer = null; }
+  _bmBackupPaused = false;
+  const waiters = _bmBackupWaiters; _bmBackupWaiters = [];
+  waiters.forEach(fn => { try { fn(); } catch (e) {} });
+}
+/* 压缩阶段的检查点：每取一张图之前 await 一次；暂停就在这里挂住，恢复后从同一张继续 */
+async function bmBackupGate() {
+  if (_bmBackupAbort) throw new Error('BM_BACKUP_ABORT');
+  if (!_bmBackupPaused) return;
+  await new Promise(res => _bmBackupWaiters.push(res));
+  if (_bmBackupAbort) throw new Error('BM_BACKUP_ABORT');
+}
+/* 切到后台/锁屏：解除暂停并尝试备一次 */
+function bmBackupOnBackground() {
+  try { bmBackupGateResume(); } catch (e) {}
+  // 延迟 1.2 秒：让 bmSetBgState 的收尾（暂停音频、停高频定时器）先做完，避免同一帧抢主线程
+  setTimeout(() => { try { autoBackup(); } catch (e) {} }, 1200);
+}
+/* 只读诊断挂载（排查用，不影响任何逻辑）：控制台/真机探针可查时段算法与闸门状态 */
+try {
+  window.__bmBackupDiag = {
+    slot: bmSlotIndex,
+    gate: bmBackupGate,
+    pause: bmBackupGatePause,
+    resume: bmBackupGateResume,
+    state: () => ({ paused: _bmBackupPaused, abort: _bmBackupAbort, waiters: _bmBackupWaiters.length, manual: _manualIOBusy }),
+  };
+} catch (e) {}
+
 async function autoBackup() {
   if (_autoBackupRunning) return; // 已有备份在执行，直接跳过（不创建第二个 backup-set）
   _autoBackupRunning = true;
@@ -27671,27 +27779,18 @@ async function autoBackup() {
     const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
     if (!FS || !FS.writeFile) return; // 非 APK 环境（网页版）静默跳过
     // 有访客数据才备份，避免全新空库也写一份空备份覆盖掉已有的有效备份
+    /* 20261117h：把「30 分钟门槛」换成「六时段记账」（完整规则见文件上方 20261117h 注释块）。
+       记账值 autoBackupCoveredSlot = 最后一次备份**完成时**所在的时段序号；
+       用结束时间记账，天然实现了「跨段合并算一次」：上午开始、中午写完 → 记到中午，下次等下午。
+       门槛必须放在最前面 —— 后台 60 秒巡检也会走到这里，已覆盖时要能在「读角色表 / 读全库」
+       之前立刻 return，否则每 60 秒白读一遍数据库（既耗电又伤电池）。 */
+    if (_manualIOBusy) return;                          // 玩家手动导入/导出优先，备份让路
+    const startSlot = bmSlotIndex(Date.now());
+    const coveredSlot = await getSetting('autoBackupCoveredSlot', -1);
+    if (typeof coveredSlot === 'number' && coveredSlot >= 0 && startSlot <= coveredSlot) return; // 本时段已覆盖
+    // 有访客数据才备份，避免全新空库也写一份空备份覆盖掉已有的有效备份
     const chars = await idbGetAll('characters');
     if (!chars || !chars.length) return;
-    /* 20261115b：由「每天只认第一次」改为「每天一条、当天可刷新」。
-       旧逻辑当天一旦成功就 return —— 白天聊的内容永远进不了当天的备份，
-       晚上的增量要等第二天才可能落盘（用户实测指出这个问题）。
-       现在的规则：
-         · 同一天且距上次 < 30 分钟 → 跳过（避免每次切后台都重打包几十 MB，伤存储也耗电）；
-         · 同一天且数据指纹（消息条数 / 最新消息时间 / 角色·表情包·朋友圈数量）没变 → 跳过；
-         · 同一天且数据有变化 → 写一份新的，写完把当天更早那份淘汰（下面轮转按日期只留最新一条）；
-         · 跨自然日 → 正常新增一条。
-       任何一次写入失败都不会更新 lastAutoBackupAt，下次触发会自动重试，不会留下空档。 */
-    const AUTO_MIN_GAP_MS = 30 * 60 * 1000;
-    const lastAt = await getSetting('lastAutoBackupAt', 0);
-    const nowProbe = new Date();
-    const sameDayAsNow = (t) => {
-      if (!t) return false;
-      const d = new Date(t);
-      return d.getFullYear() === nowProbe.getFullYear() && d.getMonth() === nowProbe.getMonth() && d.getDate() === nowProbe.getDate();
-    };
-    const lastSameDay = sameDayAsNow(lastAt);
-    if (lastSameDay && Date.now() - lastAt < AUTO_MIN_GAP_MS) return; // 30 分钟内不重复打包
     const rawData = await buildBackupPayload('3.0'); // 读出全量原始数据（图片还是 {blob,thumb} / {__img:5} 引用）
     // 数据指纹：用来判断「同一天里到底有没有新内容」，没有就不重写。
     const sigOf = (d) => {
@@ -27702,7 +27801,13 @@ async function autoBackup() {
         ((d.settings && d.settings.momentsPosts) || []).length].join('|');
     };
     const sig = sigOf(rawData);
-    if (lastSameDay && (await getSetting('lastAutoBackupSig', '')) === sig) return; // 当天没有新内容
+    const lastSig = await getSetting('lastAutoBackupSig', '');
+    if (lastSig && lastSig === sig) {
+      /* 数据一点没变 → 不写盘（玩家已确认这条：没变化就没必要备份）。
+         但记账仍然推进到当前时段 —— 否则每切一次后台都要重读全库算指纹，白耗电还伤电池。 */
+      try { await setSetting('autoBackupCoveredSlot', startSlot); } catch (e) {}
+      return;
+    }
     // 20261115：改走导出侧同一套「去重 + 抽图」——同一张图被多处引用时只进容器一次。
     const { data, images } = await collectImagesV4(rawData);
     data.version = '2.2'; // 容器格式统一标 2.2（导入端靠分隔符识别，不看 version）
@@ -27716,7 +27821,7 @@ async function autoBackup() {
     const relPath = BM_AUTO_BACKUP_DIR + '/' + fname;
     // 复用导出写盘：并发 WebP 压缩（小图直通、GIF/APNG 原样保护）+ JSON 头首块 + 图片分块 append，
     // 全程流式、单张图驻留内存，不会出现「几百 MB 全塞进 JS 堆」的 OOM。
-    await writeContainerFile(relPath, data, images, 'DOCUMENTS', null);
+    await writeContainerFile(relPath, data, images, 'DOCUMENTS', null, bmBackupGate);
 
     // 实际落盘字节数（stat 只读元数据，不读内容）
     let bytes = 0;
@@ -27784,6 +27889,8 @@ async function autoBackup() {
     try { await setSetting('lastAutoBackupAt', now.getTime()); } catch (e) {}
     try { await setSetting('lastAutoBackupFile', fname); } catch (e) {}
     try { await setSetting('lastAutoBackupSig', sig); } catch (e) {}
+    /* 20261117h：用「完成时」的时段记账 —— 备份从上午跑到中午，就记到中午，两段合并算这一次 */
+    try { await setSetting('autoBackupCoveredSlot', bmSlotIndex(Date.now())); } catch (e) {}
 
     /* 清掉被轮转淘汰的旧备份。新备份已完整落盘后才删，任何时刻都不会出现空档。
        20261115b 白名单：只删「白日梦自动备份_YYYYMMDD-HHMM.ocdata」——
@@ -27798,29 +27905,34 @@ async function autoBackup() {
       }
     }
   } catch (e) {
-    /* 静默失败，不打扰用户；只留一条最近错误（截断 200 字）供排查用，
-       例如「没有所有文件访问权限」导致一直写不进去时，能从这里看出原因。 */
-    try { await setSetting('lastAutoBackupError', String(e && e.message ? e.message : e).slice(0, 200)); } catch (e2) {}
+    const _abortMsg = String(e && e.message ? e.message : e);
+    if (_abortMsg === 'BM_BACKUP_ABORT') {
+      /* 暂停超过 10 分钟主动放弃：这不是失败，不写 error 字段、不推进时段记账，
+         下次切后台会重新开始（旧的完整备份文件一直还在，不会丢数据）。 */
+      try { await setSetting('lastAutoBackupAbortedAt', Date.now()); } catch (e2) {}
+    } else {
+      /* 静默失败，不打扰用户；只留一条最近错误（截断 200 字）供排查用，
+         例如「没有所有文件访问权限」导致一直写不进去时，能从这里看出原因。 */
+      try { await setSetting('lastAutoBackupError', _abortMsg.slice(0, 200)); } catch (e2) {}
+    }
   }
   finally { _autoBackupRunning = false; } // 无论成功/异常都释放锁，避免一次失败永久锁死
 }
 
-/* 自动备份调度：启动后延迟首备 + 每次切后台补备（省电：切后台时顺带一次即可） */
+/* 自动备份调度（20261117h 重写）：不再按固定时间定时，全部由「切后台 / 锁屏」驱动。
+   触发入口统一在文档底部那对监听器（visibilitychange + appStateChange）里调 bmBackupOnBackground()，
+   这里只保留一个兜底：从来没备过（新装 / 清过数据）时，启动 40 秒后先给一份，
+   避免玩家一整天不切后台导致一份备份都没有。除此之外前台一律不备。 */
 let _autoBackupScheduled = false;
 function scheduleAutoBackup() {
   if (_autoBackupScheduled) return;
   _autoBackupScheduled = true;
-  // 启动后延迟 40s 首备（避开启动加载/声明弹窗高峰）
-  setTimeout(() => { try { autoBackup(); } catch (e) {} }, 40000);
-  // 每次切后台补备一次（数据最可能"已经又变了一批"，切后台正是好时机）
-  try {
-    const Cap = window.Capacitor;
-    if (Cap && Cap.Plugins && Cap.Plugins.App && typeof Cap.Plugins.App.addListener === 'function') {
-      Cap.Plugins.App.addListener('appStateChange', (st) => {
-        try { if (!st.isActive) autoBackup(); } catch (e) {}
-      });
-    }
-  } catch (e) {}
+  setTimeout(async () => {
+    try {
+      const covered = await getSetting('autoBackupCoveredSlot', null);
+      if (covered === null || covered === undefined) { await autoBackup(); }
+    } catch (e) {}
+  }, 40000);
 }
 
 /* ---------- 工具：HTML 转义 ---------- */
