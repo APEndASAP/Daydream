@@ -3034,6 +3034,39 @@ body.theme-light #bm-ma-toast {
   border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
+/* ============================================================
+   20261118：模拟通话玻璃精度（独立三档）
+   —— 由 app.js 的 applyCallGlass() 给 body 挂 callg-mid / callg-low。
+   —— 作用范围只有通话玻璃三处：#call-box.call-glass（通话主卡）、
+      .modal.call-glass（复用同一张玻璃的弹窗形态）、.call-float（浮游小窗）。
+   —— 刻意不依赖 body.glass-ui：玻璃拟态总开关可能被帧率自动降档关掉，
+      但通话界面仍要按玩家自己选的档位渲染，不能跟着一起没了。
+   —— hi 档不写任何规则，沿用上面 .modal.call-glass 的 blur(28px) 原始写法。
+   ============================================================ */
+body.callg-mid .modal.call-glass,
+body.callg-mid #call-box.call-glass,
+body.callg-mid .call-float {
+  backdrop-filter: blur(14px) saturate(145%);
+  -webkit-backdrop-filter: blur(14px) saturate(145%);
+  background: rgba(32, 27, 46, 0.5);
+}
+/* 低精度：完全不用 backdrop-filter（零模糊开销），用稍高不透明度的同色卡片模拟玻璃，
+   保证在弱机/软件渲染下也不会变成"只剩一层空气"的透明色条 */
+body.callg-low .modal.call-glass,
+body.callg-low #call-box.call-glass,
+body.callg-low .call-float,
+body.theme-light.callg-low .modal.call-glass,
+body.theme-light.callg-low #call-box.call-glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(32, 27, 46, 0.82);
+}
+/* 浅色主题下 mid 档与深色保持同一套深紫玻璃，只统一不透明度 */
+body.theme-light.callg-mid .modal.call-glass,
+body.theme-light.callg-mid #call-box.call-glass {
+  background: rgba(32, 27, 46, 0.56);
+}
+
 /* —— 20260929bm：通话独立层（通话 UI 不再复用 #modal-content——
    来电/接听/挂断/缩小只影响本层，底下玩家正在用的功能弹窗/页面原样保留） —— */
 #call-layer {
