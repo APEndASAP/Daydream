@@ -4106,14 +4106,25 @@ body.theme-light .checkin-loc {
 }
 body.theme-light .checkin-loc-pos { color: #6a54c4; }
 /* ---------- 书信（信封卡片 + 火漆印开信动画） ---------- */
+/* 20261118b 修「书信卡片没有背景」—— 三轮取证后的准确结论（上一版注释写的"只是颜色淡"不准确）：
+   ① 渲染链路没问题：elementFromPoint 命中卡片内部（没被任何层压住）；
+      临时把背景改成纯红再截图，红块与绿边框完整显示、文字清晰。
+   ② 不是「某个版本把它改没了」：解包 160+ 个历史 APK 逐个比对，.letter-card 规则
+      从 20261002 至今完全相同（background #3a3050→#2a2340、border var(--purple-dim)），
+      --purple-dim 也一直是 rgba(167,139,250,0.16)，从未变过。
+   ③ 所以「看不见」的本质是这套配色在深色聊天背景上对比度不足；
+      玩家对照早期截图要的是「明显亮紫卡片」的观感。
+   ⇒ 按早期观感提亮：背景 #57486f→#3b3153→#302747 三档渐变、边框 16%→38%、补内外阴影。 */
 .letter-card {
-  background: linear-gradient(150deg, #3a3050 0%, #2a2340 100%);
-  border: 1px solid var(--purple-dim); border-radius: 16px; padding: 14px 16px;
+  background: linear-gradient(150deg, #57486f 0%, #3b3153 55%, #302747 100%);
+  border: 1px solid rgba(167, 139, 250, 0.38); border-radius: 16px; padding: 14px 16px;
   min-width: 210px; cursor: pointer; position: relative; overflow: hidden;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 .letter-card .lc-flap {
   position: absolute; top: 0; left: 0; right: 0; height: 46%;
-  background: linear-gradient(180deg, rgba(196,181,253,.14), transparent);
+  /* 20261118：跟着卡片一起提亮（原 .14 在提亮后的底上看不出信封盖） */
+  background: linear-gradient(180deg, rgba(196, 181, 253, 0.26), rgba(196, 181, 253, 0.02));
   clip-path: polygon(0 0, 100% 0, 50% 100%);
   pointer-events: none;
 }
