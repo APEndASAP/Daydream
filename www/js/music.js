@@ -506,6 +506,36 @@ window.bmMusic = (function () {
      方案A：闭包2 初始化时把网易云直连函数注入到这里，闭包1 经代理调用。 */
   let _neteaseBridgeFns = null;
   function setNeteaseBridge(fns) { _neteaseBridgeFns = fns || null; }
+  /* ===== 20261118【模式感知 · C0】本模块是「当前该用账号还是该用音源」的唯一判定入口 =====
+     【为什么要这个函数】本文件是两个互不相见的 IIFE：
+       · 闭包1（约 1~1751 行，bmMusic）：管播放、取详情、补封面、补歌词；
+       · 闭包2（约 1776 行以后，bmMusicUI）：管模式切换、网易云直连开关、原生桥。
+     真正的「直连开关」变量 _netEaseDirect 住在闭包2，闭包1 直接读它会 ReferenceError
+     （这个文件历史上多次因此崩掉，注释里到处是「跨闭包」的血案）。
+     所以由闭包2 把 _isAccountSrc 这个**函数**注进来，闭包1 每次现调现取，
+     拿到的是「此刻」的模式状态，而不是初始化时的那一个瞬间值。
+     【判定规则】只有「后台遥控 + 直连分支」才算账号模式；
+       镜像搜索 / 本地与解析 / 后台遥控·外部App 一律 false（走音源或外部会话）。
+     【调用者】fetchSongDetail / _ensureCover / _lrcFromAnySource / fetchPlaylist。
+     【未注入时】返回 false（=按音源处理），绝不抛错，保证旧调用路径不受影响。 */
+  function _acctMode() {
+    try {
+      const f = _neteaseBridgeFns && _neteaseBridgeFns._isAccountSrc;
+      return !!(f && f());
+    } catch (e) { return false; }
+  }
+  /* ===== 20261118【模式感知 · C1配套】账号模式下用「你的登录态」读整张歌单 =====
+     闭包1 看不见闭包2 的 _netEasePlaylistTracks，只能经桥调用（同 _netEaseReq 的做法）。
+     12s 超时：原生桥在弱网/后台可能永不 resolve，超时按「空」处理，
+     让 fetchPlaylist 自动落到 qijieya 分支，最坏结果等于改动前的行为。 */
+  async function _acctPlaylistTracks(pid) {
+    try {
+      const f = _neteaseBridgeFns && _neteaseBridgeFns._netEasePlaylistTracks;
+      if (!f) return [];
+      const r = await _withTimeout(f(pid, { skipFill: true }), 12000, [], 'acctPlaylist');
+      return Array.isArray(r) ? r : [];
+    } catch (e) { return []; }
+  }
   /* 20261113：走原生 HTTP（Java 层，不受 CORS 限制），专门给「有号池但不给 CORS 头」的
      第三方音源用（洛雪 Huibq 后端 lxmusicapi.onrender.com 要 X-Request-Key、无 allow-origin，
      在 WebView 里直接 fetch 必被拦）。未注入时返回 null，调用方按失败处理、自动换下一源。 */
@@ -609,7 +639,14 @@ window.bmMusic = (function () {
        只有 id 没有 _neteaseId，原来的 `song._neteaseId &&` 直接把它们全排除了，
        于是每首歌都退回多源按名重搜（切歌几分钟的真因）。 */
     const _nid0 = _songNeteaseId(song, true);
-    if (song && _nid0 && ((song.source === 'netease-direct') || !song.url || /^http:\/\//i.test(String(song.url)))) {
+    /* 20261118【模式感知 · C3】直连模式下，只要这首歌带网易云 ID，就**必须先走账号**。
+       改动前只认 song.source==='netease-direct'：粘贴导入的歌 source 是 'local'，
+       于是直连模式下重抓/切歌也会退回第三方音源按歌名重搜（封面歌词都可能抓错版本）。
+       现在把「当前是不是账号模式」加进入场条件，账号优先、音源兜底。
+       ★ 兜底是现成的：下面 if (u && u.url) 不成立（没登录 / VIP 拿不到 / 超时）
+         就自然往下走到 getActiveSources() 多源分支，不需要额外写 fallback。 */
+    const _wantAcct = _acctMode();
+    if (song && _nid0 && (_wantAcct || (song.source === 'netease-direct') || !song.url || /^http:\/\//i.test(String(song.url)))) {
       const id = String(_nid0);
       const u = await _netEaseSongUrl(id);
       if (u && u.url) {
@@ -626,7 +663,12 @@ window.bmMusic = (function () {
         } catch (e) {}
         if (song.pic) song.pic = String(song.pic).replace(/^http:\/\//i, 'https://');
         if (!song.lrc) { const lrc = await _netEaseLyric(id); if (lrc) song.lrc = lrc; }
-        song.source = 'netease-direct';
+        /* 20261118【模式感知 · C3配套】只给「本来没有来源」的歌打直连标记。
+           改动前这里无条件写 'netease-direct'：C3 放开后，直连模式下播一首镜像收藏的歌
+           也会被改标成直连，导致它从镜像收藏里「消失」（C6 的重抓按 source 分类，
+           镜像模式以后就不再抓它了）。来源是分类依据，不能因为「这次怎么播的」被覆盖。
+           缺 source 的老数据仍然补上，保证它能在直连模式里被识别。 */
+        if (!song.source) song.source = 'netease-direct';
         await _ensureCover(song, true);   // 20261116：直连也一样，空封面统一补
         if (!song.lrc) { const alt = await _lrcFromAnySource(song, ''); if (alt) song.lrc = alt; }
         return song;
@@ -765,7 +807,12 @@ window.bmMusic = (function () {
        所以顺序整体倒过来：官方 detail 最前，pic_id 次之，GD 歌曲 id 只做最后兜底，
        且兜底结果必须过 _picUsableStrict（短 id 一律丢），宁缺不烂。 */
     // ① 官方 song/detail：按歌曲 id 拿真实 album.picUrl（最准，实测 30/30）
-    if (nid && /^\d+$/.test(nid)) {
+    /* 20261118【模式感知 · C4】这一步打的是**玩家自己的网易云账号**（带 Cookie）。
+       按设计，只有「后台遥控·直连」才该消耗账号接口；镜像/本地模式一律走音源，
+       否则镜像模式下每补一张封面都在用玩家的登录态，属于越界。
+       ★ 镜像模式下跳过本步，直接落到 ② 的 GD（音源）路线；
+         ②③ 都有 _picUsableStrict 把关，宁可留空也不落死链。 */
+    if (_acctMode() && nid && /^\d+$/.test(nid)) {
       try {
         const dj = await _netEaseReq('https://music.163.com/api/song/detail?ids=[' + encodeURIComponent(nid) + ']');
         const s0 = dj && dj.songs && dj.songs[0];
@@ -843,6 +890,19 @@ window.bmMusic = (function () {
      于是「有地址、没歌词」。这里在拿不到词时依次问其余源，最后兜官方接口（仅数字 id）。 */
   async function _lrcFromAnySource(song, skipKey) {
     if (!song) return '';
+    /* 20261118【模式感知 · C5】直连模式下，歌词兜底必须**账号优先**。
+       改动前顺序是反的：先遍历所有第三方音源，最后才问官方接口
+       （下面 if (/^\d+$/.test(song.id)) 那一段）。
+       结果是直连模式拿不到词时，先去打 qijieya/GD 等音源 —— 与「直连靠自己的账号」相悖，
+       而且音源按歌名匹配经常给到翻唱版的词。
+       现在：账号模式 → 先用 _netEaseLyric(网易云 id)，拿不到再走音源；
+             非账号模式（镜像/本地/外部遥控）→ 保持原顺序，先音源。 */
+    if (_acctMode()) {
+      const sid = _songNeteaseId(song, true);
+      if (/^\d+$/.test(String(sid || ''))) {
+        try { const t = await _netEaseLyric(sid); if (t) return t; } catch (e) {}
+      }
+    }
     try {
       const srcs = await getActiveSources();
       for (const s of srcs) {
@@ -996,6 +1056,32 @@ window.bmMusic = (function () {
   async function fetchPlaylist(platform, id) {
     try {
       if (platform === 'netease') {
+        /* ===== 20261118【模式感知 · C1】直连模式：导入歌单必须走玩家自己的账号 =====
+           【改动前】这里无条件打 api.qijieya.cn（第三方匿名接口）：
+             曲目全量由第三方给，pic 字段还被写死成空串，最后靠 GD 逐首补封面。
+             玩家明明登录着自己的网易云，导入却一次都没用上账号 —— 与设计相悖。
+           【改动后】账号模式 → 先走 _acctPlaylistTracks（内部 = 官方 /api/playlist/detail，
+             带 Cookie）。实测该接口返回**全量 127 首**且 **127/127 都带 album.picUrl**，
+             一次请求就把曲目 + 官方 600×600 封面全拿到，不需要逐首补、不会撞频控。
+           【兜底】账号拿不到（未登录 / 登录失效 / 接口 405 / 12s 超时 / 返回空）
+             → 直接往下走到原来的 qijieya 分支，行为与改动前一致，绝不出现「导不进来」。
+           【落库字段】source 标成 netease-direct，播放时 fetchSongDetail 才认得出该走直连。 */
+        if (_acctMode()) {
+          const acc = await _acctPlaylistTracks(id);
+          if (acc && acc.length) {
+            return acc.map(x => ({
+              id: String(x.id || x._neteaseId || ''),
+              name: x.name || '',
+              artist: x.artist || '',
+              album: x.album || '',
+              pic: x.pic || '',            // 官方 album.picUrl（C2 已修好字段名）
+              url: '',                     // 播放时由直连分支现取签名直链
+              lrc: '',                     // 播放时由官方歌词接口现取
+              source: 'netease-direct',
+              _neteaseId: String(x._neteaseId || x.id || ''),
+            })).filter(x => x.name && x.id);
+          }
+        }
         // 网易云歌单：qijieya Meting playlist 接口（近期搜索/直链接口不稳，playlist 仍可用）
         const j = await _fetchJSON(`https://api.qijieya.cn/meting/?server=netease&type=playlist&id=${encodeURIComponent(id)}`);
         if (Array.isArray(j) && j.length) {
@@ -3635,13 +3721,38 @@ window.bmMusicUI = (function () {
        玩家的观感就是「列表 30 首只抓 10 首」，而且「重抓了还是没歌词」。
        现在重抓 = **整个播放列表**，只跳过纯本地文件（source==='local' 且没有网易云 id，
        那种没有可重抓的线上地址）。 */
-    const pl = (M.state.playlist || []).slice()
-      .filter(s => !(s && s.source === 'local' && !s._neteaseId));
+    /* ===== 20261118【模式感知 · C6】重抓范围按模式互斥（玩家 2026-11-18 当面确认）=====
+       玩家原话：「重抓范围，后台遥控·直连，只重抓带网易云 ID 的歌，一方面需要账号登录，
+       另一方面还是要用音源兜底」「模式一的抓取要走模式一的音源」。
+       规则：
+         · 后台遥控·直连 → 只抓**带网易云 id** 的（没 id 的音源歌账号也认不出来）
+         · 镜像搜索       → 只抓镜像来源的歌（走音源，不碰账号）
+         · 本地与解析     → 只抓本地库里带 id 的（纯本地文件没有可重抓的线上地址）
+         · 后台遥控·外部  → 上面已 return，只抓当前那一首，不进这里
+       ※ 20261117 曾把范围放开成「整个播放列表」来修「30 首只抓 10 首」的观感问题，
+         但那违背模式互斥；本次改用 toast 明示「本次重抓 N 首（当前模式）」解决观感，
+         不再跨模式乱抓。 */
+    const _m = M.state.mode || 'mirror';
+    const _hasNid = (s) => {
+      const a = String((s && s._neteaseId) || '').trim();
+      if (/^\d+$/.test(a)) return true;
+      /* 老数据只有 id 没有 _neteaseId：仅在来源明确是网易云（或未标来源）时才认，
+         避免把酷狗/酷我的数字 id 当成网易云 id */
+      return /^\d+$/.test(String((s && s.id) || '')) && ((s && s.source === 'netease-direct') || !(s && s.source));
+    };
+    const pl = (M.state.playlist || []).slice().filter(s => {
+      if (!s || !s.name) return false;
+      if (_m === 'mirror') return (s.source === 'mirror') || !s.source;   // 老数据没有 source，按当前模式算
+      if (_m === 'local') return (s.source === 'local') && _hasNid(s);
+      return _hasNid(s);            // remote + 直连分支
+    });
     const cur = M.state.current;
-    const _nm = '整个播放列表';
+    const _nm = _m === 'mirror' ? '镜像搜索' : (_m === 'local' ? '本地与解析' : '网易云直连');
+    /* 正在播的那首即使不属于当前模式也带上：玩家看着它点重抓，期望的就是它先被刷。
+       （其余歌严格按模式过滤，不跨模式乱抓） */
     if (cur && !pl.some(s => String(s.id) === String(cur.id))) pl.push(cur);
     if (!pl.length) {
-      if (window.miniToast) miniToast('播放列表里没有可重抓的歌（纯本地文件不需要重抓）');
+      if (window.miniToast) miniToast(`当前模式「${_nm}」下没有可重抓的歌（换模式或先导入歌单）`);
       return;
     }
     _refreshBusy = true;
@@ -3649,7 +3760,7 @@ window.bmMusicUI = (function () {
     const btn = document.getElementById('bm-music-refresh');
     if (btn) btn.classList.add('spinning');
     const slow = setTimeout(() => {
-      if (_refreshBusy && window.miniToast) miniToast(`正在重抓 ${pl.length} 首歌的歌词与播放地址…（再点一次按钮可停止）`);
+      if (_refreshBusy && window.miniToast) miniToast(`正在重抓 ${pl.length} 首（${_nm}）的歌词与播放地址…（再点一次按钮可停止）`);
     }, 700);
     let ok = 0, lrcOk = 0, urlOk = 0, picOk = 0, curFull = null, stopped = false;
     /* 20261118：整段包 try/finally —— 原来「复位 _refreshBusy + 取消 spinning」
@@ -4227,13 +4338,14 @@ window.bmMusicUI = (function () {
     };
     overlay.querySelector('#bm-music-go').onclick = doSearch;
     input.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
-    // 20261105：解析歌单按钮 → 本地模式点它先自动切到「镜像搜索」模式再去解析（歌单解析
-    //   依赖镜像站，本地模式无镜像可解析，会报「未获取到播放直链」）。镜像/后台遥控模式直接弹。
+    /* 20261118（玩家定案）：粘贴歌单链接解析【只属于网易云直连】。
+       旧逻辑是本地模式点它先偷偷 setMode('mirror') 再解析——等于玩家点一个按钮，
+       整个音乐页被强行换模式，且解析走的是匿名音源接口，登了账号也用不上。
+       现在：①本地/镜像都不再显示这个按钮（见 renderModeStage 的 parseBtn）；
+             ②解析入口统一放在「后台遥控·网易云直连」面板里（id=bm-netease-pastelink）；
+             ③fetchPlaylist 在直连模式下走玩家账号，失败才落音源兜底。
+       这里保留点击处理只是为了程序调用兜底，不再做任何模式切换。 */
     overlay.querySelector('#bm-music-parse').onclick = () => {
-      if (M.state.mode === 'local') {
-        setMode('mirror');
-        if (window.miniToast) miniToast('已切到镜像搜索模式解析歌单');
-      }
       showParsePlaylist();
     };
     // 搜索框聚焦时，若结果列表是收起状态则自动展开，方便再次搜索
@@ -5350,8 +5462,10 @@ window.bmMusicUI = (function () {
     if (dlBtn) dlBtn.style.display = '';   // 20261105：三种模式都显示下载按钮
     // 音源路径按钮只在镜像搜索模式显示
     if (srcBtn) srcBtn.style.display = (mode === 'mirror') ? '' : 'none';
-    // 20261103：解析歌单按钮只在「本地与解析」模式显示（镜像搜索去掉，后台遥控面板自带解析入口）
-    if (parseBtn) parseBtn.style.display = (mode === 'local') ? '' : 'none';
+    /* 20261118（玩家定案）：导入歌单只归「后台遥控·网易云直连」管。
+       镜像搜索 = 只搜/只播已进库的歌；本地与解析 = 只播本地库。
+       所以这个粘贴链接按钮在本地面板彻底移除，改由直连面板的 bm-netease-pastelink 提供。 */
+    if (parseBtn) parseBtn.style.display = 'none';
     if (mode === 'local') {
       // 本地与解析：保留搜索框（搜在线曲目），音乐库改由顶栏「音乐库」按钮弹窗管理
       if (searchBox) searchBox.style.display = '';
@@ -5774,8 +5888,19 @@ window.bmMusicUI = (function () {
          全部判不出「直连」，每首切歌都退回多源按名重搜（几分钟一首），封面也补不上。 */
       _neteaseId: String(t.id),
       name: t.name || '',
-      artist: (t.ar && t.ar.length) ? t.ar.map(a => a.name).join(' / ') : '',
-      pic: (t.al && t.al.picUrl) ? String(t.al.picUrl).replace(/^http:\/\//i, 'https://') : '',
+      /* 20261118【模式感知 · C2】★ 这是「登录歌单导入后 127 首全没封面」的真正根因 ★
+         /api/playlist/detail（老接口）返回的曲目字段是 **album / artists**，
+         而这里原来只读 **al / ar**（那是 v6 新接口的字段）。
+         于是 t.al 恒为 undefined → 127 首的官方封面一张都没取到 → pic 全空 →
+         触发下面 6 路并发去 GD 逐首补 → 撞网易云频控（code:405）→ 只剩零星几首有图。
+         真机实测：老接口 127/127 全都带 album.picUrl（官方 600×600），一次请求就能拿全。
+         两种结构都兼容，新老接口谁返回什么都能吃到。 */
+      artist: ((t.ar || t.artists || []).map(a => (a && a.name) || '').filter(Boolean).join(' / ')),
+      pic: (() => {
+        const a = t.al || t.album || null;
+        const u = a && (a.picUrl || a.blurPicUrl);
+        return u ? String(u).replace(/^http:\/\//i, 'https://') : '';
+      })(),
       source: 'netease-direct',
     }));
     /* 20261117i 修跨闭包 ReferenceError：_fillCoversForImport 定义在闭包1（bmMusic），
@@ -6606,7 +6731,14 @@ window.bmMusicUI = (function () {
     if (plBox && neLogged) {
       _netEaseMyPlaylists().then(pls => {
         if (!pls || !pls.length) { plBox.innerHTML = '<div class="bm-netease-empty">没读到你的歌单（可能账号没建歌单）</div>'; return; }
-        plBox.innerHTML = `<div class="bm-netease-results-head"><i data-icon="music" data-size="16"></i> 我的歌单（点一首播放 · 或导入到音乐库）<button class="bm-remote-btn bm-netease-import" id="bm-netease-import" title="勾选歌单导入到音乐库"><i data-icon="download" data-size="16"></i> 导入歌单</button></div>` + pls.slice(0, 50).map(p => `
+        /* 20261118（玩家定案）：直连面板是「导入歌单」的唯一入口。
+           ①「导入歌单」= 勾选自己账号里的歌单批量入库（原有功能）；
+           ②「粘贴歌单链接」= 解析任意歌单分享链接，走玩家自己的账号拿全量曲目+官方封面
+             （fetchPlaylist 在直连模式下已改为账号优先，失败才落音源兜底）。
+           两个按钮都在这里，镜像/本地模式不再出现任何导入入口。 */
+        plBox.innerHTML = `<div class="bm-netease-results-head"><i data-icon="music" data-size="16"></i> 我的歌单（点一首播放 · 或导入到音乐库）
+          <button class="bm-remote-btn bm-netease-pastelink" id="bm-netease-pastelink" title="粘贴歌单分享链接解析并导入（走你自己的账号）"><i data-icon="link" data-size="16"></i> 粘贴链接</button>
+          <button class="bm-remote-btn bm-netease-import" id="bm-netease-import" title="勾选歌单导入到音乐库"><i data-icon="download" data-size="16"></i> 导入歌单</button></div>` + pls.slice(0, 50).map(p => `
           <div class="bm-netease-playlist" data-id="${p.id}">
             ${p.cover ? `<img src="${esc(p.cover)}" referrerpolicy="no-referrer" alt="">` : '<span class="bm-netease-result-ph"><i data-icon="music" data-size="16"></i></span>'}
             <div class="bm-netease-result-info"><div class="bm-netease-result-name">${esc(p.name)}</div><div class="bm-netease-result-artist">${p.count} 首</div></div>
@@ -6632,6 +6764,15 @@ window.bmMusicUI = (function () {
         if (importBtn) importBtn.onclick = async (e) => {
           e.stopPropagation();
           await _netEaseImportPlaylists(pls);
+        };
+        /* 20261118（玩家定案）：粘贴歌单链接入口 —— 只在直连面板出现。
+           点击后弹出与原来完全相同的解析浮层（showParsePlaylist），区别只是：
+           现在解析走玩家自己的账号（见 fetchPlaylist 的账号优先分支），
+           拿到全量曲目 + 官方 600×600 封面；账号失败才落回音源兜底。 */
+        const pasteLinkBtn = box.querySelector('#bm-netease-pastelink');
+        if (pasteLinkBtn) pasteLinkBtn.onclick = (e) => {
+          e.stopPropagation();
+          showParsePlaylist();
         };
       });
     }
@@ -10138,6 +10279,11 @@ window.bmMusicUI = (function () {
      20261106：fetchSongDetail/_netEaseLyric 在闭包1，_netEaseSongUrl/_netEaseReq 在闭包2，
      跨闭包调用崩。这里初始化即注入，闭包1 经代理调用。 */
   M.setNeteaseBridge({
+    /* 20261118【模式感知 · C0】把「当前是否账号模式」提供给闭包1。
+       用箭头函数而不是布尔值：闭包1 每次调用都会现取，模式一变立刻生效，
+       不会像快照那样卡在初始化那一刻的 false。
+       判定与全文件其余地方保持一致：remote 模式 + 直连分支 = 用玩家自己的账号。 */
+    _isAccountSrc: () => (M.state.mode === 'remote') && !!_netEaseDirect,
     _netEaseReq,
     _nativeReq: _nativeReqJson,
     _nativeText: _nativeText,
