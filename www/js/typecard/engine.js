@@ -744,6 +744,8 @@
 
         // 1) 保存 replyMsg 引用
         self._active = { msg, ghost: null, observer: null };
+        // 20261119：新一场演出开始，清空上一场残留的表情记录（收尾时用它补发表情消息）
+        try { if (ui && typeof ui.resetEmojiShots === 'function') ui.resetEmojiShots(); } catch (e) {}
         /* 20261113h：新一场演出开始，折叠状态复位 —— 面板要重新露面（上一场折叠过也不影响这一场） */
         self._summonHidden = false;
 
@@ -825,6 +827,27 @@
       if (inThisChat(msg) && !msg.recalled) {
         appendOnce(msg); // 查重版上屏：演出期间 renderMessages 重建渲染过就不再 append（防双条一模一样）
       }
+
+      /* 20261119：把本次演出「正文预览区」真正显示过的图片表情补发成真实表情消息。
+         背景：图片表情块为省内存只存轻量标记 { img:true }，不写进 content，
+         于是演出画面里有图、落库正文里没有 —— 就是你看到的「演出内容和最终打出来的不一样」。
+         这里用的就是演出时那同一张图（不重新抽），顺序在文字消息之后，做到「看到什么就留下什么」。
+         只在真消息没被撤回时补，避免给已撤回的消息后面挂图。 */
+      try {
+        const uiR = global.bmTypecardUi;
+        const shots = (uiR && typeof uiR.takeEmojiShots === 'function') ? uiR.takeEmojiShots() : [];
+        if (shots.length && !msg.recalled) {
+          for (let si = 0; si < shots.length; si++) {
+            const em = {
+              id: (global.uid ? global.uid('msg') : ('sm' + Date.now() + '_' + si)),
+              charId: msg.charId, from: 'them', type: 'emoji',
+              content: shots[si], time: Date.now() + si,
+            };
+            try { await global.idbPut('messages', em); } catch (e) {}
+            try { if (inThisChat(em)) appendOnce(em); } catch (e) {}
+          }
+        }
+      } catch (e) {}
 
       // 删 ghost
       const ui = global.bmTypecardUi;
