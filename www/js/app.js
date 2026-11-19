@@ -7604,6 +7604,10 @@ function shouldDingFor(c) {
    即使玩家没打开聊天页也会触发（模拟后台消息）
    修复：首次启动即初始化计时起点，到间隔后稳定触发（不再被额外概率挡住） */
 let _lastProactive = {}; // 按角色 id 记录上次主动发消息时间
+/* 20261119：主动消息「生成/落库失败」后的重试退避时刻（按角色，纯内存不落库）。
+   失败时既不能推进基准（否则失败被误记成功，下一次被推迟），也不能让 15 秒心跳
+   每 15 秒重试一次（AI 生成会被打成连发）。退避 60 秒：到点前整轮跳过，到点后再试。 */
+let _proactiveRetryAt = {};
 let _proactiveRandUntil = {}; // 随机模式下，按角色记录「下次触发时间点」（内存态；见下 nextProactiveAt 持久化）
 /* 20261008 随机调度持久化：把「下次随机触发时间点」从易失内存态提升为可恢复状态。
    nextProactiveAt = _proactiveRandUntil 的持久化镜像（kv key 'proactiveNextAt'，复用现有 kv store，
@@ -7795,10 +7799,11 @@ async function requestProactiveScan() {
 }
 
 function startProactiveTimer() {
-  // 初始化计时起点：避免首次 last=0 导致 Date.now()-0 恒判定「已到时间」
-  for (const c of characters) {
-    if (!_lastProactive[c.id]) _lastProactive[c.id] = Date.now();
-  }
+  /* 20261119 修「固定间隔重启后被清零」：这里原来先把每个角色播种成 Date.now()，
+     再调用 _proactiveFixedLoad()；而 Load 只接受「比内存值更晚」的持久值（见 7660 行），
+     持久值必然早于 now → 永远恢复不进来，固定间隔实际退化成「启动时刻 + 间隔」。
+     现在不在这里播种：__proactiveScan 会先 await _proactiveFixedLoad()，再只给
+     「恢复后仍为空」的角色播种（见该函数内注释）。 */
   // 20261008：恢复随机调度「下次触发时间点」——从 kv 懒加载到内存态 _proactiveRandUntil，
   // 绝不重新随机（否则每次刷新都重新 1~5 分钟，短会话永远等不到，破坏随机调度语义）。
   // 已过期的值会原样保留，由 __proactiveScan 的 now>=triggerAt 分支识别为「已到期」补发。
@@ -7827,6 +7832,11 @@ async function __proactiveScan() {
   // 20261008：先确保随机调度「下次触发时间点」已从 kv 恢复（幂等懒加载，只读一次）。
   // 否则首次扫描会因 _proactiveRandUntil 还是空而重新随机，覆盖掉持久化的原调度时间。
   await _proactiveNextLoad();
+  /* 20261119：固定间隔基准也必须「先恢复、后播种」——下面 7840 行那句
+     `if (!_lastProactive[c.id]) _lastProactive[c.id] = now;` 会先给空角色播种 now，
+     一旦跑在 Load 前面，Load 的「只接受更晚的值」就永远拒收持久基准。
+     这里用同一套幂等懒加载把它拉回来（只读一次，返回缓存 promise）。 */
+  await _proactiveFixedLoad();
   {
     const day = todayKey();
     for (const c of characters) {
@@ -7866,14 +7876,11 @@ async function __proactiveScan() {
         } else {
           triggerAt = _lastProactive[c.id] + (s.proactiveMin || 10) * 60000;
         }
-        if (now >= triggerAt) {
-          _lastProactive[c.id] = now;
-          if (s.proactiveRandom) {
-            const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
-            const hi2 = Math.max(lo2, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
-            _proactiveRandUntil[c.id] = now + randInt(lo2, hi2) * 60000;
-            _proactiveNextSave(); // 20261008：发送成功后重新生成下一次 nextProactiveAt 并落库
-          }
+        /* 20261119：失败不推进基准（7640-7643 的语义：只有「生成 + 落库成功」才推进），
+           并且失败后 60 秒内不再重试（否则 15 秒心跳会把 AI 生成打成连发）。
+           _proactiveRetryAt 只在内存，不落库：重启后按持久基准继续，不会因为一次失败被永久推迟。 */
+        const _retryDue = !_proactiveRetryAt[c.id] || now >= _proactiveRetryAt[c.id];
+        if (now >= triggerAt && _retryDue) {
           // 20260929ba：转账/红包不再搭载在主动消息里——独立「随机红包」模式（下方 s.randomPacket 块）
           // 20260929ah：AI 模式下主动消息由 AI 生成（节奏不变）；失败软回退字卡（不回滚模式开关）
           let msg = null;
@@ -7885,15 +7892,40 @@ async function __proactiveScan() {
           } else {
             msg = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
           }
-          await deliverCharMessage(c, msg, 'text');
+          /* 20261020 起 deliverCharMessage 返回三态 { persisted } 且永不抛异常；
+             原来这里返回值被丢掉，落库失败也被当成「已发」。现在按它决定推进与否。 */
+          const _sent = await deliverCharMessage(c, msg, 'text');
           // 主动发消息也可能随机附带一次戳一戳（AI 模式下不触发）
           maybeCharPoke(c);
           // 20260929al：访客随机向玩家提问（每天0~3条，搭在主动消息节奏上，不新增定时器）
           maybeCharAskPlayer(c);
           // 20261113d：访客偶尔把朋友圈（自己的 / 有关系的人的）分享给玩家，每天最多 1 条
           maybeCharShareMoment(c);
-          // 20261002ca：本轮已触发 → 预排下一轮原生闹钟（挂后台/进程冻结也照常到点提醒）
-          bmRegisterAlarm(c, 'msg', s.proactiveRandom ? _proactiveRandUntil[c.id] : (now + (s.proactiveMin || 10) * 60000));
+          if (_sent && _sent.persisted) {
+            /* —— 成功：推进基准并落库 —— */
+            delete _proactiveRetryAt[c.id];
+            _lastProactive[c.id] = now;          // 固定模式基准：现在才推进（原来在生成之前推进）
+            if (s.proactiveRandom) {
+              const lo2 = Math.max(1, parseInt(s.proactiveRandMin, 10) || s.proactiveMin || 5);
+              const hi2 = Math.max(lo2, Math.min(720, parseInt(s.proactiveRandMax, 10) || 120));
+              _proactiveRandUntil[c.id] = now + randInt(lo2, hi2) * 60000;
+              _proactiveNextSave(); // 20261008：发送成功后重新生成下一次 nextProactiveAt 并落库
+            } else {
+              _proactiveFixedSave(); // 20261119：固定模式基准落库（此前从未落库，冷启动必回退）
+            }
+            bmDiag('proactive_advance', { charId: c.id, mode: s.proactiveRandom ? 'random' : 'fixed' });
+            // 20261002ca：本轮已触发 → 预排下一轮原生闹钟（挂后台/进程冻结也照常到点提醒）
+            bmRegisterAlarm(c, 'msg', s.proactiveRandom ? _proactiveRandUntil[c.id] : (now + (s.proactiveMin || 10) * 60000));
+          } else {
+            /* —— 失败：基准不动、下一次不重排，60 秒后再试 —— */
+            _proactiveRetryAt[c.id] = Date.now() + 60000;
+            bmDiag('proactive_hold_fail', {
+              charId: c.id,
+              mode: s.proactiveRandom ? 'random' : 'fixed',
+              err: String((_sent && _sent.error) || 'unknown'),
+            });
+            bmRegisterAlarm(c, 'msg', _proactiveRetryAt[c.id]); // 闹钟同步挪到重试时刻，避免到点提醒空转
+          }
           // 超频已从主动消息分离，固定在 15 秒 tick 每访客独立计时；此处不再触发
         }
       }
@@ -12243,7 +12275,15 @@ const POKE_ANIM_WORDS = [
   ['kiss',   /亲亲|亲昵|亲一口|亲一下|亲(?:你|我)|mua|啵啵|啵一个|嘴一个/],
   ['hold',   /牵手|牵牵|芊芊|拉(?:拉)?手|牵(?:你|我)|十指相扣/],
   ['hug',    /抱抱|抱住|抱一下|抱紧|拥抱|抱(?:你|我)/],
-  ['pat',    /摸摸头|摸(?:摸)?(?:你|我)?(?:的)?头|蹭蹭|rua|顺毛|拍拍头/],
+  /* 20261119【玩家端 · 蹭蹭 = 默认那颗小球】玩家原话：「玩家端那个默认的小球动画的
+     关键词检测是蹭蹭」。原来「蹭蹭」被塞在 pat（拍头）里，玩家写「蹭蹭」出来的是
+     一只拍头的手，而两颗球互挤冒爱心的默认动作（squish）只有在「一个词都没命中」时
+     才当兜底，等于永远轮不到。
+     现在把「蹭蹭 / 蹭一蹭」单独指到 squish；「摸摸头 / rua / 顺毛 / 拍拍头」仍是 pat。
+     顺序放在 hug 之后：写「抱抱蹭蹭」时抱抱优先，「蹭着你」仍归 lean（更具体）。
+     ⚠️ 角色那侧不读这张表 —— 它一直是 9 个动作等概率随机（pickCharPokeAnim），不受影响。 */
+  ['squish', /蹭(?:一)?蹭/],
+  ['pat',    /摸摸头|摸(?:摸)?(?:你|我)?(?:的)?头|rua|顺毛|拍拍头/],
   ['pinch',  /捏脸|捏捏|掐脸|捏(?:你|我)(?:的)?脸/],
   ['angry',  /生气|气鼓鼓|气死|好气|不理你|哼(?:！|!|$)/],
 ];
@@ -14065,7 +14105,7 @@ function openSeasonLayer(cid) {
                     frame.contentWindow.document.body.children.length > 0);
   } catch (e) { frameAlive = false; }
   if (frame && (!_seasonFrameLoaded || !frameAlive)) {
-    frame.src = 'season/index.html?v=20261116h';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
+    frame.src = 'season/index.html?v=20261119t';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
     _seasonFrameLoaded = true;
   }
   layer.classList.add('show');
@@ -14371,7 +14411,15 @@ function _seasonSceneText(p) {
   if (books.length) {
     lines.push('【你收到过的书签】');
     books.slice(-8).forEach(function (b) {
-      lines.push('- 「' + b.name + '」' + (b.myMsg ? '（玩家寄语：' + b.myMsg + '）' : '') + (b.taNote ? '（你曾在便签上写：' + b.taNote + '）' : ''));
+      /* 20261118：补上「这枚签长什么样」（season 侧 bookLookText 生成）。
+         截到 60 字，避免 8 枚签把上下文撑爆。
+         20261119：再补一句该物种的图鉴介绍（短版，玩家解锁后才有）——
+         角色日常聊天也知道自己手里这枚签是什么植物、有什么习性。 */
+      const look = b.look ? ('（' + String(b.look).replace(/。$/, '').slice(0, 60) + '）') : '';
+      const codex = b.codex ? ('（' + String(b.codex).replace(/。$/, '').slice(0, 90) + '）') : '';
+      lines.push('- 「' + b.name + '」' + look + codex +
+        (b.myMsg ? '（玩家寄语：' + b.myMsg + '）' : '') +
+        (b.taNote ? '（你曾在便签上写：' + b.taNote + '）' : ''));
     });
   }
   return lines.join('\n');
@@ -14379,15 +14427,30 @@ function _seasonSceneText(p) {
 function _seasonAsk(kind, p) {
   p = p || {};
   if (kind === 'book') {
-    return '你在书签册里翻到了一枚「' + (p.bookName || '书签') + '」书签' +
-      (p.myMsg ? '，上面有玩家写的一句话：「' + p.myMsg + '」' : '') +
-      '。写一句你此刻想说的话：不超过 25 字，只输出这一句本身，不要动作描写、不要括号、不要解释。';
+    /* ★ 20261118：以前这里只给一个书名，AI 等于「看见一个名词」。
+       现在把 season 侧 bookLookText() 生成的外观（材质/编号/别名/学名/
+       季节/签上说明）原样交给它，角色才知道自己翻到的是什么。
+       ⚠️ 字段来自 season/index.html 的 bookNoteMake payload，改字段两处一起改。 */
+    const look = String(p.look || '').trim();
+    const head = look
+      ? '你在书签册里翻到了一枚书签。它的样子是：' + look
+      : '你在书签册里翻到了一枚「' + (p.bookName || '书签') + '」书签。';
+    const msg = p.myMsg ? '这张签上，玩家写给你一句话：「' + p.myMsg + '」。' : '';
+    /* 20261119：图鉴介绍 —— 玩家解锁图鉴后，角色翻到这张签时也读得到这个物种的资料。
+       ★ 明确标注「是图鉴资料、不是玩家说的话」，避免和上面的寄语混成一种口吻。 */
+    const codex = String(p.codex || '').trim();
+    const cxBit = codex ? (' 这枚签里那株植物，植物图鉴上写着：' + codex + '（这是图鉴资料，不是玩家说的话。）') : '';
+    return head + msg + cxBit +
+      '写一句你此刻看着这张书签想说的话：不超过 25 字，只输出这一句本身，不要动作描写、不要括号、不要解释。';
   }
   if (kind === 'reply') {
+    const codex2 = String(p.codex || '').trim();
+    const cxBit2 = codex2 ? (' 这枚签里那株植物，植物图鉴上写着：' + codex2 + '（这是图鉴资料，不是玩家说的话。）') : '';
     return '玩家刚送给你一枚「' + (p.bookName || '书签') + '」书签。' +
       (p.first ? '这是你第一次收到这个品种。' : '') +
       (p.myMsg ? '玩家在书签上写了寄语：「' + p.myMsg + '」——你在星球上看到了它，回一句话（35 字内），要体现出你读到了这句寄语。'
                : '玩家没有写寄语。你在星球上看到了这枚书签，说一句话（30 字内）。') +
+      cxBit2 +
       '只输出这句话本身，不要动作描写、不要括号。';
   }
   if (kind === 'love') {
@@ -14418,10 +14481,42 @@ async function _seasonGenReply(d) {
         '· care＝去照顾其中一株（浇水/松土等）\n· love＝邀请玩家一起浇灌爱意\n' +
         '· card＝说一句日常的话\n· none＝什么都不做（允许，而且很常见）';
     }
-    const r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
-      { role: 'system', content: sys },
-      { role: 'user', content: ask },
-    ], { temperature: kind === 'decide' ? 0.6 : 0.95, timeout: 9000 });
+    /* ===== 20261119【角色真的看见书签图 · 玩家要求】=====
+       四季侧（season/index.html 的 bookImageForChar）把整枚书签画成 512 宽 JPEG，
+       放在 payload.bookImg 里传过来。这里把它作为 vision 附图交给模型：
+         · 只对「book / reply / card」三种说话场景附图；decide 是 JSON 决策，附图只会干扰；
+         · 图必须是以 data:image/ 开头的 dataURL，其余一律当没有；
+         · 模型不支持视觉时 callAI 会报错 → **去掉图原样重试一次**，
+           保住「至少有一句话」这条底线（与群里/朋友圈的 vision 回退同一策略）。
+       AI 模式看得见图；字卡模式没有模型，靠四季本地池子 + 书签集里的原图呈现。 */
+    const _pl = (d && d.payload) || {};
+    const _bookImg = String(_pl.bookImg || '');
+    const _useImg = kind !== 'decide' && /^data:image\//.test(_bookImg);
+    const _askImg = _useImg
+      ? ask + '\n\n（这张书签的照片附在后面，你正看着它。凭你看到的画面说，不要描述「照片里有什么」。）'
+      : ask;
+    const _msgs = _useImg
+      ? [
+          { role: 'system', content: sys },
+          { role: 'user', content: [
+              { type: 'text', text: _askImg },
+              { type: 'image_url', image_url: { url: _bookImg } },
+            ] },
+        ]
+      : [
+          { role: 'system', content: sys },
+          { role: 'user', content: ask },
+        ];
+    const _temp = kind === 'decide' ? 0.6 : 0.95;
+    let r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, _msgs,
+      { temperature: _temp, timeout: _useImg ? 20000 : 9000 });
+    if (_useImg && (!r || !r.ok)) {
+      /* 可能这个模型不接受 image_url → 退成纯文字再来一次 */
+      r = await callAI(cfg.chatApi.url, cfg.chatApi.key, cfg.chatApi.model, [
+        { role: 'system', content: sys },
+        { role: 'user', content: ask },
+      ], { temperature: _temp, timeout: 9000 });
+    }
     if (!r || !r.ok || !r.text) { _seasonGenResult(reqId, { text: null }); return; }
     const raw = String(r.text).trim();
     if (kind === 'decide') {
@@ -15300,7 +15395,10 @@ document.addEventListener('click', function (ev) {
 }, true);
 
 /* 四季事件 → 记忆宫殿（按 charId 独立文件夹，不同角色互不串味） */
-async function _seasonMemo(charId, text) {
+/* 20261119：img 可选 —— 书签事件（book-gift / book-note）会把整枚签的图带过来，
+   存进记忆宫殿的记录里，之后在记忆详情里能直接看到那张签（渲染逻辑本来支持 img）。
+   ⚠️ 图是 dataURL（JPEG，几十 KB），只在书签事件传；其它事件不传，保持 null。 */
+async function _seasonMemo(charId, text, img) {
   try {
     if (!charId || !text) return;
     if (typeof palEnsureFolders === 'function') await palEnsureFolders();
@@ -15311,13 +15409,24 @@ async function _seasonMemo(charId, text) {
       messages: [], baseMsgId: '',
       title: String(text).replace(/\s+/g, ' ').trim().slice(0, 30) || '四季里的一件事',
       summary: '', summaryByAI: false,
-      text: String(text), img: null,
+      text: String(text), img: (typeof img === 'string' && /^data:image\//.test(img)) ? img : null,
       dateLabel: (typeof palDateLabel === 'function') ? palDateLabel(Date.now()) : '',
       time: Date.now(), createdAt: Date.now(),
       allowAI: null, auto: true,
     });
   } catch (e) {}
 }
+/* 20261118：书签送礼进记忆宫殿的概率（用户定案「不应该是有概率吗」）
+   —— 以前 book-gift 无条件写、gift-reply 又写一条，送一枚签会在记忆宫殿
+      里落两条几乎重复的记录，玩家体感就是「每送一次都进」。
+   ⇒ 现在：
+      · 只在 book-gift 掷一次骰；写了寄语的签更值得记，概率高一些；
+      · gift-reply 是同一次赠送的延续，不再单独写（见下方分支注释）；
+      · book-note（角色自己留便签）是另一件事，仍按原逻辑 100% 记。
+   想调概率只改这两个数，别在调用点散写。 */
+const BOOK_GIFT_MEMO_RATE_MSG = 0.6;   /* 玩家写了寄语 */
+const BOOK_GIFT_MEMO_RATE_PLAIN = 0.25; /* 没写寄语 */
+
 function _seasonOnEvent(d) {
   try {
     const cid = d.charId || _seasonCurrentCharId;
@@ -15329,13 +15438,29 @@ function _seasonOnEvent(d) {
       return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
     })();
     if (d.kind === 'book-gift') {
-      _seasonMemo(cid, day + ' 玩家送了我一枚「' + (d.bookName || '书签') + '」书签' +
-        (d.myMsg ? '，上面写着：「' + d.myMsg + '」' : '，没有写寄语') + '。我收下了。');
+      const rate = d.myMsg ? BOOK_GIFT_MEMO_RATE_MSG : BOOK_GIFT_MEMO_RATE_PLAIN;
+      if (Math.random() >= rate) return;   /* 没中：这一枚不进记忆宫殿，属正常 */
+      /* 20261119：记忆里要带三样东西 —— 这张签的编号/样子、玩家写的寄语、图鉴介绍。
+         ★ 归属措辞必须写清「玩家写给我的」：玩家寄语不是角色说的话，
+           写进记忆时也不能含混成「我说过这句话」。 */
+      const noTxt = (d.bookNo != null && d.bookNo !== '')
+        ? ('No.' + String(d.bookNo).padStart(4, '0') + ' ') : '';
+      const cxTxt = d.codex ? (' 图鉴里记着：' + String(d.codex).slice(0, 120)) : '';
+      _seasonMemo(cid, day + ' 玩家把一枚' + noTxt + '「' + (d.bookName || '书签') + '」书签送给了我' +
+        (d.myMsg ? '，玩家在签上写给我的话是：「' + d.myMsg + '」' : '，玩家没有写寄语') +
+        '。' + cxTxt + ' 我收下了。', d.bookImg || null);
     } else if (d.kind === 'book-note') {
-      _seasonMemo(cid, day + ' 我在「' + (d.bookName || '那枚') + '」书签的便签上写了一句话：「' + (d.text || '') + '」');
+      const cxTxt2 = d.codex ? ('（图鉴里记着：' + String(d.codex).slice(0, 100) + '）') : '';
+      _seasonMemo(cid, day + ' 我在「' + (d.bookName || '那枚') + '」书签的便签上写了一句话：「' + (d.text || '') + '」' + cxTxt2,
+        d.bookImg || null);
     } else if (d.kind === 'gift-reply') {
-      _seasonMemo(cid, day + ' 我收到了「' + (d.bookName || '书签') + '」' +
-        (d.hasMsg ? '，玩家还写了寄语。我对玩家说：「' + (d.text || '') + '」' : '，回了一句：「' + (d.text || '') + '」'));
+      /* ★ 20261118：不再写。
+         book-gift 与 gift-reply 是同一次「送书签」的两个环节：
+         前者记「玩家送了我什么」，后者记「我回了什么」。两条一起 100% 写，
+         等于每送一枚就刷两条记忆，玩家看到的正是「每次都进」。
+         现在记忆宫殿只由 book-gift 按概率记一条；角色回过什么话，
+         在聊天/星球留言流里本来就看得到，不必再抄进记忆。
+         ⚠️ 不要把这里改成无条件写 —— 那会把刚修好的概率抵消掉。 */
     } else if (d.kind === 'plant') {
       _seasonMemo(cid, day + ' 玩家在我的星球上种下了「' + (d.name || '一株') + '」，这株是我们一起养的。');
     } else if (d.kind === 'star') {
@@ -22332,9 +22457,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">气泡内嵌：打字过程嵌在聊天气泡内部；悬浮窗：打字过程显示在独立浮动面板中。面板文字已做深浅色 + 高对比可读性兜底，任何背景/主题下都清晰可见</div>
       <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">打字速度</label>
       <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
-        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">快</span>
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;width:48px;text-align:right;">快</span>
         <input type="range" id="cs-typecard-speed" min="0.6" max="5.0" step="0.1" value="${typeof s.typecardSpeed === 'number' ? s.typecardSpeed : 1.0}" style="flex:1;accent-color:var(--purple);">
-        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">慢</span>
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;width:48px;text-align:left;">慢</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
         <span style="font-size:12px;color:var(--text-tertiary);">连续速度滑条：越靠右越慢、越能看清每个字</span>
@@ -22347,9 +22472,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，碎梦重拼演出过程中会随机穿插字卡与表情（每打一个字都可能抽到，整体随机排列组合）；关闭后碎梦重拼只纯拼字，不出现字卡和表情。此开关只影响碎梦重拼，不影响主线正常聊天</div>
       <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">句子通顺度</label>
       <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
-        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">纯拼字</span>
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;width:48px;text-align:right;">纯拼字</span>
         <input type="range" id="cs-typecard-coherence" min="0" max="2" step="0.05" value="${typeof s.typecardCoherence === 'number' ? s.typecardCoherence : 0}" style="flex:1;accent-color:var(--purple);">
-        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;">完整句子</span>
+        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;width:48px;text-align:left;">完整句子</span>
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">句子通顺度：越靠右越像真人说话——左半段从纯随机拼字逐步过渡到沿真实口语句子走；右半段进一步过渡到直接说完整通顺的句子。默认纯拼字</div>
       <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;">
@@ -23756,6 +23881,8 @@ function bindChatSettings(s, onSave, tcChar) {
     // 重新锚定主动消息计时：从现在开始算，避免保存后因旧计时点已过期而立刻弹出一堆消息
     _lastProactive = {};
     _proactiveRandUntil = {};
+    _proactiveRetryAt = {};   // 20261119：退避时刻一并清空，否则改完间隔最多还要多等 60 秒才重试
+    _proactiveFixedSave();    // 20261119：固定基准的持久副本一起清掉，否则下次冷启动会把旧基准读回来、又立刻发一条
     _proactiveNextSave(); // 20261008：清空随机调度持久化（重新锚定后由扫描体重新播种并落库）
     // 悬浮窗模式：全局设置
     floatSettings.floatMode = $('#cs-float-mode').value;
@@ -31340,29 +31467,47 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
       ${(e.images || []).length ? `<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">${e.images.map(im => `<img src="${imgSrcAttr(im, true)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid rgba(196,181,253,.24);">`).join('')}</div>` : ''}`;
   }
 
+  /* 20261119：全部记忆列表新增「批量管理」——勾选后可批量删除 / 批量移动。
+     进入批量模式后：点整行 = 勾选（不再跳转），行首出现勾选框；退出后恢复点击跳转。 */
+  let jumpManage = false;     // 是否处于批量管理模式
+  let jumpSel = new Set();    // 已勾选的记忆 id
+
+  /* 列表行 HTML：批量模式下每行前面插入勾选框 */
+  function jumpRowsHtml() {
+    return list.map((e, i) => `
+      <div class="pal-jump-row${jumpSel.has(e.id) ? ' sel' : ''}${!jumpManage && i === idx ? ' cur' : ''}" data-jid="${e.id}">
+        ${jumpManage ? `<div class="pal-jump-check">${jumpSel.has(e.id) ? '✓' : ''}</div>` : ''}
+        <div class="pal-jump-no">${String(i + 1).padStart(2, '0')}</div>
+        <div style="flex:1;min-width:0;">
+          <div class="pal-jump-title">${escapeHtml(palWithPlayerName(e.title || '（无题）'))}</div>
+          <div class="pal-jump-sub">${escapeHtml(e.dateLabel || '')} · ${kindLabelOf(e)}</div>
+        </div>
+      </div>`).join('');
+  }
+
   function jumpHtml() {
     return `
       <div class="pal-jump" id="pal-jump" style="display:none;">
         <div class="pal-jump-head">
-          <div style="font-size:14px;font-weight:600;">全部记忆（${list.length}）</div>
-          <button class="icon-btn" id="pal-jump-close">${icon('close', 16)}</button>
+          <div style="font-size:14px;font-weight:600;" id="pal-jump-title">全部记忆（${list.length}）</div>
+          <div class="pal-jump-headbtns">
+            <button class="pal-jump-manage" id="pal-jump-manage">批量管理</button>
+            <button class="icon-btn" id="pal-jump-close">${icon('close', 16)}</button>
+          </div>
         </div>
-        <div class="pal-jump-list" id="pal-jump-list">
-          ${list.map((e, i) => `
-            <div class="pal-jump-row" data-jid="${e.id}">
-              <div class="pal-jump-no">${String(i + 1).padStart(2, '0')}</div>
-              <div style="flex:1;min-width:0;">
-                <div class="pal-jump-title">${escapeHtml(palWithPlayerName(e.title || '（无题）'))}</div>
-                <div class="pal-jump-sub">${escapeHtml(e.dateLabel || '')} · ${kindLabelOf(e)}</div>
-              </div>
-            </div>`).join('')}
+        <div class="pal-jump-tools" id="pal-jump-tools" style="display:none;">
+          <button class="pal-jump-tool" id="pal-jump-all">全选</button>
+          <button class="pal-jump-tool" id="pal-jump-move" disabled>移动</button>
+          <button class="pal-jump-tool danger" id="pal-jump-del" disabled>删除</button>
         </div>
+        <div class="pal-jump-list" id="pal-jump-list">${jumpRowsHtml()}</div>
       </div>`;
   }
 
   /* —— 牌组状态：cards[k] = 第 k 层卡 DOM（0 = 前景）；卡常驻 DOM，只循环换内容 —— */
-  const n = list.length;
-  const backSlot = Math.min(2, n - 1);
+  /* 20261119：批量删除后条目会变少，n / backSlot 必须跟着变（原来用 const 会越界） */
+  let n = list.length;
+  let backSlot = Math.min(2, n - 1);
   const SLOT = [
     { t: 'translate(-50%,-50%) translate3d(0px,0px,0px) rotateZ(0deg) scale(1)', f: 'brightness(1)', z: 30 },
     { t: 'translate(-50%,-50%) translate3d(-16px,26px,-70px) rotateZ(-4.5deg) scale(.945)', f: 'brightness(.8)', z: 20 },
@@ -31434,9 +31579,12 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
             await idbDelete('palace', e.id);
             const di = list.findIndex(x => x.id === e.id);
             if (di >= 0) list.splice(di, 1);
-            if (!list.length) { miniToast('已删除'); showPalaceFolder(backFid); return; }
+            // 20261119：n / backSlot 必须跟着变（原来只在批量删除里更新，单条删完会越界）
+            n = list.length;
+            backSlot = Math.min(2, n - 1);
+            if (!list.length) { miniToast('已删除 · 这一页空了'); showPalaceFolder(backFid); return; }
             idx = Math.min(idx, list.length - 1);
-            miniToast('已删除');
+            miniToast(`已删除 · 还剩 ${list.length} 段`);
             rebuildDeck();
           });
         }
@@ -31664,20 +31812,107 @@ async function showPalaceEntry(eid, backFid, opts = {}) {
   $('#pc-focus').onclick = () => { focusMode = !focusMode; applyFocusMode(); };
   // 列表浮层（右上角「查看列表」）：竖长可滚动，直接点选某条记忆
   const jump = $('#pal-jump');
+
+  /* 重新渲染列表行（勾选态、当前项高亮、滚动位置都要保住） */
+  function bindJumpRows() {
+    const jl = $('#pal-jump-list');
+    if (!jl) return;
+    jl.querySelectorAll('.pal-jump-row').forEach(row => {
+      row.onclick = () => {
+        if (jumpManage) {
+          const id = row.dataset.jid;
+          if (jumpSel.has(id)) jumpSel.delete(id); else jumpSel.add(id);
+          refreshJumpSel();
+          return;
+        }
+        const ni = list.findIndex(x => x.id === row.dataset.jid);
+        if (ni >= 0) { idx = ni; rebuildDeck(); }
+        jump.style.display = 'none';
+      };
+    });
+  }
+
+  function refreshJumpSel() {
+    const jl = $('#pal-jump-list');
+    const st = jl ? jl.scrollTop : 0;
+    if (jl) jl.innerHTML = jumpRowsHtml();
+    bindJumpRows();
+    if (jl) jl.scrollTop = st;
+    const t = $('#pal-jump-title');
+    if (t) t.textContent = jumpManage ? `已选 ${jumpSel.size} / ${list.length}` : `全部记忆（${list.length}）`;
+    const del = $('#pal-jump-del');
+    if (del) { del.textContent = jumpSel.size ? `删除（${jumpSel.size}）` : '删除'; del.disabled = !jumpSel.size; }
+    const mv = $('#pal-jump-move');
+    if (mv) { mv.textContent = jumpSel.size ? `移动（${jumpSel.size}）` : '移动'; mv.disabled = !jumpSel.size; }
+    const all = $('#pal-jump-all');
+    if (all) all.textContent = (list.length && jumpSel.size === list.length) ? '取消全选' : '全选';
+  }
+
+  function setJumpManage(on) {
+    jumpManage = on;
+    if (!on) jumpSel.clear();
+    const tools = $('#pal-jump-tools');
+    if (tools) tools.style.display = on ? 'flex' : 'none';
+    const mb = $('#pal-jump-manage');
+    if (mb) mb.textContent = on ? '完成' : '批量管理';
+    refreshJumpSel();
+  }
+
   $('#pc-list').onclick = () => {
     jump.style.display = 'flex';
-    jump.querySelectorAll('.pal-jump-row').forEach(r => r.classList.toggle('cur', list.findIndex(x => x.id === r.dataset.jid) === idx));
+    refreshJumpSel();
     const cur = jump.querySelector('.pal-jump-row.cur');
     if (cur) cur.scrollIntoView({ block: 'center' });
   };
-  $('#pal-jump-close').onclick = () => { jump.style.display = 'none'; };
-  jump.querySelectorAll('.pal-jump-row').forEach(row => {
-    row.onclick = () => {
-      const ni = list.findIndex(x => x.id === row.dataset.jid);
-      if (ni >= 0) { idx = ni; rebuildDeck(); }
-      jump.style.display = 'none';
-    };
-  });
+  $('#pal-jump-close').onclick = () => {
+    if (jumpManage) setJumpManage(false);   // 关闭时退出批量模式，下次打开是正常列表
+    jump.style.display = 'none';
+  };
+  $('#pal-jump-manage').onclick = () => setJumpManage(!jumpManage);
+  $('#pal-jump-all').onclick = () => {
+    if (list.length && jumpSel.size === list.length) jumpSel.clear();
+    else list.forEach(x => jumpSel.add(x.id));
+    refreshJumpSel();
+  };
+  $('#pal-jump-del').onclick = () => {
+    const ids = Array.from(jumpSel);
+    if (!ids.length) return;
+    showConfirm(`删除选中的 ${ids.length} 段记忆？此操作无法撤销。`, async () => {
+      let okN = 0;
+      for (const id of ids) {
+        try { await idbDelete('palace', id); okN++; } catch (e) {}
+      }
+      // 从当前列表里同步移除，牌组与列表一起更新
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (ids.indexOf(list[i].id) >= 0) list.splice(i, 1);
+      }
+      jumpSel.clear();
+      n = list.length;
+      backSlot = Math.min(2, n - 1);
+      /* 20261119（玩家定案）：删除后**不要**把当前界面直接退出。
+         这一页还有记忆 → 留在原界面（牌组与列表一起刷新，光标落到相邻一条）；
+         只有这一页被删空 → 才退回上一层的文件夹页（只退一层，不跳到更远）。 */
+      if (!list.length) {
+        jump.style.display = 'none';
+        miniToast(`已删除 ${okN} 段记忆 · 这一页空了`);
+        showPalaceFolder(backFid);
+        return;
+      }
+      idx = Math.min(idx, list.length - 1);
+      rebuildDeck();
+      if (jumpManage) setJumpManage(true);   // 留在批量列表里，只是勾选被清空
+      else refreshJumpSel();
+      miniToast(`已删除 ${okN} 段记忆 · 还剩 ${list.length} 段`);
+    });
+  };
+  $('#pal-jump-move').onclick = () => {
+    const ids = Array.from(jumpSel);
+    if (!ids.length) return;
+    jump.style.display = 'none';
+    /* 20261119：只在本角色的子文件夹之间移动（见 palMoveModal 的 onlySubsOf 分支） */
+    palMoveModal(ids, backFid, { onlySubsOf: backFid });
+  };
+  bindJumpRows();
   rebuildDeck();
 }
 
@@ -31698,17 +31933,97 @@ function palSnapHtml(e) {
   }).join('');
 }
 
-/* 移动记忆到其他文件夹（细则八-4） */
-function palMoveModal(ids, backFid) {
+/* 移动记忆到文件夹（细则八-4）
+   20261119（玩家定案）：从「记忆查看 → 全部记忆 → 批量管理 → 移动」进来时传 opts.onlySubsOf，
+   目标只列**当前这个角色的其它子文件夹**：不列玩家分类，也不列别的角色。
+   当前角色还没有子文件夹 → 先弹窗问要不要新建，建完直接把这批记忆移进去。 */
+function palMoveModal(ids, backFid, opts) {
   (async () => {
     const folders = await palFolders();
-    const charFs = folders.filter(f => f.type === 'char');
-    const playerSubs = folders.filter(f => f.parentId === PAL_P);
-    const row = (label, sub, fn, ic) => `
+    const row = (label, sub, ic) => `
       <div class="pal-row" data-mv="1">
         <div class="pal-ic">${ic}</div>
         <div class="pal-main"><div class="pal-title">${escapeHtml(label)}</div><div class="pal-sub">${escapeHtml(sub)}</div></div>
       </div>`;
+
+    /* 把 ids 一次搬到 (fid, sub)，然后回到该文件夹页 */
+    async function doMove(fid, sub, label) {
+      const all = await palEntries();
+      for (const id of ids) {
+        const e = all.find(x => x.id === id);
+        if (e) { e.folderId = fid; e.subFolderId = sub; await idbPut('palace', e); }
+      }
+      try { closeModal(); } catch (e) {}
+      miniToast(`已移动到「${label}」`);
+      showPalaceFolder(fid);
+    }
+
+    /* 没有可用子文件夹时：问一句 → 新建 → 立刻把选中的移进去 */
+    function newSubThenMove(rootId, cname) {
+      openModal(`
+        <div style="font-size:16.5px;font-weight:600;margin-bottom:4px;">新建子文件夹</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:12px;">${escapeHtml(cname)}还没有分类。建好后会直接把选中的 ${ids.length} 段记忆移进去。</div>
+        <div class="field"><label>名称</label><input class="input" id="pmv-ns-name" placeholder="例如：日常 / 纪念日 / 心情" maxlength="12"></div>
+        <div class="field" style="display:flex;align-items:center;justify-content:space-between;">
+          <label style="margin:0;">允许 AI 读取</label>
+          <input type="checkbox" id="pmv-ns-allow" checked style="width:18px;height:18px;accent-color:var(--purple);">
+        </div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn" style="flex:1;" id="pmv-ns-cancel">取消</button>
+          <button class="btn primary" style="flex:1;" id="pmv-ns-ok">创建并移入</button>
+        </div>
+      `, { galaxy: true });
+      if (!$('#pmv-ns-ok')) return;   // 声明弹窗期间被抑制
+      $('#pmv-ns-cancel').onclick = () => { closeModal(); showPalaceFolder(rootId); };
+      $('#pmv-ns-ok').onclick = async () => {
+        const name = ($('#pmv-ns-name').value || '').trim();
+        if (!name) { miniToast('请输入名称'); return; }
+        const list = await palFolders();
+        const nid = uid('pf_sub');
+        list.push({ id: nid, type: 'sub', parentId: rootId, name, allowAI: $('#pmv-ns-allow').checked, createdAt: Date.now() });
+        await palSaveFolders(list);
+        await doMove(rootId, nid, name);
+      };
+    }
+
+    /* ★ 同角色内移动：只列这个角色的子文件夹 */
+    if (opts && opts.onlySubsOf) {
+      let rootId = String(opts.onlySubsOf || '');
+      const rf = folders.find(f => f.id === rootId);
+      if (rf && rf.type === 'sub') rootId = rf.parentId;   // 从子文件夹里点进来 → 先退到角色根
+      const rootF = folders.find(f => f.id === rootId);
+      const cname = (rootF && (rootF.charName || rootF.name)) || '这个角色';
+      const subs = folders.filter(f => f.parentId === rootId && f.type !== 'hidden');
+      if (!subs.length) {
+        showConfirm(`${cname}还没有子文件夹，要新建一个再把选中的 ${ids.length} 段记忆移进去吗？`, () => newSubThenMove(rootId, cname));
+        return;
+      }
+      openModal(`
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <div style="flex:1;font-size:16px;font-weight:600;">移到 ${escapeHtml(cname)} 的哪个分类？</div>
+          <button class="icon-btn" id="pmv-close"><i data-icon="close" data-size="17"></i></button>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-tertiary);margin-bottom:8px;">只列这个角色自己的分类，不会动到别的角色</div>
+        <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;" id="pmv-list">
+          ${subs.map(sf => row(sf.name, (sf.allowAI ? 'AI 可读' : 'AI 不可读'), icon('folder', 18))).join('')}
+          ${row('＋ 新建子文件夹', '先建一个分类，再把选中的移进去', icon('plus', 18))}
+        </div>
+      `, { galaxy: true });
+      if (!$('#pmv-list')) return;
+      $('#pmv-close').onclick = () => closeModal();
+      const rows = document.querySelectorAll('#pmv-list .pal-row');
+      rows.forEach((r, i) => {
+        r.onclick = () => {
+          if (i < subs.length) doMove(rootId, subs[i].id, subs[i].name);
+          else newSubThenMove(rootId, cname);
+        };
+      });
+      return;
+    }
+
+    /* —— 全局移动（文件夹视图 / 卡片上的「移动到…」）：保持原有范围 —— */
+    const charFs = folders.filter(f => f.type === 'char');
+    const playerSubs = folders.filter(f => f.parentId === PAL_P);
     openModal(`
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
         <button class="icon-btn" id="pmv-back">‹</button>
@@ -31716,10 +32031,10 @@ function palMoveModal(ids, backFid) {
         <button class="icon-btn" id="pmv-close"><i data-icon="close" data-size="17"></i></button>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;" id="pmv-list">
-        ${row(palPlayerFolderName(), '根部 · AI 默认不可读', null, icon('user', 18))}
-        ${playerSubs.map(sf => row(sf.name, '玩家分类 · ' + (sf.allowAI ? 'AI 可读' : 'AI 不可读'), null, icon('folder', 18))).join('')}
-        ${row('隐藏夹', '绝对不给 AI 读取', null, icon('lock', 18))}
-        ${charFs.map(f => row(f.name, (f.allowAI ? 'AI 默认可读' : 'AI 不可读'), null, f.charAvatar ? `<img src="${imgSrcAttr(f.charAvatar, true)}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;">` : icon('user', 18))).join('')}
+        ${row(palPlayerFolderName(), '根部 · AI 默认不可读', icon('user', 18))}
+        ${playerSubs.map(sf => row(sf.name, '玩家分类 · ' + (sf.allowAI ? 'AI 可读' : 'AI 不可读'), icon('folder', 18))).join('')}
+        ${row('隐藏夹', '绝对不给 AI 读取', icon('lock', 18))}
+        ${charFs.map(f => row(f.name, (f.allowAI ? 'AI 默认可读' : 'AI 不可读'), f.charAvatar ? `<img src="${imgSrcAttr(f.charAvatar, true)}" style="width:22px;height:22px;border-radius:50%;object-fit:cover;">` : icon('user', 18))).join('')}
       </div>
     `);
     $('#pmv-back').onclick = () => showPalaceFolder(backFid);
