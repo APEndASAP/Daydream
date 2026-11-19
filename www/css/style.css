@@ -5072,6 +5072,30 @@ body.glass-ui #view-moments .topbar.scrolled {
 .pal-jump-no { font-size: 11px; color: var(--text-tertiary); font-family: monospace; letter-spacing: 1px; width: 24px; }
 .pal-jump-title { font-size: 13.5px; font-weight: 600; color: #f0eaff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pal-jump-sub { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+/* 20261119：全部记忆 · 批量管理（勾选删除 / 移动） */
+.pal-jump-headbtns { display: flex; align-items: center; gap: 8px; }
+.pal-jump-manage {
+  padding: 5px 12px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  background: rgba(124,100,220,.18); border: 1px solid rgba(167,139,250,.35);
+  color: #d9cfff; white-space: nowrap; line-height: 1.4;
+}
+.pal-jump-manage:active { background: rgba(124,100,220,.34); }
+.pal-jump-tools { display: flex; gap: 8px; padding: 0 14px 10px; }
+.pal-jump-tool {
+  flex: 1; padding: 8px 10px; border-radius: 10px; font-size: 12.5px; cursor: pointer;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(196,168,255,.22);
+  color: #efe9ff; white-space: nowrap; line-height: 1.4;
+}
+.pal-jump-tool.danger { background: rgba(220,80,110,.16); border-color: rgba(255,120,150,.42); color: #ffc2cf; }
+.pal-jump-tool:disabled { opacity: .38; cursor: default; }
+.pal-jump-check {
+  width: 18px; height: 18px; border-radius: 6px; flex: 0 0 auto;
+  border: 1px solid rgba(196,168,255,.35); background: rgba(255,255,255,.04);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; line-height: 1; color: #fff;
+}
+.pal-jump-row.sel { background: rgba(124,100,220,.16); border-color: rgba(167,139,250,.3); }
+.pal-jump-row.sel .pal-jump-check { background: rgba(138,110,240,.9); border-color: transparent; }
 
 /* —— 20260929bd：记忆卡片 3D 实体照片牌组 ——
    三张卡扇形堆叠（轻微 rotateZ + Z 轴递进 + 缩放错位），点击/左右滑动抽出当前卡落到最底层，
@@ -7973,7 +7997,23 @@ body[data-view="chat"] .bm-float-badge { bottom: 152px; }
   padding: 14px 16px; border-bottom: 1px solid var(--bm-card-line, rgba(190,205,240,.14));
   font-size: 15px; font-weight: 700; flex-shrink: 0;
 }
-.bm-lib-headbtns { display: flex; align-items: center; gap: 6px; }
+.bm-lib-headbtns { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+/* 20261119：标题绝不换行 —— 之前多塞了一个按钮，标题被压成一字一行的竖排 */
+.bm-lib-title { white-space: nowrap; flex-shrink: 0; }
+/* 20261119：「重抓封面」独立成按钮，放在 tab 行右端，不参与标题行排版 */
+.bm-lib-tabrow { display: flex; align-items: center; gap: 8px; padding: 8px 10px 0 16px; flex-shrink: 0; }
+.bm-lib-tabrow .bm-lib-tabs { padding: 0; flex: 1; min-width: 0; }
+.bm-lib-refresh {
+  flex-shrink: 0; width: 32px; height: 30px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; line-height: 1; cursor: pointer;
+  background: var(--bm-card, rgba(255,255,255,.05)); border: 1px solid var(--bm-card-line, rgba(190,205,240,.18));
+  color: var(--bm-ink-dim, #9aa3bd);
+}
+.bm-lib-refresh:disabled { opacity: .55; cursor: default; }
+/* 20261119：tab 行要给右侧的「重抓」图标让出位置，四个 tab 才能在 320px 卡片里全显示 */
+.bm-lib-tabrow .bm-lib-tabs { gap: 2px; }
+.bm-lib-tabrow .bm-lib-tab { padding: 6px 8px; font-size: 12px; }
 .bm-lib-manage, .bm-lib-add {
   padding: 5px 12px; border-radius: 999px; font-size: 12px; cursor: pointer;
   background: var(--bm-card, rgba(255,255,255,.05)); border: 1px solid var(--bm-card-line, rgba(190,205,240,.18));
