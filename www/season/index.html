@@ -1585,6 +1585,13 @@ body{
   font-size:8.5px;letter-spacing:.4px;color:#8a7550;background:#f2e8cd;
   border:1px solid #d5c49c;cursor:pointer;font-family:inherit}
 .pn-more:active{background:#e9dbba}
+/* 20261119：角色说话时「面前那张书签」—— 把整枚书签的小图贴在留言下面。
+   玩家要求：角色要看得到整张书签的图。字卡模式没有模型，这张图就是
+   「TA 正看着这枚签说话」的实证；AI 模式还会把同一张图真的递给模型看。 */
+.pn-book{display:block;width:84px;margin-top:5px;border:1px solid rgba(120,104,76,.45);
+  background:#f3ead6;box-shadow:1px 2px 0 rgba(120,104,76,.18);cursor:zoom-in;
+  transform:rotate(-.6deg)}
+.pn-book:active{transform:rotate(0deg) scale(.98)}
 .pn-det{margin-top:4px;padding:4px 6px;border-left:2px solid #ddcfae;background:rgba(246,238,218,.66)}
 .pn-dr{font-size:8.8px;line-height:1.7;color:#6d6250;letter-spacing:.2px}
 .pn-dt{display:inline-block;min-width:32px;margin-right:5px;color:#9c8f76;font-variant-numeric:tabular-nums}
@@ -1603,6 +1610,19 @@ body{
   line-height:1.62;width:192%;margin:0 -46%;letter-spacing:.2px;text-align:center}
 .tkn-by{margin-top:3px;text-align:right;font-size:16px;transform:scale(.46);
   transform-origin:right top;color:#7b6f56;letter-spacing:1px}
+
+/* ===== 20261118：书签集两张纸条的区分 =====
+   ① .tk-notes  —— 详情页 #tkNote 的外层容器（里面最多放两张 .tk-note）
+   ② .tk-mine   —— 「你写的」那张：冷一点的浅蓝灰，和 TA 的米黄便签分开
+   为什么不能合并成一张：以前把「玩家寄语——角色的话」缝进同一句，
+   署名挂在角色身上，玩家看起来就是「TA 写给我的」，方向反了。
+   两张纸、两个署名，是这条规则唯一稳的写法。 */
+.tk-notes{display:none}
+.tk-notes.on{display:block}
+.tk-note.tk-mine{background:#eef2f7;border-color:#c9d3e0;transform:rotate(.9deg);
+  box-shadow:2px 2px 0 rgba(50,62,80,.12),inset 0 0 9px rgba(150,168,190,.16)}
+.tk-note.tk-mine .tkn-q{color:#3f4a5c}
+.tk-note.tk-mine .tkn-by{color:#6b7787}
 
 /* ===== 浇灌爱意 ===== */
 .bp-act.love{background:#b8557f;color:#fff0f4;border-color:#6d2b48;margin-top:9px;
@@ -4969,14 +4989,34 @@ function openTicket(p){
     /* 20261109：便签只写「角色给这枚书签的留言」（一签一角色最多一条）。
        玩家寄语不再是便签主角 —— 它在星球下方被角色回应（见 nxGiftText）。
        ★ 20261111：显示条件收敛到 bookNoteVisible（单角色视野 + 留言人必须是这个角色），
-         和书签集书页那边同一套判断，不会一处显示一处不显示。 */
-    if (bookNoteVisible(p)){
-      nt.className = 'tk-note on';
-      nt.innerHTML = '<div class="tkn-tape"></div>' +
-        '<div class="tkn-q">「' + nxEsc(p.noteText) + '」</div>' +
-        '<div class="tkn-by">—— ' + nxEsc(p.noteBy || p.giftedTo || '') + ' · ' + (p.giftedAt || '') + '</div>';
+         和书签集书页那边同一套判断，不会一处显示一处不显示。
+       ★ 20261118：详情页也要能看到「你写的」那句（用户要求单角色书签集可见）。
+         #tkNote 从此是**容器**（.tk-notes），里面最多两张纸：
+           上：你写的寄语（bookPlayerGiftOf）
+           下：TA 留的便签（bookNoteVisible）
+         两张各自带胶带，不再像以前那样一句话里混着两个人的署名。 */
+    const mineGift = bookPlayerGiftOf(p);
+    const noteOn = bookNoteVisible(p);
+    if (mineGift || noteOn){
+      nt.className = 'tk-notes on';
+      let html = '';
+      if (mineGift){
+        html += '<div class="tk-note tk-mine on">' +
+          '<div class="tkn-tape"></div>' +
+          '<div class="tkn-q">「' + nxEsc(mineGift.msg) + '」</div>' +
+          '<div class="tkn-by">—— 你 · ' + nxEsc(mineGift.at || p.giftedAt || '') + '</div>' +
+        '</div>';
+      }
+      if (noteOn){
+        html += '<div class="tk-note on">' +
+          '<div class="tkn-tape"></div>' +
+          '<div class="tkn-q">「' + nxEsc(p.noteText) + '」</div>' +
+          '<div class="tkn-by">—— ' + nxEsc(p.noteBy || p.giftedTo || '') + ' · ' + (p.giftedAt || '') + '</div>' +
+        '</div>';
+      }
+      nt.innerHTML = html;
     } else {
-      nt.className = 'tk-note';
+      nt.className = 'tk-notes';
       nt.innerHTML = '';
     }
   }
@@ -5441,17 +5481,30 @@ function buildBookPage(host, idx){
     wrap.className = 'bp-ticket';
     host.appendChild(wrap);
     mountTicket(wrap, p, true);
-    /* 20261109：便签＝角色给这枚书签的留言；只在「本角色单人」模式里贴
-       ★ 20261111 用户强调：「留言的标签只有在看单个角色的时候才会出现，
-         而且只记录单个角色」⇒ 三个条件同时满足才贴：
-         ① 这枚书签有留言 ② 当前是单角色视野 ③ 留言正是**这个角色**留的 */
-    if (bookNoteVisible(p)){
+    /* ===== 20261119（玩家定案）：单人页票根下面**只贴一张纸**，按优先级二选一 =====
+       ① 角色给这枚书签的留言（bookNoteVisible）——优先；
+       ② 没有角色留言，才显示玩家送给这个角色时写的寄语（bookPlayerGiftOf）；
+       ③ 两个都没有 → 一张都不贴，不留空白纸条。
+       为什么不再两张一起贴：玩家原话「没有点看大图的时候，优先显示角色的留言，
+       角色的留言没有的话就显示玩家的寄语，两个都没有就不显示」。
+       ※ 点「看大图」进的详情页（openTicket）仍然是两张都显示，那里才是
+         「两条都能看见」的地方。 */
+    const mineGift = bookPlayerGiftOf(p);
+    const noteOn = bookNoteVisible(p);
+    if (noteOn){
       const nt = document.createElement('div');
       nt.className = 'tk-note on';
       nt.innerHTML = '<div class="tkn-tape"></div>' +
         '<div class="tkn-q">「' + nxEsc(p.noteText) + '」</div>' +
         '<div class="tkn-by">—— ' + nxEsc(p.noteBy || p.giftedTo || '') + ' · ' + (p.giftedAt || '') + '</div>';
       host.appendChild(nt);
+    } else if (mineGift){
+      const mt = document.createElement('div');
+      mt.className = 'tk-note tk-mine on';
+      mt.innerHTML = '<div class="tkn-tape"></div>' +
+        '<div class="tkn-q">「' + nxEsc(mineGift.msg) + '」</div>' +
+        '<div class="tkn-by">—— 你 · ' + nxEsc(mineGift.at || p.giftedAt || '') + '</div>';
+      host.appendChild(mt);
     }
     const bar = document.createElement('div');
     bar.className = 'bp-acts';
@@ -10387,7 +10440,9 @@ function makeGiftMsg(ch, p){
 
 /* ============================================================
    TA 的留言 —— 一年四季里，角色自己会做的四件事
-   ① 收到书签：回一句话（会引你写的那句寄语）
+   ① 收到书签：回一句话（20261118 起**不再引用**玩家寄语 ——
+      寄语归玩家，由书签集的「你写的」纸条显示；
+      角色只说自己看着这枚签想说的话，绝不把玩家的话顶成角色的署名）
    ② 固定间隔照料：浇水 / 施肥，做够三次顺口留一句
    ③ 抽字卡：从字卡池抽 2~3 张，拼成一条像样的留言
    ④ 隔一阵邀请你一起浇灌爱意
@@ -10661,6 +10716,164 @@ function bookNoteVisible(p){
 }
 
 /* ============================================================
+   20261118：书签集里的「你的寄语」与「书签的样子」
+   ------------------------------------------------------------
+   ★ 用户定案（本轮原话）
+     「切换到当前角色的书签集之后，应该可以看到玩家送给角色的寄语，
+       还可以看到角色给玩家的留言（这项随机）」
+     「角色实际只能看到一个名字……要让角色真的能够查看、随机翻看书签集，
+       并且看到书签集的书签的样子」
+
+   ⇒ 两件事分开：
+     ① 给**玩家看**的：单角色视野里，票根下面贴一张「你写的」纸条。
+        数据来自 giftLog 里**这个角色**收到时的 msg —— 不是 p.myMsg
+        （p.myMsg 是最近一次赠送，送过两个人就会被后一句覆盖）。
+     ② 给**角色看**的：bookLookText() 把书签的材质/编号/别名/学名/
+        季节/签上说明拼成一句客观描述，进 AI 上下文与字卡外观引导句。
+
+   ⚠️ 显示条件与 bookNoteVisible 完全一致：只在 bookScope==='char' 且
+      当前定格的这个角色**确实收过**这枚书签时才出现。别在「全部」里显示，
+      那会让人以为整本书都是写给一个人的。
+   ============================================================ */
+function bookPlayerGiftOf(p){
+  if (!p) return null;
+  if (typeof bookScope === 'undefined' || bookScope !== 'char') return null;
+  if (!bookScopeCharId) return null;
+  const list = giftLogOf(p);
+  /* 新档按 id；老档可能只有名字 → 按名字兜底（和 bookIsOfScopeChar 同一套规则） */
+  const mine = list.filter(function(g){ return g.id === bookScopeCharId; })[0]
+    || list.filter(function(g){ return !g.id && g.name === bookScopeCharName; })[0]
+    || null;
+  if (!mine || !mine.msg) return null;
+  return mine;
+}
+
+/* 书签「长什么样」——一句客观描述，不是台词。
+   角色拿到它，才知道自己翻到的是一张压干花票根还是一枚齿孔邮票、
+   编号多少、玩家有没有另起名字、是哪一季收的、签上写了什么。
+   ⚠️ 只读字段，不改任何数据；字段缺失就跳过，不要补默认值（会变成编造）。 */
+function bookLookText(p){
+  if (!p) return '';
+  const isStamp = (p.kind === 'planet' || p.src === 'planet');
+  const bits = [];
+  bits.push(isStamp ? '一张星球邮票，四边是邮票齿孔' : '一张压干植物做的票根');
+  bits.push(pad(p.no));
+  if (p.title) bits.push('玩家给它起名叫「' + p.title + '」');
+  bits.push('主体是「' + (p.name || '还没认出来的那一株') + '」');
+  if (p.latin) bits.push('学名 ' + p.latin);
+  if (p.season != null && typeof SEASON_CN !== 'undefined' && SEASON_CN[p.season]) {
+    bits.push(SEASON_CN[p.season] + '收的');
+  }
+  if (p.date) bits.push('日期 ' + p.date);
+  if (p.desc) bits.push('签上写着「' + String(p.desc).slice(0, 48) + '」');
+  return bits.join('，') + '。';
+}
+
+/* ============================================================
+   20261119【角色视角的书签视图 · 玩家定案】
+   ------------------------------------------------------------
+   玩家原话（本轮）：
+     「字卡模式也要可以看到。不是让字卡模式里面的角色也要能够说出这张图的
+       描述，而是要在代码里面让字卡模式下……他是可以看得到的。不需要角色去
+       主动说。重点是那边读取的时候能不能看得到图，能不能看得到玩家写过去的
+       寄语，能不能看到这是个什么书签，能不能知道植物图鉴里的介绍。」
+     「无论是字卡模式还是 AI 模式，玩家写给角色的寄语都不能说是被角色自己
+       发出去，不能让玩家写的寄语被当成角色写的留言。」
+   ⇒ 两种模式共用同一份「角色能看到什么」，只在一个地方构造：
+       · look     这枚签长什么样（材质/编号/别名/学名/季节/签上说明）
+       · codex    这枚签里那株植物的图鉴介绍（习性/周期/分布/生境/稀有度）
+       · gift     玩家写给**这个角色**的寄语，固定带 by:'玩家' 标记，
+                  任何拼接台词的地方都只能引用它、不能把它当成角色的输出
+       · img      整枚签的图（JSON 里放不下，异步填；字卡模式也会真的取一次）
+       · taNote   这个角色自己留在便签上的那句话
+   ⚠️ 图鉴介绍只在该物种**已被玩家解锁**（dexOwned）时给，没解锁就返回 null，
+      免得角色说出玩家还没见过的内容。
+   ============================================================ */
+function bookCodexOf(p){
+  if (!p) return null;
+  let no = 0;
+  try { no = dexNoOfAny(p) || 0; } catch (e) { no = 0; }
+  if (!no) return null;
+  try { if (!dexOwned(no)) return null; } catch (e) { return null; }
+  const d = DEX[no - 1];
+  if (!d) return null;
+  let w = null;
+  try { w = wkOf(d); } catch (e) { w = null; }
+  if (!w) return null;
+  return {
+    no: no, name: d.n, latin: d.l || '', family: d.f || '',
+    seasonCn: (typeof SEASON_CN !== 'undefined' ? (SEASON_CN[d.s] || '') : ''),
+    desc: d.d || '',
+    habit: w.habit || '', cycle: w.cycle || '', range: w.range || '', env: w.env || '',
+    rare: WK_RARE[w.rare] || '常见', rareTxt: w.rareTxt || ''
+  };
+}
+/* 图鉴资料 → 一句话。brief=true 用于日常聊天上下文（短），否则给书签场景用全文 */
+function bookCodexText(cx, brief){
+  if (!cx) return '';
+  if (brief){
+    return '图鉴 No.' + pad4(cx.no) + '「' + cx.name + '」（' + (cx.family || '未定科') + '·' + cx.rare + '）' +
+      (cx.desc ? '：' + String(cx.desc).replace(/。$/, '') : '');
+  }
+  return '图鉴 No.' + pad4(cx.no) + '「' + cx.name + '」' +
+    (cx.latin ? '（' + cx.latin + '）' : '') +
+    (cx.family ? '，' + cx.family : '') + '，' + cx.rare + '。' +
+    (cx.desc ? '简介：' + cx.desc + ' ' : '') +
+    (cx.habit ? '习性：' + cx.habit + ' ' : '') +
+    (cx.cycle ? '生长周期：' + cx.cycle + ' ' : '') +
+    (cx.range ? '分布：' + cx.range + ' ' : '') +
+    (cx.env ? '生境：' + cx.env : '');
+}
+/* 角色视角视图（同步部分：不含图） */
+function bookCharView(p, ch){
+  if (!p) return null;
+  const mine = giftLogOf(p).filter(function(g){ return ch && g.id === ch.id; })[0] || null;
+  const cx = bookCodexOf(p);
+  const isStamp = (p.kind === 'planet' || p.src === 'planet');
+  return {
+    no: p.no,
+    isStamp: isStamp,
+    name: p.name || '',
+    title: p.title || '',
+    latin: p.latin || '',
+    seasonCn: (p.season != null && typeof SEASON_CN !== 'undefined') ? (SEASON_CN[p.season] || '') : '',
+    date: p.date || '',
+    desc: p.desc || '',
+    kindKey: (typeof bookKindKey === 'function' ? bookKindKey(p) : ''),
+    look: bookLookText(p),
+    codex: cx,
+    codexText: bookCodexText(cx, false),
+    codexBrief: bookCodexText(cx, true),
+    /* ★ 归属固定在这里：这是**玩家**写的，by 永远是 '玩家'。
+       任何把 view 拼进角色台词的地方，都必须保持「玩家说……」的转述口吻，
+       绝不能写成角色自己的话。 */
+    gift: (mine && mine.msg) ? { by: '玩家', at: (mine.at || ''), text: String(mine.msg) } : null,
+    taNote: (p.noteText && (!p.noteById || p.noteById === (ch && ch.id))) ? p.noteText : '',
+    img: ''
+  };
+}
+/* 角色视角视图（含图）：字卡模式也走这条，角色在代码层面真的拿到整张签的图。
+   取图超过 1.5 秒就先返回「已经能读的视图」（图稍后补到 v.img 上），
+   不为了等一张图把字卡模式的即时留言卡住。 */
+function bookCharViewFull(p, ch){
+  const v = bookCharView(p, ch);
+  if (!v) return Promise.resolve(null);
+  return new Promise(function(resolve){
+    let done = false;
+    const finish = function(){ if (done) return; done = true; resolve(v); };
+    const timer = setTimeout(finish, 1500);
+    bookImageForChar(p).then(function(du){
+      v.img = du || '';
+      try { clearTimeout(timer); } catch (e) {}
+      finish();
+    }).catch(function(){
+      try { clearTimeout(timer); } catch (e) {}
+      finish();
+    });
+  });
+}
+
+/* ============================================================
    20261109：书签便签留言（书签集留言）
    ------------------------------------------------------------
    ★ 用户定案
@@ -10687,18 +10900,88 @@ function bookNoteOpen(ch, p){
   return true;
 }
 
-/* 生成一句便签留言：AI 模式问宿主，字卡模式/失败回落本地池 */
+/* 生成一句便签留言：AI 模式问宿主，字卡模式/失败回落本地池
+   ★ 20261118：交给宿主的「书签」不再只有名字 —— 补上 bookLookText() 的
+     外观描述、这个角色收到时的寄语（不是 p.myMsg）、以及它自己的旧便签。
+     这样 AI 写的便签才是「看着这张具体的签」说的话，而不是看着一个名词。
+   ⚠️ 耦合：这里的字段名必须和主项目 _seasonAsk('book') 一一对应；
+      改字段时两处一起改（season/index.html ↔ js/app.js）。 */
 async function bookNoteMake(ch, p){
   let text = null;
+  /* 这个角色收到这枚书签时，玩家写的那句 —— 按角色取，避免多归属串味 */
+  const mine = giftLogOf(p).filter(function(g){ return ch && g.id === ch.id; })[0] || null;
+  const myMsg = (mine && mine.msg) || '';
+  /* ★ 20261119【字卡模式也要「看得到」· 玩家定案】
+     以前字卡模式只把 pl.name 传给拼句池，等于角色只看见一个名词。
+     现在两种模式**都**先构造同一份「角色视角」视图：图、玩家寄语、书签外观、
+     该物种的图鉴介绍。视图挂在 ch.__bookView 与 PLANET.lastBookView 上，
+     字卡模式任何一处代码都能读到（不需要角色主动开口描述）。
+     ⚠️ 玩家寄语在视图里固定是 {by:'玩家', text:…}，绝不能被当成角色的输出。 */
+  const view = await bookCharViewFull(p, ch);
+  if (ch && view) { try { ch.__bookView = view; } catch (e) {} }
+  if (view) { try { PLANET.lastBookView = view; } catch (e) {} }
   if (INTERACT.mode === 'ai'){
+    /* 20261119：把**整枚书签的图**一起交给角色 —— 玩家要求「角色真的能看到图」。
+       bookImageForChar 内部复用 exportTicket 的绘制，失败返回空串，退回纯文字。 */
+    const bookImg = (view && view.img) || '';
     text = await seasonAskHost('book', {
       bookName: p.name || '', kind: p.kind || 'plant',
-      imprintKey: p.imprintKey || '', myMsg: p.myMsg || '',
+      imprintKey: p.imprintKey || '', myMsg: myMsg,
+      bookImg: bookImg,
+      /* ↓ 20261118 新增：书签的样子 + 归属信息 */
+      look: bookLookText(p),
+      title: p.title || '', latin: p.latin || '', desc: p.desc || '',
+      seasonCn: (p.season != null && typeof SEASON_CN !== 'undefined') ? (SEASON_CN[p.season] || '') : '',
+      isStamp: (p.kind === 'planet' || p.src === 'planet'),
+      bookNo: p.no, bookDate: p.date || '',
+      /* ↓ 20261119 新增：图鉴里的物种介绍（玩家解锁后才有内容）。 */
+      codex: (view && view.codexText) || '',
       scene: 'book'
     });
   }
-  if (!text) text = seasonDrawCard(ch, p, 'book');
+  if (!text) {
+    text = seasonDrawCard(ch, p, 'book');
+    /* 字卡模式也要「看到样子」：一半概率在角色那句话前面补一句具体观察。
+       只用真实字段，不凭空形容颜色/气味（那是编造，用户明确反感）。
+       20261119：观察句的池子里加入了图鉴里真实存在的习性/生境，
+       仍只描述「角色看到的东西」，不引用玩家寄语。 */
+    if (text && Math.random() < 0.5){
+      const lead = bookLookLead(p, view);
+      if (lead) text = lead + text;
+    }
+  }
   return text || '';
+}
+
+/* 字卡模式的书签外观引导句（1 句，第一人称，只描述确实存在的字段）
+   ⚠️ 和 PRESET_BOOK 是两个东西：PRESET_BOOK 是「角色说了什么」，
+      这里是「角色看到了什么」。前者可能提到 {n}，后者不复述整句。 */
+function bookLookLead(p, view){
+  if (!p) return '';
+  const nm = p.title || p.name || '那枚';
+  const isStamp = (p.kind === 'planet' || p.src === 'planet');
+  const sn = (p.season != null && typeof SEASON_CN !== 'undefined') ? (SEASON_CN[p.season] || '') : '';
+  const pool = [];
+  if (isStamp){
+    pool.push('翻到「' + nm + '」这张星球票，齿孔边上还留着压过的痕。');
+    pool.push('这枚「' + nm + '」是星球票，纸比别的都硬一点。');
+  } else {
+    if (sn) pool.push('翻到「' + nm + '」，是' + sn + '收的那一张。');
+    pool.push('「' + nm + '」压得很干，纸边还留着当时的折痕。');
+    pool.push('这张「' + nm + '」夹在中间，叶子上的颜色比刚收时浅了。');
+  }
+  if (p.title) pool.push('你先给这张起了名字「' + p.title + '」，我翻到就先看这三个字。');
+  /* 20261119：字卡模式也能用到图鉴里的介绍（只取真实字段的第一句，
+     不是编造；玩家解锁过图鉴才给）。角色说的是**自己的观察**，
+     绝不把玩家寄语混进这里。 */
+  const cx = (view && view.codex) || bookCodexOf(p);
+  if (cx){
+    const habitOne = String(cx.habit || '').split('。')[0];
+    const envOne = String(cx.env || '').split('；')[0];
+    if (habitOne) pool.push('图鉴上说它' + habitOne.replace(/^[一二三四五六七八九十]年生或?/, '') + '。');
+    if (envOne) pool.push('记得图鉴里写着它爱长在' + envOne.replace(/^.*?[，、]/, '') + '。');
+  }
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : '';
 }
 
 /* 落一条便签留言（一签一角色只留一条，写在这里守住唯一入口） */
@@ -10715,9 +10998,30 @@ function bookNoteSet(ch, p, text){
   try { if (curView === 'vBook') renderBookPage(); } catch(e){}
   try { if (curView === 'vTicket' && curTicket === p) openTicket(p); } catch(e){}
   try { toast(ch.name + ' 在书签上留了一句话'); } catch(e){}
-  seasonHostEvent('book-note', {
-    charId: ch.id, bookNo: p.no, bookName: p.name, text: String(text), at: Date.now()
-  });
+  /* 20261119：便签留言进记忆宫殿时也带这枚签的图和图鉴介绍。
+     图优先用留言区缩略图的缓存（同一张，不重复绘制）。 */
+  (function(){
+    const ev = {
+      charId: ch.id, bookNo: p.no, bookName: p.name, text: String(text), at: Date.now(),
+      codex: (function(){
+        try { const cx = bookCodexOf(p); return cx ? bookCodexText(cx, true) : ''; } catch (e) { return ''; }
+      })()
+    };
+    let sent = false;
+    const send = function(img){
+      if (sent) return;
+      sent = true;
+      try { ev.bookImg = img || ''; } catch (e) {}
+      seasonHostEvent('book-note', ev);
+    };
+    const key = String(p.no);
+    try {
+      if (typeof _pnImgCache !== 'undefined' && _pnImgCache.has(key)){ send(_pnImgCache.get(key)); return; }
+    } catch (e) {}
+    const timer = setTimeout(function(){ send(''); }, 1800);
+    bookImageForChar(p).then(function(du){ try { clearTimeout(timer); } catch (e) {} send(du || ''); })
+      .catch(function(){ try { clearTimeout(timer); } catch (e) {} send(''); });
+  })();
 }
 
 /* 掷一次：现在要不要留。force=true 跳过掷骰 */
@@ -10730,14 +11034,23 @@ function bookNoteTry(ch, p, force){
   return true;
 }
 
-/* 挂在角色互动节拍上：翻一遍「收到的、还没留过言的书签」，随机挑一枚试一次。
-   ★ 这就是「过几天又翻到这张书签」的实现——不新建定时器，借角色本来活动的时间点。 */
+/* 挂在角色互动节拍上：翻书签集，随机挑一枚，按概率留便签。
+   ★ 20261118 修两处（用户定案「角色真的能够随机翻看书签集」）：
+     ① 归属判断从 x.giftedToId 改成 giftHasChar(x, id, ch.name)。
+        giftedToId 只是「最近一次送给了谁」——一张签送过 A 又送 B 之后，
+        A 的书签就永远翻不到了。giftLog 才是完整归属。
+     ② 池子不再只有「还没留过言的」。角色翻书签集是随便翻，
+        翻到旧的那几张也会看；只是「还没写过的」多给一点机会（七成）。
+       留不留话仍由 bookNoteTry 掷骰（BOOK_NOTE_CHANCE），和翻阅本身分开。
+   ⚠️ 不新建定时器：仍由 aiTick / 字卡节拍调用，省电红线不变。 */
 function bookNoteTick(ch, id){
   try {
-    const pool = BOOKS.filter(function(x){
-      return x && x.giftedToId === id && !x.noteById;
+    const mine = BOOKS.filter(function(x){
+      return x && giftHasChar(x, id, ch.name);
     });
-    if (!pool.length) return;
+    if (!mine.length) return;
+    const fresh = mine.filter(function(x){ return !x.noteById; });
+    const pool = (fresh.length && Math.random() < 0.7) ? fresh : mine;
     const p = pool[Math.floor(Math.random() * pool.length)];
     bookNoteTry(ch, p, false);
   } catch(e){}
@@ -10750,10 +11063,11 @@ function bookNoteTick(ch, id){
    「『寄语』——」，后面接随机抽出来的留言；没写寄语就直接是随机抽的结果。 */
 function nxGiftText(ch, p, myMsg){
   /* ⚠️ 20261109 起本函数只作为「本地文本」兜底，正式流程走 giftReply()。
-     giftReply 负责三档时机 + AI/字卡两种内容来源 + 上报宿主。 */
-  const back = seasonDrawCard(ch, p, 'planet');
-  if (myMsg) return '「' + myMsg + '」——' + back;
-  return back;
+     ★ 20261118 用户纠正：玩家写的寄语**不能缝进角色的台词**。
+       原写法 '「寄语」——' + 角色的话 会把玩家的署名挂到角色嘴上，
+       看起来像角色写给玩家的。寄语归玩家，在书签集 / 赠送记录里显示；
+       角色的话就只是角色的话。myMsg 参数保留（调用点不改），但不再拼接。 */
+  return seasonDrawCard(ch, p, 'planet');
 }
 
 /* ============================================================
@@ -10796,7 +11110,13 @@ function giftReply(ch, p, myMsg){
 
   const push = function(text){
     if (!text) return;
-    const line = myMsg ? ('「' + myMsg + '」——' + text) : text;
+    /* ★ 20261118：这里是「玩家寄语变成角色写给玩家的」的源头。
+       旧写法：const line = myMsg ? ('「' + myMsg + '」——' + text) : text;
+       这句被 nxPush 记成**角色**说的话，署名是 ch.name，于是玩家写的寄语
+       顶着角色的名字出现在留言流里 —— 方向反了。
+       现在：角色只说自己的话；玩家寄语交给书签集的「你写的」纸条显示。
+       ⚠️ 本函数只有这一个出口（push），别在别处再拼一次 myMsg。 */
+    const line = text;
     const n = nxPush(ch.id, 'gift', line, { no: p.no });
     if (n) seasonHostEvent('gift-reply', {
       charId: ch.id, bookNo: p.no, bookName: p.name, text: line,
@@ -10805,15 +11125,33 @@ function giftReply(ch, p, myMsg){
   };
 
   if (INTERACT.mode === 'ai'){
-    seasonAskHost('reply', {
-      bookName: p.name || '', kind: p.kind || 'plant',
-      imprintKey: p.imprintKey || '', myMsg: myMsg || '',
-      first: first, scene: 'planet'
+    /* 20261119：收到书签这一刻，把整枚书签的图 + 图鉴介绍一起递给角色。
+       视图与便签留言走同一个构造函数（bookCharViewFull），两边看到的是同一份东西。 */
+    bookCharViewFull(p, ch).then(function(view){
+      if (ch && view) { try { ch.__bookView = view; } catch (e) {} }
+      if (view) { try { PLANET.lastBookView = view; } catch (e) {} }
+      return seasonAskHost('reply', {
+        bookName: p.name || '', kind: p.kind || 'plant',
+        imprintKey: p.imprintKey || '', myMsg: myMsg || '',
+        first: first, scene: 'planet',
+        bookImg: (view && view.img) || '',
+        codex: (view && view.codexText) || ''
+      });
     }).then(function(text){
       /* AI 模式允许「这回不想说话」——null 就真的不推，不硬塞 */
       if (text) push(text);
     }).catch(function(){});
   } else {
+    /* ★ 20261119 字卡模式：拼句之前先把「角色视角」建起来 ——
+       图（异步补进视图）、玩家写给这个角色的寄语、书签外观、图鉴介绍，
+       全部挂在 ch.__bookView / PLANET.lastBookView 上。
+       玩家要的不是角色念出描述，而是**代码里真的读得到**这些内容。 */
+    const v0 = bookCharView(p, ch);
+    if (v0){
+      try { ch.__bookView = v0; } catch (e) {}
+      try { PLANET.lastBookView = v0; } catch (e) {}
+      bookImageForChar(p).then(function(du){ if (du) v0.img = du; }).catch(function(){});
+    }
     push(seasonDrawCard(ch, p, 'planet'));
   }
   return true;
@@ -11388,6 +11726,22 @@ function renderNotes(){
     const m = document.createElement('div'); m.className = 'pn-m';
     m.textContent = n.by + ' · ' + agoStr(n.at);
     b.appendChild(x); b.appendChild(m);
+    /* 20261119【书签图 · 玩家要求「角色要真的看到整张书签」】
+       这条留言是「收到某枚书签」或「翻到某枚书签」说的 → 把那枚签的整图贴在下面。
+       图与书签集里那张完全同源（同一套 exportTicket 绘制），点一下能开详情。
+       取图是异步的：先占位、拿到再填；拿不到就安静地不放图，不影响文字。 */
+    if (n.ref && n.ref.no != null){
+      const bk = BOOKS.find(function(o){ return String(o.no) === String(n.ref.no); });
+      if (bk){
+        const im = document.createElement('img');
+        im.className = 'pn-book';
+        im.alt = bk.name || '书签';
+        im.title = 'TA 面前的这枚书签 · 点开看大图';
+        _pnBookThumb(bk, im);
+        im.onclick = function(){ try { openTicket(bk); } catch (e) {} };
+        b.appendChild(im);
+      }
+    }
     /* ★ 20261112：带明细的留言（补算按「浇水 / 施肥 / 静静看着」各一条）下面挂一个展开钮，
        点开就是逐条的时间 + 株名 + 动作 —— 用户要的「能看具体什么时候去照料的」。 */
     if (n.detail && n.detail.length){
@@ -11581,10 +11935,34 @@ function booksOfChar(id){
       /* 多归属：giftLog 里记着这个角色就算（一张书签可送多人） */
       return giftLogOf(x).some(function(g){ return g.id === id; });
     }).map(function(x){
+      /* ★ 20261118 修「角色读到别人的寄语」：
+         原来取 x.myMsg —— 那是**最近一次赠送**的寄语。一张书签送过 A 又送 B 时，
+         x.myMsg 已经被 B 那句覆盖，A 再来读就变成「B 写给 A 的话」，归属彻底错乱。
+         giftLog 里每个角色各存一条 {id,name,at,msg}，必须按 id 取**自己那条**。
+         耦合：giftLogOf() 是老档兜底（只有 giftedTo/myMsg 时合成一条），
+               所以这里走 giftLogOf，不要直接读 x.giftLog。 */
+      const mine = giftLogOf(x).filter(function(g){ return g.id === id; })[0] || null;
       return {
         no: x.no, name: x.name, kind: x.kind || 'plant',
-        imprintKey: x.imprintKey || '', at: x.giftedAt || '',
-        myMsg: x.myMsg || '',
+        imprintKey: x.imprintKey || '', at: (mine && mine.at) || x.giftedAt || '',
+        /* 玩家写给「这个角色」的那句寄语（没写就是空串） */
+        myMsg: (mine && mine.msg) || '',
+        /* 20261118：书签长什么样 —— 角色以前只拿到一个名字，等于「看见一个名词」。
+           look 是给人读的外观句（材质/编号/别名/学名/季节/签上说明），
+           进 AI 上下文和字卡模式的外观引导句，两边共用同一个来源。 */
+        look: bookLookText(x),
+        title: x.title || '', latin: x.latin || '', desc: x.desc || '',
+        season: x.season, date: x.date || '',
+        isStamp: (x.kind === 'planet' || x.src === 'planet'),
+        /* 20261119：这枚签里那株植物的图鉴介绍（习性/周期/分布/生境）。
+           只在该物种已被玩家解锁时才有内容；没有就是空串。
+           ⚠️ 这是「图鉴资料」，和玩家寄语是两回事，拼上下文时不能混。 */
+        codex: (function(){
+          try {
+            const cx = bookCodexOf(x);
+            return cx ? bookCodexText(cx, false) : '';
+          } catch (e) { return ''; }
+        })(),
         /* 20261111：便签属于留它的那个角色 —— 别的角色留的，不能出现在这个角色的上下文里 */
         taNote: (x.noteText && (!x.noteById || x.noteById === id)) ? x.noteText : ''
       };
@@ -16173,11 +16551,44 @@ function doGift(p, ch){
      TA 收下这张邮票，回你一颗种下去 100% 长出这颗星的种子。
      票本身留在书签集里当凭证（还是邮票花边），不删不改。 */
   const isStamp = (p.kind === 'planet' || p.src === 'planet');
-  /* 20261109：上报宿主——这枚书签进了谁的手（写记忆宫殿 + 判断是否首次收到该品类） */
-  seasonHostEvent('book-gift', {
-    charId: ch.id, bookNo: p.no, bookName: p.name, kind: p.kind || 'plant',
-    imprintKey: p.imprintKey || '', myMsg: myMsg, at: Date.now()
-  });
+  /* 20261119【字卡模式的「看见」入口 · 玩家定案】
+     字卡模式完全不经过模型，所以「角色看到图/寄语/外观/图鉴」只能在代码层落地：
+     送出的这一刻就把「角色视角」挂到角色身上（ch.__bookView），
+     不管它这次回不回话、留不留便签 —— 之后的拼句、留言渲染、调试都能读到。
+     图异步补进去（字卡模式尤其需要，因为它没有任何别的取图路径）。 */
+  (function(){
+    try {
+      const v = bookCharView(p, ch);
+      if (!v) return;
+      ch.__bookView = v;
+      PLANET.lastBookView = v;
+      bookImageForChar(p).then(function(du){ if (du) v.img = du; }).catch(function(){});
+    } catch (e) {}
+  })();
+
+  /* 20261109：上报宿主——这枚书签进了谁的手（写记忆宫殿 + 判断是否首次收到该品类）
+     ★ 20261119 玩家要求「存进记忆宫殿的时候也要带着图和寄语」：
+       事件里补上 bookImg（整枚签的图）与 codex（图鉴介绍），宿主落库时一并写进去。
+       取图最多等 1.8 秒；超时就先发无图版本，绝不因为一张图把事件卡掉。 */
+  (function(){
+    const ev = {
+      charId: ch.id, bookNo: p.no, bookName: p.name, kind: p.kind || 'plant',
+      imprintKey: p.imprintKey || '', myMsg: myMsg, at: Date.now(),
+      codex: (function(){
+        try { const cx = bookCodexOf(p); return cx ? bookCodexText(cx, true) : ''; } catch (e) { return ''; }
+      })()
+    };
+    let sent = false;
+    const send = function(img){
+      if (sent) return;
+      sent = true;
+      try { ev.bookImg = img || ''; } catch (e) {}
+      seasonHostEvent('book-gift', ev);
+    };
+    const timer = setTimeout(function(){ send(''); }, 1800);
+    bookImageForChar(p).then(function(du){ try { clearTimeout(timer); } catch (e) {} send(du || ''); })
+      .catch(function(){ try { clearTimeout(timer); } catch (e) {} send(''); });
+  })();
   /* 20261109：便签留言——纯随机链路。可能当场留，也可能一直等到某个节拍才留。 */
   setTimeout(function(){ try { bookNoteTry(ch, p, false); } catch(e){} }, 1500);
 
@@ -20808,6 +21219,10 @@ function exportTicket(p, opts){
   }
 
   window.__lastExportCv = cv;   /* 调试用：导出画布句柄 */
+  /* 20261119：silent = 只把图画出来，不落盘、不弹提示。
+     专门给「让角色看见这枚书签」用 —— 必须复用同一套绘制代码，
+     否则角色看到的那张和玩家看到的那张会长得不一样。 */
+  if (opts && opts.silent) return cv.toDataURL('image/jpeg', 0.82);
   const fname = (p.title || p.name) + '_No' + pad4(p.no) + (withNote ? '_带留言' : '') + '.png';
   const dataUrl = cv.toDataURL('image/png');
   if (window.parent && window.parent !== window){
@@ -20826,6 +21241,71 @@ function exportTicket(p, opts){
     setTimeout(() => a.remove(), 3000);
     toast('已开始下载 · ' + fname);
   }
+}
+
+/* ============================================================
+   20261119【让角色真的看见这枚书签 · 玩家要求】
+   ------------------------------------------------------------
+   玩家原话：「整个书签的图片角色都要可以看到，字卡模式下也是，
+             那边的代码是可以看到的，它就是真的可以看到图的」。
+   以前交给角色的只有文字（名字 / 外观描述 / 寄语），图从来没出去过。
+   这里复用 exportTicket 的绘制（silent 模式），把**整枚书签**（票根 + 照片/星球 + 便签）
+   画成一张图，缩到 512 宽 JPEG：
+     · 512 宽是为了控制上传体积（原图 620×830 PNG 约 1~2MB，JPEG 后约 60~150KB）；
+     · 失败一律返回空串 —— 拿不到图就退回纯文字，绝不阻断对话。
+   ⚠️ 书签照片在 IndexedDB 里，内存里的 p.img 可能还没加载，
+      所以先等 imgReady 再画（否则角色看到的是一张空白票根）。
+   ============================================================ */
+function bookImageForChar(p){
+  return new Promise(function(resolve){
+    const draw = function(){
+      try {
+        const full = exportTicket(p, { silent: true });
+        if (!full || full.indexOf('data:image/') !== 0) { resolve(''); return; }
+        const im = new Image();
+        im.onload = function(){
+          try {
+            const w = 512, h = Math.max(1, Math.round(im.height * (w / im.width)));
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            const g = cv.getContext('2d');
+            g.fillStyle = '#f3ead6'; g.fillRect(0, 0, w, h);
+            g.drawImage(im, 0, 0, w, h);
+            resolve(cv.toDataURL('image/jpeg', 0.72));
+          } catch (e2){ resolve(''); }
+        };
+        im.onerror = function(){ resolve(''); };
+        im.src = full;
+      } catch (e){ resolve(''); }
+    };
+    try {
+      /* 有照片但还没加载进内存 → 先从 IDB 取一次 */
+      if (p && p.hasImg && !p.img && typeof imgGet === 'function' && typeof imgIdOf === 'function'){
+        imgGet(imgIdOf(p)).then(function(du){
+          if (!du) { draw(); return; }
+          const im = new Image();
+          im.onload = function(){ p.img = im; draw(); };
+          im.onerror = function(){ draw(); };
+          im.src = du;
+        }).catch(draw);
+        return;
+      }
+    } catch (e) {}
+    draw();
+  });
+}
+
+/* 20261119：留言里那张「书签缩略图」的缓存。
+   同一个编号只画一次（画一次要跑整套 exportTicket，别每条留言都画）。 */
+const _pnImgCache = new Map();
+function _pnBookThumb(bk, img){
+  const key = String(bk && bk.no);
+  if (_pnImgCache.has(key)){ img.src = _pnImgCache.get(key); return; }
+  bookImageForChar(bk).then(function(du){
+    if (!du) return;
+    _pnImgCache.set(key, du);
+    try { if (img && img.isConnected) img.src = du; } catch (e) {}
+  }).catch(function(){});
 }
 
 
