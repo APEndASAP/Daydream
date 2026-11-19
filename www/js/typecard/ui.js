@@ -236,7 +236,20 @@
     });
   }
 
+  /* 20261119：记录本次演出「正文预览区」实际插入的图片表情（存原始 img 值）。
+     为什么需要：图片表情块为了省内存只落轻量标记 { img:true }（不存 base64），
+     所以落库的正文 text 里这个位置是空的 —— 演出的画面里有图、最终聊天记录里没有，
+     玩家看到的就是「演出的内容和最后打出来的不一样」。
+     这里把真正显示过的那张图记下来，由 engine 在演出收尾时补发成真实表情消息，
+     保证「演出里看到什么，聊天里就留下什么」。 */
+  let _emojiShots = [];
+
   const ui = {
+
+    // 20261119：取出并清空本次演出的表情记录（engine 收尾时调用）
+    takeEmojiShots: function () { const a = _emojiShots.slice(); _emojiShots = []; return a; },
+    // 20261119：演出开始时清空，避免上一场残留串到这一场
+    resetEmojiShots: function () { _emojiShots = []; },
 
     // 创建 ghost（真实消息结构 + Shadow DOM 面板 + 正文预览区），返回 ghost 节点
     buildGhost: function (replyMsg) {
@@ -1871,6 +1884,7 @@
         if (st && st.img) {
           const src = (typeof global.imgSrc === 'function') ? global.imgSrc(st.img) : st.img;
           if (src) {
+            _emojiShots.push(st.img);   // 20261119：记录「正文区真正显示的这张」，收尾时补发成消息
             const im = document.createElement('img');
             im.className = 'tc-preview-emoji';
             im.src = src;
