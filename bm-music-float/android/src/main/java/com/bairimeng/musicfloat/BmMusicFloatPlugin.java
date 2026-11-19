@@ -130,6 +130,10 @@ public class BmMusicFloatPlugin extends Plugin {
        -1 是「还没唱到第一句」的合法高亮结果，若拿它当「尚未渲染」的哨兵，
        renderLyricLines 首帧就会判定「同一句」直接返回，歌词永远画不出来。 */
     private int lyricActiveIdx = -2;                       // 当前高亮句下标；-2 = 尚未渲染
+    /* 20261119：双语歌词「原文 + 译文」同时间戳，是连续两行 —— 高亮与滚动都以整组为准。
+       这两个值记当前高亮的起止行，用来判断「同一句」以便原地返回。 */
+    private int lyricActiveStart = -1;
+    private int lyricActiveEnd = -1;
     /* 20261111：进度/封面判等缓存。心跳 500ms 一次，重复写同值会白白触发 setText/layout；
        浮窗 View 与 Capacitor WebView 共用主线程，这部分开销会直接拖慢 App 内部界面。 */
     /* 20261111：头像 drawable 判等缓存。每次全量推送都会重新 new 一个
@@ -341,6 +345,7 @@ public class BmMusicFloatPlugin extends Plugin {
             lyricTimes.clear(); lyricTexts.clear();
             lyricActiveIdx = -2;   // 20261109：换歌词后重置高亮下标，否则新歌词沿用旧下标不滚动
                                    // 20261111：改成 -2 强制失效，-1 会被早退判成「同句」导致新歌词不重绘
+            lyricActiveStart = -1; lyricActiveEnd = -1;   // 20261119：双语整组缓存一并失效
             try {
                 org.json.JSONArray arr = call.getArray("lyricLines");
                 if (arr != null) {
@@ -1403,7 +1408,10 @@ public class BmMusicFloatPlugin extends Plugin {
         } catch (Throwable t) {}
     }
 
-    /* 20261105：逐句歌词渲染——高亮当前句 + 滚动居中，复刻软件内滚动歌词 */
+    /* 20261105：逐句歌词渲染——高亮当前句 + 滚动居中，复刻软件内滚动歌词
+       20261119（玩家要求「歌词要带翻译」）：双语歌词同一时间戳有「原文 + 译文」两行，
+       高亮必须整组一起亮。原来只亮 active 一行（时间戳相同取最后一条），
+       表现为「原文灰、只有译文亮」，看着像把原文丢了。 */
     private void renderLyricLines() {
         try {
             boolean hasLines = lyricTexts != null && !lyricTexts.isEmpty();
@@ -1413,61 +1421,82 @@ public class BmMusicFloatPlugin extends Plugin {
                 else cardLyric.setVisibility(View.VISIBLE);
             }
             if (!hasLines || cardLyricLines == null) return;
-            // 构建多行文本（当前句紫色加粗高亮）
             int active = lyricActiveIdxForPosition();
-            /* 20261111 主线程减负的关键一处：同一句就原地返回。
+            // 向前后扩到「同一时间戳」的整组（原文 + 译文）
+            int s = active, e = active;
+            try {
+                if (active >= 0) {
+                    float t0 = lyricTimes.get(active)[0];
+                    while (s > 0 && Math.abs(lyricTimes.get(s - 1)[0] - t0) < 0.001f) s--;
+                    while (e + 1 < lyricTimes.size() && e + 1 < lyricTexts.size()
+                            && Math.abs(lyricTimes.get(e + 1)[0] - t0) < 0.001f) e++;
+                }
+            } catch (Throwable t) { s = active; e = active; }
+            /* 20261111 主线程减负：同一组就原地返回 ——
                此前无论高亮句有没有变，每次心跳（500ms）都会把整段歌词重拼成
-               SpannableString、逐行 setSpan（40 行 = 80 个 Span 对象）、再 setText 触发一次 layout。
-               浮窗 View 和 Capacitor WebView 跑在同一个主线程上，所以浮窗每刷一次歌词，
-               就是从界面渲染里抢走一段主线程时间 —— 这是「开原生浮窗后 App 内部界面也变卡」的主因。 */
-            if (active == lyricActiveIdx) return;
+               SpannableString、逐行 setSpan、再 setText 触发一次 layout。 */
+            if (active == lyricActiveIdx && s == lyricActiveStart && e == lyricActiveEnd) return;
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < lyricTexts.size(); i++) {
                 if (i > 0) sb.append('\n');
                 sb.append(lyricTexts.get(i));
             }
             android.text.SpannableString ss = new android.text.SpannableString(sb.toString());
-            // 逐句定位并上色
             int offset = 0;
             for (int i = 0; i < lyricTexts.size(); i++) {
                 String line = lyricTexts.get(i);
                 int len = line.length();
-                if (i == active) {
+                if (s >= 0 && i >= s && i <= e) {
                     ss.setSpan(new android.text.style.ForegroundColorSpan(0xFFB8A6FF), offset, offset + len, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                     ss.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), offset, offset + len, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    /* 译文行（整组的第二行起）小一号，和原文一眼分得开 */
+                    if (i > s) {
+                        ss.setSpan(new android.text.style.RelativeSizeSpan(0.86f), offset, offset + len, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
                 }
                 offset += len + 1;   // +1 换行
             }
             cardLyricLines.setText(ss);
-            // 20261109 修复「2号 mini 形态歌词不跟随」：此前只更新 3 号卡片的多行歌词，
-            //   mini 的单行 miniLyric 只在 applyState 里 setText 一次 → 切歌/走句后永远停住。
-            //   这里随高亮句同步，文本没变则不写（避免无谓重绘导致悬浮窗闪）。
+            // 20261109 修复「2号 mini 形态歌词不跟随」：mini 的单行歌词随高亮句同步
             if (miniLyric != null) {
-                String cur = (active >= 0 && active < lyricTexts.size()) ? lyricTexts.get(active) : "";
+                String cur = (s >= 0 && s < lyricTexts.size()) ? lyricTexts.get(s) : "";
                 if (!cur.equals(String.valueOf(miniLyric.getText()))) miniLyric.setText(cur);
             }
-            // 滚动居中到当前句（只在 active 变化时滚，唱同一句期间不弹回）
-            if (active != lyricActiveIdx) {
+            // 滚动居中到当前组（只在组变化时滚，唱同一句期间不弹回）
+            if (active != lyricActiveIdx || s != lyricActiveStart) {
                 lyricActiveIdx = active;
-                if (cardLyricScroll != null && active >= 0) {
-                    final int idx = active;
-                    cardLyricScroll.post(new Runnable() {
-                        @Override public void run() {
-                            try {
-                                if (cardLyricLines == null || idx < 0 || idx >= lyricTexts.size()) return;
-                                android.text.Layout layout = cardLyricLines.getLayout();
-                                if (layout == null) return;
-                                int lineTop = layout.getLineTop(idx);
-                                int lineBottom = layout.getLineBottom(idx);
-                                int lineCenter = (lineTop + lineBottom) / 2;
-                                int viewCenter = cardLyricScroll.getHeight() / 2;
-                                int target = Math.max(0, lineCenter - viewCenter);
-                                cardLyricScroll.smoothScrollTo(0, target);
-                            } catch (Throwable t) {}
-                        }
-                    });
-                }
+                lyricActiveStart = s;
+                lyricActiveEnd = e;
+                if (active >= 0) centerLyricOn(s, 0);
             }
+        } catch (Throwable t) {}
+    }
+
+    /* 20261119：把当前句放到歌词框正中。
+       旧写法 `lineCenter - scrollView.getHeight()/2` 有两个坑：
+         ① 没算 TextView 的 paddingTop（6dp）→ 目标位置整体偏上；
+         ② ScrollView 刚 setVisibility(VISIBLE) 那一帧 getHeight() 还是 0 →
+            viewCenter=0，target=行中心，当前句直接被滚到框外/最上方。
+       现在高度或 layout 没准备好就延迟重试（最多 4 次 × 120ms），够了再算。 */
+    private void centerLyricOn(final int idx, final int retry) {
+        try {
+            if (cardLyricScroll == null || cardLyricLines == null) return;
+            if (idx < 0 || idx >= lyricTexts.size()) return;
+            final int h = cardLyricScroll.getHeight();
+            android.text.Layout layout = cardLyricLines.getLayout();
+            if (h <= 0 || layout == null) {
+                if (retry < 4) {
+                    cardLyricScroll.postDelayed(new Runnable() {
+                        @Override public void run() { centerLyricOn(idx, retry + 1); }
+                    }, 120);
+                }
+                return;
+            }
+            int padTop = cardLyricLines.getPaddingTop();
+            int lineTop = padTop + layout.getLineTop(idx);
+            int lineBottom = padTop + layout.getLineBottom(idx);
+            int target = Math.max(0, (lineTop + lineBottom) / 2 - h / 2);
+            cardLyricScroll.smoothScrollTo(0, target);
         } catch (Throwable t) {}
     }
 
