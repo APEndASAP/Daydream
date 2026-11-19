@@ -50,10 +50,14 @@ window.bmMusic = (function () {
          VIP 歌同样给整首，且响应头 Access-Control-Allow-Origin: *（WebView 里 fetch 不会被 CORS 拦）。
          20261105 那次「返回空数组」是它临时抽风，本轮已恢复，重新提回主源。 */
       name: '镜像路径 A（网易云·祈杰·整首）',
-      /* 20261117：祈杰的**搜索**接口已死（实测任何关键词都返回 []，但 type=url / type=lrc 仍正常）。
-         搜索改走网易云官方 cloudsearch（App 内经 _nativeReq 原生 HTTP，绕 CORS），
-         取链与歌词继续用祈杰——这样「搜索」和「取链」解耦，祈杰不再拖累搜索。 */
-      search: (kw) => `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(kw)}&type=1&limit=20`,
+      /* 20261119 回滚错误改动：11-18 有人把祈杰搜索换成网易云官方 cloudsearch，
+         还在注释里写成「祈杰搜索接口已死」。本轮实测（node fetch 直连）：
+           https://api.qijieya.cn/meting/?server=netease&type=search&id=孤勇者
+           → 200，返回 [{name,artist,url,pic,lrc}]，20 条/945B 起，**搜索一直是好的**，
+             而且 pic 就是它自己的 type=pic 图床地址（直接可当 img src 用，不用再补封面）。
+         玩家要求：用音源自己的接口，不许拿官方接口顶替。故恢复自有搜索。
+         （cloudsearch 的解析分支保留在 parseSearch 里做兜底，不删、不用。） */
+      search: (kw) => `https://api.qijieya.cn/meting/?server=netease&type=search&id=${encodeURIComponent(kw)}&limit=20`,
       song: (song) => `https://api.qijieya.cn/meting/?server=netease&type=url&id=${encodeURIComponent(song.id)}`,
       lrc: (song) => `https://api.qijieya.cn/meting/?server=netease&type=lrc&id=${encodeURIComponent(song.id)}`,
       parseSearch: (j) => {
@@ -74,6 +78,18 @@ window.bmMusic = (function () {
           // qijieya 的 id 藏在 url 参数里
           let id = x.id || '';
           if (!id && x.url) { try { id = new URL(x.url, 'https://x').searchParams.get('id') || ''; } catch (e) {} }
+          /* 20261119 封面修复（这是「能搜到歌但没封面」的真因之一）：
+             祈杰返回的 pic 是它自己的转发地址
+               https://api.qijieya.cn/meting/?server=netease&type=pic&id=<图片id>
+             旧代码原样塞进 song.pic，随后 _picUsable 因为「不是图片文件」把它判死并清空，
+             于是封面永远补不回来（官方 detail 在镜像模式被跳过，GD 按歌曲 id 取又是死链）。
+             实测这个转发地址 **302 到 p3.music.126.net/…/<图片id>.jpg?param=300y300**，
+             <img> 能正常跟随。所以：
+               · pic 保留原地址（搜索列表立刻有图）
+               · 同时把「图片id」抽出来存 _picId，播放时用它换成真实图床地址落库
+             注意图片 id 与歌曲 id 是两套编号，必须从 pic 里取，不能从 url 里取。 */
+          let _pid = x.pic_id || '';
+          if (!_pid && x.pic) { const mm = String(x.pic).match(/[?&]id=(\d+)/); if (mm) _pid = mm[1]; }
           return {
             id: id,
             name: x.name || x.title || '',
@@ -82,6 +98,7 @@ window.bmMusic = (function () {
             pic: x.pic || '',
             url: x.url || '',
             lrc: '', _lrcUrl: x.lrc || '',
+            _picId: _pid,
           };
         }).filter(x => x.name) : [];
       },
@@ -127,7 +144,11 @@ window.bmMusic = (function () {
       })).filter(x => x.name) : [],
       // types=url 直接给 CDN 直链（不是 302 转发），所以不需要再走 _resolveUrl
       parseSong: (j) => (j && j.url) ? { url: j.url, pic: '', lrc: '' } : null,
-      parseLrc: (j) => (j && j.lyric) ? j.lyric : (typeof j === 'string' ? j : ''),
+      /* 20261119：GD 自己的歌词接口就返回 {lyric, tlyric}，tlyric 是中文翻译。
+         旧代码只取 lyric 把 tlyric 丢掉 → GD 的歌永远只有原文。现在在本源内合并，
+         绝不跨源去问网易云（玩家明令：哪个模式播，词就来自哪个模式的音源）。 */
+      parseLrc: (j) => (j && j.lyric) ? _mergeBiLrc(String(j.lyric), j.tlyric || '')
+        : (typeof j === 'string' ? j : ''),
     },
     /* ========== 网易云第四源：amarea（公开 Meting 部署，长期在线） ==========
        20261117 逐首下载字节实测（同一首《孤勇者》VIP）：
@@ -172,27 +193,53 @@ window.bmMusic = (function () {
        不是限流、也不是冷启动，任何 id 都取不到直链；它的搜索又借祈杰（同期也挂了），
        等于搜索与取链双失效。整源移除，避免播放列表里出现「选了它永远播不了」的死源。
        若日后恢复，可以从 .workbuddy/backup/20261117_音源修复/music.js.before 里取回原定义。 */
-    // 副源：tang s01s（QQ 音乐开放接口），长期维护
+    /* ========== 20261119 QQ 音乐换源（旧 tang 端点已死） ==========
+       旧源 tang.api.s01s.cn：域名解析正常（1.94.235.213），但 HTTPS 请求 8~10 秒无响应
+       （http=000），同域 api.s01s.cn 却 200，说明是这个端点自己没了，不是网络问题。
+       新源（全部实测通过，2026-11-19 02:0x）：
+         · 搜索 / 取链：api.vkeys.cn/v2/music/tencent
+             search?word=孤勇者&num=20 → 200，{code:200,data:[{id,mid,song,album,singer,cover,…}]}
+             取链  ?mid=<songmid>&quality=8 → 200，{data:{url:'http://ws.stream.qqmusic.qq.com/RS02…mp3?vkey=…'}}
+                   实测 Range 请求 206 audio/mpeg，可直接喂 audio 标签
+         · 封面：搜索结果自带 cover，就是 QQ 官方图床
+             https://y.qq.com/music/photo_new/T002R800x800M000<albummid>.jpg（实测 200 image/jpeg）
+         · 歌词：QQ 官方 fcg_query_lyric_new.fcg（nobase64=1）→ 200 + 完整 LRC
+       为什么取链要走聚合层而不是直连 u.y.qq.com：QQ 官方 vkey 接口无登录态时返回
+       result:104003 / purl 为空；六种老 CDN 格式（ws/dl/isure × C400/M500）全部 403。
+       这是 QQ 侧登录限制，聚合层只是代签 vkey，音频仍在 QQ 自己的 CDN 上。
+       付费歌只能拿到试听片段（quality 显示「音乐试听」），同为 QQ 侧限制。 */
     {
       key: 'tang',
       name: '路径 B（QQ 音乐）',
-      search: (kw) => `https://tang.api.s01s.cn/music_open_api.php?msg=${encodeURIComponent(kw)}&type=json`,
-      song: (song) => `https://tang.api.s01s.cn/music_open_api.php?msg=${encodeURIComponent(song.name || song.id)}&type=json&n=1`,
-      lrc: (song) => `https://tang.api.s01s.cn/music_open_api.php?msg=${encodeURIComponent(song.name || song.id)}&type=json&n=1`,
+      search: (kw) => `https://api.vkeys.cn/v2/music/tencent?word=${encodeURIComponent(kw)}&num=20`,
+      song: (song) => `https://api.vkeys.cn/v2/music/tencent?mid=${encodeURIComponent(song.id || song.mid || '')}&quality=8`,
+      lrc: (song) => `https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=${encodeURIComponent(song.id || song.mid || '')}&format=json&nobase64=1&g_tk=5381`,
+      headers: { Referer: 'https://y.qq.com/' },
       parseSearch: (j) => {
-        const arr = Array.isArray(j) ? j : (Array.isArray(j && j.data) ? j.data : []);
+        const arr = (j && Array.isArray(j.data)) ? j.data : [];
         return arr.map(x => ({
-          id: x.song_mid || x.songid || x.id || '',
-          name: x.song_title || x.name || x.title || '',
-          artist: x.singer_name || x.singer || x.artist || '',
-          album: x.album_name || x.album || '',
-          pic: x.pic || x.cover || '',
-          url: x.url || x.song_url || '',
-          lrc: '', _lrcUrl: x.lrc || '',
-        })).filter(x => x.name);
+          id: x.mid || String(x.id || ''),
+          name: x.song || x.name || '',
+          artist: x.singer || x.artist || '',
+          album: x.album || '',
+          // 20261119：封面直接用 QQ 官方图床地址（搜索接口自带），不走任何绕行
+          pic: String(x.cover || x.pic || '').replace(/^http:\/\//i, 'https://'),
+          url: '', lrc: '',
+        })).filter(x => x.name && x.id);
       },
-      parseSong: (j) => { const d = Array.isArray(j) ? j[0] : (j && (j.data && j.data[0])); return d ? { url: d.url || d.song_url || d.playUrl || '', pic: d.pic || '', lrc: '' } : null; },
-      parseLrc: (j) => { const d = Array.isArray(j) ? j[0] : (j && (j.data && j.data[0])); return (d && d.lrc) || ''; },
+      // 取链：{code,data:{url,cover,…}}，data 是单对象（不是数组）
+      parseSong: (j) => {
+        const d = (j && j.data && !Array.isArray(j.data)) ? j.data : null;
+        if (!d) return null;
+        return {
+          url: d.url || '',
+          pic: String(d.cover || '').replace(/^http:\/\//i, 'https://'),
+          lrc: '',
+        };
+      },
+      /* 20261119：QQ 自己的歌词接口带 trans（翻译）字段，有就合并成双语；
+         trans 为空（多数中文歌/部分曲目 QQ 不提供翻译）时只返回原文。 */
+      parseLrc: (j) => (j && j.lyric) ? _mergeBiLrc(String(j.lyric), j.trans || '') : '',
     },
     // 副源：酷我（oiapi），搜索列表 + 详情接口分开
     {
@@ -203,7 +250,12 @@ window.bmMusic = (function () {
       song: (song) => `https://oiapi.net/api/Kuwo?msg=${encodeURIComponent(song.name || song.id)}&n=1&br=128`,
       lrc: (song) => `https://oiapi.net/api/Kuwo?msg=${encodeURIComponent(song.name || song.id)}&n=1&br=128`,
       parseSearch: (j) => {
-        const arr = Array.isArray(j && j.data) ? j.data : [];
+        /* 20261119 修「酷我完全搜不到」：oiapi 返回的是 {code,message,data:{items:[…]}}，
+           data 本身**不是数组**。旧代码 `Array.isArray(j && j.data)` 恒为 false → 永远返回 []
+           （所以界面上是「搜不到任何东西」，不是接口挂了）。实测 data.items[0] =
+           {song,singer,album,rid,picture,time,types}，picture 就是可直接用的 kwimg 封面地址。 */
+        const arr = Array.isArray(j && j.data) ? j.data
+          : ((j && j.data && Array.isArray(j.data.items)) ? j.data.items : []);
         return arr.map(x => ({
           id: x.rid || x.songid || '',
           name: x.song || x.name || '',
@@ -214,7 +266,9 @@ window.bmMusic = (function () {
           lrc: '',
         })).filter(x => x.name);
       },
-      parseSong: (j) => { const d = j && j.data; return d ? { url: d.url || '', pic: d.picture || '', lrc: d.lyric || d.lrc || '' } : null; },
+      // 20261119：详情（n=1）返回 data 直接是单对象（song/singer/rid/picture/url/format…），
+      //   只有搜索列表才是 data.items。两种都兼容，取到对象再读 url/picture/歌词。
+      parseSong: (j) => { const d = (j && j.data && (Array.isArray(j.data.items) ? j.data.items[0] : j.data)) || null; return d ? { url: d.url || '', pic: d.picture || '', lrc: d.lyric || d.lrc || '' } : null; },
       parseLrc: (j) => {
         // 酷我歌词可能在 data.lyric 或 data 顶层，兼容多种结构
         if (!j) return '';
@@ -462,7 +516,10 @@ window.bmMusic = (function () {
     try { pick = await getSetting('musicSource', 'auto'); } catch (e) {}
     const custom = getCustomSources().map(customToSource);
     const all = [...SOURCES, ...custom];
-    if (pick && pick !== 'auto') {
+    /* 20261119：allSources=true 是「批量补图」专用 —— 忽略玩家手选的单一音源。
+       原因：玩家可能把音源固定成祈杰，而祈杰搜索一被限流就返回空，
+       这时只搜它一个 → 整轮补图 0 首。批量任务必须全源轮着试。 */
+    if (pick && pick !== 'auto' && !(opts && opts.allSources)) {
       const hit = all.find(s => s.key === pick);
       if (hit) return [hit];
     }
@@ -486,14 +543,66 @@ window.bmMusic = (function () {
     return sorted;
   }
 
-  async function search(keyword) {
+  /* 20261119：给 GD Studio 搜索结果补封面。
+     背景：GD 的搜索只返回 pic_id，不返回封面地址（旧代码这里直接写 pic:''，于是整列表没封面）。
+     玩家要求「用音源自己的接口拿封面、不许走官方接口绕」——GD 自己就有 types=pic：
+       实测 https://music-api.gdstudio.xyz/api.php?types=pic&source=netease&id=<pic_id>
+        → 200 {"url":"https://p2.music.126.net/…jpg?param=300y300"}（720ms，124B）
+     做法：并发 6 逐首补、单首 4 秒超时、结果进缓存；首屏最多等 3 秒，
+     来不及的先留空（播放时 _ensureCover 还会再补），绝不把搜索卡住。
+     注意：必须用 pic_id，用 url_id 会拿到失效图（20261116 真机实测 404）。 */
+  const _gdPicCache = new Map();
+  async function _gdCover(picId) {
+    if (!picId) return '';
+    if (_gdPicCache.has(picId)) return _gdPicCache.get(picId);
+    try {
+      const j = await _fetchJSON('https://music-api.gdstudio.xyz/api.php?types=pic&source=netease&id=' + encodeURIComponent(picId), 4000);
+      const u = (j && j.url) ? String(j.url).replace(/^http:\/\//i, 'https://') : '';
+      _gdPicCache.set(picId, u);
+      return u;
+    } catch (e) { _gdPicCache.set(picId, ''); return ''; }
+  }
+  async function _enrichGdCovers(list) {
+    try {
+      const pending = list.filter(x => !x.pic && x._picId);
+      if (!pending.length) return list;
+      const t0 = Date.now();
+      let idx = 0;
+      const worker = async () => {
+        while (idx < pending.length && Date.now() - t0 < 3000) {
+          const s = pending[idx++];
+          const u = await _gdCover(s._picId);
+          if (u) s.pic = u;
+        }
+      };
+      await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+    } catch (e) {}
+    return list;
+  }
+
+  async function search(keyword, opts) {
     if (!keyword) return [];
     const sources = await getActiveSources();
+    /* 20261119【批量补图专用 · 避开祈杰限流】
+       玩家实测：祈杰的搜索接口本身没坏，但**短时间内请求多了就会被限流、直接返回空**，
+       过一会儿又能用（搜索栏手动搜一直没问题）。
+       而重抓是「一首一首连续搜」，正好是最容易把祈杰打成限流的方式 ——
+       一限流，整轮重抓全军覆没，表现为「0 首修好」。
+       所以批量补图（_metaFromSearch 调用）把祈杰挪到最后：
+       先用酷狗/清羽这些不限流的源，全部失败才回头试祈杰。 */
+    if (opts && opts.avoidQj) {
+      const qi = sources.findIndex(s => s.key === 'qijieya');
+      if (qi >= 0 && sources.length > 1) sources.push(sources.splice(qi, 1)[0]);
+    }
     for (const src of sources) {
       try {
         const j = await _fetchJSON(src.search(keyword), src.timeout, src.headers);
-        const list = src.parseSearch(j);
-        if (list && list.length) return list;
+        let list = src.parseSearch(j);
+        if (list && list.length) {
+          // 20261119：GD 的封面要单独按 pic_id 取（见 _enrichGdCovers 注释）
+          if (src.key === 'gdstudio') list = await _enrichGdCovers(list);
+          return list;
+        }
       } catch (e) { /* 换下一个源 */ }
     }
     return [];
@@ -624,7 +733,7 @@ window.bmMusic = (function () {
     if (allowBareId && !song.source) return b;        // 搜索结果没标 source，沿用旧行为
     return '';
   }
-  async function fetchSongDetail(song) {
+  async function fetchSongDetail(song, opts) {
     /* 20261117：进来的 song.lrc 若其实是「歌词接口地址」，先清成空 ——
        这样即使后面所有源都抓词失败，也不会把地址留在 lrc 里当成歌词显示「暂无」。 */
     if (song) song.lrc = _cleanLrc(song.lrc);
@@ -646,7 +755,14 @@ window.bmMusic = (function () {
        ★ 兜底是现成的：下面 if (u && u.url) 不成立（没登录 / VIP 拿不到 / 超时）
          就自然往下走到 getActiveSources() 多源分支，不需要额外写 fallback。 */
     const _wantAcct = _acctMode();
-    if (song && _nid0 && (_wantAcct || (song.source === 'netease-direct') || !song.url || /^http:\/\//i.test(String(song.url)))) {
+    /* 20261119（玩家定案）：重抓时传 opts.modeOnly —— 按**当前模式**取源。
+       镜像搜索 / 本地与解析：绝不走账号接口，整首歌交给第三方音源；
+       网易云直连：账号优先，拿不到再落音源兜底。
+       不传 modeOnly 的老调用（正常播放/切歌）行为一点不变。 */
+    const _modeOnly = !!(opts && opts.modeOnly);
+    const _directMode = (M.state.mode !== 'mirror' && M.state.mode !== 'local');
+    const _acctBranch = _modeOnly ? (_directMode && _wantAcct) : true;
+    if (song && _nid0 && _acctBranch && (_wantAcct || (song.source === 'netease-direct') || !song.url || /^http:\/\//i.test(String(song.url)))) {
       const id = String(_nid0);
       const u = await _netEaseSongUrl(id);
       if (u && u.url) {
@@ -698,6 +814,10 @@ window.bmMusic = (function () {
           } else if (real) {
             song.url = real;
           }
+          /* 20261119：记下「这首歌唱是哪个音源给的」。
+             补封面时要用音源**自己的**接口（祈杰 type=song 会把图片 id 一起给出来），
+             没有这个标记就不知道该问谁。绝不写进 source —— source 是模式分类依据。 */
+          if (!song._src) song._src = src.key;
           // song.lrc 是 type=lrc 转发地址 → 跟随拿 LRC 文本
           // 20261117：统一走 _fetchLrcText（它现在能分辨 JSON / 纯文本两种返回），
           //   以前这里直接 _fetchText 塞进 song.lrc，GD 的 JSON 会被原样当歌词。
@@ -723,6 +843,7 @@ window.bmMusic = (function () {
           }
           song.url = _realUrl;
           if (d.pic) song.pic = d.pic;
+          if (!song._src) song._src = src.key;   // 20261119：同上，记来源供补封面用
           /* 20261117：把这一步解析出的歌词转发地址接到 song 上，
              否则 _fetchLrcText 只能退回 src.lrc() 的「按歌名重搜」兜底（拿不到歌词）。 */
           if (d._lrcUrl) song._lrcUrl = d._lrcUrl;
@@ -776,7 +897,25 @@ window.bmMusic = (function () {
   function _picUsable(u) {
     const s = String(u || '').trim();
     if (!/^https?:\/\//i.test(s)) return false;
-    if (/\/meting\//i.test(s)) return false;                       // qijieya 等接口转发地址
+    /* 20261119 封面主因（真机 + 逐源实测）：
+       Meting 系音源的 type=pic 不是「返回 JSON 的假图地址」，而是 **302 转发到真实图床**，
+       <img>/background-image 都能正常跟随。实测四源全部 302 到真图：
+         api.qijieya.cn → p3.music.126.net/…/<图片id>.jpg?param=300y300
+         api.kfjie.me   → imge.kugou.com/stdmusic/400/…jpg
+         api.amarea.cn  → p3.music.126.net/…/…jpg?param=90y90
+       旧代码一刀切 `if (/\/meting\//) return false` 把它们全判死并清空，
+       于是**自动容灾最常用的祈杰、兜底的酷狗/amarea 全部没封面**——
+       这就是玩家看到的「能搜到歌、能播，但哪都没有封面」。
+       白名单放行（只认这些已知 302 到真图的域名 + type=pic），其它 /meting/ 仍然拒绝。 */
+    /* 20261119 修正【真·根因】：上面的域名白名单原来写成
+         /(^|\.)(api\.qijieya\.cn|…)\//
+       而地址是 "https://api.qijieya.cn/…"—— "api" 前面是 "//"，
+       既不是行首也不是点，**四条白名单一条都匹配不上**。
+       结果：所有 Meting 系封面一律被判「不可用」→ 被清空 → 重抓永远 0 首、
+       原本有封面的歌点一次重抓反而变空。现在改成按 "https://域名/" 整段匹配。 */
+    if (/[?&]type=pic\b/i.test(s)
+        && /^https?:\/\/(api\.qijieya\.cn|api\.kfjie\.me|met\.liiiu\.cn|api\.amarea\.cn)\//i.test(s)) return true;
+    if (/\/meting\//i.test(s)) return false;                       // 其余 qijieya 等接口转发地址
     if (/music-api\.gdstudio\.xyz/i.test(s)) return false;          // GD 接口地址
     if (/\/api\.php\?(.*&)?(types|type)=pic/i.test(s)) return false;
     if (/\.(jpg|jpeg|png|webp|gif|bmp)(\?|#|$)/i.test(s)) {
@@ -792,10 +931,78 @@ window.bmMusic = (function () {
     if (/(^|\.)music\.126\.net\//i.test(s) && _picShortId(s)) return false;
     return true;
   }
+  /* ============================================================
+     20261119【强制兜底 · 按歌名重搜】玩家定案：
+       「无论我使用哪个源，无论我什么时候点重抓，都必须抓到歌词和封面，不能是空。」
+     ------------------------------------------------------------------
+     下面 _ensureCover 的 ①②③④ 都依赖「这首歌的 id 属于某个音源」。但库里大量老记录
+     （角色收藏 / 遥控收藏 / 早期导入的歌单）根本没记来源，id 可能是任何平台的，
+     也可能干脆是 mh_ 假 id —— 这种情况下前面所有路线都必然落空。
+     这类歌唯一可靠的锚点就是**歌名 + 歌手**：按名重搜一遍，挑歌名最像的一条，
+     拿它的封面 / 歌词。只要这首歌在任意音源能搜到，就一定能拿到图。
+     这是最后一道防线，也是「不留空封面」的唯一保证。
+     ============================================================ */
+  function _nmKey(s) {
+    return String(s || '')
+      .replace(/[（(【\[][^）)】\]]*[)）】\]]/g, '')   // 去掉 (Live)（feat.xxx）（Remix）这类标注
+      .replace(/[\s\-_·'’"“”]/g, '')
+      .toLowerCase();
+  }
+  function _nmSim(a, b) {
+    const x = _nmKey(a), y = _nmKey(b);
+    if (!x || !y) return 0;
+    if (x === y) return 1;
+    if (x.includes(y) || y.includes(x)) return 0.85;
+    const n = Math.min(6, x.length, y.length);
+    if (n >= 4 && x.slice(0, n) === y.slice(0, n)) return 0.7;
+    return 0;
+  }
+  /* 按歌名+歌手重搜，挑最匹配的一条。匹配度不足宁可返回 null —— 绝不拿别的歌的封面顶上。 */
+  let _metaSearching = false;   // 防重入：搜索链路里有补图调用时不再递归触发
+  async function _metaFromSearch(song, want) {
+    if (_metaSearching) return null;
+    if (!song || !song.name) return null;
+    _metaSearching = true;
+    try {
+      let list = [];
+      const kw = [song.name, song.artist].filter(Boolean).join(' ').trim();
+      // 20261119：批量补图专用参数 avoidQj —— 祈杰限流时不再"一次挂、整轮挂"
+      try { list = await _withTimeout(search(kw, { avoidQj: true, allSources: true }), 16000, [], 'metaSearch'); } catch (e) { list = []; }
+      /* 带歌手一起搜有时反而搜不到（英文名/多个歌手写法不一），退一步只搜歌名 */
+      if (!list || !list.length) {
+        try { list = await _withTimeout(search(String(song.name), { avoidQj: true, allSources: true }), 16000, [], 'metaSearch2'); } catch (e) { list = []; }
+      }
+      if (!list || !list.length) return null;
+      let best = null, bestScore = 0;
+      for (const c of list) {
+        if (!c || !c.name) continue;
+        const sc = _nmSim(c.name, song.name);
+        if (sc > bestScore) { bestScore = sc; best = c; }
+      }
+      if (!best || bestScore < 0.7) return null;      // 名字不像 → 不采信
+      const out = {
+        pic: best.pic || '', url: best.url || '', lrc: best.lrc || '',
+        id: best.id, name: best.name, _src: best._src || ''
+      };
+      if (want === 'pic') return out.pic ? out : null;
+      if (want === 'lrc') return out.lrc ? out : null;
+      return out;
+    } catch (e) { return null; } finally { _metaSearching = false; }
+  }
   async function _ensureCover(song, isNetease, force) {
     if (!song) return song;
     /* force = true 时不信任现有 pic（重抓封面用：旧地址可能早就 404 了） */
     if (!_picUsable(song.pic)) song.pic = '';   // 20261118：接口转发地址直接作废，逼后面重取
+    /* 20261119：Meting 系 type=pic 的转发地址「尽力升级」成真实图床地址。
+       目的是落库更持久（接口以后停了，老封面也不会一起失效）；跟不到就保留转发地址，
+       <img> 自己会跟随 302，照样能显示 —— 绝不因为一次请求失败把封面弄丢。 */
+    if (song.pic && /[?&]type=pic\b/i.test(String(song.pic))
+        && /(qijieya\.cn|kfjie\.me|liiiu\.cn|amarea\.cn)/i.test(String(song.pic))) {
+      try {
+        const realPic = await _resolveUrl(String(song.pic), 5000);
+        if (realPic && realPic !== song.pic && _picUsableStrict(realPic)) song.pic = realPic;
+      } catch (e) {}
+    }
     if (!force && String(song.pic || '').trim()) return song;
     const nid = String(song._neteaseId || (isNetease ? song.id : '') || '').trim();
     /* 20261117e 修「导入的新歌单没有封面，歌词/播放都正常」：
@@ -833,7 +1040,27 @@ window.bmMusic = (function () {
         }
       } catch (e) {}
     }
-    // ③ 最后兜底：GD 按歌曲 id（实测多数是死链，所以必须校验，不合格就留空）
+    /* ③ 20261119 音源自有接口抓封面（玩家定案：重抓要「自己抓到图」，不许在别处兜底）。
+       ★ 先记住这个坑：祈杰的 type=pic 只认 18 位「图片 id」，
+         拿歌曲 id 请求 type=pic&id=1901371647 → **HTTP 404**（实测），拼出来就是破图。
+       ✅ 正确做法是问它的 type=song：实测 type=song&id=1901371647 →
+          pic = ...type=pic&id=109951171836610847，它会把图片 id 一起给出来，
+          拿到的就是这首歌自己的封面（不会串歌），<img> 也能正常跟随 302。
+       20261119 修正：不再要求「必须带 _src==='qijieya' 标记」——
+         库里老记录（角色收藏/遥控收藏/早期导入）统统没有这个标记，导致这一步永不触发，
+         这才是「点了重抓还是空封面」的直接原因。现在只要 id 是数字就问一次，
+         **再用返回的歌名跟本地歌名比对**，对不上（说明是别的平台的 id）就丢弃，绝不串歌。 */
+    if (!song.pic && /^\d+$/.test(nid)) {
+      try {
+        const j = await _fetchJSON(
+          'https://api.qijieya.cn/meting/?server=netease&type=song&id=' + encodeURIComponent(nid), 6000);
+        const d = (Array.isArray(j) ? j[0] : j) || null;
+        const u = d && d.pic ? String(d.pic).replace(/^http:\/\//i, 'https://') : '';
+        const nmOk = !d || !d.name || _nmSim(d.name, song.name) >= 0.7;   // 名字对得上才采信
+        if (u && nmOk && _picUsable(u)) { song.pic = u; return song; }
+      } catch (e) {}
+    }
+    // ④ GD 按歌曲 id（实测多数是死链，所以必须校验，不合格继续往下）
     if (nid && /^\d+$/.test(nid)) {
       try {
         const pj = await _fetchJSON(`https://music-api.gdstudio.xyz/api.php?types=pic&source=netease&id=${encodeURIComponent(nid)}&size=600`, 5000);
@@ -843,13 +1070,24 @@ window.bmMusic = (function () {
         }
       } catch (e) {}
     }
+    /* ⑤ 20261119【按歌名重搜 · 最后一道防线】
+       前面全部落空的，几乎都是「id 不对源 / 没有来源标记 / mh_ 假 id」的老记录。
+       这时唯一不依赖 id 归属的办法就是按歌名重搜，取最匹配那条的封面。
+       玩家要求「无论哪个源、什么时候点重抓都必须抓到，不许空」——
+       这一步就是兑现它的地方。名字不像就不采信，绝不拿别的歌的图顶上。 */
+    if (!song.pic) {
+      try {
+        const m = await _metaFromSearch(song, 'pic');
+        if (m && m.pic && _picUsable(m.pic)) { song.pic = m.pic; return song; }
+      } catch (e) {}
+    }
     return song;
   }
   /* 这些源的 id 就是网易云歌曲 id，可以直接问网易云接口 */
   const _NETEASE_ID_SOURCES = ['qijieya', 'meting', 'gdstudio', 'qingyu', 'kfjie-wy', 'amarea', 'netease-direct'];   // 20261117：huibq 已下线，amarea 补入
 
   // 统一拉歌词：优先按「转发地址文本」抓，失败再走 JSON 解析
-  async function _fetchLrcText(src, song) {
+  async function _fetchLrcTextRaw(src, song) {
     /* 20261117 修「镜像搜索一首歌都抓不到歌词」（真机实测结论）：
        上一版改成「文本优先 + 用 /\\[\\d{1,2}:\\d{1,2}/ 判断是不是 LRC」，
        但 GD 的 lrc 接口返回的是 **JSON**：{"lyric":"[00:00.000] 作曲 …"} ——
@@ -884,11 +1122,93 @@ window.bmMusic = (function () {
     return '';
   }
 
+  /* 20261119【翻译必须从**各音源自己的接口**里拿 · 玩家当面纠正】
+     玩家原话：「在哪个模式下播放歌曲，它的封面、歌词等其他的东西都要来自相应的模式」，
+     并明确否掉「按歌名去查网易云 id、再请求网易云歌词接口」这条跨源路线。
+     实测三个源的歌词接口，各自都带翻译，根本不用外部补：
+       · 祈杰 / amarea（Meting）：type=lrc 返回的文本里，翻译**已内联**在原文同一行的括号中，
+         形如 [00:09.480]The club isn't ... (夜店不是寻找情人的好地方)；
+       · GD Studio：types=lyric 返回 {"lyric":"…","tlyric":"…"}，tlyric 就是中文翻译，
+         旧代码只取了 lyric、把 tlyric 丢掉 —— 这才是「GD 的歌没翻译」的真因；
+       · QQ 音乐：fcg_query_lyric_new 返回 {"lyric":"…","trans":"…"}，有翻译时取 trans。
+     所以只在**该模式自己的源**里合并：原文行下面紧跟一行同时间戳的翻译，
+     播放器 parseLrc 会给第二行打 tr 标记（字小、色浅，与网易云官方一致）。
+     ⚠️ 网页端同样拿得到：祈杰歌词接口带 Access-Control-Allow-Origin: *。 */
+  /** 把「原文 LRC」与「翻译 LRC」按时间戳合并成双语 LRC；没有翻译就原样返回 */
+  function _mergeBiLrc(orig, trans) {
+    const o = String(orig || '').trim();
+    const t = String(trans || '').trim();
+    if (!o) return '';
+    if (!t || !/\[\d{1,2}:\d{1,2}/.test(t)) return o;
+    const re = /\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/;
+    const map = new Map();
+    t.split('\n').forEach(line => {
+      const m = line.match(re);
+      if (!m) return;
+      const text = line.replace(/\[[^\]]*\]/g, '').trim();
+      if (text && !map.has(m[0])) map.set(m[0], text);
+    });
+    if (!map.size) return o;
+    const out = [];
+    o.split('\n').forEach(line => {
+      out.push(line);
+      const m = line.match(re);
+      if (!m) return;
+      const text = line.replace(/\[[^\]]*\]/g, '').trim();
+      const tr = map.get(m[0]);
+      if (tr && tr !== text) out.push(m[0] + tr);
+    });
+    return out.join('\n');
+  }
+
+  /* 20261119：祈杰/amarea（Meting）把翻译**内联在原文同一行括号里**：
+       [00:09.480]The club isn't the best place to find a lover (夜店不是寻找情人的好地方)
+     这样一行里中英文挤在一起，虽然不截断（CSS 允许换行），但看不出哪句是翻译。
+     这里把它拆成两行同时间戳：上行原文、下行翻译 —— 播放器会给下行打 tr 标记
+     （字小、色浅），与 GD/QQ 合并出来的双语完全一致。
+     ★ 保守条件，避免误拆：
+       ① 只处理带时间戳的行；
+       ② 正文（去掉括号内容后）里不能有汉字 —— 中文歌/中文注释一律不动；
+       ③ 括号内必须含汉字，且括号必须在行尾。
+     已经是双语的歌词（GD/QQ 合并结果）第二行正文是中文，会被 ② 挡住，天然幂等。 */
+  function _splitInlineBiLrc(lrc) {
+    const s = String(lrc || '');
+    if (!s || !/\[\d{1,2}:\d{1,2}/.test(s)) return s;
+    const out = [];
+    s.split('\n').forEach(line => {
+      const m = line.match(/^((?:\[[^\]]*\])+)(.*)$/);
+      if (!m) { out.push(line); return; }
+      const ts = m[1], body = m[2];
+      if (!body.trim()) { out.push(line); return; }
+      const noParen = body.replace(/[（(][^）)]*[）)]/g, '');
+      if (/[\u4e00-\u9fff]/.test(noParen)) { out.push(line); return; }   // 正文本身是中文 → 不动
+      const mm = body.match(/^(.*?)\s*[（(]([^）)]*[\u4e00-\u9fff][^）)]*)[）)]\s*$/);
+      if (!mm) { out.push(line); return; }
+      const orig = mm[1].trim(), tr = mm[2].trim();
+      if (!orig || !tr || orig === tr) { out.push(line); return; }
+      out.push(ts + orig);
+      out.push(ts + tr);
+    });
+    return out.join('\n');
+  }
+
+  async function _fetchLrcText(src, song) {
+    const raw = await _fetchLrcTextRaw(src, song);
+    /* 祈杰/amarea 的内联翻译在这里拆成两行（见 _splitInlineBiLrc 注释） */
+    return raw ? _splitInlineBiLrc(raw) : raw;
+  }
+
   /* 20261117 新增：歌词多源兜底。
      真机实测：fetchSongDetail 只要第一个源（祈杰）解析出 url 就直接 return，
      歌词跟着只问那一个源；而酷狗/其它曲库的 id 拿去请求祈杰的 type=lrc 必然为空，
      于是「有地址、没歌词」。这里在拿不到词时依次问其余源，最后兜官方接口（仅数字 id）。 */
   async function _lrcFromAnySource(song, skipKey) {
+    const raw = await _lrcFromAnySourceRaw(song, skipKey);
+    /* 同 _fetchLrcText：兜底路径里也可能拿到「翻译内联在括号」的文本 */
+    return raw ? _splitInlineBiLrc(raw) : raw;
+  }
+
+  async function _lrcFromAnySourceRaw(song, skipKey) {
     if (!song) return '';
     /* 20261118【模式感知 · C5】直连模式下，歌词兜底必须**账号优先**。
        改动前顺序是反的：先遍历所有第三方音源，最后才问官方接口
@@ -913,6 +1233,25 @@ window.bmMusic = (function () {
     if (/^\d+$/.test(String(song.id || ''))) {
       try { const t = await _netEaseLyric(song.id); if (t) return t; } catch (e) {}
     }
+    /* 20261119【按歌名重搜取词】与封面同一条逻辑：id 不对源、来源没标记的老歌，
+       只能靠歌名把词找回来。玩家要求「无论哪个源都必须抓到歌词，不能空」。 */
+    try {
+      const m = await _metaFromSearch(song, 'lrc');
+      if (m && m.lrc) {
+        // 搜索结果的 lrc 字段是「歌词转发地址」，跟 302 拿文本
+        try {
+          const txt = await _fetchText(m.lrc);
+          if (txt && /\[\d{1,2}:\d{1,2}/.test(txt)) return txt;
+        } catch (e) {}
+        // 有的是 JSON 形态（GD 等），取 lyric/lrc 字段
+        try {
+          const jj = await _fetchJSON(m.lrc);
+          const p = typeof jj === 'string' ? jj
+            : (jj && (jj.lyric || jj.lrc || (jj.data && (jj.data.lyric || jj.data.lrc))));
+          if (p && /\[\d{1,2}:\d{1,2}/.test(p)) return p;
+        } catch (e) {}
+      }
+    } catch (e) {}
     return '';
   }
 
@@ -961,14 +1300,18 @@ window.bmMusic = (function () {
   /* ---------- 本地曲库（模式三） ---------- */
   // source 过滤：'mirror'=镜像搜索收藏（玩家，全局共通） / 'local'=本地上传（玩家，全局共通）
   //              'visitor'=角色收藏（跟 charId 走，需传 charId 过滤）；不传=全部
-  async function getLocalLibrary(source, charId) {
+  async function getLocalLibrary(source, charId, allChars) {
     try {
       const all = await idbGetAll('musicHistory');
       let list = (all || []).filter(x => x.kind === 'local');
       if (source) list = list.filter(x => (x.source || 'local') === source);
       // 20261104 数据隔离：角色收藏（visitor）按 charId 隔离；玩家收藏（mirror/local）全局共通不过滤
       if (source === 'visitor') {
-        if (charId) list = list.filter(x => x.charId === charId);
+        /* 20261119：allChars=true 表示「库管理 / 重抓」这类全局操作 —— 要扫**所有角色**的收藏。
+           原来不传 charId 直接返回空数组，导致音乐库重抓把「访客收藏」整块跳过，
+           玩家看到明明有两首没封面却提示「都齐了，不用重抓」。 */
+        if (allChars) { /* 不过滤 charId */ }
+        else if (charId) list = list.filter(x => x.charId === charId);
         else list = [];   // 未指定角色时，访客收藏不展示（避免串角色）
       }
       return list;
@@ -1357,7 +1700,8 @@ window.bmMusic = (function () {
      每首歌每个源只试一次，全试完就停，绝不递归。 */
   const _previewFixTried = new Map();          // 歌名 → 已试到第几个候选
   // 30 秒试听自动换源的候选顺序：两个网易云号池源在前，酷狗（换曲库）垫最后
-  const _PREVIEW_SOURCES = ['qijieya', 'huibq', 'gdstudio', 'kugou', 'kuwo'];
+  // 20261119：huibq 已整源移除（后端 503 停服），不再参与换源
+  const _PREVIEW_SOURCES = ['qijieya', 'gdstudio', 'kugou', 'kuwo'];
   async function _upgradeShortPreview(cur) {
     try {
       if (!cur || !cur.name) return;
@@ -1503,25 +1847,33 @@ window.bmMusic = (function () {
     // 20261105 修复「网易云直连歌词/封面不显示」：直连播放（搜歌点播/歌单点播/导入歌单）时
     //   song 往往只有 url 没有 lrc/pic（_netEaseSongUrl 不返回歌词、部分路径 pic 缺失）。
     //   这里异步补拉歌词 + 封面，补齐后刷新播放器/悬浮窗，让滚动歌词和封面都能显示。
-    if (song.source === 'netease-direct' && song.id) {
+    /* 20261119【玩家定案：每首播放的歌都必须有封面 + 滚动歌词】
+       原来这里只在 source==='netease-direct' 时补 —— 于是镜像搜索 / 访客收藏 / 本地库
+       里那些「url 有了但没图没词」的歌，播起来永远是空封面 + 暂无歌词。
+       现在对**所有来源**都补，且走的是这首歌自己的音源接口：
+         封面 → _ensureCover：官方 detail（账号模式）→ 各自音源 pic_id → 祈杰 type=song
+                （按 id 取图，带歌名校验）→ GD → 按歌名重搜
+         歌词 → _lrcFromAnySource：账号官方词 → 各激活音源的 lrc 接口 → 按歌名重搜
+       拿不到就一直沿这条链往下走，直到拿到为止。 */
+    if (song && song.id && (!song.pic || !song.lrc)) {
       (async () => {
         let changed = false;
         try {
-          if (!song.lrc) {
-            const lrc = await _netEaseLyric(song.id);
-            if (lrc) { song.lrc = lrc; changed = true; }
-          }
+          if (!song.pic) { await _ensureCover(song, true, true); if (song.pic) changed = true; }
         } catch (e) {}
         try {
-          if (!song.pic) {
-            const dj = await _netEaseReq('https://music.163.com/api/song/detail?ids=[' + song.id + ']');
-            const s0 = dj && dj.songs && dj.songs[0];
-            if (s0 && s0.album && s0.album.picUrl) { song.pic = String(s0.album.picUrl).replace(/^http:\/\//i, 'https://'); changed = true; }
-          } else if (String(song.pic).indexOf('http://') === 0) {
+          if (!song.lrc) { const t = await _lrcFromAnySource(song, ''); if (t) { song.lrc = t; changed = true; } }
+        } catch (e) {}
+        try {
+          if (song.pic && String(song.pic).indexOf('http://') === 0) {
             song.pic = String(song.pic).replace(/^http:\/\//i, 'https://'); changed = true;
           }
         } catch (e) {}
-        if (changed) { try { refreshPlayerUI(); } catch (e) {} try { renderFloat(); } catch (e) {} }
+        if (changed) {
+          try { refreshPlayerUI(); } catch (e) {}
+          try { renderFloat(); } catch (e) {}
+          try { if (window.bmMusicUI && window.bmMusicUI.refreshPlayerUI) window.bmMusicUI.refreshPlayerUI(); } catch (e) {}
+        }
       })();
     }
   }
@@ -1818,6 +2170,12 @@ window.bmMusic = (function () {
         id: s.id, name: s.name, artist: s.artist || '', album: s.album || '',
         pic: s.pic || '', url: s.url || '', lrc: s.lrc || '',
         source: s.source || '', _neteaseId: s._neteaseId || s._picId || '', needResolve: !!s.needResolve,
+        /* 20261119：_picId 必须单独存。原来只把它并进 _neteaseId，重启后 ②步子（GD types=pic）
+           再也拿不到图片 id，封面补不回来 —— 这正是「重抓一次好了、退出重进又没封面」的原因之一。 */
+        _picId: s._picId || '',
+        /* 20261119：_src 也存。补封面时要靠它知道「该问哪个音源自己的接口」
+           （祈杰 type=song 能用歌曲 id 换回图片 id）；不存的话重进 App 就补不了图。 */
+        _src: s._src || '',
       });
       const data = {
         current: cur ? keep(cur) : null,
@@ -2193,8 +2551,30 @@ window.bmMusicUI = (function () {
        · 卡片记下自己的消息 id（state.togetherCardId），切歌时 _syncTogetherCard()
          就地改写这条消息（DB + 聊天页 DOM 同步），所以它永远显示当前那首。
      ============================================================ */
+  /* 20261119：统一「此刻到底是不是在遥控外部 App」的唯一判据。
+     玩家报：后台明明在网易云直连，点角色发来的换歌/点歌卡，却提示「外部 App 只能切歌」。
+     根因：mode 是同步从 localStorage（bmMusicSession）恢复的，而 _netEaseDirect 是异步从
+          IndexedDB（setting: neteaseDirect）恢复的；两者在启动初期会短暂不一致
+          （mode 已经是 remote，_netEaseDirect 还是初值 false），
+          于是分散在各处的 `mode==='remote' && !_netEaseDirect` 会一起误判成「遥控外部 App」。
+     判据（任一成立就不算遥控，宁可走内置播放器也不要误发 next 给外部 App）：
+       ① 不在 remote 模式；
+       ② 直连开关开着；
+       ③ 当前曲目有播放地址、且内置播放器正在播（或这首本身就来自直连）。
+     ★ 只收敛「能不能指定歌」这一层，不改角色互动权重、不改模式状态本身。
+     ★ 判据③只看「内置播放器是否真的在播」——不能再加 source==='netease-direct'：
+        玩家从直连切到外部 App 时 current 会残留上一首直连歌，若按 source 判会误判成内置播放，
+        导致一起听卡/悬浮窗读的是内置残留歌，而不是外部 App 正在放的那首。 */
+  function _isRemoteAppNow() {
+    if (M.state.mode !== 'remote') return false;
+    if (_netEaseDirect) return false;
+    const cur = M.state.current;
+    if (cur && cur.url && M.state.playing) return false;
+    return true;
+  }
+
   async function _nowPlayingInfo() {
-    const isRemote = (M.state.mode === 'remote') && !_netEaseDirect;
+    const isRemote = _isRemoteAppNow();
     if (isRemote) {
       const b = _remoteBridge();
       if (b && typeof b.getMediaState === 'function') {
@@ -2292,7 +2672,7 @@ window.bmMusicUI = (function () {
     clearInterval(_tcWatch);
     _tcWatch = setInterval(function(){
       if (!M.state.charId || !M.state.togetherSince) { clearInterval(_tcWatch); _tcWatch = 0; return; }
-      if ((M.state.mode === 'remote') && !_netEaseDirect) _syncTogetherCard();
+      if (_isRemoteAppNow()) _syncTogetherCard();
     }, 2500);
   }
 
@@ -2595,7 +2975,8 @@ window.bmMusicUI = (function () {
     const hasCur = !!cur;
     // 20261105：isRemote = 真在「遥控外部 App」（mode=remote 且未开网易云直连）。
     //   开了直连后，角色走内置播放器（搜歌/点播都走 _netEase*），不再盲控外部 App。
-    const isRemote = (M.state.mode === 'remote') && !_netEaseDirect;
+    // 20261119：统一走 _isRemoteAppNow()（直连开关异步恢复期间的短暂不一致不再误判）
+    const isRemote = _isRemoteAppNow();
     // 20261106 修复「直连模式下角色互动权重归零」：网易云直连（_netEaseDirect=true 且 mode=mirror）
     //   时 isRemote 恒 false，导致盲抽/日推/漫游权重 isRemote?X:0 全部归零，角色永远只抽得到
     //   「主动搜歌」一个动作。这里单独标 isDirect，让盲抽/日推/漫游在直连模式下也有权重>0，
@@ -2846,6 +3227,10 @@ window.bmMusicUI = (function () {
       if (!c) return;
       // 只在跟这个角色一起听歌时才有意义（没在一起听，切模式玩家看不见）
       if (!(M.state.charId === charId && M.state.togetherSince)) return;
+      /* 20261119：先读一遍磁盘上的直连开关与分支记忆。
+         App 在后台挂很久时，内存里的 _netEaseDirect / _netEaseBranch 可能落后于
+         玩家在设置页刚改过的值，会导致「切了却没切对分支」。 */
+      try { await _netEaseLoadDirect(); } catch (e0) {}
       const isApp = !!(M.isApp && M.isApp());
       // 本地曲库数量（决定 local 能不能进候选池）
       let localCount = 0;
@@ -2855,32 +3240,31 @@ window.bmMusicUI = (function () {
       if (localCount > 0) pool.push('local');
       if (isApp) { pool.push('remote'); pool.push('direct'); }
       if (!pool.length) return;
-      // 当前模式（直连优先判定：直连时 mode 仍是 mirror，光看 mode 会误判）
-      const cur = _netEaseDirect ? 'direct' : (M.state.mode || 'mirror');
+      // 当前模式（直连优先判定：直连时 mode 仍是 remote，光看 mode 会误判）
+      const cur = _realPlayMode();
       // 尽量别切到「本来就是这个」，否则等于没切
       let cand = pool.filter(x => x !== cur);
       if (!cand.length) cand = pool.slice();
       const target = cand[Math.floor(Math.random() * cand.length)];
-      // 执行
+      /* 执行（20261119 修复）：
+         原来这里调的是 showMusicPage() 私有的 setMode —— 跨作用域必抛
+         ReferenceError，又被外层 catch 静默吞掉，四个分支从来没生效过。
+         现在统一走顶层数据层 _applyPlayMode：音乐页没打开（后台）也能真正切。 */
       if (target === 'mirror') {
-        if (_netEaseDirect) { await _netEaseSetDirect(false, { keepBranch: true }); }
-        await setMode('mirror');
+        await _applyPlayMode('mirror');
       } else if (target === 'local') {
-        if (_netEaseDirect) { await _netEaseSetDirect(false, { keepBranch: true }); }
-        await setMode('local');
+        await _applyPlayMode('local');
       } else if (target === 'remote') {
-        /* 20261117：直连是「后台遥控」下的一个分支，不再靠 setMode 隐式关直连。
-           角色要「遥控外部 App」就把分支明确切到 external。 */
-        await setMode('remote');
-        await _netEaseSetDirect(false);
+        /* 直连是「后台遥控」下的一个分支：角色要「遥控外部 App」就把分支明确切到 external */
+        await _applyPlayMode('remote', { branch: 'external' });
       } else if (target === 'direct') {
-        /* 同上：直连 = remote 模式 + direct 分支，绝不把 mode 改成 mirror
+        /* 直连 = remote 模式 + direct 分支，绝不把 mode 改成 mirror
            （改成 mirror 就是玩家看到的「一点直连就跳回镜像搜索」）。 */
-        await setMode('remote');
-        await _netEaseSetDirect(true);
+        await _applyPlayMode('remote', { branch: 'direct' });
       }
-      // 落库（顶替玩家上次记忆）
-      try { M.saveSession(); } catch (e2) {}
+      // 落库已在 _applyPlayMode 内完成（顶替玩家上次记忆），这里不再重复
+      // 真没切成（例如网页端没有遥控插件）就不谎报，安静退出
+      if (_realPlayMode() !== target) return;
       // 通知玩家（自动遵循 chat / toast / off）
       const label = ({ mirror: '镜像搜索', remote: '后台遥控', direct: '网易云直连', local: '本地与解析' })[target] || target;
       _sayMusicAction(c, '把播放模式换成了「' + label + '」');
@@ -2929,7 +3313,7 @@ window.bmMusicUI = (function () {
      顺序：播放列表随机（优先已有 url）→ 列表里没有再搜关键词（AI 按角色卡 / 固定池）。 */
   async function _swapResolveSong(c) {
     try {
-      const isRemote = (M.state.mode === 'remote') && !_netEaseDirect;
+      const isRemote = _isRemoteAppNow();
       if (isRemote) return { __remote: true };
       const pl = (M.state.playlist || []).filter(s => s && s.name);
       if (pl.length) {
@@ -3114,7 +3498,7 @@ window.bmMusicUI = (function () {
          原生插件只能发 next/prev/toggle，没法指定歌。
          所以这里不许再冒充「换成了《X》，你点的这首」，改为如实说
          「尝试换《X》但出了点问题，于是换了一首歌播放」+ 一条小提示条。 */
-      const _remoteMode = (M.state.mode === 'remote') && !_netEaseDirect;
+      const _remoteMode = _isRemoteAppNow();
       if (_remoteMode) {
         // 不传 sayText：由下面的分支统一发言，避免一次点击冒出两条消息
         await _remoteAction({ bridge: 'next', local: () => M.next() });
@@ -3186,7 +3570,7 @@ window.bmMusicUI = (function () {
       const c = getCharById(charId);
       if (!c) return { ok: false };
       // 遥控外部 App 模式读不到具体曲目（只能发 next/prev），不发卡片
-      if (M.state.mode === 'remote' && !_netEaseDirect) return { ok: false };
+      if (_isRemoteAppNow()) return { ok: false };
       /* ★ 20261116 玩家报：「听到这首歌」卡片上的歌不是我当时正在听的那首。
          根因就在这里 —— 原来**故意**挑一首「不是当前在播的」（_pickAnotherPlayable），
          卡片却写着「听到这首歌，TA 想对你说」，语义直接对不上。
@@ -3721,17 +4105,17 @@ window.bmMusicUI = (function () {
        玩家的观感就是「列表 30 首只抓 10 首」，而且「重抓了还是没歌词」。
        现在重抓 = **整个播放列表**，只跳过纯本地文件（source==='local' 且没有网易云 id，
        那种没有可重抓的线上地址）。 */
-    /* ===== 20261118【模式感知 · C6】重抓范围按模式互斥（玩家 2026-11-18 当面确认）=====
-       玩家原话：「重抓范围，后台遥控·直连，只重抓带网易云 ID 的歌，一方面需要账号登录，
-       另一方面还是要用音源兜底」「模式一的抓取要走模式一的音源」。
+    /* ===== 20261119（玩家定案，覆盖 11-18 的「按模式过滤」）=====
+       玩家原话：「我本来在网易云直连模式听了一个歌单，切换成镜像搜索，点重抓，
+       刚才在网易云里播的歌曲能不能在镜像搜索里继续播放？」
+       现在改成：**切模式后点重抓 = 整张播放列表按当前模式的音源全部重抓一遍**。
        规则：
-         · 后台遥控·直连 → 只抓**带网易云 id** 的（没 id 的音源歌账号也认不出来）
-         · 镜像搜索       → 只抓镜像来源的歌（走音源，不碰账号）
-         · 本地与解析     → 只抓本地库里带 id 的（纯本地文件没有可重抓的线上地址）
-         · 后台遥控·外部  → 上面已 return，只抓当前那一首，不进这里
-       ※ 20261117 曾把范围放开成「整个播放列表」来修「30 首只抓 10 首」的观感问题，
-         但那违背模式互斥；本次改用 toast 明示「本次重抓 N 首（当前模式）」解决观感，
-         不再跨模式乱抓。 */
+         · 抓之前把旧 url / 歌词 / 封面清掉 —— 不清就会复用模式外的旧地址，等于没换源；
+         · 按当前模式取源（见 fetchSongDetail 的 opts.modeOnly）：
+             镜像搜索 / 本地与解析 → 只走第三方音源，绝不碰账号；
+             网易云直连          → 账号优先，拿不到再落音源兜底；
+         · 当前模式没抓到的，一律把旧的还回去，绝不把本来能播的歌弄成不能播；
+         · 唯一跳过：纯本地文件（source==='local'、没有 id、没有线上地址）。 */
     const _m = M.state.mode || 'mirror';
     const _hasNid = (s) => {
       const a = String((s && s._neteaseId) || '').trim();
@@ -3742,12 +4126,11 @@ window.bmMusicUI = (function () {
     };
     const pl = (M.state.playlist || []).slice().filter(s => {
       if (!s || !s.name) return false;
-      if (_m === 'mirror') return (s.source === 'mirror') || !s.source;   // 老数据没有 source，按当前模式算
-      if (_m === 'local') return (s.source === 'local') && _hasNid(s);
-      return _hasNid(s);            // remote + 直连分支
+      if (s.source === 'local' && !_hasNid(s) && !String(s.url || '').trim()) return false;   // 纯本地文件没有可重抓的线上来源
+      return true;
     });
     const cur = M.state.current;
-    const _nm = _m === 'mirror' ? '镜像搜索' : (_m === 'local' ? '本地与解析' : '网易云直连');
+    const _nm = _m === 'mirror' ? '镜像搜索音源' : (_m === 'local' ? '本地解析音源' : '网易云直连音源');
     /* 正在播的那首即使不属于当前模式也带上：玩家看着它点重抓，期望的就是它先被刷。
        （其余歌严格按模式过滤，不跨模式乱抓） */
     if (cur && !pl.some(s => String(s.id) === String(cur.id))) pl.push(cur);
@@ -3771,37 +4154,37 @@ window.bmMusicUI = (function () {
         if (_refreshCancel) { stopped = true; break; }
         const s = pl[i];
         try {
-          const hadUrl = s.url || '';
+          /* 20261119：旧的地址 / 歌词 / 封面先记下来。
+             重抓 = 按当前模式的音源重新取一份；哪一样没取到就把旧的还回去。
+             （原来无条件清空封面，玩家实测「点重抓反而把封面弄没了」——
+               祈杰的歌走账号 detail 拿不到图，图一清就再也补不回来。） */
+          const oldUrl = String(s.url || '').trim();
+          const oldLrc = String(s.lrc || '').trim();
+          const oldPic = String(s.pic || '').trim();
+          s.url = '';                        // 清掉旧地址，逼它按当前模式的源重取（不清就等于没换源）
           s.lrc = '';                        // 清掉旧歌词，逼 fetchSongDetail 重抓
-          /* 20261117e：封面也一并重抓 —— 每个模式、每一首，不再只清 netease-direct。
-             玩家实测：新导入的歌单能播、有词，就是没封面；点重抓也只补词和地址。 */
-          s.pic = '';
+          s.pic = '';                        // 封面同理
           /* 20261118：单首 18s 超时。原来直接 await，一首的网络/原生调用挂住就整队停摆，
              而且没有任何可见反馈 —— 这是「一直转但没反应」的直接原因。 */
-          const full = await _withTimeout(M.fetchSongDetail(s), 18000, null, 'refresh:' + (s.name || ''));
-          if (full) {
-            ok++;
-            if (full.url) urlOk++;
-            if (full.lrc) lrcOk++;
-            /* 详情里没带封面（导入歌单很常见）→ 单独走统一补封面（GD 按歌曲 id 取，无需登录态）。
-               force=true：不信旧 URL，一律重新取一次。 */
-            if (!s.pic && window.bmMusic && typeof window.bmMusic.ensureCover === 'function') {
-              try { await _withTimeout(window.bmMusic.ensureCover(s, true, true), 12000, null, 'cover'); } catch (eC) {}
-            }
-            if (s.pic) picOk++;
-            if (M.state.current && String(M.state.current.id) === String(s.id)) {
-              if (full.lrc) M.state.current.lrc = full.lrc;
-              if (full.url) M.state.current.url = full.url;
-              if (s.pic) M.state.current.pic = s.pic;   // 用实际补到的封面（可能是 ensureCover 的结果）
-              M.state.lyrics = '';           // 清掉遥控/旧歌残留的歌词缓存
-              curFull = full;
-            }
-          } else if (hadUrl) {
-            ok++; urlOk++;
-            if (!s.pic && window.bmMusic && typeof window.bmMusic.ensureCover === 'function') {
-              try { await _withTimeout(window.bmMusic.ensureCover(s, true, true), 12000, null, 'cover2'); } catch (eC2) {}
-            }
-            if (s.pic) picOk++;
+          await _withTimeout(M.fetchSongDetail(s, { modeOnly: true }), 18000, null, 'refresh:' + (s.name || ''));
+          /* 详情里没带封面（导入歌单很常见）→ 单独走统一补封面（force=true：不信旧地址，一律重取）。 */
+          if (!s.pic && window.bmMusic && typeof window.bmMusic.ensureCover === 'function') {
+            try { await _withTimeout(window.bmMusic.ensureCover(s, true, true), 12000, null, 'cover'); } catch (eC) {}
+          }
+          /* 当前模式没抓到的，还回旧的 —— 重抓绝不能把本来能播、能看的歌弄坏。 */
+          if (!s.url && oldUrl) s.url = oldUrl;
+          if (!s.lrc && oldLrc) s.lrc = oldLrc;
+          if (!s.pic && oldPic) s.pic = oldPic;
+          ok++;
+          if (s.url) urlOk++;
+          if (s.lrc) lrcOk++;
+          if (s.pic) picOk++;
+          if (M.state.current && String(M.state.current.id) === String(s.id)) {
+            if (s.lrc) M.state.current.lrc = s.lrc;
+            if (s.url) M.state.current.url = s.url;
+            if (s.pic) M.state.current.pic = s.pic;
+            M.state.lyrics = '';           // 清掉遥控/旧歌残留的歌词缓存
+            curFull = s;
           }
         } catch (e) {}
         /* 20261118：进度改成每 2 首报一次，并带上已补到的封面数（原来 5 首一次，
@@ -3828,44 +4211,147 @@ window.bmMusicUI = (function () {
        重抓到的封面/歌词全没了 —— 观感就是「点了重抓还是没封面」。
        这里补一次会话存档。 */
     try { if (M.saveSession) M.saveSession(); } catch (e8) {}
-    /* 20261117g：音乐库（收藏的曲库）也要补封面与歌词。
-       重抓此前只遍历「播放列表」，库里的歌永远补不到（玩家要求：音乐库每首歌都要有封面）。
-       只处理缺封面或缺词的记录，已有内容不动；用 addLocalTrack 按 id 覆盖回库。 */
-    let libDone = 0, libTotal = 0;
-    /* 20261118：音乐库补全这一段以前是「无超时、无取消、无上限」地跑完全库，
-       3237 首 × 每首 1~3s = 可能一两个小时，而且按钮早就停了、完全没有进度感。
-       现在纳入同一套任务状态：按钮重新转起来、每首有超时、再点一次能停。 */
+    /* ===== 20261119（玩家定案）：音乐库**不再**跟着播放列表重抓一起跑 =====
+       以前点一次 ⟳ 会把 3000+ 首的库也一起扫，动辄几分钟，按钮早停了它还在跑，
+       玩家原话：「点重抓的时候连带着音乐库也给我一起重抓了，应该单独……在批量管理旁边
+       增加一个单独的按钮，专门给音乐库重抓封面」。
+       现在库的重抓在音乐库面板的独立按钮里（refreshLibraryCovers），下面只收尾播放列表。 */
+    /* 20261117：重抓完把自愈额度清零，否则之后切到这些歌时不再补词 */
+    try { if (window.bmMusic && window.bmMusic._resetHealQuota) window.bmMusic._resetHealQuota(); } catch (e7) {}
+    if (window.miniToast) miniToast(`${_nm} · ${stopped ? '已停止' : '重抓完成'} ${ok}/${pl.length} 首 · 歌词 ${lrcOk} · 封面 ${picOk} · 地址 ${urlOk}`);
+  }
+
+  /* ============================================================
+     20261119：音乐库「重抓封面」——独立按钮（音乐库面板里，批量管理旁边）
+     ------------------------------------------------------------------
+     与播放列表重抓的区别：
+       · 只扫「音乐库」（idb 里 kind:'local' 的记录），不碰播放列表；
+       · 默认扫三个库（镜像收藏 / 本地 / 访客收藏），也可以只扫某个库（scope）；
+       · 补图走 _ensureCover，音源自己的接口优先（祈杰 type=song 能按歌曲 id 换回图片 id）；
+       · 真抓不到新图就保留旧的，绝不让「重抓」把本来能看的封面弄丢。
+     ============================================================ */
+  /* 20261119：拿到封面地址 ≠ 能显示。
+     酷狗/网易云的图床地址带 auth 或 302 转发，链过期、图被删时地址仍然"长得对"，
+     但 <img> 一定打不开 —— 表现就是「重抓显示已修 3 首，列表还是灰占位」。
+     所以落库前实测一次：真加载成图（naturalWidth>0）才算成功。 */
+  function _picLoads(url, ms) {
+    return new Promise(res => {
+      if (!url) return res(false);
+      try {
+        const img = new Image();
+        const t = setTimeout(() => res(false), ms || 6000);
+        img.onload = () => { clearTimeout(t); res(img.naturalWidth > 0); };
+        img.onerror = () => { clearTimeout(t); res(false); };
+        img.src = url;
+      } catch (e) { res(false); }
+    });
+  }
+
+  async function refreshLibraryCovers(scope) {
+    if (_refreshBusy) {
+      // 再点一次 = 停止（与播放列表重抓一致），完成当前这首就收尾
+      _refreshCancel = true;
+      if (window.miniToast) miniToast('正在停止…完成当前这首就收尾');
+      return { done: 0, total: 0, busy: true };
+    }
+    const srcs = scope ? [scope] : ['mirror', 'local', 'visitor'];
     _refreshBusy = true;
-    if (btn) btn.classList.add('spinning');
+    _refreshCancel = false;
+    const btn = document.getElementById('bm-lib-refresh-cover');
+    if (btn) { btn.textContent = '■'; btn.title = '点一下停止重抓'; }
+    let done = 0, total = 0, stopped2 = false;
+    // 20261119：把「一共多少首」和「需要修多少首」分开记，提示里写清楚，避免「怎么只有 5 首」的误会
+    let poolTotal = 0, earTotal = 0, needN = 0, earsN = 0, failN = 0;
+    // 20261119：版本标记写进提示，方便一眼确认「跑到的是哪一版代码」（缓存没刷新时最容易误判）
+    const _LIB_BUILD = 'V1.5n';
     try {
+      /* 20261119【扫描范围 · 按玩家定的隔离规则】
+         ① 玩家自己的库（mirror 云端收藏 / local 本地）：**全局共通**，扫一次所有角色都能播；
+         ② 角色相关（visitor 访客收藏 / ear 耳机记录）：**跟角色绑定**，只扫「当前这个角色」。
+            绝不跨角色扫 —— 别的角色的收藏不该被这次操作碰到，也避免一次重抓几百首的负担。
+         说明：从哪个角色进的一起听歌页面，这里就是哪个角色（currentChar / state.charId）。 */
+      const _curC = (typeof currentChar === 'function' ? currentChar() : null);
+      const _cid = (_curC && _curC.id) || M.state.charId || null;
       const pool = [];
-      for (const src of ['mirror', 'local', 'visitor']) {
-        try { const l = await M.getLocalLibrary(src); if (l && l.length) pool.push(...l); } catch (e0) {}
+      for (const key of srcs) {
+        try {
+          const l = await M.getLocalLibrary(key, _cid);
+          if (l && l.length) pool.push(...l);
+        } catch (e0) {}
       }
+      // 只处理缺封面或缺词的；已有内容不动（避免把本来好的图覆盖成空）
       const need = pool.filter(x => x && x.name && (!String(x.pic || '').trim() || !String(x.lrc || '').trim()));
-      libTotal = need.length;
+      poolTotal = pool.length; needN = need.length;
+      /* 20261119：「Ta的耳机」也是音乐库的一个 tab，历史记录（kind:'ear'）是快照、
+         不在 kind:'local' 里，必须单独扫，否则耳机里永远是一片占位图。
+         ★ 只扫**当前角色**的耳机记录（跟角色绑定，跨角色不互扫），按 songId/歌名去重。 */
+      const earsNeed = [];
+      try {
+        const eh = await M.getHistory('ear', _cid);
+        earTotal = (eh || []).length;
+        const seenE = new Set();
+        (eh || []).forEach(x => {
+          const k = String(x.songId || x.name || '');
+          if (!k || seenE.has(k) || String(x.pic || '').trim()) return;
+          seenE.add(k);
+          earsNeed.push(x);
+        });
+      } catch (e0) {}
+      earsN = earsNeed.length;
+      total = need.length + earsNeed.length;
+      if (!total) {
+        if (window.miniToast) miniToast(`音乐库共 ${poolTotal + earTotal} 首，封面和歌词都齐了，不用重抓`);
+        return { done: 0, total: 0 };
+      }
+      if (window.miniToast) miniToast(`开始重抓（${_LIB_BUILD}）：共 ${poolTotal + earTotal} 首，其中 ${total} 首缺图或缺词（收藏 ${needN} · 耳机 ${earsN}）…`);
+      /* 先扫耳机记录：这是玩家点了完全没反应的地方，优先补 */
+      for (let j = 0; j < earsNeed.length; j++) {
+        if (_refreshCancel) { stopped2 = true; break; }
+        const x = earsNeed[j];
+        const s = {
+          id: x.songId || x.id, name: x.name, artist: x.artist || '', album: x.album || '',
+          pic: x.pic || '', url: x.url || '', _neteaseId: x._neteaseId || '', _src: x._src || ''
+        };
+        try {
+          /* 25s：真机实测「When It Snows」单首补图要 8s 上下，原来 12s 在弱网/低端机必被砍断 */
+          await _withTimeout(M.ensureCover(s, false, true), 25000, null, 'earcover');
+          if (String(s.pic || '').trim() && !(await _picLoads(s.pic, 6000))) s.pic = '';   // 地址拿到但打不开 → 判失败
+          if (String(s.pic || '').trim()) {
+            await M.addHistory(Object.assign({}, x, { pic: s.pic }));
+            done++;
+          } else { failN++; }
+        } catch (e) { failN++; }
+        if (window.miniToast && (j + 1) % 4 === 0) miniToast(`重抓耳机记录 ${j + 1}/${earsNeed.length} · 已修 ${done}`);
+      }
       for (let i = 0; i < need.length; i++) {
-        if (_refreshCancel) { stopped = true; break; }
+        if (_refreshCancel) { stopped2 = true; break; }
         const s = need[i];
         try {
+          const oldPic = String(s.pic || '').trim();
           if (!String(s.url || '').trim() || !String(s.lrc || '').trim()) {
             try { const f = await _withTimeout(M.fetchSongDetail(s), 18000, null, 'lib'); if (f && f.lrc) s.lrc = f.lrc; if (f && f.url) s.url = f.url; } catch (e1) {}
           }
+          /* force=true：不信库里那条旧地址（可能早就 404 了），一律重取一次；
+             音源自己的接口优先，见 _ensureCover ③ 祈杰 type=song。 */
           if (!String(s.pic || '').trim() && M.ensureCover) {
-            try { await _withTimeout(M.ensureCover(s, true, false), 12000, null, 'libcover'); } catch (e2) {}
+            try { await _withTimeout(M.ensureCover(s, true, true), 25000, null, 'libcover'); } catch (e2) {}
           }
-          if (String(s.pic || '').trim() || String(s.lrc || '').trim()) { await M.addLocalTrack(s); libDone++; }
-        } catch (e3) {}
-        if (need.length > 4 && ((i + 1) % 4 === 0) && window.miniToast) miniToast(`音乐库补全 ${i + 1}/${need.length} · 已修 ${libDone}`);
+          // 地址拿到但真打不开（auth 过期 / 302 到 404）→ 判失败，别把坏地址写进库
+          if (String(s.pic || '').trim() && !(await _picLoads(s.pic, 6000))) s.pic = '';
+          if (!String(s.pic || '').trim() && oldPic) s.pic = oldPic;   // 真抓不到就留旧的，不能弄丢
+          if (String(s.pic || '').trim() || String(s.lrc || '').trim()) { await M.addLocalTrack(s); done++; }
+          else { failN++; }
+        } catch (e3) { failN++; }
+        if (total > 4 && ((i + 1) % 4 === 0) && window.miniToast) miniToast(`音乐库重抓 ${i + 1}/${total} · 已修 ${done}`);
       }
-    } catch (e) {} finally {
+    } catch (e) {
+    } finally {
       _refreshBusy = false;
       _refreshCancel = false;
-      if (btn) btn.classList.remove('spinning');
+      if (btn) { btn.textContent = '⟳'; btn.title = '重抓封面与歌词：扫音乐库 + 访客收藏 + Ta的耳机，每个音源用自己的接口取图'; }
     }
-    /* 20261117：重抓完把自愈额度清零，否则之后切到这些歌时不再补词 */
-    try { if (window.bmMusic && window.bmMusic._resetHealQuota) window.bmMusic._resetHealQuota(); } catch (e7) {}
-    if (window.miniToast) miniToast(`${_nm} · ${stopped ? '已停止' : '重抓完成'} ${ok}/${pl.length} 首 · 歌词 ${lrcOk} · 封面 ${picOk} · 地址 ${urlOk}${libTotal ? ` · 音乐库 ${libDone}/${libTotal}` : ''}`);
+    if (window.miniToast) miniToast(`音乐库${stopped2 ? '已停止' : '重抓完成'}（${_LIB_BUILD}）：共 ${poolTotal + earTotal} 首 · 需修 ${total} 首 · 已修 ${done} 首${failN ? ` · 未拿到 ${failN} 首` : ''}`);
+    return { done, total };
   }
 
   /* 20261104：「邀请一起听」按钮——不依赖当前有没有歌，直接弹角色选择器，
@@ -4244,45 +4730,26 @@ window.bmMusicUI = (function () {
     // 另外两个模式的功能面板（搜索/遥控/本地）自动隐藏，但按钮本身不灰、不锁。
     const modeBtns = overlay.querySelectorAll('.bm-mode');
     async function setMode(mode) {
-      // 20261109：网页端不能切「后台遥控」。该模式依赖原生 BmRemoteControl（读系统媒体会话 +
-      //   发 MediaSession 指令），浏览器里没有插件，切过去只会「按钮亮着但什么都不动」。
-      //   直接拒绝并提示；若残留遥控态（如从 App 端同步过来的会话），强制回镜像搜索。
-      if (mode === 'remote' && !(M.isApp && M.isApp())) {
-        if (M.state.mode === 'remote') M.state.mode = 'mirror';
+      /* 20261119：数据层统一走顶层 _applyPlayMode（charSwitchPlayMode 也调它）。
+         这里只负责「调用 + 刷新 DOM」，不再自己写一份模式/直连/心跳/落库逻辑，
+         避免两处实现各写一份、改一处漏一处。
+         20261109：网页端不能切「后台遥控」—— 依赖原生 BmRemoteControl（读系统媒体会话 +
+         发 MediaSession 指令），浏览器里没有插件，切过去只会「按钮亮着但什么都不动」。
+         拒绝逻辑在 _applyPlayMode 里，这里只负责提示。 */
+      const wasRemoteBlocked = (mode === 'remote') && !(M.isApp && M.isApp());
+      await _applyPlayMode(mode);
+      if (wasRemoteBlocked) {
         try { if (typeof miniToast === 'function') miniToast('「后台遥控」只能在 App 端使用'); } catch (e) {}
-        renderModePanel(M.state.mode);
-        return;
       }
-      M.state.mode = mode;
+      const cur = M.state.mode || 'mirror';
       modeBtns.forEach(b => {
-        const isOn = b.dataset.mode === mode;
+        const isOn = b.dataset.mode === cur;
         b.classList.toggle('on', isOn);
         b.classList.remove('off');       // 20261104 修正：不再给未选模式加灰色禁用态
         b.disabled = false;              // 按钮永远可点
         b.title = isOn ? '当前模式' : '切换到「' + modeLabel(b.dataset.mode) + '」';
       });
-      /* 20261117 修玩家两条投诉：
-         ①「我一点后台遥控，弹出来的又是遥控后台 APP」——
-            以前这里无条件 _netEaseSetDirect(false) 把分支记忆清掉了。
-            现在进 remote 时按上次记住的分支恢复（直连就还是直连）。
-         ② 切去镜像/本地时，只把直连关掉、但**保留分支记忆**（keepBranch），
-            下次回后台遥控仍是你上次选的那一支。 */
-      if (mode === 'remote') {
-        if (M.isApp && M.isApp()) {
-          try { await _netEaseSetDirect(_netEaseBranch === 'direct', { keepBranch: true }); } catch (e0) {}
-        }
-      } else {
-        if (_netEaseDirect) {
-          try { await _netEaseSetDirect(false, { keepBranch: true }); } catch (e1) {}
-        }
-      }
-      // 20261106：remote 模式启动「真实态」心跳，其余模式停止
-      //   20261117：直连分支下外部 App 没在看，绝不能开心跳（否则会把外部歌名/歌词推上去）
-      if (mode === 'remote' && !_netEaseDirect) { _startLiveExternalHeartbeat(); }
-      else { _stopLiveExternalHeartbeat(); _liveExternal = null; _liveExternalAt = 0; }
-      // 20261106：切换模式立即落库，重进记住上次选的模式
-      M.saveSession();
-      renderModePanel(mode);
+      renderModePanel(cur);
     }
     function modeLabel(mode) {
       return ({ mirror: '镜像搜索', remote: '后台遥控', local: '本地与解析' })[mode] || mode;
@@ -5680,6 +6147,13 @@ window.bmMusicUI = (function () {
      即使中途切去「镜像搜索 / 本地」把直连关掉，回来时也能恢复上次的分支。 */
   let _netEaseBranch = 'external';   // 'external' | 'direct'
   async function _netEaseLoadDirect() {
+    /* 20261119 注意（回退一次错误改法）：
+       曾想把「分支记忆 direct」直接当成「直连已开启」，但那会让玩家切到镜像/本地后
+       只要页面重载就把直连又打开 —— 镜像模式会偷偷走账号接口，违背三模式互斥。
+       正确职责分工（保持原样）：
+         · neteaseDirect  = 直连开关的真实状态，只由 _netEaseSetDirect 写；
+         · neteaseBranch  = 玩家最后一次选的分支，只在切进 remote 时由 setMode 用来恢复。
+       误判「直连却提示只能切歌」由 _isRemoteAppNow() 的兜底判据解决，不在这里动开关。 */
     try { _netEaseDirect = (await getSetting('neteaseDirect', false)) === true; } catch (e) {}
     try {
       const br = await getSetting('neteaseBranch', _netEaseDirect ? 'direct' : 'external');
@@ -5718,6 +6192,57 @@ window.bmMusicUI = (function () {
     }
     try { M.saveSession(); } catch (e6) {}
     try { _syncModeUi(); } catch (e4) {}
+  }
+
+  /* ============================================================
+     20261119：切模式的「数据层」唯一入口
+     ------------------------------------------------------------------
+     背景（这是本轮查出来的硬缺陷）：
+       以前「切模式」只有 showMusicPage() 内部的一个私有 setMode()（约 4384 行），
+       它闭合了 overlay / modeBtns / renderModePanel —— 这些只有音乐页打开时才存在。
+       而角色自主切模式 charSwitchPlayMode() 在 IIFE 顶层（约 2981 行），
+       直接调 setMode() → 跨作用域 ReferenceError → 被最外层 catch 静默吞掉，
+       四个分支（镜像/本地/遥控/直连）全部失效，而且一句提示都不会有。
+     现在把数据层抽到这里，音乐页的 setMode 与角色切模式都调它：
+       · 角色在后台（音乐页没打开）也能真正切模式、切直连/外部 App 分支；
+       · DOM 高亮与面板仍由音乐页的 setMode 在调用后自行刷新，这里不碰 DOM。
+     opts.branch：'direct' | 'external'，显式指定 remote 下的分支；
+                  不传则按玩家上次记住的分支（_netEaseBranch）恢复。
+     返回切换后真实的 mode（网页端切 remote 会被拒，返回 'mirror'）。
+     ============================================================ */
+  async function _applyPlayMode(mode, opts) {
+    // 网页端不能切「后台遥控」：依赖原生 BmRemoteControl（读系统媒体会话 + 发指令）
+    if (mode === 'remote' && !(M.isApp && M.isApp())) {
+      if (M.state.mode === 'remote') M.state.mode = 'mirror';
+      return M.state.mode || 'mirror';
+    }
+    M.state.mode = mode;
+    /* 直连不是独立模式，而是 remote 下的一条分支：
+       · 进 remote → 用 opts.branch，没指定就按上次记住的分支恢复；
+       · 切去镜像/本地 → 只关直连、保留分支记忆（keepBranch），下次回后台遥控还是那一支。 */
+    if (mode === 'remote') {
+      if (M.isApp && M.isApp()) {
+        const wantDirect = (opts && opts.branch)
+          ? (opts.branch === 'direct')
+          : (_netEaseBranch === 'direct');
+        try { await _netEaseSetDirect(wantDirect, { keepBranch: !(opts && opts.branch) }); } catch (e0) {}
+      }
+    } else {
+      if (_netEaseDirect) {
+        try { await _netEaseSetDirect(false, { keepBranch: true }); } catch (e1) {}
+      }
+    }
+    // remote 模式启动「真实态」心跳，其余模式停止
+    //   直连分支下外部 App 没在看，绝不能开心跳（否则会把外部歌名/歌词推上去）
+    if (mode === 'remote' && !_netEaseDirect) { _startLiveExternalHeartbeat(); }
+    else { _stopLiveExternalHeartbeat(); _liveExternal = null; _liveExternalAt = 0; }
+    // 立即落库：重进 App 记住这次选的模式（角色切的会顶替玩家上次的选择）
+    try { M.saveSession(); } catch (e2) {}
+    return M.state.mode;
+  }
+  // 当前「真实」模式名（直连优先判定：直连时 mode 仍是 remote，光看 mode 会误判）
+  function _realPlayMode() {
+    return _netEaseDirect ? 'direct' : (M.state.mode || 'mirror');
   }
 
   /* 20261117：把「当前真实模式」同步到音乐页的模式按钮与面板。
@@ -7043,6 +7568,8 @@ window.bmMusicUI = (function () {
     if (panel) { panel.remove(); return; }
     const page = document.getElementById('bm-music-page');
     const host = page || document.body;
+    /* 20261119：库名按新语义 —— 只有「本地与解析」是独立库，其余三个模式共用「收藏库」。
+       用户在音乐库里看到的收藏与歌单，在镜像 / 后台遥控 / 直连 之间是互通的。 */
     const libName = M.state.mode === 'mirror' ? '镜像收藏库' : '本地音乐库';
     panel = document.createElement('div');
     panel.id = 'bm-music-lib-panel';
@@ -7051,18 +7578,22 @@ window.bmMusicUI = (function () {
       <div class="bm-lib-mask" id="bm-lib-mask"></div>
       <div class="bm-lib-card">
         <div class="bm-lib-head">
-          <span>${libName}</span>
+          <span class="bm-lib-title">${libName}</span>
           <div class="bm-lib-headbtns">
             <button class="bm-lib-manage" id="bm-lib-manage">批量管理</button>
             <button class="bm-lib-add" id="bm-lib-add">添加歌曲</button>
             <button class="bm-lib-close" id="bm-lib-close"><i data-icon="close" data-size="17"></i></button>
           </div>
         </div>
-        <div class="bm-lib-tabs">
-          <button class="bm-lib-tab on" data-tab="songs">歌曲</button>
-          <button class="bm-lib-tab" data-tab="playlists">歌单</button>
-          <button class="bm-lib-tab" data-tab="visitor">访客收藏</button>
-          <button class="bm-lib-tab" data-tab="ear">Ta的耳机</button>
+        <div class="bm-lib-tabrow">
+          <div class="bm-lib-tabs">
+            <button class="bm-lib-tab on" data-tab="songs">歌曲</button>
+            <button class="bm-lib-tab" data-tab="playlists">歌单</button>
+            <button class="bm-lib-tab" data-tab="visitor">访客收藏</button>
+            <button class="bm-lib-tab" data-tab="ear">Ta的耳机</button>
+          </div>
+          <!-- 20261119：音乐库专用「重抓封面」——独立小按钮，绝不挤标题 -->
+          <button class="bm-lib-refresh" id="bm-lib-refresh-cover" title="重抓封面与歌词：扫音乐库 + 访客收藏 + Ta的耳机，每个音源用自己的接口取图">⟳</button>
         </div>
         <div class="bm-lib-body" id="bm-lib-body"></div>
         <div class="bm-lib-foot" id="bm-lib-foot" style="display:none;">
@@ -7099,6 +7630,17 @@ window.bmMusicUI = (function () {
       renderLibFoot();
       if (curTab === 'songs') renderLibSongs();
       panel.querySelector('#bm-lib-manage').textContent = managing ? '完成' : '批量管理';
+    };
+
+    // 20261119：音乐库独立的「重抓封面」——播放列表的 ⟳ 不再连带扫库
+    panel.querySelector('#bm-lib-refresh-cover').onclick = async (ev) => {
+      try { ev.stopPropagation(); } catch (e) {}
+      const r = await refreshLibraryCovers();
+      if (!r || !r.total) return;
+      if (curTab === 'songs') renderLibSongs();
+      else if (curTab === 'playlists') renderLibPlaylists();
+      else if (curTab === 'visitor') renderLibVisitor();
+      else if (curTab === 'ear') renderLibEar();
     };
 
     // 底部批量操作
@@ -7256,12 +7798,102 @@ window.bmMusicUI = (function () {
     }
     // 按时间倒序（最近的在前）
     his.sort((a, b) => (b.ts || 0) - (a.ts || 0));
-    body.innerHTML = `<div class="bm-lib-visitor-hint">${esc(c.name || 'TA')} 的耳机记录（${his.length} 首）</div>` + his.map(x => `
-      <div class="bm-lib-row" data-id="${esc(x.songId || x.id || '')}">
+    /* 20261119【修「Ta的耳机里的歌完全没法播放」】
+       根因：这个 tab 只渲染了文本行，**从来没有绑定点击事件、也没有播放按钮**，
+       玩家点上去自然一点反应都没有。
+       现在：① 按 songId 去重（同一首听多次只留最近一条）；
+             ② 映射成标准歌曲对象（带 id/name/artist/pic，url 为空时播放前现补直链）；
+             ③ 行点击 / 播放按钮都能播，并把整张耳机列表设为播放列表（可连播）。 */
+    const seen = new Set();
+    const list = [];
+    for (const x of his) {
+      const key = String(x.songId || x.name || '');
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      list.push({
+        id: x.songId || x.id || key, name: x.name, artist: x.artist || '', album: x.album || '',
+        pic: x.pic || '', url: x.url || '', _neteaseId: x._neteaseId || '', _src: x._src || '', _earRec: x
+      });
+    }
+    /* 缺封面的，先用「曲库里同一首」的图补上 —— 不需要联网，直接把空占位填掉。
+       20261119：只读「玩家库（mirror/local）+ 当前角色的访客收藏」，
+       **不读其他角色** —— 角色与角色之间的音乐不互通，不能拿别人的数据来填自己的列表。 */
+    try {
+      const parts = [];
+      for (const k of ['mirror', 'local']) {
+        try { const l = await M.getLocalLibrary(k); if (l && l.length) parts.push(...l); } catch (e0) {}
+      }
+      try { const l = await M.getLocalLibrary('visitor', c.id); if (l && l.length) parts.push(...l); } catch (e0) {}
+      const byId = {}, byName = {};
+      parts.forEach(s => {
+        if (!s) return;
+        if (s.id && s.pic) byId[String(s.id)] = s.pic;
+        if (s.name && s.pic) byName[String(s.name)] = s.pic;
+      });
+      list.forEach(s => { if (!s.pic) s.pic = byId[String(s.id)] || byName[String(s.name)] || ''; });
+    } catch (e) {}
+    body.innerHTML = `<div class="bm-lib-visitor-hint">${esc(c.name || 'TA')} 的耳机记录（${list.length} 首）</div>` + list.map((x, i) => `
+      <div class="bm-lib-row" data-i="${i}">
         <span class="bm-lib-cover">${x.pic ? `<img src="${esc(x.pic)}" alt="">` : window.icon('music', 16)}</span>
         <span class="bm-lib-info"><span class="bm-lib-name">${esc(x.name)}</span><span class="bm-lib-artist">${esc(x.artist || '')}</span></span>
-        <span class="bm-ear-time">${_fmtEarTime(x.ts)}</span>
+        <span class="bm-ear-time">${_fmtEarTime(x._earRec && x._earRec.ts)}</span>
+        <button class="bm-lib-play" data-i="${i}" title="播放">${window.icon ? window.icon('play', 16) : '▶'}</button>
       </div>`).join('');
+    /* 播耳机里的一首：先补直链（url 为空或过期），再播；整张列表作为播放列表 */
+    const playOne = async (i) => {
+      const t = list[i];
+      if (!t) return;
+      M.state.playlist = list;
+      M.state.playIndex = i;
+      try {
+        if (!t.url) {
+          const full = await M.fetchSongDetail(t);
+          if (full && full.url) {
+            Object.assign(t, full);
+            list[i] = t;
+            M.state.playlist = list;
+            M.play(t);
+            try { refreshPlayerUI(); } catch (e) {}
+            return;
+          }
+        }
+        M.play(t);
+        try { refreshPlayerUI(); } catch (e) {}
+      } catch (e) {
+        if (window.miniToast) miniToast('这首歌暂时拿不到直链，稍后再试');
+      }
+    };
+    body.querySelectorAll('.bm-lib-play').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      playOne(Number(b.dataset.i));
+    });
+    body.querySelectorAll('.bm-lib-row').forEach(el => {
+      el.onclick = () => playOne(Number(el.dataset.i));
+    });
+    /* 渲染后异步补图（限 24 首，2 路并发）：耳机记录是历史快照，很多老记录没存封面。
+       补到就写回该条历史记录，下次进来直接有图，不用每次重抓。 */
+    try {
+      const todo = list.map((x, i) => ({ x, i })).filter(o => !o.x.pic);
+      if (todo.length) {
+        let cur2 = 0;
+        const worker = async () => {
+          for (;;) {
+            const k = cur2++;
+            if (k >= todo.length) return;
+            const { x, i } = todo[k];
+            try {
+              await M.ensureCover(x, false, true);
+              if (x.pic) {
+                const row = body.querySelector(`.bm-lib-row[data-i="${i}"] .bm-lib-cover`);
+                if (row) row.innerHTML = `<img src="${esc(x.pic)}" alt="">`;
+                if (x._earRec) { try { await M.addHistory(Object.assign({}, x._earRec, { pic: x.pic })); } catch (e4) {} }
+              }
+            } catch (e3) {}
+          }
+        };
+        Promise.all([worker(), worker()]);
+      }
+    } catch (e5) {}
   }
 
   // 幽灵听歌记录的时间显示（相对时间）
@@ -7726,11 +8358,10 @@ window.bmMusicUI = (function () {
     const builtin = [
       { key: 'auto', name: '自动（推荐）', desc: '多源自动容灾切换' },
       { key: 'qijieya', name: '网易云（祈杰·整首）', desc: '号池源，VIP 歌给完整版' },
-      { key: 'huibq', name: '网易云（Huibq·整首）', desc: '洛雪社区号池，按 ID 取直链，冷启动较慢' },
       { key: 'gdstudio', name: '网易云（GD Studio·整首）', desc: '号池源，VIP 歌给完整版，偶发限流' },
       { key: 'kugou', name: '酷狗（整首）', desc: '换曲库兜底，不是网易云' },
       { key: 'kuwo', name: '酷我音乐', desc: '酷我曲库，多档音质' },
-      { key: 'tang', name: 'QQ 音乐', desc: '开放接口' },
+      { key: 'tang', name: 'QQ 音乐', desc: 'QQ 曲库，付费歌只给试听片段' },
       { key: 'qingyu', name: '网易云（清羽·30 秒）', desc: '旧镜像，只给试听；整首源全挂时的兜底' },
       { key: 'kfjie-wy', name: '网易云（kfjie·30 秒）', desc: '同站网易云线，只给试听；兜底用' },
       { key: 'itunes', name: 'iTunes（国际）', desc: '英文/欧美曲库，30 秒试听' },
@@ -9648,6 +10279,13 @@ window.bmMusicUI = (function () {
       fw.classList.remove('dot', 'mini', 'card');
       if (s) fw.classList.add(s);
       M.state.floatState = s;
+      /* ★ 20261118：切换形态后强制让歌词「重新定位一次」。
+         原因：歌词滚动是 500ms 心跳里的 upd() 算的，而 dot/mini 形态下卡片
+         是 display:none，歌词区 clientHeight=0、scrollTop 赋值会被 clamp 成 0；
+         展开成 card 时 activeIdx 没变（_flyLastActive 已记住），于是**不会再滚**，
+         停在顶部 —— 玩家看到的正是「歌词在滚，框里却没字，要自己往下滑几下」。
+         把定位标记清零，下一次心跳一定按当前句重新居中。 */
+      try { fw.__flyLastActive = -1; } catch (e) {}
       // 20261104：每次形态切换都重新播放入场动画，让 dot→mini→card 展开丝滑（带回弹），
       // 而非 display 硬切瞬间跳变。用 reflow 强制重启 CSS animation。
       const el = s === 'dot' ? fw.querySelector('#bm-float-dot')
@@ -9790,7 +10428,10 @@ window.bmMusicUI = (function () {
         const a = M.state.audio;
         // 大卡歌词逐句高亮 + 滚动居中 + mini 显示当前句。
         // 20261104：玩家可自由上下滚动歌词（wheel/touch 不拦截），只有「唱到新一句」才跳转回当前句。
-        let _flyLastActive = -1;
+        /* 20261118：定位标记挂在 fw 上（原来是闭包局部变量）。
+           理由：setFloatState() 从 dot/mini 展开成 card 时要能把它清零，
+           让下一拍强制重滚（隐藏态算出的 scrollTop 无效，见 setFloatState 注释）。 */
+        fw.__flyLastActive = -1;
         let _flyLastTag = null;   // 20261111：当前高亮句的时间戳标记，只在换句时才重写着色
         const upd = () => {
           // 20261105：悬浮窗进度条/时长独立刷新——此前只靠音乐页 rAF（startPlanetAnimation）驱动，
@@ -9830,12 +10471,51 @@ window.bmMusicUI = (function () {
             }
             if (curIdx >= 0) activeIdx = curIdx;
             // 只在「唱到新一句」时才跳转滚动（activeIdx 变化才滚），唱同一句期间玩家可自由滚动不被弹回
-            if (activeIdx >= 0 && activeIdx !== _flyLastActive) {
-              _flyLastActive = activeIdx;
+            if (activeIdx >= 0 && activeIdx !== fw.__flyLastActive) {
+              fw.__flyLastActive = activeIdx;
               const target = fly.querySelectorAll('.bm-fly-line')[activeIdx];
-              const lineH = target.offsetHeight || 24;
-              const center = fly.clientHeight / 2 - lineH / 2;
-              fly.scrollTop = Math.max(0, target.offsetTop - center);
+              /* ★ 20261118：滚动算法改成「视觉位置闭环」，不再自己拼 offsetTop。
+                 旧写法：scrollTop = target.offsetTop - (clientHeight - lineH)/2
+                   · offsetTop 相对谁、卡片 zoom 后量纲怎么换算，全押在
+                     「歌词容器永远是 offsetParent」这一个假设上；
+                     卡片缩放、主题覆盖、隐藏态测量任一环节变了，就会多滚/少滚，
+                     当前句跑出可视区 —— 玩家要自己往下滑几下才看到字。
+                   · 而且它只算一次，DOM 刚插入/布局未完成时量到的是 0。
+                 新写法用两个 rect 的**视觉差**：
+                   delta = 目标行顶 - 容器顶 - (容器高 - 行高)/2
+                 两者在同一视觉坐标系里，zoom/offsetParent 都不参与；算完再在
+                 下一帧校正一次，兜住布局延迟。完全等价于「把当前句放到框中央」，
+                 但不再依赖任何量纲假设。
+                 ⚠️ 不要改回 offsetTop 写法；也不要加 smooth 动画（会追不上 500ms 心跳）。 */
+              /* 20261119 补丁：上面的「占位框不计 zoom」是错的，这也是玩家看到的
+                 「当前句不在正中央」的真因（真实样式表无头实测：zoom=0.5878 时
+                 当前句偏离容器中心 746px，整句跑出显示框；zoom=1 时也还差 8%／221px）。
+                 getBoundingClientRect() 给的是**视觉**像素，fly.scrollTop 用的是
+                 **布局**像素，两者之间差一个「视觉/布局」缩放比 —— 它不只来自
+                 #bm-float-card 的 zoom（右下角锚点，存 bmFloatZoom），也可能来自
+                 任何祖先的 transform/zoom。所以这里不猜具体是谁在缩放，而是现场
+                 用「容器 rect 高度 ÷ 容器 clientHeight」把比值量出来再除回去：
+                 zoom=1 时比值恰好 1（等价原逻辑），被缩放时自动跟上。 */
+              const lyricViewScale = () => {
+                try {
+                  const h = fly.clientHeight;
+                  const vh = fly.getBoundingClientRect().height;
+                  const v = (h > 0 && vh > 0) ? (vh / h) : 1;
+                  return (isFinite(v) && v > 0) ? v : 1;
+                } catch (e) { return 1; }
+              };
+              const alignLyric = () => {
+                if (!target || !target.isConnected) return;
+                const lr = fly.getBoundingClientRect();
+                const tr = target.getBoundingClientRect();
+                if (!lr.height || !tr.height) return;
+                const delta = ((tr.top - lr.top) - (lr.height - tr.height) / 2) / lyricViewScale();
+                if (Math.abs(delta) >= 1) {
+                  fly.scrollTop = Math.max(0, fly.scrollTop + delta);
+                }
+              };
+              alignLyric();
+              requestAnimationFrame(alignLyric);
             }
           }
           if (miniLyric) {
