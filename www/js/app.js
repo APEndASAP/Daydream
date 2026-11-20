@@ -7772,7 +7772,33 @@ function charCardPools(c) {
 let _proactiveScanBusy = false;   // 扫描并发锁：两个定时器同时触发时只放行一个，避免重入
 let _proactiveScanBusyAt = 0;     // 20261019 诊断：记录 busy 置位时间戳，用于算「已忙多久」
 let _proactiveScanPending = false; // 扫描期间有新的触发请求排队（本轮结束后再补扫一次，防止漏判到点）
+/* 20261119b 单步超时：扫描主循环里对角色联网互动（搜歌/切歌/邀请/换歌/分享/偷看/耳机/收藏/视频）
+   都是同步 await，任何一步网络挂住就拖死整轮扫描——真机实测出现过单轮 901 秒卡死，
+   期间 15s/60s 心跳全部撞并发锁返回，主动消息因此彻底停摆（与「后台冻结」无关，前台同样发生）。
+   这里给每一步 8 秒预算：超时按「这一步没做成」处理，继续往下走。
+   原 Promise 不强行中断（它可能在后台自行结束），但不再占用扫描锁。 */
+function _withStepTimeout(p, ms, label) {
+  let timer = null;
+  const guard = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      bmDiag('step_timeout', { label: label, ms: ms });
+      resolve(null);
+    }, ms);
+  });
+  return Promise.race([Promise.resolve(p).catch(() => null), guard]).finally(() => {
+    if (timer) clearTimeout(timer);   // 正常完成时撤掉超时，避免误记 step_timeout
+  });
+}
+
 async function requestProactiveScan() {
+  /* 20261119b 看门狗：上面那种挂死一旦发生，_proactiveScanBusy 会永久占着，扫描再也不跑。
+     超过 120 秒一律判定为挂死，强制释放并记一条 scan_watchdog，让下一拍照常扫描。
+     被判定挂死的那一轮仍在后台跑，但它已经不再阻塞主动消息。 */
+  if (_proactiveScanBusy && _proactiveScanBusyAt && Date.now() - _proactiveScanBusyAt > 120000) {
+    bmDiag('scan_watchdog', { busyMs: Date.now() - _proactiveScanBusyAt });
+    _proactiveScanBusy = false;
+    _proactiveScanBusyAt = 0;
+  }
   if (_proactiveScanBusy) {
     _proactiveScanPending = true;
     bmDiag('scan_busy', { busyMs: Date.now() - _proactiveScanBusyAt });
@@ -7885,10 +7911,12 @@ async function __proactiveScan() {
           // 20260929ah：AI 模式下主动消息由 AI 生成（节奏不变）；失败软回退字卡（不回滚模式开关）
           let msg = null;
           if (await isCharAIMode(c.id)) {
-            const r = await aiSoftReply(c,
+            /* 20261119b：AI 生成也给预算。callAI 自身超时是 60 秒，模型慢/网络抖动时
+               这一轮就干等 60 秒；超过 25 秒直接改用字卡，消息照发不误（字卡模式本来就允许）。 */
+            const r = await _withStepTimeout(aiSoftReply(c,
               '请主动给玩家发一条消息（像自然地想起对方）：可以是分享、问候、吐槽或关心，1~3 句，符合角色口吻。',
-              () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []));
-            msg = r;
+              () => drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || [])), 25000, 'proactive_ai');
+            msg = r || drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
           } else {
             msg = drawReply(cards, getCharBanWords(c), c.relation || null, c.bannedGroups || []);
           }
@@ -7941,7 +7969,8 @@ async function __proactiveScan() {
         if (!_emojiUntil[c.id] || _emojiUntil[c.id] <= now) {
           _emojiUntil[c.id] = now + randInt(ELO, EHI) * 60000;
           try {
-            const st = await pickCharSticker(c);
+            // 20261119b：抽表情包要读库/可能取图，同样给单步预算，避免拖住整轮扫描
+            const st = await _withStepTimeout(pickCharSticker(c), 8000, 'pickCharSticker');
             if (st) {
               const m = (st && st.img)
                 ? { id: uid('msg'), charId: c.id, from: 'them', type: 'emoji', content: st.img, time: Date.now() }
@@ -7969,7 +7998,7 @@ async function __proactiveScan() {
         } else if (now >= _multiCardUntil[c.id]) {
           _multiCardUntil[c.id] = now + nextMcIv() * 60000; // 重排下一次
           try { bmRegisterAlarm(c, 'msg', _multiCardUntil[c.id]); } catch (e) {}
-          try { await _sendMultiCardCombo(c, s); } catch (e) {}
+          try { await _withStepTimeout(_sendMultiCardCombo(c, s), 12000, 'multiCardCombo'); } catch (e) {}
         }
       } else if (_multiCardUntil[c.id]) {
         delete _multiCardUntil[c.id]; // 关闭即清除，重开重新播种
@@ -7998,7 +8027,7 @@ async function __proactiveScan() {
         } else if (now >= _musicAutoUntil[c.id]) {
           _musicAutoUntil[c.id] = now + nextMuIv() * 60000; // 重排下一次
           try {
-            if (window.bmMusicUI && window.bmMusicUI.charAutoMusic) await window.bmMusicUI.charAutoMusic(c.id);
+            if (window.bmMusicUI && window.bmMusicUI.charAutoMusic) await _withStepTimeout(window.bmMusicUI.charAutoMusic(c.id), 8000, 'charAutoMusic');
           } catch (e) {}
         }
       } else if (_musicAutoUntil[c.id]) {
@@ -8021,7 +8050,7 @@ async function __proactiveScan() {
         } else if (now >= _musicModeSwitchUntil[c.id]) {
           _musicModeSwitchUntil[c.id] = now + nextMsIv() * 60000; // 重排下一次
           try {
-            if (window.bmMusicUI && window.bmMusicUI.charSwitchPlayMode) await window.bmMusicUI.charSwitchPlayMode(c.id);
+            if (window.bmMusicUI && window.bmMusicUI.charSwitchPlayMode) await _withStepTimeout(window.bmMusicUI.charSwitchPlayMode(c.id), 8000, 'charSwitchPlayMode');
           } catch (e) {}
         }
       } else if (_musicModeSwitchUntil[c.id]) {
@@ -8041,7 +8070,7 @@ async function __proactiveScan() {
         } else if (now >= _musicInviteUntil[c.id]) {
           _musicInviteUntil[c.id] = now + nextViIv() * 60000;
           try {
-            if (window.bmMusicUI && window.bmMusicUI.charInviteTogether) await window.bmMusicUI.charInviteTogether(c.id);
+            if (window.bmMusicUI && window.bmMusicUI.charInviteTogether) await _withStepTimeout(window.bmMusicUI.charInviteTogether(c.id), 8000, 'charInviteTogether');
           } catch (e) {}
         }
       } else if (_musicInviteUntil[c.id]) {
@@ -8063,7 +8092,7 @@ async function __proactiveScan() {
         } else if (now >= _musicSwapUntil[c.id]) {
           _musicSwapUntil[c.id] = now + nextSwIv() * 60000;   // 重排下一次
           try {
-            if (window.bmMusicUI && window.bmMusicUI.charAskSongSwap) await window.bmMusicUI.charAskSongSwap(c.id);
+            if (window.bmMusicUI && window.bmMusicUI.charAskSongSwap) await _withStepTimeout(window.bmMusicUI.charAskSongSwap(c.id), 8000, 'charAskSongSwap');
           } catch (e) {}
         }
       } else if (_musicSwapUntil[c.id]) {
@@ -8083,7 +8112,7 @@ async function __proactiveScan() {
         } else if (now >= _musicShareUntil[c.id]) {
           _musicShareUntil[c.id] = now + nextShIv() * 60000;   // 重排下一次
           try {
-            if (window.bmMusicUI && window.bmMusicUI.charShareSong) await window.bmMusicUI.charShareSong(c.id);
+            if (window.bmMusicUI && window.bmMusicUI.charShareSong) await _withStepTimeout(window.bmMusicUI.charShareSong(c.id), 8000, 'charShareSong');
           } catch (e) {}
         }
       } else if (_musicShareUntil[c.id]) {
@@ -8103,7 +8132,7 @@ async function __proactiveScan() {
         } else if (now >= _musicPeekUntil[c.id]) {
           _musicPeekUntil[c.id] = now + nextPeIv() * 60000; // 重排下一次
           try {
-            if (window.bmMusicUI && window.bmMusicUI.charPeekPlaylist) await window.bmMusicUI.charPeekPlaylist(c.id);
+            if (window.bmMusicUI && window.bmMusicUI.charPeekPlaylist) await _withStepTimeout(window.bmMusicUI.charPeekPlaylist(c.id), 8000, 'charPeekPlaylist');
           } catch (e) {}
         }
       } else if (_musicPeekUntil[c.id]) {
@@ -8125,7 +8154,7 @@ async function __proactiveScan() {
         } else if (now >= _earListenUntil[c.id]) {
           _earListenUntil[c.id] = now + nextElIv() * 60000; // 触发后立即重排下一次（刷新间隔）
           try {
-            if (window.bmMusicUI && window.bmMusicUI.charEarListen) await window.bmMusicUI.charEarListen(c.id);
+            if (window.bmMusicUI && window.bmMusicUI.charEarListen) await _withStepTimeout(window.bmMusicUI.charEarListen(c.id), 8000, 'charEarListen');
           } catch (e) {}
         }
       } else if (_earListenUntil[c.id]) {
@@ -8145,7 +8174,7 @@ async function __proactiveScan() {
         } else if (now >= _charCollectUntil[c.id]) {
           _charCollectUntil[c.id] = now + nextCcIv() * 60000; // 触发后立即重排下一次
           try {
-            if (window.bmMusicUI && window.bmMusicUI.charCollect) await window.bmMusicUI.charCollect(c.id);
+            if (window.bmMusicUI && window.bmMusicUI.charCollect) await _withStepTimeout(window.bmMusicUI.charCollect(c.id), 8000, 'charCollect');
           } catch (e) {}
         }
       } else if (_charCollectUntil[c.id]) {
@@ -8164,7 +8193,7 @@ async function __proactiveScan() {
         } else if (now >= _videoAutoUntil[c.id]) {
           _videoAutoUntil[c.id] = now + nextVaIv() * 60000;
           try {
-            if (typeof charAutoSendVideo === 'function') await charAutoSendVideo(c.id);
+            if (typeof charAutoSendVideo === 'function') await _withStepTimeout(charAutoSendVideo(c.id), 8000, 'charAutoSendVideo');
           } catch (e) {}
         }
       } else if (_videoAutoUntil[c.id]) {
