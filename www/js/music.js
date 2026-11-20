@@ -4158,8 +4158,8 @@ window.bmMusicUI = (function () {
        ① 单首预算 18s → 8s；封面补抓 12s → 5s（某一步挂住不再拖满 18 秒）；
        ② 两首并发（worker 池）：整单耗时再砍将近一半；
        ③ 「重抓前快速探测有没有源」→ 落地为**已知无源跳过**：
-          判定依据是这首歌上一次在**同一模式下**的真实重抓结果（记在 _refreshFailAt），
-          6 小时内不再空跑。之所以不提前搜一遍来探测：搜一遍要遍历所有音源，
+          判定依据是这首歌上一次在**同一模式下**的真实重抓结果（按模式记在 _refreshFail），
+          2 小时内不再空跑。之所以不提前搜一遍来探测：搜一遍要遍历所有音源，
           既可能比直接抓更慢（每源 6~8 秒），又会把「第 3 个源其实有」的歌误判成无源，
           反而漏抓 —— 用真实结果判定零误判。
        并发只改「同时跑几首」，每首内部的取源顺序、模式互斥、旧值回填全部不变。 */
@@ -4168,8 +4168,11 @@ window.bmMusicUI = (function () {
     let doneN = 0, skippedN = 0, qIdx = 0;
     const _oneSong = async (s) => {
       if (_refreshCancel) { stopped = true; return; }
-      const failAt = Number(s._refreshFailAt || 0);
-      if (failAt && (Date.now() - failAt) < _NO_SRC_TTL) { skippedN++; doneN++; return; }   // ③ 已知无源，跳过
+      /* 标记必须**按模式分开**：同一首歌在镜像搜不到、在直连能抓到，
+         若只记一个时间戳，切到直连也会被当成「已知无源」跳过 —— 那是真漏抓。 */
+      const _failRec = (s && s._refreshFail && typeof s._refreshFail === 'object') ? s._refreshFail : {};
+      const failAt = Number(_failRec[_m] || 0);
+      if (failAt && (Date.now() - failAt) < _NO_SRC_TTL) { skippedN++; doneN++; return; }   // ③ 本模式已知无源，跳过
       try {
           /* 20261119：旧的地址 / 歌词 / 封面先记下来。
              重抓 = 按当前模式的音源重新取一份；哪一样没取到就把旧的还回去。
@@ -4183,11 +4186,15 @@ window.bmMusicUI = (function () {
           s.pic = '';                        // 封面同理
           /* ① 单首 8 秒预算（原 18 秒）。一首的网络调用挂住不再让整队停摆 18 秒。 */
           await _withTimeout(M.fetchSongDetail(s, { modeOnly: true }), 8000, null, 'refresh:' + (s.name || ''));
-          /* 详情里没带封面（导入歌单很常见）→ 单独走统一补封面（force=true：不信旧地址，一律重取）。
-             ① 同样压到 5 秒：封面是附加项，不该跟歌词抢预算。 */
-          if (!s.pic && window.bmMusic && typeof window.bmMusic.ensureCover === 'function') {
+          /* ② 封面兜底只在「这首确实拿到源」时才做：
+             连地址和歌词都没抓到的歌，再花 5 秒补一张封面纯属空耗（真机实测每首多 5 秒）。 */
+          if ((s.url || s.lrc) && !s.pic && window.bmMusic && typeof window.bmMusic.ensureCover === 'function') {
             try { await _withTimeout(window.bmMusic.ensureCover(s, true, true), 5000, null, 'cover'); } catch (eC) {}
           }
+          /* ③ 先记下**本次**真实结果 —— 必须放在「还回旧值」之前。
+             踩过的坑：写在还回旧值之后，旧 url 一回填就被误判成「抓到了」，
+             无源标记永远写不上，于是每轮重抓都在这些没源的歌上反复空跑。 */
+          const gotThisSong = !!(s.url || s.lrc);
           /* 当前模式没抓到的，还回旧的 —— 重抓绝不能把本来能播、能看的歌弄坏。 */
           if (!s.url && oldUrl) s.url = oldUrl;
           if (!s.lrc && oldLrc) s.lrc = oldLrc;
@@ -4196,9 +4203,12 @@ window.bmMusicUI = (function () {
           if (s.url) urlOk++;
           if (s.lrc) lrcOk++;
           if (s.pic) picOk++;
-          /* ③ 两种结果都要记：抓到了就清掉失败标记，没抓到就打时间戳，下一轮直接跳过。 */
-          if (s.url || s.lrc) { try { delete s._refreshFailAt; } catch (eD) { s._refreshFailAt = 0; } }
-          else { s._refreshFailAt = Date.now(); }
+          /* ③ 两种结果都要记（按当前模式记）：抓到了就清掉本模式的失败标记，没抓到就打时间戳。 */
+          if (gotThisSong) {
+            if (s._refreshFail && typeof s._refreshFail === 'object') { try { delete s._refreshFail[_m]; } catch (eD) {} }
+          } else {
+            s._refreshFail = Object.assign({}, s._refreshFail || {}, { [_m]: Date.now() });
+          }
           if (M.state.current && String(M.state.current.id) === String(s.id)) {
             if (s.lrc) M.state.current.lrc = s.lrc;
             if (s.url) M.state.current.url = s.url;
@@ -4206,7 +4216,7 @@ window.bmMusicUI = (function () {
             M.state.lyrics = '';           // 清掉遥控/旧歌残留的歌词缓存
             curFull = s;
           }
-      } catch (e) { s._refreshFailAt = Date.now(); }
+      } catch (e) { s._refreshFail = Object.assign({}, s._refreshFail || {}, { [_m]: Date.now() }); }
       doneN++;
       /* 进度每 2 首报一次（并发下按完成数报，不再按序号，否则两路会互相踩号）。 */
       if (pl.length > 2 && doneN % 2 === 0 && doneN < pl.length) {
@@ -4253,8 +4263,13 @@ window.bmMusicUI = (function () {
     /* 20261117：重抓完把自愈额度清零，否则之后切到这些歌时不再补词 */
     try { if (window.bmMusic && window.bmMusic._resetHealQuota) window.bmMusic._resetHealQuota(); } catch (e7) {}
     if (window.miniToast) {
-      const _sk = skippedN ? ` · 跳过 ${skippedN}（本模式下 2 小时内已确认抓不到）` : '';
-      miniToast(`${_nm} · ${stopped ? '已停止' : '重抓完成'} ${ok}/${(pl.length - skippedN) || pl.length} 首 · 歌词 ${lrcOk} · 封面 ${picOk} · 地址 ${urlOk}${_sk}`);
+      if (skippedN && skippedN === pl.length) {
+        /* 全跳过时不能只说「0 首」——要讲清为什么，否则玩家以为按钮坏了。 */
+        miniToast(`${_nm} · 这 ${pl.length} 首在本模式下 2 小时内已确认抓不到，已跳过（换回原模式或稍后再点）`);
+      } else {
+        const _sk = skippedN ? ` · 跳过 ${skippedN}（本模式 2 小时内已确认无源）` : '';
+        miniToast(`${_nm} · ${stopped ? '已停止' : '重抓完成'} ${ok}/${pl.length - skippedN} 首 · 歌词 ${lrcOk} · 封面 ${picOk} · 地址 ${urlOk}${_sk}`);
+      }
     }
   }
 
