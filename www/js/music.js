@@ -760,7 +760,11 @@ window.bmMusic = (function () {
        网易云直连：账号优先，拿不到再落音源兜底。
        不传 modeOnly 的老调用（正常播放/切歌）行为一点不变。 */
     const _modeOnly = !!(opts && opts.modeOnly);
-    const _directMode = (M.state.mode !== 'mirror' && M.state.mode !== 'local');
+    /* 20261120 致命修复：这里原来写的是 `M.state.mode`，但 fetchSongDetail 属于**数据层 IIFE**，
+       该作用域里没有 `M`（M 是 UI 层的别名）→ 每次调用必抛 ReferenceError: M is not defined。
+       后果：搜到歌点播放/加播放列表/收藏/切上下首全部中断（界面已把 current 设好，所以只剩封面变），
+       只有遥控外部 App 不经过本函数所以正常。改用数据层自己的 state。 */
+    const _directMode = (state.mode !== 'mirror' && state.mode !== 'local');
     const _acctBranch = _modeOnly ? (_directMode && _wantAcct) : true;
     if (song && _nid0 && _acctBranch && (_wantAcct || (song.source === 'netease-direct') || !song.url || /^http:\/\//i.test(String(song.url)))) {
       const id = String(_nid0);
