@@ -4153,11 +4153,24 @@ window.bmMusicUI = (function () {
     /* 20261118：整段包 try/finally —— 原来「复位 _refreshBusy + 取消 spinning」
        写在循环之后，一旦循环里抛未捕获异常（或某首永不返回）就永远复位不了，
        按钮就一直转（玩家报的「重抓一直转、没反应」）。 */
-    try {
-      for (let i = 0; i < pl.length; i++) {
-        if (_refreshCancel) { stopped = true; break; }
-        const s = pl[i];
-        try {
+    /* ===== 20261120 重抓提速（玩家定案，三项全做）=====
+       真机实测旧版：15 首英文歌在镜像模式吃满 18 秒/首 = 284 秒。
+       ① 单首预算 18s → 8s；封面补抓 12s → 5s（某一步挂住不再拖满 18 秒）；
+       ② 两首并发（worker 池）：整单耗时再砍将近一半；
+       ③ 「重抓前快速探测有没有源」→ 落地为**已知无源跳过**：
+          判定依据是这首歌上一次在**同一模式下**的真实重抓结果（记在 _refreshFailAt），
+          6 小时内不再空跑。之所以不提前搜一遍来探测：搜一遍要遍历所有音源，
+          既可能比直接抓更慢（每源 6~8 秒），又会把「第 3 个源其实有」的歌误判成无源，
+          反而漏抓 —— 用真实结果判定零误判。
+       并发只改「同时跑几首」，每首内部的取源顺序、模式互斥、旧值回填全部不变。 */
+    const _CONC = 2;                 // 同时处理 2 首
+    const _NO_SRC_TTL = 2 * 3600 * 1000;   // 已知无源的有效期：2 小时内不重复空跑（不会永久跳过）
+    let doneN = 0, skippedN = 0, qIdx = 0;
+    const _oneSong = async (s) => {
+      if (_refreshCancel) { stopped = true; return; }
+      const failAt = Number(s._refreshFailAt || 0);
+      if (failAt && (Date.now() - failAt) < _NO_SRC_TTL) { skippedN++; doneN++; return; }   // ③ 已知无源，跳过
+      try {
           /* 20261119：旧的地址 / 歌词 / 封面先记下来。
              重抓 = 按当前模式的音源重新取一份；哪一样没取到就把旧的还回去。
              （原来无条件清空封面，玩家实测「点重抓反而把封面弄没了」——
@@ -4168,12 +4181,12 @@ window.bmMusicUI = (function () {
           s.url = '';                        // 清掉旧地址，逼它按当前模式的源重取（不清就等于没换源）
           s.lrc = '';                        // 清掉旧歌词，逼 fetchSongDetail 重抓
           s.pic = '';                        // 封面同理
-          /* 20261118：单首 18s 超时。原来直接 await，一首的网络/原生调用挂住就整队停摆，
-             而且没有任何可见反馈 —— 这是「一直转但没反应」的直接原因。 */
-          await _withTimeout(M.fetchSongDetail(s, { modeOnly: true }), 18000, null, 'refresh:' + (s.name || ''));
-          /* 详情里没带封面（导入歌单很常见）→ 单独走统一补封面（force=true：不信旧地址，一律重取）。 */
+          /* ① 单首 8 秒预算（原 18 秒）。一首的网络调用挂住不再让整队停摆 18 秒。 */
+          await _withTimeout(M.fetchSongDetail(s, { modeOnly: true }), 8000, null, 'refresh:' + (s.name || ''));
+          /* 详情里没带封面（导入歌单很常见）→ 单独走统一补封面（force=true：不信旧地址，一律重取）。
+             ① 同样压到 5 秒：封面是附加项，不该跟歌词抢预算。 */
           if (!s.pic && window.bmMusic && typeof window.bmMusic.ensureCover === 'function') {
-            try { await _withTimeout(window.bmMusic.ensureCover(s, true, true), 12000, null, 'cover'); } catch (eC) {}
+            try { await _withTimeout(window.bmMusic.ensureCover(s, true, true), 5000, null, 'cover'); } catch (eC) {}
           }
           /* 当前模式没抓到的，还回旧的 —— 重抓绝不能把本来能播、能看的歌弄坏。 */
           if (!s.url && oldUrl) s.url = oldUrl;
@@ -4183,6 +4196,9 @@ window.bmMusicUI = (function () {
           if (s.url) urlOk++;
           if (s.lrc) lrcOk++;
           if (s.pic) picOk++;
+          /* ③ 两种结果都要记：抓到了就清掉失败标记，没抓到就打时间戳，下一轮直接跳过。 */
+          if (s.url || s.lrc) { try { delete s._refreshFailAt; } catch (eD) { s._refreshFailAt = 0; } }
+          else { s._refreshFailAt = Date.now(); }
           if (M.state.current && String(M.state.current.id) === String(s.id)) {
             if (s.lrc) M.state.current.lrc = s.lrc;
             if (s.url) M.state.current.url = s.url;
@@ -4190,13 +4206,27 @@ window.bmMusicUI = (function () {
             M.state.lyrics = '';           // 清掉遥控/旧歌残留的歌词缓存
             curFull = s;
           }
-        } catch (e) {}
-        /* 20261118：进度改成每 2 首报一次，并带上已补到的封面数（原来 5 首一次，
-           单首又慢，观感就是「没有进度条、一直转」）。 */
-        if (pl.length > 2 && ((i + 1) % 2 === 0) && i + 1 < pl.length) {
-          if (window.miniToast) miniToast(`重抓中 ${i + 1}/${pl.length} · 封面 ${picOk} · 歌词 ${lrcOk}`);
-        }
+      } catch (e) { s._refreshFailAt = Date.now(); }
+      doneN++;
+      /* 进度每 2 首报一次（并发下按完成数报，不再按序号，否则两路会互相踩号）。 */
+      if (pl.length > 2 && doneN % 2 === 0 && doneN < pl.length) {
+        if (window.miniToast) miniToast(`重抓中 ${doneN}/${pl.length} · 封面 ${picOk} · 歌词 ${lrcOk}`);
       }
+    };
+    try {
+      /* ② 两路并发：并发跑同一份 pl，每首独立取源、独立回填，互不影响。 */
+      const _workers = [];
+      for (let w = 0; w < _CONC; w++) {
+        _workers.push((async () => {
+          while (!stopped) {
+            if (_refreshCancel) { stopped = true; break; }
+            const s = pl[qIdx++];
+            if (!s) break;
+            await _oneSong(s);
+          }
+        })());
+      }
+      await Promise.all(_workers);
     } finally {
       clearTimeout(slow);
       _refreshBusy = false;
@@ -4222,7 +4252,10 @@ window.bmMusicUI = (function () {
        现在库的重抓在音乐库面板的独立按钮里（refreshLibraryCovers），下面只收尾播放列表。 */
     /* 20261117：重抓完把自愈额度清零，否则之后切到这些歌时不再补词 */
     try { if (window.bmMusic && window.bmMusic._resetHealQuota) window.bmMusic._resetHealQuota(); } catch (e7) {}
-    if (window.miniToast) miniToast(`${_nm} · ${stopped ? '已停止' : '重抓完成'} ${ok}/${pl.length} 首 · 歌词 ${lrcOk} · 封面 ${picOk} · 地址 ${urlOk}`);
+    if (window.miniToast) {
+      const _sk = skippedN ? ` · 跳过 ${skippedN}（本模式下 2 小时内已确认抓不到）` : '';
+      miniToast(`${_nm} · ${stopped ? '已停止' : '重抓完成'} ${ok}/${(pl.length - skippedN) || pl.length} 首 · 歌词 ${lrcOk} · 封面 ${picOk} · 地址 ${urlOk}${_sk}`);
+    }
   }
 
   /* ============================================================
