@@ -962,7 +962,13 @@ body.theme-light #modal-content .cs-panel > .field { box-shadow: 0 3px 12px rgba
   align-items: center !important;
   gap: 8px !important;
 }
-#modal-content .cs-panel > .field > div[style*="display:flex"] > span[style*="white-space:nowrap"] {
+/* 20261120：原来这条无差别命中「滑条的端点标签」——
+   打字速度的「快/慢」、句子通顺度的「纯拼字/完整句子」都带 white-space:nowrap，
+   于是被 flex:0 0 100% 撑成各自独占一行：
+   左标签右对齐跑到右上、右标签左对齐跑到左下，滑条夹在中间，
+   玩家完全看不出哪边快哪边慢（真机截图确认）。
+   端点标签统一带 data-end-label="1"，这里排除掉，只让真正的小标题独占一行。 */
+#modal-content .cs-panel > .field > div[style*="display:flex"] > span[style*="white-space:nowrap"]:not([data-end-label]):not([data-inline]) {
   flex: 0 0 100% !important;
   font-size: 12px !important;
   font-weight: 600;

@@ -22486,13 +22486,13 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">气泡内嵌：打字过程嵌在聊天气泡内部；悬浮窗：打字过程显示在独立浮动面板中。面板文字已做深浅色 + 高对比可读性兜底，任何背景/主题下都清晰可见</div>
       <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">打字速度</label>
       <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
-        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;width:48px;text-align:right;">快</span>
+        <span data-end-label="1" style="font-size:12px;color:var(--text-secondary);white-space:nowrap;width:52px;text-align:right;">快</span>
         <input type="range" id="cs-typecard-speed" min="0.6" max="5.0" step="0.1" value="${typeof s.typecardSpeed === 'number' ? s.typecardSpeed : 1.0}" style="flex:1;accent-color:var(--purple);">
-        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;width:48px;text-align:left;">慢</span>
+        <span data-end-label="1" style="font-size:12px;color:var(--text-secondary);white-space:nowrap;width:52px;text-align:left;">慢</span>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
-        <span style="font-size:12px;color:var(--text-tertiary);">连续速度滑条：越靠右越慢、越能看清每个字</span>
-        <span id="cs-typecard-speed-val" style="font-size:13px;font-weight:700;color:var(--purple-soft);white-space:nowrap;">${typeof s.typecardSpeed === 'number' ? s.typecardSpeed.toFixed(1) : '1.0'}×</span>
+        <span style="font-size:12px;color:var(--text-tertiary);">越靠右越慢，越能看清每个字</span>
+        <span data-inline="1" id="cs-typecard-speed-val" style="font-size:13px;font-weight:700;color:var(--purple-soft);white-space:nowrap;">${typeof s.typecardSpeed === 'number' ? s.typecardSpeed.toFixed(1) : '1.0'}×</span>
       </div>
       <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;">
         <span>拼字卡与表情</span>
@@ -22501,9 +22501,9 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开启后，碎梦重拼演出过程中会随机穿插字卡与表情（每打一个字都可能抽到，整体随机排列组合）；关闭后碎梦重拼只纯拼字，不出现字卡和表情。此开关只影响碎梦重拼，不影响主线正常聊天</div>
       <label style="font-size:13px;color:var(--text-secondary);display:block;margin-top:12px;">句子通顺度</label>
       <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
-        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;width:48px;text-align:right;">纯拼字</span>
+        <span data-end-label="1" style="font-size:12px;color:var(--text-secondary);white-space:nowrap;width:52px;text-align:right;">纯拼字</span>
         <input type="range" id="cs-typecard-coherence" min="0" max="2" step="0.05" value="${typeof s.typecardCoherence === 'number' ? s.typecardCoherence : 0}" style="flex:1;accent-color:var(--purple);">
-        <span style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;width:48px;text-align:left;">完整句子</span>
+        <span data-end-label="1" style="font-size:12px;color:var(--text-secondary);white-space:nowrap;width:52px;text-align:left;">完整句子</span>
       </div>
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">句子通顺度：越靠右越像真人说话——左半段从纯随机拼字逐步过渡到沿真实口语句子走；右半段进一步过渡到直接说完整通顺的句子。默认纯拼字</div>
       <label style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;">
