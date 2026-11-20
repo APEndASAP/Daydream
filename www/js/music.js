@@ -726,9 +726,13 @@ window.bmMusic = (function () {
   function _songNeteaseId(song, allowBareId) {
     if (!song) return '';
     const a = String(song._neteaseId || '').trim();
-    if (/^\d+$/.test(a)) return a;
+    /* 20261120 脏数据防御：历史版本存会话时把封面 id（18 位，如 109951168698460378）
+       错写进了 _neteaseId。拿它去请求 song/url 必失败，直连会静默退回多源：
+       每首多花 8 秒，重抓还把它判成「本模式无源」。
+       网易云歌曲 id 现在最多 10 位，超过 12 位一律当封面 id 弃用，回退到 song.id。 */
+    if (/^\d{1,12}$/.test(a)) return a;
     const b = String(song.id || '').trim();
-    if (!/^\d+$/.test(b)) return '';
+    if (!/^\d{1,12}$/.test(b)) return '';
     if (song.source === 'netease-direct') return b;   // 导入/登录歌单：来源明确
     if (allowBareId && !song.source) return b;        // 搜索结果没标 source，沿用旧行为
     return '';
@@ -2173,7 +2177,11 @@ window.bmMusic = (function () {
       const keep = (s) => ({
         id: s.id, name: s.name, artist: s.artist || '', album: s.album || '',
         pic: s.pic || '', url: s.url || '', lrc: s.lrc || '',
-        source: s.source || '', _neteaseId: s._neteaseId || s._picId || '', needResolve: !!s.needResolve,
+        /* 20261120 修脏数据：原来是 `_neteaseId || _picId` —— _neteaseId 为空时
+           直接拿**封面图 id** 顶上。封面 id 是 18 位（如 109951168698460378），
+           拿它去请求 song/url 必然失败 → 直连静默退回多源，每首慢 8 秒还判成「无源」。
+           _picId 下面单独存，两者绝不能混。 */
+        source: s.source || '', _neteaseId: s._neteaseId || '', needResolve: !!s.needResolve,
         /* 20261119：_picId 必须单独存。原来只把它并进 _neteaseId，重启后 ②步子（GD types=pic）
            再也拿不到图片 id，封面补不回来 —— 这正是「重抓一次好了、退出重进又没封面」的原因之一。 */
         _picId: s._picId || '',
