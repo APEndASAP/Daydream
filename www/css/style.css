@@ -1978,13 +1978,42 @@ body.theme-light .char-group-head > span:not(.cg-arrow) {
   box-shadow: 0 1px 3px rgba(0,0,0,.25);
 }
 .rp-card .rp-sub-amt { font-size: 14px; font-weight: 800; color: #fff; letter-spacing: .3px; }
-/* 开包动效：红包封盖弹开 + 抖动 */
-.rp-card.rp-opening { animation: bm-rp-open .32s ease; }
+/* 20261122：拆红包短过渡（0.45s，玩家定案「一点点感觉就够」，不要太长）
+   拆转账不走这里 —— 转账卡片点击即到账，没有这个过渡。 */
+.rp-card.rp-opening { animation: bm-rp-open .45s ease; }
 @keyframes bm-rp-open {
-  0% { transform: scale(1); }
-  30% { transform: scale(1.04) rotate(-1deg); }
-  60% { transform: scale(.98) rotate(1deg); }
+  0%   { transform: scale(1); }
+  18%  { transform: scale(.985) rotate(-1.2deg); }
+  40%  { transform: scale(1.035) rotate(1deg); }
+  65%  { transform: scale(1.012) rotate(-.4deg); }
   100% { transform: scale(1) rotate(0); }
+}
+/* 封盖掀开（往上翻起淡出）。自定义封面卡没有 .rp-icon-top，自动跳过这一层 */
+.rp-card.rp-opening .rp-icon-top { animation: bm-rp-flip .45s ease forwards; }
+@keyframes bm-rp-flip {
+  0%   { transform: translateY(0) rotate(0); opacity: 1; }
+  55%  { transform: translateY(-13px) rotate(-6deg) scale(1.02); opacity: .85; }
+  100% { transform: translateY(-22px) rotate(-10deg) scale(.94); opacity: 0; }
+}
+/* 中央浮出的金额（+¥406）：放大 → 停顿 → 淡出 */
+.rp-card .rp-gain {
+  position: absolute; left: 50%; top: 50%; z-index: 3;
+  font-size: 22px; font-weight: 800; letter-spacing: .5px;
+  color: #ffd76a; text-shadow: 0 2px 10px rgba(0,0,0,.45);
+  pointer-events: none; opacity: 0; white-space: nowrap;
+  animation: bm-rp-gain .45s ease forwards;
+}
+@keyframes bm-rp-gain {
+  0%   { opacity: 0; transform: translate(-50%, -42%) scale(.7); }
+  35%  { opacity: 1; transform: translate(-50%, -52%) scale(1.06); }
+  75%  { opacity: 1; transform: translate(-50%, -58%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -70%) scale(.98); }
+}
+/* 系统开启「减少动效」时只留金额淡出，不做抖动/翻盖 */
+@media (prefers-reduced-motion: reduce) {
+  .rp-card.rp-opening { animation: none; }
+  .rp-card.rp-opening .rp-icon-top { animation: none; opacity: 0; }
+  .rp-card .rp-gain { animation: bm-rp-gain .2s ease forwards; }
 }
 
 /* 转账卡片：扁平纯色 + 左侧白色描边转账图标 + 右侧金额/说明 + 左下「转账」标签 */
@@ -9952,4 +9981,256 @@ body.focus-hide-floats #call-float{ display:none !important; }
   animation: avatarQuake .72s cubic-bezier(.36, .8, .3, 1);
   transform-origin: center 62%;
   will-change: transform;
+}
+
+/* ============================================================
+   20261120：视频卡片 / 播放弹窗——全屏 + 跳转原站
+   玩家反馈：第三方解析成功的视频只能在内部小窗看，播放器下方
+   既没有放大（全屏）按钮，也没有跳去原站/原 App 的入口。
+   这里只新增样式，不改动其它弹窗，全部选择器带 vp- 前缀。
+   ============================================================ */
+
+/* 卡片底部「去原站看」胶囊按钮 */
+.vp-card-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--purple-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.vp-card-jump:active { transform: scale(.96); }
+.vp-card-jump [data-icon] { opacity: .85; }
+
+/* 播放弹窗结构 */
+.vp-wrap { display: flex; flex-direction: column; }
+.vp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.vp-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vp-stage { min-height: 0; }
+.vp-actions { display: flex; gap: 10px; margin-top: 12px; }
+.vp-btn {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.vp-btn:active { transform: scale(.98); }
+.vp-btn-primary {
+  background: var(--purple);
+  border-color: transparent;
+  color: #141019;
+}
+
+/* —— 全屏态：弹窗本体铺满视口，黑底，播放器撑满，按钮浮在底部 —— */
+#modal-mask.mask-vp-fs { background: #000; }
+#modal-mask.mask-vp-fs .modal.vp-fs {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  overflow: hidden;
+  transform: none !important;
+  display: flex;
+  flex-direction: column;
+}
+#modal-content.vp-fs .vp-wrap { flex: 1 1 auto; min-height: 0; height: 100%; }
+#modal-content.vp-fs .vp-head {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 3;
+  margin: 0;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) 14px 26px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .72), rgba(0, 0, 0, 0));
+  align-items: flex-start;
+}
+#modal-content.vp-fs .vp-title { color: #fff; font-size: 14px; }
+#modal-content.vp-fs .vp-head .icon-btn {
+  color: #fff;
+  background: rgba(255, 255, 255, .16);
+  border-radius: 50%;
+}
+#modal-content.vp-fs .vp-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#modal-content.vp-fs .vp-stage video,
+#modal-content.vp-fs .vp-stage iframe {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+/* 全屏时封面让位给播放器，不挤压画面 */
+#modal-content.vp-fs .vp-stage > img { display: none; }
+#modal-content.vp-fs .vp-actions {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 3;
+  margin: 0;
+  padding: 14px 14px calc(env(safe-area-inset-bottom, 0px) + 14px);
+  background: linear-gradient(0deg, rgba(0, 0, 0, .72), rgba(0, 0, 0, 0));
+}
+#modal-content.vp-fs .vp-btn {
+  background: rgba(255, 255, 255, .16);
+  border-color: rgba(255, 255, 255, .22);
+  color: #fff;
+}
+#modal-content.vp-fs .vp-btn-primary {
+  background: var(--purple);
+  border-color: transparent;
+  color: #141019;
+}
+
+/* 20261120：视频全屏时暂时让出一起听歌悬浮窗（z-index 远高于弹窗层，会挡住画面）。
+   只改透明度与点击穿透，不动悬浮窗自身的显示状态机，退出全屏立即恢复。 */
+body.vp-fs-open .bm-music-float {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* ============================================================
+   20261121：视频全屏 —— 横竖屏区分 + 全屏不显示封面
+   玩家反馈两点：
+     ① 全屏后「封面和视频都在中间」——封面属于上一页，全屏时不该出现；
+     ② 横屏视频（16:9）铺在竖屏手机上只能占中间一条，必须区分横屏/竖屏：
+        横屏视频把播放区转 90°，手机横拿即为正常方向并铺满；竖屏视频保持竖着铺满。
+   ============================================================ */
+
+/* ① 全屏时彻底隐藏封面（用类名单独命中，不依赖层级选择器） */
+#modal-content.vp-fs .vp-cover { display: none !important; }
+
+/* ② 全屏播放器保持等比，绝不拉伸变形 */
+#modal-content.vp-fs .vp-stage video,
+#modal-content.vp-fs .vp-stage iframe {
+  object-fit: contain;
+  background: #000;
+}
+
+/* ③ 横屏视频的全屏形态：播放区旋转 90°，尺寸取屏幕的高×宽 */
+#modal-content.vp-fs.vp-land .vp-stage {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 100vh;
+  height: 100vw;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  z-index: 1;                 /* 低于顶部标题(3)与底部按钮(3)，不会盖住它们 */
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#modal-content.vp-fs.vp-land .vp-stage video,
+#modal-content.vp-fs.vp-land .vp-stage iframe {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+
+/* ④ 「横过来看 / 竖着看」按钮：只在全屏时出现 */
+.vp-rot { display: none; }
+#modal-content.vp-fs .vp-rot { display: inline-flex; }
+
+/* ⑤ 旋转提示：居中浮一层，自动淡出（不跟播放区一起旋转） */
+.vp-rotate-hint {
+  position: fixed;
+  left: 50%;
+  top: 46%;
+  transform: translate(-50%, -50%);
+  z-index: 6;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .6);
+  color: #fff;
+  font-size: 12.5px;
+  letter-spacing: .3px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .28s ease;
+}
+.vp-rotate-hint.show { opacity: 1; }
+
+/* 20261121：全屏时底部会出现三个按钮（退出全屏 / 横过来看 / 去原站看），
+   按钮文字长度不一，必须允许压缩，否则第三个会被挤出屏幕右侧。
+   旋转按钮不参与等分，固定自身宽度，剩下两个按钮平分剩余空间。 */
+.vp-actions .vp-btn {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#modal-content.vp-fs .vp-actions .vp-rot { flex: 0 0 auto; }
+
+/* 旋转提示不换行（窄屏下「把手机横过来，画面就铺满了」会折成两行） */
+.vp-rotate-hint { white-space: nowrap; }
+
+/* ============================================================
+   20261121：新消息上屏过渡（QQ / 微信那种「气泡从下往上浮出 + 渐显」）
+   ------------------------------------------------------------
+   只作用于「刚刚发出 / 刚刚收到」的那一条：
+     · 翻历史、首屏渲染、虚拟滚动批量补载 —— 全部走 appendMessage(x, false, frag)，
+       这两个条件一挡住，历史消息永远不会一屏一屏地乱动。
+     · 由 JS 的 bmMsgInMark() 判定（实时新增 + 12 秒内），动画播完自动摘类，
+       不会残留 transform 影响后续的跳转高亮 / 拖拽 / 长按态。
+   为什么只用 transform + opacity：
+     两者都不触发重排，气泡的占位高度在第 0 帧就已经是最终高度，
+     scrollToBottom() 算出来的位置和动画结束后完全一致 —— 不会出现「先弹一下再回落」。
+   ============================================================ */
+@keyframes bmMsgIn {
+  from { opacity: 0; transform: translate3d(0, 14px, 0) scale(0.985); }
+  55%  { opacity: 1; }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+.msg-row.bm-msg-in {
+  animation: bmMsgIn 170ms cubic-bezier(0.22, 0.85, 0.28, 1) both;
+  will-change: transform, opacity;
+}
+
+/* 系统开了「减弱动态效果」就老老实实直接出现，不做位移 */
+@media (prefers-reduced-motion: reduce) {
+  .msg-row.bm-msg-in { animation: none; }
 }

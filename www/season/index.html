@@ -10065,9 +10065,58 @@ function imgHydrateAll(done){
 const SEASON_DATA_VER = '20261109-clean';
 const SEASON_VER_KEY = 'bmSeasonDataVer';
 const SEASON_SIDE_KEYS = ['bmSeasonTitles','bmSeasonBookTitle','bmSeasonWallBg','bmSeasonFirstTill'];
+
+/* ★ 20261121：四季存档自留快照 —— 「删档 / 覆盖」之前先在本地留一份。
+   事故背景：11-20 玩家点「清除冗余缓存」后主存档被整包删掉，本地没有任何副本，
+   6 株植物 / 4 张书签 / 8 颗种子 / 5 条图鉴只能靠硬盘里的 .seasondata 捞回来。
+   以后凡是要动主存档，先留一份，App 端「数据管理」里可一键找回。
+   策略：每天最多一份（记的是「当天开始前的状态」），保留最近 5 份；
+         只存主存档 JSON（约 60KB），不存图片；太大就跳过，绝不挤占正常存档的空间。 */
+const SEASON_SNAP_PREFIX = 'bmSeasonSave_snap_';
+const SEASON_SNAP_KEEP = 5;
+const SEASON_SNAP_MAX_BYTES = 400000;   // 超过 400KB 不留快照，避免写满 localStorage 配额
+function seasonSnapshot(reason){
+  try {
+    const raw = localStorage.getItem(SEASON_SAVE_KEY);
+    if (!raw || raw.length < 20) return false;
+    if (raw.length > SEASON_SNAP_MAX_BYTES) return false;
+    const d = new Date();
+    const day = '' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    const key = SEASON_SNAP_PREFIX + day;
+    if (localStorage.getItem(key)) return true;   // 今天已经留过，不重复写
+    // 元信息先写：即使主存档写失败，也不会留下一个没有说明的半截快照
+    let sum = { plants: 0, books: 0, seeds: 0 };
+    try {
+      const o = JSON.parse(raw);
+      sum.plants = ((o.planet || {}).plants || []).length;
+      sum.books = (o.books || []).length;
+      sum.seeds = (o.seeds || []).length;
+    } catch(e){}
+    localStorage.setItem(key + '_meta', JSON.stringify({
+      at: Date.now(), reason: String(reason || ''), bytes: raw.length,
+      plants: sum.plants, books: sum.books, seeds: sum.seeds,
+    }));
+    localStorage.setItem(key, raw);
+    // 轮转：只留最近 N 份（键名按日期排序，天然有序）
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if (k && k.indexOf(SEASON_SNAP_PREFIX) === 0 && k.indexOf('_meta') < 0) keys.push(k);
+    }
+    keys.sort();
+    while (keys.length > SEASON_SNAP_KEEP){
+      const old = keys.shift();
+      try { localStorage.removeItem(old); localStorage.removeItem(old + '_meta'); } catch(e){}
+    }
+    return true;
+  } catch(e){ return false; }
+}
+
 function seasonDataResetIfStale(){
   try {
     if (localStorage.getItem(SEASON_VER_KEY) === SEASON_DATA_VER) return false;
+    /* 20261121：删档之前先留快照 —— 版本升级要重置数据时，玩家至少还能找回上一版 */
+    try { seasonSnapshot('版本重置（旧版本 ' + (localStorage.getItem(SEASON_VER_KEY) || '无') + '）'); } catch(e){}
     /* ① 主存档整包删掉（照片/星球/植物/留言/书签全在里面） */
     localStorage.removeItem(SEASON_SAVE_KEY);
     /* ② 四季自己的零散键一并清（标题、书签集名、照片墙背景、首次翻土标记） */
@@ -10155,6 +10204,9 @@ function seasonSave(){
   /* ★ 20261116：存盘前最后过一遍硬闸门 —— 任何一条路径写歪了（老档 / 后台照料 /
      导入备份 / 切角色），落盘的一定是「一株只属于一颗星球」的干净结构。 */
   try { enforcePlanetIsolation(); } catch(e){}
+  /* ★ 20261121：落盘前先留当天第一份快照（记的是「今天开始前的状态」），
+     万一之后被误删或被写坏，App 端还能找回上一版。 */
+  try { seasonSnapshot('每日自动快照'); } catch(e){}
   try { localStorage.setItem(SEASON_SAVE_KEY, JSON.stringify(seasonSerialize())); } catch(e){}
 }
 /* 读盘：启动时恢复 PHOTOS / PLANET / 各 bmSeason* 键 */

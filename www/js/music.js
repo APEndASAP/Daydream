@@ -2887,7 +2887,7 @@ window.bmMusicUI = (function () {
     '听着《{song}》就停不下来了，想让你也听听',
     '把《{song}》切给你了，这首是真的好听',
     '《{song}》好听到不行，你也听听看',
-    '刚才那首听着听着就想到你，《{song}》给你',
+    '刚才那首听着听着就想到你，这首《{song}》给你听',
     '在《{song}》里找到了很喜欢的东西，分你一半',
   ];
   const _searchForYouPool = [
@@ -9157,7 +9157,10 @@ window.bmMusicUI = (function () {
   const LC_GROUP_ID = 'grp_lyric_collect';
   const LC_GROUP_NAME = '歌词采集';
   const LC_TICK_MS = 3000;     /* 每 3 秒看一次「在不在听歌」 */
-  const LC_CHANCE = 0.025;     /* 每次 2.5% → 平均约 2 分钟收一张，随机不固定 */
+  /* 20261122 玩家要求加一道「保险」：命中概率后再投一次币，一半真采、一半这次算了
+     （「想过，又放下」）。基准从 2.5% 提到 5%，×50% 后等效仍是 2.5%，观感不变。 */
+  const LC_CHANCE = 0.05;
+  const LC_COIN = 0.5;
   const LC_MAX_LEN = 24;       /* 字卡最长字数（聊天里能用得上的长度） */
 
   let _lcTimer = null, _lcBusy = false;
@@ -9310,6 +9313,8 @@ window.bmMusicUI = (function () {
     _lcTimer = setInterval(function () {
       if (_lcBusy) return;
       if (Math.random() >= LC_CHANCE) return;
+      /* 20261122：第二级投币 —— 有一半的时候「这次不采」，什么都不记，下次照常判定 */
+      if (Math.random() >= LC_COIN) return;
       _lcBusy = true;
       Promise.resolve()
         .then(() => _lcCollectOnce())

@@ -412,8 +412,23 @@ async function saveCards(cards) {
   await setSetting('cards', cards);
 }
 
+/* 20261122：禁词命中判定 —— **单句精确匹配**（逐字完全相同，含标点；与 dedupeCards 同一标准）。
+   玩家定案：禁词一开始就是按「整句字卡」设计的，不是关键词。旧实现 t.includes(b) 是错的，
+   会把「嗯」「好」这种短卡连带屏蔽一大片。
+   banList 里放的是字卡原文（角色禁词 / 勾选禁用的单条）。 */
+function bmBanHit(text, banList) {
+  if (!banList || !banList.length) return false;
+  const t = String(text == null ? '' : text);
+  for (let i = 0; i < banList.length; i++) {
+    const b = banList[i];
+    if (b == null) continue;
+    if (String(b) === t) return true;
+  }
+  return false;
+}
+
 /* 从字卡库中完全随机抽取一条（支持禁词过滤 + 禁用分组过滤 + 关系语气倾向）
-   banWords: 禁词数组（角色禁词 + 全局禁词由调用方合并，或只传角色禁词）
+   banWords: 禁词数组（角色禁词，已含勾选禁用的单条）
    relation: 关系类型（语气倾向）
    bannedGroupIds: 该角色禁用的字卡分组 id 数组（从字卡文件夹整体勾选禁用） */
 function drawReply(cards, banWords = [], relation = null, bannedGroupIds = []) {
@@ -428,16 +443,15 @@ function drawReply(cards, banWords = [], relation = null, bannedGroupIds = []) {
   });
   if (all.length === 0) return "……（我一时不知道说什么）";
 
-  // 合并全局字卡禁词 + 角色禁词
-  const globalBan = (cards.customBanWords || []).concat(
-    (cards.customBanWordGroups || []).flatMap(g => g.items || [])
-  );
-  const allBan = (banWords || []).concat(globalBan);
+  /* 20261122：禁词按「单句」判定（玩家定案：与字卡库去重同一标准，逐字完全相同）。
+     全局字卡禁词功能已停用 —— 不再合并 cards.customBanWords / customBanWordGroups，
+     那两个字段只为老备份兼容保留。 */
+  const allBan = (banWords || []);
 
-  // 过滤禁词
+  // 过滤禁词（单句精确匹配；全被滤光时回退全量，保持原有兜底语义）
   let pool = all;
   if (allBan.length) {
-    pool = all.filter(t => !allBan.some(b => b && t.includes(b)));
+    pool = all.filter(t => !bmBanHit(t, allBan));
     if (pool.length === 0) pool = all;
   }
 

@@ -21,6 +21,9 @@ let chatSettings = {
   notifyMerge: 'each',           // 20261002cg：消息通知方式 each=逐条通知 / merge=合并通知（玩家在聊天设置最顶端自主选择）
   notifyConversationEnabled: false, // 20261004dk：会话式通知（MessagingStyle）开关，默认关；开启后消息通知改走 BmConversationNotify 会话式出口，失败自动回退旧通知
   proactive: false,              // 访客主动发消息 5.3
+  /* 20261122：允许角色自己往自己的禁词里加字卡 / 把禁词里的字卡放出来（card-delete.js）。
+     默认开；关掉后角色完全不碰禁词。玩家要求：这一项只由玩家决定，不加入 self-adjust 白名单。 */
+  allowSelfBan: true,
   proactiveMin: 20,               // 主动消息间隔（分钟）1~120
   proactiveRandom: false,        // 随机主动发消息：开启后在下方区间内随机时刻发，不再按固定间隔
   proactiveRandMin: 10,          // 20260929bf 随机发消息区间·最小（分钟）
@@ -2436,6 +2439,13 @@ async function renderChatList() {
       else if (lastMsg.type === 'pieCard') brief = speakerName + '：[苹果派]';
       else if (lastMsg.type === 'pieReply') brief = speakerName + '：[苹果派的回话]';
       else if (lastMsg.type === 'selfAdjust') brief = (lastMsg.content && lastMsg.content.done) ? '[改好了] 数值修改' : '[数值修改申请]';
+      else if (lastMsg.type === 'cardDelete') {
+        /* 20261122：区分「移进禁词」和「从禁词里放出来」两种清单卡 */
+        const cdAct = (lastMsg.content && lastMsg.content.action) === 'remove';
+        brief = cdAct
+          ? ('[放出禁词] ' + ((lastMsg.content && lastMsg.content.n) || 0) + ' 张又能抽到了')
+          : ('[移进禁词] ' + ((lastMsg.content && lastMsg.content.n) || 0) + ' 张，7 天内可撤销');
+      }
       else if (lastMsg.type === 'call') brief = (lastMsg.content && lastMsg.content.group) ? `[群${lastMsg.content.kind === 'video' ? '视频' : '语音'}通话]` : '[通话]';
       else if (typeof lastMsg.content === 'string') brief = speakerName + '：' + lastMsg.content;
       else brief = speakerName + '：[卡片消息]';
@@ -4127,6 +4137,8 @@ async function renderMessages(charId, preMsgs) {
   if (msgs.length === 0) {
     _chatWin = null;
     scroll.innerHTML = `<div class="empty"><div class="empty-icon"><i data-icon="comment" data-size="16"></i></div><div>说点什么，开启你们的对话吧</div></div>`;
+    /* 20261122：一条消息都没有、但这一轮回复已经在路上时，同样要把「正在输入」补回来 */
+    bmRestoreTypingIfPending(charId, scroll);
     return;
   }
   /* 20261112b：记下「这个窗口属于谁、已经从库里读到第几条」——
@@ -4150,6 +4162,9 @@ async function renderMessages(charId, preMsgs) {
   scroll.appendChild(_frag);
   _chatWin.suspend = false;
   scrollToBottom();
+  /* 20261122：重建聊天页（撤回消息、切页回来都会走这里）时，如果这轮回复还在路上，
+     把「正在输入」补回来 —— 否则玩家会以为 TA 突然不说了。 */
+  bmRestoreTypingIfPending(charId, scroll);
   syncBubbleHyalite(); // 20261011：按气泡预设 2号挂 hyalite（watch 接管消息气泡）
   _paintSongCovers(scroll); // 20261118：整屏渲染完统一给音乐类卡片补封面（异步排队，不阻塞首屏）
 }
@@ -4661,6 +4676,13 @@ function msgBodyHtml(m, oneLine = false) {
         return quoteHtml(m.quote) + window.bmSelfAdjustCardHtml(m.content || {});
       }
       return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">数值修改申请</span><div>TA 想动一动你的设置</div></div>`;
+    /* 20261122：角色把字卡移进自己禁词的清单卡 —— 点开看是哪几张，7 天内可撤销（card-delete.js） */
+    case 'cardDelete':
+      if (typeof window.bmCardDeleteCardHtml === 'function') {
+        return quoteHtml(m.quote) + window.bmCardDeleteCardHtml(m.content || {});
+      }
+      const _cdRm = (m.content && m.content.action) === 'remove';
+      return `${quoteHtml(m.quote)}<div class="msg-card"><span class="msg-card-tag">${_cdRm ? '放出禁词' : '移进禁词'}</span><div>${_cdRm ? 'TA 把几张字卡从禁词里放出来了' : 'TA 把几张字卡移进了自己的禁词'}</div></div>`;
     case 'checkin': {
       return _checkinCardHTML(m);
     }
@@ -4877,13 +4899,23 @@ function msgBodyHtml(m, oneLine = false) {
       }
       const mottoHtml = vc.motto ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:12.5px;line-height:1.6;color:var(--purple-soft);word-break:break-word;"><i data-icon="letter" data-size="12"></i> ${escapeHtml(vc.motto)}</div>` : '';
       const tagLabel = isImagePost ? '图文分享' : '视频分享';
+      // 20261120：卡片底部常驻「去原站 / 去 App 看」入口——第三方解析成功的视频原来没有跳转口，
+      //   手机端想跳去原平台看不方便。这里直接给一个胶囊按钮，点击跳转，不经过播放弹窗。
+      const jumpUrl = videoTargetUrl(vc);
+      const jumpLabel = videoTargetLabel(vc);
+      const jumpHtml = jumpUrl
+        ? `<span class="vp-card-jump" data-video-jump="${escapeHtml(jumpUrl)}" data-video-title="${escapeHtml(vc.title || '视频')}">${escapeHtml(jumpLabel)}<i data-icon="link" data-size="12"></i></span>`
+        : '';
       return `<div class="msg-card msg-video-card" data-video-card="${m.id}" style="cursor:pointer;">
         <span class="msg-card-tag" style="background:${plat.color};color:#fff;border:none;"><i data-icon="video" data-size="16"></i> ${escapeHtml(plat.label)}</span>
         <span style="margin-left:6px;font-size:11.5px;color:var(--text-tertiary);">${tagLabel}</span>
         <div style="margin-top:6px;font-size:14px;font-weight:600;line-height:1.4;">${escapeHtml(vc.title || '视频')}</div>
         ${coverHtml}
         ${imageStripHtml}
-        <div style="margin-top:6px;font-size:11.5px;color:var(--text-tertiary);">${isImagePost ? '图文分享' : (playable ? '点击播放' : '视频链接')}</div>
+        <div style="margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span style="font-size:11.5px;color:var(--text-tertiary);">${isImagePost ? '图文分享' : (playable ? '点击播放' : '视频链接')}</span>
+          ${jumpHtml}
+        </div>
         ${mottoHtml}
       </div>`;
     }
@@ -5112,6 +5144,30 @@ function fixOnelineBubble(row) {
   });
 }
 
+/* 20261121：新消息上屏过渡（用户要的「像 QQ / 微信那样，气泡从下往上缓动出去、渐渐出现」）。
+   —— 判据只有一条，但卡得很死：scroll 为真 **且** 没有传 fragment 容器。
+      全项目里「实时新增」的调用都是 appendMessage(x) / appendMessage(x, true)；
+      而翻历史、首屏渲染、虚拟滚动批量补载一律是 appendMessage(x, false, frag)。
+      所以这两个条件同时成立，几乎是「刚发生」的同义词 —— 历史消息绝不会一屏一屏乱动。
+   —— 再叠一道 12 秒时效闸：万一日后有新代码路径用默认参数复用了老消息，也不会闪。
+   —— 播完立刻摘类：不残留 transform，后面的消息跳转高亮 / 长按态 / 拖拽全都不受影响。 */
+function bmMsgInMark(el, m, scroll, container) {
+  if (!el || container || !scroll) return;
+  if (!m || typeof m !== 'object') return;
+  if (!(Date.now() - (Number(m.time) || 0) < 12000)) return;
+  try {
+    el.classList.add('bm-msg-in');
+    const done = (ev) => {
+      if (ev && ev.target !== el) return;   // 子元素（戳一戳动画 / 气泡光效）冒上来的不算
+      el.classList.remove('bm-msg-in');
+      el.removeEventListener('animationend', done);
+    };
+    el.addEventListener('animationend', done);
+    /* 兜底：某些机型在 display:none 的父级里不会派发 animationend，1 秒后强制摘类 */
+    setTimeout(() => { try { el.classList.remove('bm-msg-in'); } catch (e) {} }, 1000);
+  } catch (e) {}
+}
+
 function appendMessage(m, scroll = true, container = null) {
   const scrollEl = $('#chat-scroll');
   if (!scrollEl) return;
@@ -5155,6 +5211,7 @@ function appendMessage(m, scroll = true, container = null) {
     row.addEventListener('touchmove', () => clearTimeout(pokePress));
     row.addEventListener('touchcancel', () => clearTimeout(pokePress)); // 20261001ci
     mount.appendChild(row);
+    bmMsgInMark(row, m, scroll, container);
     /* 20261113i：垫片永远不空。
        新增动作的容器是空的，必须靠 JS 现画 —— 原来的逻辑只在「3 秒内」才画，
        于是翻历史 / 重进聊天补载的戳一戳就只剩下一段空白（老 squish 至少还有静态 SVG 兜底）。
@@ -5232,6 +5289,7 @@ function appendMessage(m, scroll = true, container = null) {
     row.addEventListener('touchmove', () => clearTimeout(cePress));
     row.addEventListener('touchcancel', () => clearTimeout(cePress));
     mount.appendChild(row);
+    bmMsgInMark(row, m, scroll, container);
     if (scroll) scrollToBottom();
     return;
   }
@@ -5260,6 +5318,7 @@ function appendMessage(m, scroll = true, container = null) {
     row.addEventListener('touchmove', () => clearTimeout(maPress));
     row.addEventListener('touchcancel', () => clearTimeout(maPress));
     mount.appendChild(row);
+    bmMsgInMark(row, m, scroll, container);
     if (scroll) scrollToBottom();
     return;
   }
@@ -5271,6 +5330,7 @@ function appendMessage(m, scroll = true, container = null) {
     row.dataset.msgid = m.id;
     row.innerHTML = _diviCardHTML(m);
     mount.appendChild(row);
+    bmMsgInMark(row, m, scroll, container);
     if (scroll) scrollToBottom();
     return;
   }
@@ -5299,6 +5359,7 @@ function appendMessage(m, scroll = true, container = null) {
     row.innerHTML = `${avatarHtml(c && c.avatar, c && c.name, 'them')}<div class="msg-body">${body}<div class="msg-time">${msgTimeLabel(m.time)}</div></div>${checkHtml}`;
   }
   mount.appendChild(row);
+  bmMsgInMark(row, m, scroll, container);
   /* 20261114：角色自调数值的申请卡 / 完成卡 —— 点开才进同意窗 / 清单。
      卡片的观感由 self-adjust.js 注入的样式控制，这里只负责把点击转过去。 */
   const saCardEl = row.querySelector('[data-sa-card]');
@@ -5309,6 +5370,16 @@ function appendMessage(m, scroll = true, container = null) {
       const saId = saCardEl.getAttribute('data-sa-card') || '';
       const saDone = saCardEl.getAttribute('data-sa-done') === '1';
       if (typeof window.bmSelfAdjustOpenCard === 'function') window.bmSelfAdjustOpenCard(saId, saDone);
+    };
+  }
+  /* 20261122：角色自主删字卡的清单卡 —— 点开看删了哪些 / 撤销 */
+  const cdCardEl = row.querySelector('[data-cd-card]');
+  if (cdCardEl) {
+    cdCardEl.onclick = (ev) => {
+      ev.stopPropagation();
+      if (multiSelectMode) return;
+      const cdId = cdCardEl.getAttribute('data-cd-card') || '';
+      if (typeof window.bmCardDeleteOpen === 'function') window.bmCardDeleteOpen(cdId);
     };
   }
   fixOnelineBubble(row); // 20261001cr：颜文字单行气泡超宽时缩字号/换行兜底，杜绝截断
@@ -5384,6 +5455,14 @@ function appendMessage(m, scroll = true, container = null) {
       if (isImagePost) openImageGallery(imgs, vc.title || '图文分享');
       else openVideoPlay(vc);
     };
+    // 20261120：卡片底部「去原站 / 去 App 看」——阻止冒泡，避免同时打开播放弹窗
+    const jumpEl = row.querySelector('[data-video-jump]');
+    if (jumpEl) {
+      jumpEl.onclick = (ev) => {
+        ev.stopPropagation();
+        openVideoInApp(jumpEl.getAttribute('data-video-jump'), jumpEl.getAttribute('data-video-title') || '视频');
+      };
+    }
   }
 
   /* 20261109 新增：角色的「换歌 / 点歌」卡片
@@ -5472,17 +5551,35 @@ function appendMessage(m, scroll = true, container = null) {
       ev.stopPropagation();
       // 只有待领取的「角色发来」红包才能开；玩家自己发的红包点开无动作（或显示已发）
       if (m.content.status !== 'pending') return;
-      // 20261104：拆开即时反馈——先加「开包」动效（红包封盖弹开 + 金币弹出），
-      //   动效播完再落库重渲染，用户能明确看到「已拆开」的视觉变化。
-      rpCard.classList.add('rp-opening');
+      if (rpCard.dataset.rpOpening === '1') return;   // 20261122：0.45s 内防连点，避免金额重复加
+      rpCard.dataset.rpOpening = '1';
+
+      /* 20261122：拆红包的即时反馈（玩家定案：很短，一点点感觉就够；**拆转账不走这里**）
+         ① 卡片本身播 0.45s 过渡：轻抖 → 封盖掀开 → 中央浮出「+¥406」；
+         ② 到点只替换这一张卡的 HTML，**不整页 renderMessages** —— 原来 320ms 就整页重绘，
+            把正在跑的动画节点整个换掉，动画被腰斩，看起来就像「什么都没发生」；
+         ③ toast 必须是纯文字：miniToast 走的是 textContent，塞 <i data-icon> 只会把标签
+            原样显示出来（玩家看到的「一串代码」就是这个）。 */
+      const rpAmt = m.content.amount || 0;
       m.content.status = 'claimed';
-      playerProfile.wallet += (m.content.amount || 0);
+      playerProfile.wallet += rpAmt;
       try { await savePlayerProfile(); await idbPut('messages', m); } catch (e) {}
-      // 短暂展示开包动画后再重渲染（让金币弹出动效可见）
-      setTimeout(async () => {
-        await renderMessages(m.charId);
-        miniToast(`<i data-icon="redpacket" data-size="14"></i> 拆开红包，收到 ¥${m.content.amount}`);
-      }, 320);
+
+      rpCard.classList.add('rp-opening');
+      try {
+        const gain = document.createElement('div');
+        gain.className = 'rp-gain';
+        gain.textContent = '+¥' + rpAmt;
+        rpCard.appendChild(gain);
+      } catch (e) {}
+
+      setTimeout(() => {
+        try {
+          if (typeof refreshRedpacketCard === 'function') refreshRedpacketCard(m);
+          else renderMessages(m.charId);
+        } catch (e) {}
+        miniToast('拆开红包，收到 ¥' + rpAmt);
+      }, 450);
     };
   }
 
@@ -5949,6 +6046,13 @@ function parseDeveloperCommand(text) {
        必须整句匹配——「我改设置去了」这类普通聊天不能被吞。 */
     [/^(?:让|叫|命令)(.+?)(?:改|调)(?:一下)?(?:聊天)?设置$/u, 'selfadjust'],
     [/^(?:改|调)(?:一下)?(?:聊天)?设置$/u, 'selfadjust'],
+    /* 20261122：角色自主删字卡（开发者看演出用）。
+       写法：删字卡 / 清字卡 / 让XX删两张字卡。必须整句匹配，普通聊天不会被吞。 */
+    [/^(?:让|叫|命令)(.+?)(?:去)?(?:删|清)(?:掉)?(?:两张|2张|几张|一些)?字卡$/u, 'carddelete'],
+    [/^(?:删|清)(?:掉)?(?:两张|2张|几张|一些)?字卡$/u, 'carddelete'],
+    /* 20261122：角色把字卡从自己的禁词里放出来（与移进对称，方便真机看演出） */
+    [/^(?:让|叫|命令)(.+?)(?:把)?字卡(?:从)?禁词(?:里|中)?(?:放出来|移出来|拿出来)$/u, 'cardrestore'],
+    [/^字卡(?:从)?禁词(?:里|中)?(?:放出来|移出来)$/u, 'cardrestore'],
     [/^(?:自调|自改)(?:一下)?(?:数值|设置)$/u, 'selfadjust'],
     [/^(?:改|调)(?:几|一|上)?(?:处|个)?数值$/u, 'selfadjust'],
     [/^(?:数值修改申请|修改申请|申请改数值)$/u, 'selfadjust'],
@@ -6287,9 +6391,20 @@ async function executeDeveloperCommand(command) {
     catch (e) { console.error('[开发者模式 selfadjust]', e); miniToast('开发者命令执行失败'); }
     return true;
   }
+  // 20261122：角色自主删字卡（开发者看演出用，无视概率与冷却）
+  if (command.action === 'carddelete') {
+    try { await window.bmCardDeleteDev(c); }
+    catch (e) { console.error('[开发者模式 carddelete]', e); miniToast('开发者命令执行失败'); }
+    return true;
+  }
+  // 20261122：角色把字卡从自己的禁词里放出来（开发者看演出用，无视概率与冷却）
+  if (command.action === 'cardrestore') {
+    try { await window.bmCardDeleteDev(c, 'remove'); }
+    catch (e) { console.error('[开发者模式 cardrestore]', e); miniToast('开发者命令执行失败'); }
+    return true;
+  }
   // 音乐：播放器动作与一起听互动（20261113b）
-  if (/^(?:mnext|mprev|mpause|mresume|msearch|ltinvite|ltstart|ltpeek|ltear|ltcollect|ltmode|ltauto)$/.test(command.action)) {
-    try { await _devCommandMusic(c, command); }
+  if (/^(?:mnext|mprev|mpause|mresume|msearch|ltinvite|ltstart|ltpeek|ltear|ltcollect|ltmode|ltauto)$/.test(command.action)) {    try { await _devCommandMusic(c, command); }
     catch (e) { console.error('[开发者模式 music]', e); miniToast('开发者命令执行失败'); }
     return true;
   }
@@ -6345,6 +6460,75 @@ async function executeDeveloperCommand(command) {
 /* 角色延迟回复（5.4：按每条消息计算）
    replyQuote：显式引用（查岗回复时引用查岗卡片）。
    无显式引用时，角色有概率（约 22%）随机引用玩家最近一条消息（5：角色会引用玩家的每句话）。 */
+/* ============================================================
+   20261122：待发回复登记表（解决「挂后台回复停住、要再发消息才触发」）
+   ------------------------------------------------------------
+   病根：回复靠 setTimeout(delay) 触发。App 一挂后台，WebView 的定时器被系统冻结，
+        这一轮回复就停在那儿；玩家回来才继续 → 观感是「先停住，等我回来再发」；
+        进程被系统回收时连回调都没了 → 这条回复彻底消失，只能再发一条重新触发。
+   做法：不重构原有回复逻辑（一行主体代码都不动），只把那个「到点要跑的回调」
+        登记下来。回到前台（或页面重新可见）时，凡是已经过期的登记项立即执行，
+        并把这期间的时间差补回消息时间戳 —— 消息看起来就是「本来那个时刻发来的」。
+   注意：整页刷新 / 应用重启属于用户认可的「正常中断」，这里不做跨进程恢复。
+   ============================================================ */
+const _bmReplyFlush = new Map();   // key: charId|reply|dueAt → { charId, dueAt, timer, run, replaying }
+
+function bmReplyFlushRegister(key, item) {
+  try { _bmReplyFlush.set(key, item); } catch (e) {}
+}
+function bmReplyFlushUnregister(key) {
+  try { _bmReplyFlush.delete(key); } catch (e) {}
+}
+/* 立即补发所有「本该已经发出」的回复。force=true 时不管到没到点都发（用于极端兜底）。 */
+function bmFlushPendingReplies(force) {
+  if (!_bmReplyFlush.size) return 0;
+  const now = Date.now();
+  let n = 0;
+  for (const [key, it] of Array.from(_bmReplyFlush.entries())) {
+    if (!it || it.replaying) continue;
+    if (!force && now < (it.dueAt || 0) - 60) continue;   // 还没到点，交给定时器
+    it.replaying = true;
+    try { clearTimeout(it.timer); } catch (e) {}
+    try { Promise.resolve(it.run(it.dueAt)).catch(() => {}); n++; }
+    catch (e) { bmReplyFlushUnregister(key); }
+  }
+  return n;
+}
+/* 这个角色有没有「在路上」的回复（用于重建聊天页后把「正在输入」补回来） */
+function bmReplyHasPending(charId) {
+  const pre = charId + '|reply|';
+  for (const k of _bmReplyFlush.keys()) if (k.indexOf(pre) === 0) return true;
+  return false;
+}
+/* 重建聊天页后补回「正在输入」（空聊天、有消息两种分支都调） */
+function bmRestoreTypingIfPending(charId, scroll) {
+  try {
+    if (!scroll || !bmReplyHasPending(charId)) return;
+    if (document.getElementById('typing-indicator-' + charId)) return;
+    const cc0 = characters.find(x => x.id === charId);
+    const tp = document.createElement('div');
+    tp.className = 'msg-row them';
+    tp.innerHTML = `${avatarHtml(cc0 && cc0.avatar, cc0 && cc0.name, 'them')}<div class="msg-body"><div class="bubble typing"><span></span><span></span><span></span></div></div>`;
+    tp.id = 'typing-indicator-' + charId;
+    scroll.appendChild(tp);
+    scrollToBottom();
+  } catch (e) {}
+}
+
+/* 页面重新可见 / 回到前台 / 窗口重新聚焦 —— 三个入口都补一次，谁先到算谁 */
+try {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') bmFlushPendingReplies(false);
+  });
+  window.addEventListener('focus', () => bmFlushPendingReplies(false));
+  window.addEventListener('pageshow', () => bmFlushPendingReplies(false));
+  document.addEventListener('resume', () => bmFlushPendingReplies(false));
+  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App && window.Capacitor.Plugins.App.addListener) {
+    window.Capacitor.Plugins.App.addListener('resume', () => bmFlushPendingReplies(false));
+    window.Capacitor.Plugins.App.addListener('appStateChange', (st) => { if (st && st.isActive) bmFlushPendingReplies(false); });
+  }
+} catch (e) {}
+
 function scheduleCharReply(charId, replyQuote = null, opts = {}) {
   const c = characters.find(x => x.id === charId);
   const cs = getCharChatSettings(c);
@@ -6389,9 +6573,76 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
     try { bmBackgroundSchedule(__bmReplyTaskId, charId, __bmReplyDue, c.name || '访客', 'reply'); } catch (e) {}
   }
 
+  /* ============================================================
+     20261122（玩家要求：挂后台也要当场发出来，不能回前台再补）
+     ------------------------------------------------------------
+     原来的顺序是「延迟到点 → 才去取上下文、调 AI/字卡生成 → 落库 → 通知」，
+     生成这一步可能要几秒到几十秒；App 在这期间被系统冻结，整条链就停在半路，
+     只能等回前台补发。
+     现在改成「预生成」：一进函数就把上下文和回复内容算好缓存起来，
+     定时器到点只剩「拆条 + 落库 + 通知」——全是本地毫秒级操作。
+     这样即使延迟期间被冻结，到点被原生闹钟唤醒的那一瞬间也能真正把消息发出去
+     （而不是等玩家回来才出现）。
+     预生成失败不吞错：到点取不到内容就抛出去，由外层 catch 回退字卡，绝不静默不回复。
+     ============================================================ */
+  const prepareReply = async () => {
+    // ① 引用对象：无显式引用时，随机引用玩家最近一条消息
+    let finalQuote = replyQuote;
+    if (!finalQuote) {
+      const msgs = await idbGetMessagesByChar(charId, 50);
+      // 只在单聊消息里找引用对象（群聊消息不串进单聊，20260925 数据乱串修复）
+      const lastMe = [...msgs].reverse().find(mm => mm.from === 'me' && mm.type === 'text' && !mm.groupId);
+      if (lastMe && Math.random() < 0.22) {
+        finalQuote = { name: playerProfile.name || '我', content: lastMe.content, msgId: lastMe.id };
+      }
+    }
+
+    const curChar = characters.find(x => x.id === charId);
+    const banWords = curChar ? getCharBanWords(curChar) : [];
+    const relation = curChar ? (curChar.relation || null) : null;
+    const bannedGroups = curChar ? (curChar.bannedGroups || []) : []; // 角色勾选禁用的字卡分组
+    const tcSettings = curChar ? getCharChatSettings(curChar) : chatSettings;
+
+    // ② 生成内容（AI 模式 / 字卡模式 / 打字卡旁路，与原来完全一致）
+    let gen = null;
+    let typecardBlocks = null;
+    if (tcSettings.typecardOn && window.bmTypecard && window.bmTypecard.generate) {
+      try {
+        const tc = await window.bmTypecard.generate(charId, {
+          banWords: banWords, relation: relation, bannedGroups: bannedGroups,
+          coherence: (typeof tcSettings.typecardCoherence === 'number') ? tcSettings.typecardCoherence : 0,
+          allowCards: tcSettings.typecardCards !== false
+        });
+        gen = { type: 'typing_card', text: tc.text };
+        typecardBlocks = tc.blocks;
+      } catch (e) {
+        // 打字卡生成失败：回退主线字卡生成，绝不静默不回复
+        gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
+        typecardBlocks = null;
+      }
+    } else {
+      gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
+    }
+    return { finalQuote, gen, typecardBlocks, curChar };
+  };
+  /* 立刻开跑，不阻塞当前调用；失败用 null 表示，到点再兜底 */
+  const __bmPreGen = Promise.resolve().then(prepareReply).catch((e) => {
+    console.warn('[聊天] 预生成失败，到点后回退字卡：', e && (e.message || e));
+    return null;
+  });
+
   // 4. 延迟后回复字卡（访客禁词 + 全局字卡禁词过滤 + 关系语气倾向）
   return new Promise((resolve) => {
-    setTimeout(async () => {
+    /* 20261122：整段「到点要跑的东西」起名 runReply，登记进补发表。
+       函数体本身与原版一致，只在开头多算一个 skew（被冻结多久），
+       并把 skew 从消息时间戳里减掉 —— 补发出来的消息显示的是「本该发出的那一刻」。 */
+    const runReply = async (effectiveDue) => {
+      /* effectiveDue：补发时传入「登记表里的原定时刻」，用来把冻结的那段时长补回消息时间 */
+      const _due = (typeof effectiveDue === 'number') ? effectiveDue : __bmReplyDue;
+      let skew = 0;
+      try { skew = Math.max(0, Date.now() - _due); } catch (e) {}
+      /* 一旦开始跑就从登记表摘掉：不会再被补发第二次 */
+      try { bmReplyFlushUnregister(charId + '|reply|' + __bmReplyDue); } catch (e) {}
       // 20260929ai：执行体包进 deliverReply——任何意外错误都不允许"静默不回复"，
       // catch 里强制回退发一条字卡（字卡模式/AI 模式都兜底）
       const deliverReply = async () => {
@@ -6399,46 +6650,12 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
       if (t) t.remove();
       if (inThisChat) restoreChatHeaderStatus();
 
-      // 无显式引用时：随机引用玩家最近一条消息
-      let finalQuote = replyQuote;
-      if (!finalQuote) {
-        const msgs = await idbGetMessagesByChar(charId, 50);
-        // 只在单聊消息里找引用对象（群聊消息不串进单聊，20260925 数据乱串修复）
-        const lastMe = [...msgs].reverse().find(mm => mm.from === 'me' && mm.type === 'text' && !mm.groupId);
-        if (lastMe && Math.random() < 0.22) {
-          finalQuote = { name: playerProfile.name || '我', content: lastMe.content, msgId: lastMe.id }; // 20261004：带 msgId 支持点击跳回
-        }
-      }
-
-      const curChar = characters.find(x => x.id === charId);
-      const banWords = curChar ? getCharBanWords(curChar) : [];
-      const relation = curChar ? (curChar.relation || null) : null;
-      const bannedGroups = curChar ? (curChar.bannedGroups || []) : []; // 角色勾选禁用的字卡分组
-      // 20260929ae：AI 模式分流（AI 生成 / 失败自动回退字卡；字卡模式走原逻辑）
-      // 20260929bf：AI 模式也随机 1~3 条——先抽条数，再让 AI 按条数分行输出
-      // 20261008 打字卡拦截：角色开启打字卡时，跳过主线 generateCharReply，
-      // 改由 typecard 自己从字库随机拼句生成回复（typing_card），字卡/表情穿插其中。
-      // 这是唯一允许修改主线核心逻辑的地方，最小侵入：只在生成入口分流，不重写后续落库/渲染。
-      const tcSettings = curChar ? getCharChatSettings(curChar) : chatSettings;
-      let gen;
-      let typecardBlocks = null;
-      if (tcSettings.typecardOn && window.bmTypecard && window.bmTypecard.generate) {
-        try {
-          const tc = await window.bmTypecard.generate(charId, {
-            banWords: banWords, relation: relation, bannedGroups: bannedGroups,
-            coherence: (typeof tcSettings.typecardCoherence === 'number') ? tcSettings.typecardCoherence : 0,
-            allowCards: tcSettings.typecardCards !== false
-          });
-          gen = { type: 'typing_card', text: tc.text };
-          typecardBlocks = tc.blocks;
-        } catch (e) {
-          // 打字卡生成失败：回退主线字卡生成，绝不静默不回复
-          gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
-          typecardBlocks = null;
-        }
-      } else {
-        gen = await generateCharReply(charId, { quote: finalQuote, count: randInt(1, 3) });
-      }
+      /* 20261122：上下文和回复内容在定时器之前就预生成好了，这里直接取用 ——
+         到点只剩「拆条 + 落库 + 通知」，毫秒级完成。这样 App 挂后台被系统冻结时，
+         到点被原生闹钟唤醒的那一瞬间也能把消息真正发出去，而不是等玩家回来才补。 */
+      const pre = await __bmPreGen;
+      if (!pre) throw new Error('预生成失败，回退字卡');
+      const { finalQuote, gen, typecardBlocks, curChar } = pre;
       // 20260929ah：随机 1~3 条回复——字卡模式按概率连发（此前只有单条，规则缺失），
       // AI 模式按 AI 输出分段拆条（最多 3 条），像真人连续发消息
       const parts = splitReplyParts(gen, curChar);
@@ -6455,7 +6672,7 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
           const recent = await idbGetMessagesByChar(charId, 10);
           if (recent && recent.some(mm => mm && mm.from === 'me' && mm.type === 'text' && !mm.groupId && mm.time >= firstReplyTime)) break;
         }
-        const replyMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: parts[i], time: Date.now() };
+        const replyMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: parts[i], time: Date.now() - skew };
         if (i === 0 && finalQuote) replyMsg.quote = finalQuote;
         // 20261030：首条回复带上后台任务 taskId——若 App 在延迟期间被冻结、setTimeout 未执行，
         // 回前台 recoverDue 走 _bmProcessTask 时，靠消息上的 taskId 字段兜底查重（bmTaskMsgScanByField），
@@ -6530,14 +6747,21 @@ function scheduleCharReply(charId, replyQuote = null, opts = {}) {
           if (t2) t2.remove();
           const cc = characters.find(x => x.id === charId);
           const fb = drawReply(cards, cc ? getCharBanWords(cc) : [], cc ? (cc.relation || null) : null, cc ? (cc.bannedGroups || []) : []);
-          const fbMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: fb, time: Date.now() };
+          const fbMsg = { id: uid('msg'), charId, from: 'them', type: 'text', content: fb, time: Date.now() - skew };
           await idbPut('messages', fbMsg);
           if (currentCharId === charId && document.body.dataset.view === 'chat') appendMessage(fbMsg);
           else renderChatList();
           resolve(fbMsg);
         } catch (e2) { resolve(null); }
       }
+    };
+    /* 登记 + 定时：定时器照旧，登记表只是给「回前台补发」留一个入口 */
+    const __bmReplyKey = charId + '|reply|' + __bmReplyDue;
+    const __bmReplyTimer = setTimeout(() => {
+      bmReplyFlushUnregister(__bmReplyKey);
+      Promise.resolve(runReply()).catch(() => {});
     }, delay);
+    bmReplyFlushRegister(__bmReplyKey, { charId, dueAt: __bmReplyDue, timer: __bmReplyTimer, run: runReply, replaying: false });
   });
 }
 
@@ -6567,6 +6791,8 @@ function splitReplyParts(gen, c) {
      玩家原话：「把这句删了，发卡片消息就够了，不用发这句话。」
      ⇒ 返回空数组，落库循环一次都不跑；卡片由 self-adjust.js 自己投递。 */
   if (gen.type === 'selfadjust_card') return [];
+  /* 20261122：删字卡同理 —— 只发卡片，不发任何文字气泡 */
+  if (gen.type === 'carddelete_card') return [];
   if (gen.type === 'ai') {
     const segs = String(gen.text || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
     if (segs.length <= 1) return [gen.text];
@@ -7744,10 +7970,12 @@ function getCharBanWords(c) {
 function charCardPools(c) {
   const junk = (t) => !(typeof t === 'string' && t.trim()) || isLineJunkText(t);
   const banned = new Set((c && c.bannedGroups) || []);
-  const banWords = getCharBanWords(c).concat(
-    (cards.customBanWords || []).concat((cards.customBanWordGroups || []).flatMap(g => g.items || []))
-  );
-  const wordBanned = (t) => banWords.some(b => b && t.includes(b));
+  /* 20261122：只合并**角色自己**的禁词；全局字卡禁词功能已停用，不再并进池子 */
+  const banWords = getCharBanWords(c);
+  /* 20261122：禁词按单句精确匹配（与字卡库去重同一标准），不再是子串包含 */
+  const wordBanned = (t) => (typeof bmBanHit === 'function')
+    ? bmBanHit(t, banWords)
+    : (banWords || []).some(b => b != null && String(b) === String(t));
   const rawReplies = [];
   if (!banned.has('__pool_replies__')) (cards.customReplies || []).forEach(t => rawReplies.push(t));
   (cards.customReplyGroups || []).forEach(g => {
@@ -10741,8 +10969,9 @@ function closeModal() {
   try { stopVideoPlayers(); } catch (e) {}
   // 20261031：清理故障弹窗装饰（白框闪屏+彩线+乱码的定时器）
   if (_ocPopupGlitchCleanup) { try { _ocPopupGlitchCleanup(); } catch(e){} _ocPopupGlitchCleanup = null; }
-  $('#modal-content').classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy', 'modal-gray-hall');
-  $('#modal-mask').classList.remove('mask-oc', 'mask-oc-clear');
+  $('#modal-content').classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy', 'modal-gray-hall', 'vp-fs', 'vp-land');
+  $('#modal-mask').classList.remove('mask-oc', 'mask-oc-clear', 'mask-vp-fs');
+  document.body.classList.remove('vp-fs-open');
   $('#modal-mask').classList.remove('show');
   setCallGlass(false);
   resetModalSizing(); // 20260929bg：清理通话弹窗等比缩放的 inline 尺寸，防残留到下一个弹窗
@@ -11567,13 +11796,13 @@ function showBanWordsModal(c) {
       <div style="font-size:18px;font-weight:600;">访客禁词</div>
       <button class="icon-btn" id="ban-close"><i data-icon="close" data-size="17"></i></button>
     </div>
-    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">TA 回复、书信、入梦签等抽取字卡时，过滤禁词、禁用分组和勾选的单条字卡（入梦签同样只从 TA 可用的字卡里抽）</div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">TA 回复、书信、入梦签等抽取字卡时，过滤禁词、禁用分组和勾选的单条字卡（入梦签同样只从 TA 可用的字卡里抽）<br><span style="color:var(--text-tertiary);font-size:12px;">禁词按<b style="color:var(--text);">整句</b>判定：只有和字卡原文逐字完全相同的那一条才会被挡掉，和字卡库「过滤重复字卡」是同一个标准。</span></div>
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">已设禁词（<span id="ban-count">${words.length}</span>）</div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;min-height:20px;" id="ban-list"></div>
 
     <div style="display:flex;gap:8px;margin-bottom:18px;">
-      <input class="input" id="ban-input" placeholder="手动输入禁词" style="flex:1;">
+      <input class="input" id="ban-input" placeholder="粘贴整句字卡（需与原文完全一致）" style="flex:1;">
       <button class="btn primary" id="ban-add">添加</button>
     </div>
 
@@ -12825,8 +13054,10 @@ async function sendCharPoke(c) {
       (g.items || []).forEach(t => pool.push(t));
     });
     const banWords = getCharBanWords(c);
-    const filtered = pool.filter(t =>
-      !(banWords || []).some(b => b && t.includes(b)));
+    /* 20261122：单句精确匹配（原来是 t.includes(b) 子串，会把短卡连带屏蔽一大片） */
+    const filtered = pool.filter(t => !((typeof bmBanHit === 'function')
+      ? bmBanHit(t, banWords)
+      : (banWords || []).some(b => b != null && String(b) === String(t))));
     const use = filtered.length ? filtered : pool;
     if (!use.length) return;
     text = drawFrom(use);
@@ -13941,6 +14172,32 @@ async function charAutoSendVideo(charId) {
   } catch (e) {}
 }
 
+/* 20261120：视频「去原站 / 去 App 看」目标链接
+   优先级：原站真实链接 vc.url → 平台 + ID 拼出的原站地址 → 解析出的播放直链。
+   目的：第三方解析成功（有 playUrl）的视频原来只能在内部小窗看，没有跳转口；
+   现在同样能给出去原站的入口，手机上想看原 App / 原网站时直接一点就走。 */
+function videoTargetUrl(vc) {
+  if (!vc) return '';
+  const id = String(vc.videoId || '').trim();
+  if (vc.url) return String(vc.url);
+  if (id) {
+    if (vc.platform === 'bilibili') return `https://www.bilibili.com/video/${encodeURIComponent(id)}/`;
+    if (vc.platform === 'douyin') return `https://www.douyin.com/video/${encodeURIComponent(id)}`;
+    if (vc.platform === 'youtube') return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+    if (vc.platform === 'xiaohongshu') return `https://www.xiaohongshu.com/explore/${encodeURIComponent(id)}`;
+  }
+  return vc.playUrl ? String(vc.playUrl) : '';
+}
+function videoTargetLabel(vc) {
+  const p = vc && vc.platform;
+  if (p === 'bilibili') return '去 B 站看';
+  if (p === 'douyin') return '去抖音看';
+  if (p === 'xiaohongshu') return '去小红书看';
+  if (p === 'youtube') return '去 YouTube 看';
+  if (p === 'direct') return '浏览器打开';
+  return '去原站看';
+}
+
 /* 打开视频播放弹窗：播放视频（iframe 或 video 标签），不自动播放由用户点开触发。
    20261104 重写 + 20261104 APP内播放：
    - B站/YouTube：有 embed，软件内 iframe 真实播放（最理想的「APP 内播放」，无需跳转）；
@@ -13948,45 +14205,136 @@ async function charAutoSendVideo(charId) {
    - 小红书/抖音/其他外链：无法 iframe 内嵌（X-Frame-Options 拒绝）→ 走 @capacitor/browser
      的 Browser.open()，在 APP 内打开系统内嵌浏览器（Chrome Custom Tabs / SFSafariViewController）
      真实播放视频页，顶部自带返回按钮回到 APP，不跳去外部浏览器/原站 App；
-     纯网页端（无 Capacitor/Browser 插件）fallback 到 window.open 新标签页。 */
+     纯网页端（无 Capacitor/Browser 插件）fallback 到 window.open 新标签页。
+   20261120 增强（玩家反馈：手机端小窗看不了全屏、想跳去原站/原 App 很不方便）：
+   - 播放器下方新增「全屏」按钮：把弹窗本体铺满视口（黑底、视频/iframe 撑满），
+     再点一次「退出全屏」回到原本的小窗弹窗状态；不动 DOM、不重载播放器，播放不中断；
+   - 播放器下方常驻「去 B 站 / 抖音 / 小红书 / YouTube 看」按钮：解析成功也有入口，
+     走 Browser.open（App 内浏览器，系统会按 App Links 唤起原 App），网页端新标签页打开。 */
 function openVideoPlay(vc) {
   if (!vc) return;
+  const ic = (n, s) => (typeof window.icon === 'function' ? window.icon(n, s) : '');
   const title = vc.title || '视频';
   // 20261104：封面防盗链——B站图床有 Referer 校验，http 升级 https + no-referrer 绕过
   const coverUrl = (vc.cover && typeof vc.cover === 'string') ? vc.cover.replace(/^http:\/\//i, 'https://') : vc.cover;
   const coverHtml = coverUrl
-    ? `<img src="${escapeHtml(imgSrc(coverUrl, true))}" referrerpolicy="no-referrer" style="width:100%;max-height:200px;object-fit:cover;display:block;border-radius:10px;margin-bottom:10px;background:#1a1420;">`
+    ? `<img class="vp-cover" src="${escapeHtml(imgSrc(coverUrl, true))}" referrerpolicy="no-referrer" style="width:100%;max-height:200px;object-fit:cover;display:block;border-radius:10px;margin-bottom:10px;background:#1a1420;">`
     : '';
   let playerHtml = '';
-  let extLink = '';   // 需要「APP 内打开网页播放」兜底的原始链接
+  let hasPlayer = false;   // 有真正的播放源才给「全屏」按钮（纯链接页没有可放大的内容）
   if (vc.embed) {
     // B站/YouTube：软件内 iframe 真实播放（封面+标题展示在上方）
     playerHtml = `${coverHtml}<iframe src="${escapeHtml(vc.embed)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+    hasPlayer = true;
   } else if (vc.playUrl) {
-    playerHtml = `<video src="${escapeHtml(vc.playUrl)}" controls style="width:100%;max-height:300px;border-radius:10px;background:#000;"></video>`;
+    playerHtml = `<video src="${escapeHtml(vc.playUrl)}" controls playsinline webkit-playsinline style="width:100%;max-height:300px;border-radius:10px;background:#000;"></video>`;
+    hasPlayer = true;
   } else if (vc.videoId && vc.platform === 'bilibili') {
     playerHtml = `${coverHtml}<iframe src="https://player.bilibili.com/player.html?bvid=${escapeHtml(vc.videoId)}" style="width:100%;height:240px;border:0;border-radius:10px;" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+    hasPlayer = true;
   } else if (vc.url) {
-    // 小红书/抖音/其它：无法 iframe 内嵌，改在 APP 内打开网页播放（Browser.open）
-    extLink = vc.url;
-    playerHtml = `${coverHtml}<div style="text-align:center;padding:14px 0;color:var(--text-secondary);font-size:13px;line-height:1.6;">该平台视频需跳转网页播放</div>`;
+    // 小红书/抖音/其它：无法 iframe 内嵌，给出封面 + 下方跳转按钮
+    playerHtml = `${coverHtml}<div style="text-align:center;padding:14px 0;color:var(--text-secondary);font-size:13px;line-height:1.6;">该平台视频需跳转原站播放</div>`;
   } else {
     playerHtml = `${coverHtml}<div style="text-align:center;color:var(--text-tertiary);padding:40px 0;">该视频暂无可播放源</div>`;
   }
-  openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-      <div style="font-size:16px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${escapeHtml(title)}</div>
-      <button class="icon-btn" id="vp-close"><i data-icon="close" data-size="17"></i></button>
+
+  const jumpUrl = videoTargetUrl(vc);
+  const jumpLabel = videoTargetLabel(vc);
+
+  const ok = openModal(`
+    <div class="vp-wrap">
+      <div class="vp-head">
+        <div class="vp-title">${escapeHtml(title)}</div>
+        <button class="icon-btn" id="vp-close"><i data-icon="close" data-size="17"></i></button>
+      </div>
+      <div class="vp-stage" id="vp-stage">${playerHtml}</div>
+      ${(hasPlayer || jumpUrl) ? `<div class="vp-actions">
+        ${hasPlayer ? `<button type="button" class="vp-btn" id="vp-full">${ic('expand', 15)}<span>全屏</span></button>` : ''}
+        ${hasPlayer ? `<button type="button" class="vp-btn vp-rot" id="vp-rot"><span>横过来看</span></button>` : ''}
+        ${jumpUrl ? `<button type="button" class="vp-btn vp-btn-primary" id="vp-jump">${ic('link', 15)}<span>${escapeHtml(jumpLabel)}</span></button>` : ''}
+      </div>` : ''}
+      <div class="vp-rotate-hint" id="vp-rotate-hint">把手机横过来，画面就铺满了</div>
     </div>
-    ${playerHtml}
-    ${extLink ? `<div style="margin-top:10px;display:flex;gap:10px;justify-content:center;">
-      <button id="vp-open-raw" style="display:inline-block;padding:10px 18px;border-radius:10px;background:var(--purple);color:#141019;font-size:14px;font-weight:600;border:0;cursor:pointer;">▶ 原链接播放</button>
-    </div>` : ''}
   `);
-  $('#vp-close').onclick = () => closeModal();
-  if (extLink) {
-    // 原链接跳转：直接打开原始链接（小红书/抖音 APP 页）
-    $('#vp-open-raw').onclick = () => openVideoInApp(extLink, title);
+  if (ok === false) return;
+
+  const content = $('#modal-content');
+  const mask = $('#modal-mask');
+  const fullBtn = $('#vp-full');
+  const closeBtn = $('#vp-close');
+  if (closeBtn) closeBtn.onclick = () => closeModal();
+
+  // 20261120：全屏 = 给弹窗本体挂 vp-fs（CSS 铺满视口），再点一次摘掉即回到小窗弹窗。
+  //   只切类、不重建 DOM，<video>/<iframe> 不会被重载，播放进度与声音都不断。
+  // 20261121：全屏要区分横屏视频与竖屏视频 ——
+  //   横屏（16:9）铺在竖屏手机上只会变成中间一条，所以全屏时把播放区转 90°，
+  //   画面按「手机横拿」的方向铺满整块屏幕；竖屏（9:16）则保持竖着铺满，不旋转。
+  //   iframe（B站/YouTube）读不到视频真实尺寸，按横屏处理（这两个平台基本都是横屏），
+  //   并给一个「横过来看 / 竖着看」按钮，玩家随时可以手动纠正。
+  let landMode = true;          // 当前是否按「横向铺满」处理
+  let landTouched = false;      // 玩家手动改过就不再自动判定
+  const rotBtn = $('#vp-rot');
+  const rotHint = $('#vp-rotate-hint');
+
+  const guessLandscape = () => {
+    try {
+      const v = document.querySelector('#vp-stage video');
+      if (v && v.videoWidth && v.videoHeight) {
+        // 1.15：接近正方形（1:1）按竖屏处理，不旋转，避免转得莫名其妙
+        return v.videoWidth > v.videoHeight * 1.15;
+      }
+    } catch (e) {}
+    return true;   // 没有可测尺寸（iframe / 尚未加载）→ 按横屏
+  };
+  const applyLand = () => {
+    if (!content) return;
+    const fs = content.classList.contains('vp-fs');
+    content.classList.toggle('vp-land', !!(fs && landMode));
+    if (rotBtn) rotBtn.innerHTML = `<span>${landMode ? '竖着看' : '横过来看'}</span>`;
+    if (rotHint) {
+      const show = !!(fs && landMode);
+      rotHint.classList.toggle('show', show);
+      if (show) { clearTimeout(rotHint._t); rotHint._t = setTimeout(() => rotHint.classList.remove('show'), 2200); }
+    }
+  };
+
+  const setFs = (on) => {
+    if (!content || !mask) return;
+    content.classList.toggle('vp-fs', !!on);
+    mask.classList.toggle('mask-vp-fs', !!on);
+    // 全屏时让一起听歌悬浮窗临时让位（它 z-index 极高，会挡画面）
+    document.body.classList.toggle('vp-fs-open', !!on);
+    if (on && !landTouched) landMode = guessLandscape();
+    if (fullBtn) {
+      fullBtn.innerHTML = `${ic(on ? 'scale' : 'expand', 15)}<span>${on ? '退出全屏' : '全屏'}</span>`;
+    }
+    applyLand();
+  };
+  setFs(false); // 每次打开都从小窗开始，防上一次全屏状态残留
+  if (fullBtn) fullBtn.onclick = () => setFs(!content.classList.contains('vp-fs'));
+  if (rotBtn) rotBtn.onclick = () => { landMode = !landMode; landTouched = true; applyLand(); };
+
+  // 视频元数据到位后重新判定一次（<video> 的尺寸只有加载后才知道）
+  try {
+    const v = document.querySelector('#vp-stage video');
+    if (v) {
+      const reGuess = () => { if (content.classList.contains('vp-fs') && !landTouched) { landMode = guessLandscape(); applyLand(); } };
+      v.addEventListener('loadedmetadata', reGuess);
+      v.addEventListener('playing', reGuess);
+    }
+  } catch (e) {}
+
+  const jumpBtn = $('#vp-jump');
+  if (jumpBtn && jumpUrl) {
+    jumpBtn.onclick = () => {
+      // 跳去原站前先把本页 <video> 暂停，避免两边同时出声
+      try {
+        const v = document.querySelector('#vp-stage video');
+        if (v) v.pause();
+      } catch (e) {}
+      openVideoInApp(jumpUrl, title);
+    };
   }
 }
 
@@ -14256,8 +14604,11 @@ function _seasonCardPoolFor(c) {
   });
   list = list.map(function (t) { return String(t || '').trim(); }).filter(Boolean);
   if (banWords.length) {
+    /* 20261122：单句精确匹配（逐字完全相同；原来 indexOf 子串会在短卡上误伤） */
     list = list.filter(function (t) {
-      return !banWords.some(function (w) { return w && t.indexOf(w) >= 0; });
+      return !((typeof bmBanHit === 'function')
+        ? bmBanHit(t, banWords)
+        : banWords.some(function (w) { return w != null && String(w) === String(t); }));
     });
   }
   return list;
@@ -18972,7 +19323,7 @@ function showCardsModal() {
       <div style="display:flex;align-items:center;gap:8px;">
         ${batch && tab === 'replies' ? `<button class="btn" style="padding:6px 12px;font-size:13px;" id="btn-cards-movetop">移动</button>` : ''}
         <button class="btn" style="padding:6px 12px;font-size:13px;" id="btn-cards-batch">${batch ? '退出批量' : '批量管理'}</button>
-        <button class="plus-ring" id="btn-cards-plus" title="新建分组 / 添加字卡 / 过滤重复 / 禁词管理">
+        <button class="plus-ring" id="btn-cards-plus" title="新建分组 / 添加字卡 / 过滤重复">
           <span class="plus-ring-sym">＋</span>
         </button>
         <button class="icon-btn" id="btn-cards-close"><i data-icon="close" data-size="17"></i></button>
@@ -18989,6 +19340,9 @@ function showCardsModal() {
         <input class="input" id="cards-search" placeholder="搜索字卡…" style="padding-left:36px;" value="${escapeHtml(window._cardsSearch || '')}">
       </div>
     ` : ''}
+
+    <!-- 20261122：字卡库顶部「角色移进禁词的字卡」入口（7 天内清单，异步统计后填充） -->
+    <div id="bm-cd-shelf-slot"></div>
 
     ${tab === 'replies' ? `<div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">共 ${total} 条字卡 · ${cards.customReplyGroups.length} 个分组${batch ? ' · <span style="color:var(--purple-soft);">批量模式：点击字卡勾选，可整组勾选或移动</span>' : ''}</div>` : ''}
 
@@ -19012,6 +19366,35 @@ function showCardsModal() {
       ` : ''}
     </div>
   `);
+
+  /* 20261122：异步填入口条 —— 顶部统计「几个角色 · 几张字卡 · 7 天内可撤销」。
+     没有记录时整块移除，不占版面；统计失败静默忽略，绝不影响字卡库本身。 */
+  (async () => {
+    try {
+      const slot = document.getElementById('bm-cd-shelf-slot');
+      if (!slot) return;
+      if (typeof window.bmCardDeleteShelfStat !== 'function') { slot.remove(); return; }
+      const st = await window.bmCardDeleteShelfStat();
+      const slot2 = document.getElementById('bm-cd-shelf-slot');
+      if (!slot2) return;
+      if (!st || !st.items) { slot2.remove(); return; }
+      if (typeof window.bmCardDeleteStyle === 'function') window.bmCardDeleteStyle();
+      const sub = st.chars + ' 个角色 · 共 ' + st.items + ' 条禁词' +
+        (st.lyric ? ' · 歌词 ' + st.lyric + ' 张' : '') +
+        (st.recent ? ' · ' + st.recent + ' 个有 ' + 7 + ' 天内的记录' : '');
+      slot2.innerHTML = '<div class="bm-cd-shelf" id="bm-cd-shelf-entry">' +
+        '<span class="bm-cd-shelf-ic">📋</span>' +
+        '<span class="bm-cd-shelf-tx">' +
+        '<span class="bm-cd-shelf-t">角色禁词总览</span>' +
+        '<span class="bm-cd-shelf-s">' + sub + ' · 可移出或删掉字卡</span>' +
+        '</span>' +
+        '<span class="bm-cd-shelf-arr">&#8250;</span></div>';
+      const entry = document.getElementById('bm-cd-shelf-entry');
+      if (entry) entry.onclick = () => {
+        if (typeof window.bmCardDeleteShelf === 'function') window.bmCardDeleteShelf();
+      };
+    } catch (e) {}
+  })();
 
   $('#btn-cards-close').onclick = closeModal;
   $('#btn-cards-plus').onclick = () => showCardsPlusMenu();
@@ -19553,9 +19936,6 @@ function showCardsPlusMenu() {
       <button class="btn block" style="justify-content:flex-start;" id="cp-dedupe">
         <span class="func-ic"><i data-icon="broom" data-size="16"></i></span><span>过滤重复字卡</span>
       </button>
-      <button class="btn block" style="justify-content:flex-start;" id="cp-banwords">
-        <span class="func-ic"><i data-icon="ban" data-size="16"></i></span><span>字卡禁词管理</span>
-      </button>
     </div>
   `);
   $('#cp-close').onclick = () => showCardsModal();
@@ -19569,7 +19949,7 @@ function showCardsPlusMenu() {
       showCardsModal();
     });
   };
-  $('#cp-banwords').onclick = () => showGlobalBanWordsModal();
+  /* 20261122：字卡禁词管理入口已移除（全局字卡禁词停用，见下方说明） */
 }
 
 /* 20261117：添加字卡 → 输入完点「确定」不再直接进未分组，先弹「存入哪个分组」。
@@ -19936,152 +20316,9 @@ function showGroupSelectModal(groups, onPick) {
   $('#gsel-ungroup').onclick = () => onPick(null);
 }
 
-/* ---------- 全局字卡禁词管理（5.11：独立于访客禁词，含文件夹分类 + 批量管理） ---------- */
-function showGlobalBanWordsModal() {
-  cards.customBanWords = cards.customBanWords || [];
-  cards.customBanWordGroups = cards.customBanWordGroups || [];
-  const batch = !!window._banBatch;
-
-  const total = cards.customBanWords.length + cards.customBanWordGroups.reduce((s, g) => s + (g.items || []).length, 0);
-  openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-      <div style="font-size:18px;font-weight:600;">字卡禁词</div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button class="btn" style="padding:6px 12px;font-size:13px;" id="ban-batch">${batch ? '退出批量' : '批量管理'}</button>
-        <button class="icon-btn" id="ban-close"><i data-icon="close" data-size="17"></i></button>
-      </div>
-    </div>
-    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">
-      全局字卡禁词：抽取任何字卡时都会过滤掉包含这些词的条目。共 ${total} 条${batch ? ' · <span style="color:var(--purple-soft);">批量模式：点击勾选</span>' : ''}
-    </div>
-
-    <div style="margin-bottom:14px;">
-      <div style="font-size:14px;font-weight:600;margin-bottom:8px;">未分组禁词（${cards.customBanWords.length}）</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;min-height:20px;" id="banb-ungrouped">
-        ${cards.customBanWords.map((w, i) => batch
-          ? `<span class="badge" style="cursor:pointer;" data-bsel="${i}">${escapeHtml(w)}</span>`
-          : `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bdel="${i}">${escapeHtml(w)} <i data-icon="close" data-size="12"></i></span>`
-        ).join('')}
-      </div>
-    </div>
-
-    ${cards.customBanWordGroups.map((g, gi) => `
-      <div style="margin-bottom:14px;">
-        <div style="font-size:14px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;">
-          <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${g.color || '#a78bfa'};margin-right:6px;"></span>${escapeHtml(g.name)}（${(g.items || []).length}）</span>
-          ${batch ? '' : `<span class="badge" style="cursor:pointer;color:var(--danger);" data-bdelgroup="${gi}">删</span>`}
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">
-          ${(g.items || []).map((w, ii) => batch
-            ? `<span class="badge" style="cursor:pointer;" data-bgsel="${gi}" data-bgseli="${ii}">${escapeHtml(w)}</span>`
-            : `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bg="${gi}" data-bi="${ii}">${escapeHtml(w)} <i data-icon="close" data-size="12"></i></span>`
-          ).join('')}
-        </div>
-      </div>
-    `).join('')}
-
-    <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px;">
-      ${batch ? `
-        <button class="btn danger block" id="ban-batchdel">删除所选禁词</button>
-      ` : `
-        <div style="display:flex;gap:8px;margin-bottom:6px;">
-          <input class="input" id="ban-input" placeholder="输入禁词" style="flex:1;">
-          <button class="btn primary" id="ban-add">添加</button>
-        </div>
-        <button class="btn block" id="ban-addgroup"><i data-icon="folder" data-size="16"></i> 新建禁词分组</button>
-      `}
-    </div>
-  `);
-
-  // 20261117：关闭禁词子页回到「字卡功能」菜单（上一级），点空白处同理
-  $('#ban-close').onclick = () => showCardsPlusMenu();
-  window.__bmModalOnDismiss = () => showCardsPlusMenu();
-  $('#ban-batch').onclick = () => { window._banBatch = !batch; showGlobalBanWordsModal(); };
-
-  if (batch) {
-    const sel = new Set(); // 存 "u:i" 或 "g:gi:ii"
-    const apply = () => {
-      document.querySelectorAll('[data-bsel]').forEach(el => {
-        const on = sel.has('u:' + el.dataset.bsel);
-        el.style.background = on ? 'var(--purple)' : ''; el.style.color = on ? '#141019' : '';
-      });
-      document.querySelectorAll('[data-bgsel]').forEach(el => {
-        const on = sel.has('g:' + el.dataset.bgsel + ':' + el.dataset.bgseli);
-        el.style.background = on ? 'var(--purple)' : ''; el.style.color = on ? '#141019' : '';
-      });
-    };
-    document.querySelectorAll('[data-bsel]').forEach(el => {
-      el.onclick = () => { const k = 'u:' + el.dataset.bsel; sel.has(k) ? sel.delete(k) : sel.add(k); apply(); };
-    });
-    document.querySelectorAll('[data-bgsel]').forEach(el => {
-      el.onclick = () => { const k = 'g:' + el.dataset.bgsel + ':' + el.dataset.bgseli; sel.has(k) ? sel.delete(k) : sel.add(k); apply(); };
-    });
-    $('#ban-batchdel').onclick = () => {
-      const ungroupIdx = [...sel].filter(k => k.startsWith('u:')).map(k => parseInt(k.slice(2))).sort((a, b) => b - a);
-      ungroupIdx.forEach(i => cards.customBanWords.splice(i, 1));
-      const groupDel = {};
-      [...sel].filter(k => k.startsWith('g:')).forEach(k => {
-        const [, gi, ii] = k.split(':').map(Number);
-        (groupDel[gi] = groupDel[gi] || []).push(ii);
-      });
-      Object.keys(groupDel).forEach(gi => {
-        groupDel[gi].sort((a, b) => b - a).forEach(ii => cards.customBanWordGroups[gi].items.splice(ii, 1));
-      });
-      saveCards(cards).then(() => showGlobalBanWordsModal());
-    };
-    return;
-  }
-
-  // 删除未分组禁词
-  document.querySelectorAll('[data-bdel]').forEach(el => {
-    el.onclick = () => { cards.customBanWords.splice(parseInt(el.dataset.bdel), 1); saveCards(cards).then(() => showGlobalBanWordsModal()); };
-  });
-  // 删除分组内禁词
-  document.querySelectorAll('[data-bg][data-bi]').forEach(el => {
-    el.onclick = () => {
-      cards.customBanWordGroups[parseInt(el.dataset.bg)].items.splice(parseInt(el.dataset.bi), 1);
-      saveCards(cards).then(() => showGlobalBanWordsModal());
-    };
-  });
-  // 删除分组
-  document.querySelectorAll('[data-bdelgroup]').forEach(el => {
-    el.onclick = () => {
-      const g = parseInt(el.dataset.bdelgroup);
-      showConfirm(`删除禁词分组「${cards.customBanWordGroups[g].name}」？组内禁词将一并删除。`, () => {
-        cards.customBanWordGroups.splice(g, 1);
-        saveCards(cards).then(() => showGlobalBanWordsModal());
-      });
-    };
-  });
-
-  $('#ban-add').onclick = () => {
-    const v = $('#ban-input').value.trim();
-    if (v && !cards.customBanWords.includes(v)) {
-      cards.customBanWords.push(v);
-      saveCards(cards).then(() => showGlobalBanWordsModal());
-    }
-  };
-  $('#ban-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#ban-add').click(); });
-
-  $('#ban-addgroup').onclick = () => {
-    openModal(`
-      <div style="font-size:18px;font-weight:600;margin-bottom:16px;">新建禁词分组</div>
-      <div class="field"><label>分组名称</label><input class="input" id="bang-name" placeholder="如：脏话、敏感词…"></div>
-      <div class="field"><label>分组颜色</label><input type="color" id="bang-color" value="#a78bfa" style="width:100%;height:40px;border:none;background:none;cursor:pointer;"></div>
-      <div style="display:flex;gap:10px;">
-        <button class="btn" style="flex:1;" id="bang-cancel">取消</button>
-        <button class="btn primary" style="flex:1;" id="bang-save">创建</button>
-      </div>
-    `);
-    $('#bang-cancel').onclick = closeModal;
-    $('#bang-save').onclick = () => {
-      const name = $('#bang-name').value.trim();
-      if (!name) { miniToast('请填写分组名称'); return; }
-      cards.customBanWordGroups.push({ id: uid('bang'), name, color: $('#bang-color').value, items: [] });
-      saveCards(cards).then(() => showGlobalBanWordsModal());
-    };
-  };
-}
+/* 20261122：全局字卡禁词功能已停用（玩家定案：只有角色主页里的「访客禁词」）。
+   原 showGlobalBanWordsModal 整块删除；cards.customBanWords / customBanWordGroups
+   两个字段保留，只为老备份兼容，不再参与任何过滤。 */
 
 /* 导入字卡弹窗（19.4：全模块识别 + 合并/覆盖） */
 function showCardImportModal() {
@@ -22235,6 +22472,14 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
 
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between;">
+        <span>允许角色自己添加禁词</span>
+        <input type="checkbox" id="cs-allow-self-ban" ${s.allowSelfBan !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
+      </label>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开着：TA 可能自己把某几张字卡收进自己的禁词，也可能把之前收进去的放出来。每次改动都会给你发一张清单；字卡库 →「角色禁词总览」里能看到每个角色当前的全部禁词，随时移出或删掉对应字卡。关掉：TA 不再动禁词。这一项只由你决定，角色不会动它。</div>
+    </div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;justify-content:space-between;">
         <span>显示角色修改过程</span>
         <input type="checkbox" id="cs-sa-show-process" ${saShowProcessOn() ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
@@ -23818,6 +24063,8 @@ function bindChatSettings(s, onSave, tcChar) {
     s.maxDelay = parseInt($('#cs-max-num').value) || 0;
     if (s.minDelay > s.maxDelay) { const t = s.minDelay; s.minDelay = s.maxDelay; s.maxDelay = t; }
     s.proactive = $('#cs-proactive').checked;
+    // 20261122：允许角色自己添加禁词（card-delete.js 的总开关）
+    s.allowSelfBan = $('#cs-allow-self-ban').checked;
     s.proactiveMin = Math.min(120, Math.max(1, parseInt($('#cs-proactive-min').value) || 10));
     // 20260929bf：随机发消息分钟区间（1~720；最小>最大时自动对调）
     let randMin = Math.min(720, Math.max(1, parseInt($('#cs-proactive-rand-min').value, 10) || 10));
@@ -24693,18 +24940,24 @@ function showDataCatModal(id) {
         <b style="color:var(--text);">不包含</b>（需在对应分类里单独导出）：音乐<b style="color:var(--text);">音频文件本体</b>（本地歌曲恢复后要重新选一次文件）。<br>
         另外<b style="color:var(--text);">两处按设计不备份</b>：AI 接口配置、占卜接口地址——换机或重装后需要重新填写；角色每日日程表会在次日自动重新生成。
       </div>
+      <div id="wb-backup-slot"></div>
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
       <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">恢复：检测现有<b>自动备份</b>，选择要恢复到的那一份（无需手动找文件）</div>
       ${btn('btn-restore-auto', '恢复自动备份（选择）', '🔄')}
       ${btn('btn-clear-legacy-auto', '清除旧格式备份（保留最新一份）', '🗂')}
       <div style="height:1px;background:var(--border);margin:16px 0 14px;"></div>
-      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">维护：软件或浏览器更新后，清掉旧版本遗留的冗余缓存（只清缓存，<b>不影响</b>访客、聊天记录等正式数据）</div>
-      ${btn('btn-clear-stale', '清除冗余缓存（旧版遗留）', '🧹')}`;
+      <div style="font-size:13px;color:var(--text-tertiary);margin-bottom:10px;">维护：只清理浏览器缓存存储（Cache Storage / Service Worker 残留），<b>不碰</b>聊天记录、四季（植物/书签/种子/图鉴）、照片与任何数据库</div>
+      ${btn('btn-clear-stale', '清除冗余缓存（旧版遗留）', '🧹')}
+      <div style="font-size:13px;color:var(--text-tertiary);margin:14px 0 10px;">保护：四季数据只存在本机缓存里，被误删后没有副本 —— 这里可以找回最近几天的存档</div>
+      ${btn('btn-season-snap', '四季存档找回（本机快照）', '🌱')}`;
     $('#btn-export').onclick = () => showExportAllModal(() => showDataCatModal('migrate'));
     $('#btn-import').onclick = () => showImportModal(showDataModal);
     $('#btn-restore-auto').onclick = restoreAutoBackup;
     $('#btn-clear-legacy-auto').onclick = clearLegacyAutoBackups;
     $('#btn-clear-stale').onclick = clearStaleCache;
+    $('#btn-season-snap').onclick = showSeasonSnapshotsModal;
+    /* 20261120：网页端自动备份的挂载点。APK 端没有 __wbMount（脚本在 App 环境直接退出），此行空跑。 */
+    try { if (window.__wbMount) window.__wbMount(document.getElementById('wb-backup-slot')); } catch (e) {}
     // 20261011 晚：重进数据迁移页时，若有进行中的导入/导出任务，恢复完整进度面板继续显示
     if (isProgressActive()) setProgressPanelMode(true);
   } else if (id === 'chars') {
@@ -25043,7 +25296,10 @@ function showImportSeasonModal(back = null) {
       导入方式固定为<b>合并</b>：补上缺的照片与图鉴/书签记录，不会清掉你现在养到的进度。<br>
       独立于全局数据，不影响访客、聊天记录等其他内容。
     </div>
-    <input type="file" id="ism-file" accept=".seasondata,.json" style="display:none;" />
+    <!-- accept 必须放宽：安卓系统文件选择器会把 .seasondata 这类自定义扩展名判成
+         application/octet-stream 或 text/plain，只写 ".seasondata,.json" 会让文件整片置灰、
+         根本点不中（字卡导入那次踩过同一个坑，见 card-file 的注释）。 -->
+    <input type="file" id="ism-file" accept=".seasondata,.json,application/json,application/octet-stream,text/plain" style="display:none;" />
     <button class="btn primary block" id="ism-go">选择文件并合并导入</button>
     <div id="ism-msg" style="font-size:12px;color:var(--text-tertiary);margin-top:10px;display:none;"></div>
   `);
@@ -25423,48 +25679,58 @@ async function clearStaleCache() {
       for (const r of regs) { await r.unregister(); cleaned.push('Service Worker 注册'); }
     }
   } catch (e) {}
-  // ③ localStorage / sessionStorage（20261010 修复：只清真正的旧版遗留键。
-  //   bm_notify_asked / bm_guide_done / bm_srcwarn / __justAutocleared 是应用运行时活键，
-  //   清掉会导致「每次清完下次清除还有一项」+ 通知授权反复询问——它们不是冗余）
+  /* ③ localStorage / sessionStorage —— 20261121 起改为「正向黑名单」：只删下面明确列出的键，
+     其余一律不动（列表为空就一项都不删）。
+     事故原因：旧写法是「不在白名单里就删」，而本应用有一批正经数据恰恰存在 localStorage 里：
+       · bmSeasonSave      四季存档（星球植物 / 种子 / 书签 / 照片记录 / 图鉴 / 照料记录）
+       · bmSeasonDataVer   四季存档版本戳（被删会触发重建流程）
+       · bm_notify_asked / bm_guide_done / bm_srcwarn / __justAutocleared  运行时活键
+       · 诊断日志、网页备份 wb_* 索引等
+     于是这个写着「只清缓存、不影响正式数据」的按钮，把玩家 6 株植物 / 4 张书签 / 8 颗种子 /
+     5 条图鉴整个清空。localStorage 容量极小，清它对释放空间几乎没有意义——宁可不碰。 */
   try {
-    const keepLS = new Set(['bm_notify_asked', 'bm_guide_done', 'bm_srcwarn']);
-    let lsStale = 0;
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (k && !keepLS.has(k)) { localStorage.removeItem(k); lsStale++; }
-    }
-    const keepSS = new Set(['bm_srcwarn', '__justAutocleared']);
-    let ssStale = 0;
-    for (let i = sessionStorage.length - 1; i >= 0; i--) {
-      const k = sessionStorage.key(i);
-      if (k && !keepSS.has(k)) { sessionStorage.removeItem(k); ssStale++; }
-    }
+    const STALE_LS = new Set([]);   // 确认可删的旧版遗留键（目前为空，保持为空最安全）
+    const STALE_SS = new Set([]);
+    let lsStale = 0, ssStale = 0;
+    STALE_LS.forEach(k => { try { if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); lsStale++; } } catch (e2) {} });
+    STALE_SS.forEach(k => { try { if (sessionStorage.getItem(k) !== null) { sessionStorage.removeItem(k); ssStale++; } } catch (e2) {} });
     if (lsStale) cleaned.push('localStorage 旧数据 ' + lsStale + ' 项');
     if (ssStale) cleaned.push('sessionStorage 旧数据 ' + ssStale + ' 项');
   } catch (e) {}
-  // ④ 旧版本遗留的 IndexedDB 数据库（正式库名固定为 bairimeng）
+  /* ④ IndexedDB —— 20261121 起改为「只删明确列出的旧库」，其余一律不动。
+     事故原因：旧写法是「库名不等于 bairimeng 就整库删」，而本项目还有两个正经业务库：
+       · bmSeasonImg        四季照片本体（书签图 / 照片墙的图片全在这里）
+       · bm_webbackup_meta  网页端自动备份索引
+     旧写法会把它们删掉——照片就再也找不回来了。现在用「保护名单 + 旧库名单」双保险，
+     旧库名单为空 → 一个库都不删。 */
   try {
     if (indexedDB.databases) {
+      const PROTECT_DBS = new Set([DB_NAME, 'bmSeasonImg', 'bm_webbackup_meta']);
+      const LEGACY_DBS = new Set([]);   // 确认可删的旧库名（目前为空，保持为空最安全）
       const dbs = await indexedDB.databases();
       for (const d of (dbs || [])) {
-        if (d && d.name && d.name !== DB_NAME) {
-          // 20261010 修复：deleteDatabase 是异步的，之前没等待就报「已清理」——
-          // 实际可能没删完（库被占用时还会静默失败），导致「清完还有」
-          await new Promise(res => {
-            try {
-              const rq = indexedDB.deleteDatabase(d.name);
-              rq.onsuccess = res; rq.onerror = res; rq.onblocked = res;
-              setTimeout(res, 3000); // 兜底：极慢设备不卡住清理流程
-            } catch (e2) { res(); }
-          });
-          cleaned.push('旧数据库「' + d.name + '」');
-        }
+        if (!d || !d.name) continue;
+        if (PROTECT_DBS.has(d.name)) continue;      // 业务库，绝不碰
+        if (!LEGACY_DBS.has(d.name)) continue;      // 不在旧库名单里的，也不碰
+        // 20261010 修复：deleteDatabase 是异步的，必须等它真的结束再报「已清理」
+        await new Promise(res => {
+          try {
+            const rq = indexedDB.deleteDatabase(d.name);
+            rq.onsuccess = res; rq.onerror = res; rq.onblocked = res;
+            setTimeout(res, 3000); // 兜底：极慢设备不卡住清理流程
+          } catch (e2) { res(); }
+        });
+        cleaned.push('旧数据库「' + d.name + '」');
       }
     }
   } catch (e) {}
   // ⑤ 孤儿聊天记录（20261001cn）：不属于任何现存访客的单聊消息——历史版本残留/导入错位产生的多余数据组
   try {
-    const curIds = new Set((typeof characters !== 'undefined' ? characters : []).map(c => c.id));
+    /* 20261121 加保险：characters 尚未加载完时 curIds 会是空集，
+       那样「所有消息都不属于现存角色」→ 会把全部单聊记录一次性删光。宁可跳过。 */
+    const curChars = (typeof characters !== 'undefined' && Array.isArray(characters)) ? characters : null;
+    if (!curChars || !curChars.length) throw new Error('BM_SKIP_NO_CHARS');
+    const curIds = new Set(curChars.map(c => c.id));
     const msgs = await idbGetAll('messages');
     let orphan = 0;
     for (const mm of msgs) {
@@ -25478,7 +25744,7 @@ async function clearStaleCache() {
         <div style="font-size:40px;margin-bottom:12px;"><i data-icon="broom" data-size="37"></i></div>
         <div style="font-size:15px;line-height:1.7;color:var(--text);">已清理 ${cleaned.length} 项冗余缓存：<br><span style="font-size:13px;color:var(--text-secondary);">${escapeHtml(cleaned.slice(0, 8).join('；'))}${cleaned.length > 8 ? ' 等' : ''}</span></div>
       </div>
-      <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:10px;">建议立即刷新页面，确保加载的是最新版代码（访客与聊天记录不受影响）。</div>
+      <div style="font-size:12.5px;color:var(--text-tertiary);margin-top:10px;">建议立即刷新页面，确保加载的是最新版代码（聊天记录、四季、书签、照片都不受影响）。</div>
       <div style="display:flex;gap:10px;margin-top:18px;">
         <button class="btn" style="flex:1;" id="cc-later">稍后自己刷</button>
         <button class="btn primary" style="flex:1;" id="cc-reload">立即刷新</button>
@@ -25490,6 +25756,120 @@ async function clearStaleCache() {
     miniToast('没发现冗余缓存，已经很干净啦');
   }
 }
+
+/* ---------- 20261121：四季存档快照（本地找回，不依赖任何备份文件） ----------
+   四季的全部数据存在 localStorage['bmSeasonSave']（唯一不在 IndexedDB 里的正式数据），
+   一旦被误删就彻底没有。四季页现在每次存盘前会留「每天一份」快照，这里提供找回入口。 */
+const BM_SEASON_SNAP_PREFIX = 'bmSeasonSave_snap_';
+const BM_SEASON_SNAP_KEEP = 5;
+
+/* 立即给当前四季存档留一份快照（今天已有就不重复写；恢复操作前也会调用一次） */
+function bmSeasonSnapNow(reason) {
+  try {
+    const raw = localStorage.getItem('bmSeasonSave');
+    if (!raw || raw.length < 20 || raw.length > 400000) return false;
+    const d = new Date();
+    const day = '' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    const key = BM_SEASON_SNAP_PREFIX + day;
+    if (localStorage.getItem(key)) return true;
+    let sum = { plants: 0, books: 0, seeds: 0 };
+    try {
+      const o = JSON.parse(raw);
+      sum.plants = ((o.planet || {}).plants || []).length;
+      sum.books = (o.books || []).length;
+      sum.seeds = (o.seeds || []).length;
+    } catch (e) {}
+    localStorage.setItem(key + '_meta', JSON.stringify({ at: Date.now(), reason: String(reason || ''), bytes: raw.length, plants: sum.plants, books: sum.books, seeds: sum.seeds }));
+    localStorage.setItem(key, raw);
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf(BM_SEASON_SNAP_PREFIX) === 0 && k.indexOf('_meta') < 0) keys.push(k);
+    }
+    keys.sort();
+    while (keys.length > BM_SEASON_SNAP_KEEP) {
+      const old = keys.shift();
+      try { localStorage.removeItem(old); localStorage.removeItem(old + '_meta'); } catch (e) {}
+    }
+    return true;
+  } catch (e) { return false; }
+}
+
+function bmSeasonSnapList() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf(BM_SEASON_SNAP_PREFIX) !== 0 || k.indexOf('_meta') > 0) continue;
+      const day = k.slice(BM_SEASON_SNAP_PREFIX.length);
+      let meta = {};
+      try { meta = JSON.parse(localStorage.getItem(k + '_meta') || '{}') || {}; } catch (e) {}
+      const raw = localStorage.getItem(k) || '';
+      out.push({
+        key: k, day,
+        bytes: raw.length,
+        at: Number(meta.at) || 0,
+        reason: String(meta.reason || ''),
+        plants: Number(meta.plants) || 0,
+        books: Number(meta.books) || 0,
+        seeds: Number(meta.seeds) || 0,
+      });
+    }
+  } catch (e) {}
+  out.sort((a, b) => b.day.localeCompare(a.day));
+  return out;
+}
+
+/* 找回界面：列出每天一份，选一天恢复（恢复前先给现在这份也留一份，选错还能退） */
+function showSeasonSnapshotsModal() {
+  const list = bmSeasonSnapList();
+  if (!list.length) {
+    showConfirm('本机还没有四季快照。\n\n从今天起，四季每次存盘前都会自动留一份（每天一份、最多 5 份），即使存档被误删也能在这里找回。', null);
+    return;
+  }
+  const fmtDay = (d) => d.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
+  const rows = list.map((it, i) => `
+    <label class="bm-restore-item" data-day="${escapeHtml(it.day)}" style="display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;margin-bottom:8px;">
+      <input type="radio" name="bm-snap-pick" value="${escapeHtml(it.key)}" style="accent-color:var(--purple);width:16px;height:16px;" ${i === 0 ? 'checked' : ''}>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:600;color:var(--text-primary);">${escapeHtml(fmtDay(it.day))} 的快照</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;line-height:1.5;">植物 ${it.plants} 株 · 书签 ${it.books} 张 · 种子 ${it.seeds} 颗 · ${bmFmtBytes(it.bytes)}</div>
+        ${it.reason ? `<div style="font-size:11.5px;color:var(--text-tertiary);margin-top:2px;">记录原因：${escapeHtml(it.reason)}</div>` : ''}
+      </div>
+    </label>`).join('');
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:18px;font-weight:600;">四季存档找回</div>
+      <button class="icon-btn" id="bm-snap-close"><i data-icon="close" data-size="17"></i></button>
+    </div>
+    <div style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;line-height:1.6;">
+      本机每天自动留一份四季存档（最多 5 份）。存档被误删、写坏，或想回到某一天的状态时，选一份恢复即可。<br>
+      <span style="color:var(--text-tertiary);font-size:12px;">恢复前会先把「现在这份」也留成快照，选错还能再退回来。图片不在这份快照里（它们单独存着，不会被动）。</span>
+    </div>
+    <div style="max-height:48vh;overflow-y:auto;">${rows}</div>
+    <button class="btn primary block" id="bm-snap-go" style="margin-top:14px;">恢复到选中的这一天</button>
+  `);
+  $('#bm-snap-close').onclick = () => closeModal();
+  $('#bm-snap-go').onclick = async () => {
+    const picked = document.querySelector('input[name="bm-snap-pick"]:checked');
+    if (!picked) { miniToast('先选一天'); return; }
+    const raw = localStorage.getItem(picked.value);
+    if (!raw) { miniToast('这份快照已被清理'); return; }
+    let d = null;
+    try { d = JSON.parse(raw); } catch (e) {}
+    if (!d || !d.__season) { miniToast('快照内容损坏，未执行'); return; }
+    const pl = d.planet || {};
+    const nPlants = (pl.plants || []).length, nBooks = (d.books || []).length;
+    const ok = await confirmAsync('把四季恢复到「' + picked.closest('[data-day]').dataset.day.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3') + '」的状态：\n\n植物 ' + nPlants + ' 株 · 书签 ' + nBooks + ' 张\n\n现在这份会先留成快照，选错还能退回。', '恢复', '取消');
+    if (!ok) return;
+    bmSeasonSnapNow('恢复快照前自动留存');       // 先把当前这份留住
+    try { localStorage.setItem('bmSeasonSave', raw); }
+    catch (e) { miniToast('写入失败：空间不足'); return; }
+    miniToast('四季已回到 ' + (picked.closest('[data-day]').dataset.day) + '，正在重新载入…');
+    setTimeout(() => location.reload(), 800);
+  };
+}
+
 
 /* ---------- 导入全局数据（2.4：支持覆盖/合并） ---------- */
 function showImportModal(back = null) {
@@ -25970,6 +26350,8 @@ async function restoreAutoBackup() {
         seasonFile: sFile,
         seasonPhotos: (meta && typeof meta.seasonPhotos === 'number') ? meta.seasonPhotos : -1,
         seasonBytes: (meta && Number(meta.seasonBytes)) || 0,
+        // 20261121：把「这次为什么没备四季」的原因带到列表上，不再只显示一个「无四季」
+        seasonErr: (meta && meta.seasonErr) ? String(meta.seasonErr).slice(0, 60) : '',
         time: stamp ? fmtBackupTime(stamp) : '未知时间',
         // -1 = 「索引里没有，暂无统计」，列表显示为「—」，不假装是 0
         charCount: (meta && typeof meta.charCount === 'number') ? meta.charCount : -1,
@@ -26047,16 +26429,21 @@ function showRestoreAutoModal(list) {
     if (isFallback) {
       tag += '<span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:6px;background:var(--purple-dim);color:var(--purple);font-size:10.5px;font-weight:600;vertical-align:1px;">兜底·已保留</span>';
     }
-    /* 20261116：新格式会显示四季是否跟着一起恢复 —— 这是玩家最关心的「照片墙在不在」 */
+    /* 20261116：新格式会显示四季是否跟着一起恢复 —— 这是玩家最关心的「照片墙在不在」
+       20261121：没有四季时不再只写「无四季」，把原因一起带出来（为什么这次没有植物） */
     const seasonTxt = isDir ? ''
-      : (it.seasonFile
+      : ((it.seasonFile
         ? ' · 四季 ' + (it.seasonPhotos > 0 ? (it.seasonPhotos + ' 张照片') : '已包含')
-        : ' · 无四季');
+        : ' · 无四季')
+        + (it.seasonErr ? '（' + String(it.seasonErr).slice(0, 22) + '）' : ''));
     const seasonTag = (!isDir && it.seasonFile)
       ? '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:var(--purple-dim);color:var(--purple);font-size:10.5px;font-weight:600;vertical-align:1px;">含四季</span>'
       : '';
     const warn = (isDir && it.imgCount === 0)
       ? '<div style="font-size:11.5px;color:#c08a1e;margin-top:3px;line-height:1.4;">⚠ 此备份不含图片，恢复后聊天与朋友圈的图会丢</div>'
+      : '';
+    const seasonWarn = (!isDir && !it.seasonFile)
+      ? '<div style="font-size:11.5px;color:#c08a1e;margin-top:3px;line-height:1.4;">⚠ 这一份没有四季数据，恢复后星球植物/书签/照片不会变化</div>'
       : '';
     const hidden = isDir && !shownDir.has(it.set);
     return `
@@ -26066,6 +26453,7 @@ function showRestoreAutoModal(list) {
         <div style="font-size:14px;font-weight:600;color:var(--text-primary);">${escapeHtml(it.time)}${tag}${seasonTag}</div>
         <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;line-height:1.5;">角色 ${fmtN(it.charCount)} 个 · 消息 ${fmtN(it.msgCount)} 条 · 图片 ${fmtN(it.imgCount)} 张${sizeTxt}${seasonTxt}</div>
         ${warn}
+        ${seasonWarn}
       </div>
     </label>`;
   }).join('');
@@ -26109,130 +26497,523 @@ function showRestoreAutoModal(list) {
    · 新格式（单文件容器 .ocdata）→ 整读成内存 File，走与「全局导入」完全相同的解析链：
      probeContainerHead 找分隔符 → JSON 头 → bmCreateStreamReader 顺序读图 → doImport；
    · 旧格式（目录式 manifest.json + images/）→ 保持原逻辑（restoreAutoImagesV3 逐张读图 → doImport）。 */
-async function doRestoreAutoBackup(it) {
+/* ============================================================================
+   20261121：恢复自动备份 —— 独立链路 bmRestore*
+   ----------------------------------------------------------------------------
+   玩家要求：恢复自动备份不许再「直接引用全局导入导出那条链」，两边互不影响。
+   于是这里自成一套：读取 → 解析 → 图片还原 → 写库 → 四季合并，共 5 段，
+   全部 bmRestore* 前缀，不调用 doImport / deepImagesFromExport /
+   restoreImagesV3 / restoreImagesV4 / bmImportSeasonPayload 中的任何一个。
+
+   只复用「格式原子工具」这一层（它们不是导入逻辑，只是读字节的螺丝刀）：
+     · probeContainerHead / bmCreateStreamReader  读容器头与分段字节
+     · bmB64ToFileChunked / bmB64ToText           base64 分块解码（压内存峰值）
+     · bmReadJsonFile / dataURLToBlob             读小 JSON / dataURL 转 Blob
+     · _bmImgBlobToFs / imgDescFromExport         单张图写文件 / 单条载荷转 Blob
+     · bmMergeSeasonSave / bmSeasonImgPut         四季合并纯函数与图片落库
+   全局导入那条链一个字没动。
+
+   支持的格式（玩家点名的「旧格式 / 各种格式 / 大文件」）：
+     ① 单文件容器 .ocdata（图片以 offset/len 引用，顺序流式读，不整块进内存）
+     ② 旧目录式自动备份（manifest.json + images/ 目录，{__img:3,ref} 引用）
+     ③ 老版本 base64 内嵌图（{__img:1,data} 或 {blob:"dataURL"}）
+     ④ 四季包 .seasondata（自动识别 __season 标记，合并而非覆盖）
+     ⑤ 只有文字没有图的残包（图片缺失降级为空图，绝不中断整次恢复）
+   ============================================================================ */
+
+const BM_RESTORE_STAGES = [
+  { label: '读取备份' },
+  { label: '解析数据' },
+  { label: '还原图片' },
+  { label: '写入数据库' },
+];
+
+/* 探测包里有没有某种图片引用标记（避免对几十 MB 的对象做 JSON.stringify） */
+function bmRestoreHasImg(node, tag, depth = 0) {
+  if (!node || typeof node !== 'object' || depth > 40) return false;
+  if (Array.isArray(node)) { for (let i = 0; i < node.length; i++) if (bmRestoreHasImg(node[i], tag, depth + 1)) return true; return false; }
+  if (node.__img === tag) return true;
+  for (const k of Object.keys(node)) { if (bmRestoreHasImg(node[k], tag, depth + 1)) return true; }
+  return false;
+}
+
+/* ---------- ① 图片还原：容器格式（{__img:4} + offset/len 顺序流式读） ---------- */
+async function bmRestoreImagesV4(node, readAt, onProgress = null) {
+  if (!node || typeof node !== 'object') return node;
+  const jobs = [];
+  const seen = new WeakSet();
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object' || seen.has(n)) return;
+    seen.add(n);
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.__img === 4 && typeof n.ref === 'string') {
+      jobs.push({ offset: n.offset || 0, len: n.len || 0, mime: n.mime || 'image/png', parent, key, imgNode: n, isThumb: false });
+      if (n.thumbRef && n.thumbOffset !== undefined) {
+        jobs.push({ offset: n.thumbOffset || 0, len: n.thumbLen || 0, mime: n.thumbMime || 'image/jpeg', parent, key, imgNode: n, isThumb: true });
+      }
+      return;
+    }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+  if (!jobs.length) return node;
+
+  // 必须按 offset 升序顺序读：content:// 大文件随机跳读会读空，几百张图全坏
+  jobs.sort((a, b) => a.offset - b.offset);
+  const total = jobs.length;
+  const blobAt = new Map();
+  for (let i = 0; i < total; i++) {
+    const j = jobs[i];
+    try { blobAt.set(i, await readAt(j.offset, j.len, j.mime)); }
+    catch (e) { blobAt.set(i, null); }
+    if (onProgress && (i % 8 === 0 || i === total - 1)) { try { onProgress(i + 1, total); } catch (e) {} }
+  }
+
+  // 分组：同一个 {__img:4} 对象的主图与缩略图合并回一处，avatar / profileBg 互不串组
+  const groups = new Map();
+  for (let i = 0; i < total; i++) {
+    const j = jobs[i];
+    const blob = blobAt.get(i);
+    if (!blob) continue;
+    let g = groups.get(j.imgNode || j);
+    if (!g) { groups.set(j.imgNode || j, g = { parent: j.parent, key: j.key, main: null, thumb: null, mime: null, thumbMime: null, w: 0, h: 0 }); }
+    if (j.isThumb) g.thumb = blob; else { g.main = blob; g.mime = j.mime; }
+    const orig = j.parent && j.parent[j.key];
+    if (orig) { g.w = orig.w || 0; g.h = orig.h || 0; g.thumbMime = orig.thumbMime || 'image/jpeg'; }
+  }
+
+  const useFs = bmImgIsApp();
+  const list = Array.from(groups.values());
+  const writeOne = async (g) => {
+    try {
+      if (!g.parent) return;
+      if (useFs && g.main) {
+        const mainRef = await _bmImgBlobToFs(g.main, g.mime || 'image/png');
+        const out = { __img: 5, ref: mainRef.ref, mime: mainRef.mime, w: g.w, h: g.h };
+        if (g.thumb) {
+          try { const t = await _bmImgBlobToFs(g.thumb, g.thumbMime || 'image/jpeg'); out.thumbRef = t.ref; out.thumbMime = t.mime; } catch (e) {}
+        }
+        g.parent[g.key] = out;
+      } else if (g.main) {
+        g.parent[g.key] = { blob: g.main, thumb: g.thumb, w: g.w, h: g.h };
+      }
+    } catch (e) { /* 单张写失败保留引用原样，不影响整包 */ }
+  };
+  for (let i = 0; i < list.length; i += 8) await Promise.all(list.slice(i, i + 8).map(writeOne));
+  return node;
+}
+
+/* ---------- ② 图片还原：旧目录格式（{__img:3,ref} 按文件名逐张读） ---------- */
+async function bmRestoreImagesV3(node, readByRef, onProgress = null) {
+  if (!node || typeof node !== 'object') return node;
+  const found = [];
+  const seen = new WeakSet();
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object' || seen.has(n)) return;
+    seen.add(n);
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.__img === 3 && typeof n.ref === 'string') { found.push({ parent, key, n }); return; }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+  if (!found.length) return node;
+
+  const useFs = bmImgIsApp();
+  const total = found.length;
+  let idx = 0, done = 0;
+  const worker = async () => {
+    while (idx < total) {
+      const it = found[idx++];
+      const n = it.n;
+      let out = null;
+      try {
+        const blob = await readByRef(n.ref, n.mime || 'image/png');
+        let thumb = null;
+        if (n.thumbRef) { try { thumb = await readByRef(n.thumbRef, n.thumbMime || 'image/jpeg'); } catch (e) {} }
+        if (useFs) {
+          const m = await _bmImgBlobToFs(blob, n.mime || 'image/png');
+          out = { __img: 5, ref: m.ref, mime: m.mime, w: n.w || 0, h: n.h || 0 };
+          if (thumb) { try { const t = await _bmImgBlobToFs(thumb, n.thumbMime || 'image/jpeg'); out.thumbRef = t.ref; out.thumbMime = t.mime; } catch (e) {} }
+        } else {
+          out = { blob, thumb, w: n.w || 0, h: n.h || 0 };
+        }
+      } catch (e) {
+        // 旧目录备份常有零星缺图（历史清理留下缺口）：降级成空图，其余照常恢复，
+        // 绝不能让一张缺图把整次恢复打断（那样角色和消息都写不进去）
+        out = useFs ? { __img: 5, ref: '', mime: 'image/png', w: 0, h: 0 } : { blob: new Blob([]), thumb: null, w: 0, h: 0 };
+      }
+      if (it.parent) it.parent[it.key] = out;
+      done++;
+      if (onProgress && (done % 8 === 0 || done === total)) { try { onProgress(done, total); } catch (e) {} }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  return node;
+}
+
+/* ---------- ③ 图片还原：老版本内嵌 base64（{__img:1,data} / {blob:"dataURL"}） ---------- */
+async function bmRestoreImagesInline(node, onProgress = null) {
+  if (!node || typeof node !== 'object') return node;
+  const found = [];
+  (function collect(n, parent, key) {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) collect(n[i], n, i); return; }
+    if (n.__img && typeof n.data === 'string') { found.push({ parent, key, n }); return; }
+    if (typeof n.blob === 'string' && /^data:/.test(n.blob)) { found.push({ parent, key, n }); return; }
+    for (const k of Object.keys(n)) collect(n[k], n, k);
+  })(node, null, null);
+  if (!found.length) return node;
+
+  const total = found.length;
+  let idx = 0, done = 0;
+  const worker = async () => {
+    while (idx < total) {
+      const it = found[idx++];
+      try {
+        const conv = await imgDescFromExport(it.n);   // 原子转换：dataURL → Blob / 文件引用
+        if (conv !== undefined) it.parent[it.key] = conv;
+      } catch (e) {}
+      done++;
+      if (onProgress && (done % 8 === 0 || done === total)) { try { onProgress(done, total); } catch (e) {} }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
+  return node;
+}
+
+/* ---------- ④ 写库：与全局导入互不相干的一套写入 ---------- */
+async function bmRestoreApply(data, onStage = null) {
+  const stage = (i, v, t) => { if (onStage) { try { onStage(i, v, t); } catch (e) {} } };
+
+  // 空包拦截：覆盖写在下面会先清库，空包会把玩家数据全清空 —— 必须先挡住
+  const core = ['characters', 'messages', 'emojis', 'palace', 'surveys', 'gifts', 'surveyLibrary'];
+  const allEmpty = core.every(k => !(Array.isArray(data[k]) && data[k].length));
+  if (allEmpty) throw new Error('这个备份里没有任何角色／聊天／记忆宫殿数据，已拦截，未执行恢复');
+
+  // 本机接口配置不能因为恢复一次就丢（包里有值才用包里的）
+  const keepCfg = {};
+  for (const k of ['aiConfig', 'divinationApi']) {
+    try { const v = await getSetting(k, null); if (v != null) keepCfg[k] = v; } catch (e) {}
+  }
+
+  /* 20261122（玩家点名）：恢复绝不能把「包外」的本机 kv 一起清掉。
+     原实现是 idbClear('kv') 之后只写回 data.settings 那份白名单，其余几十个键全部消失，
+     其中混着玩家的真数据 —— 自定义惊喜 oc_customGifts、累计听歌时长 musicTogetherTotal、
+     软件声明 softwareNoticeAgreed/Ver、效果查看解锁 playerFxViewUnlocked、
+     音乐源/音量/悬浮窗/毛玻璃档位、已读位置 lastRead_* 等等，覆盖安装恢复一次就全没了。
+     做法：清库前先把当前 kv **全量**快照下来，等包内数据写完，再把「包里没有的键」按本机补回。
+     包里有的键一律以包为准（覆盖语义不变）；动态前缀键（charSchedule_ / lastRead_ 等）
+     不需要维护白名单，天然被覆盖到。 */
+  const keepKv = new Map();
+  try {
+    const kvRows = await idbGetAll('kv');
+    for (const r of (kvRows || [])) if (r && r.key != null) keepKv.set(String(r.key), r.value);
+  } catch (e) {}
+  /* 包里明确写过的键：这些以包为准，补回时要跳过（值为 null 也算「包里有」，保持覆盖语义） */
+  const packKvKeys = new Set();
+
+  await idbClear('characters');
+  await idbClear('messages');
+  await idbClear('emojis');
+  await idbClear('palace');
+  await idbClear('surveys');
+  await idbClear('gifts');
+  await idbClear('surveyLibrary');
+  // 老备份没有 focusSessions 字段 —— 不清，否则等于抹掉玩家本机的专注历史
+  if (Array.isArray(data.focusSessions)) await idbClear('focus_session');
+  await idbClear('kv');
+
+  const chars = Array.isArray(data.characters) ? data.characters : [];
+  const msgs = Array.isArray(data.messages) ? data.messages : [];
+  const emos = Array.isArray(data.emojis) ? data.emojis : [];
+  const pals = Array.isArray(data.palace) ? data.palace : [];
+  const srvs = Array.isArray(data.surveys) ? data.surveys : [];
+  const gifts = Array.isArray(data.gifts) ? data.gifts : [];
+  const svls = Array.isArray(data.surveyLibrary) ? data.surveyLibrary : [];
+  const fses = Array.isArray(data.focusSessions) ? data.focusSessions : [];
+  const wTotal = chars.length + msgs.length + emos.length + pals.length + srvs.length + gifts.length + svls.length + fses.length || 1;
+  let wDone = 0;
+  stage(3, 0, wTotal);
+  const bulk = async (store, arr) => {
+    if (!arr.length) return;
+    await idbBulkPut(store, arr, (done) => stage(3, wDone + done, wTotal));
+    wDone += arr.length;
+    stage(3, wDone, wTotal);
+  };
+  await bulk('characters', chars);
+  await bulk('messages', msgs);
+  await bulk('emojis', emos);
+  await bulk('palace', pals);
+  await bulk('surveys', srvs);
+  await bulk('gifts', gifts);
+  await bulk('surveyLibrary', svls);
+  /* 20261121：番茄钟结算（focusSessions）原来只清了库却没写回 —— 包里带着 focusSessions
+     时等于把玩家的专注历史清零。这里补上写入（store 名是单数 focus_session）。 */
+  await bulk('focus_session', fses);
+  // 音乐库只补缺：本地那条可能带着音频 blob，不能被同 id 的纯元数据冲空
+  if (Array.isArray(data.music) && data.music.length) {
+    try {
+      const cur = await idbGetAll('musicHistory');
+      const have = new Set((cur || []).map(x => String(x && x.id)));
+      const add = data.music.filter(x => x && x.id != null && !have.has(String(x.id)));
+      if (add.length) await idbBulkPut('musicHistory', add);
+    } catch (e) {}
+  }
+  stage(3, wTotal, wTotal);
+
+  if (data.cards) {
+    const fresh = JSON.parse(JSON.stringify(data.cards));
+    try { sanitizeCards(fresh); } catch (e) {}
+    await setSetting('cards', fresh);
+    packKvKeys.add('cards');
+  }
+  if (data.playerProfile) { await setSetting('playerProfile', data.playerProfile); packKvKeys.add('playerProfile'); }
+  if (data.chatSettings) { await setSetting('chatSettings', data.chatSettings); packKvKeys.add('chatSettings'); }
+  if (data.chatTheme) { await setSetting('chatTheme', data.chatTheme); packKvKeys.add('chatTheme'); }
+  if (data.settings && typeof data.settings === 'object') {
+    // 「导入时重复触发动画」开着 → 跳过三个已触发标记，让首次动画可以重播
+    let replay = false;
+    try { replay = !!(chatSettings && chatSettings.importReplayOcAnim); } catch (e) {}
+    const ocKeys = new Set(['oc_seen', 'oc_unlocked', 'oc_surpriseUnlocked']);
+    for (const [k, v] of Object.entries(data.settings)) {
+      /* 只要包内出现这个键，就记成「以包为准」——哪怕值是 null 或被 replay 跳过，
+         补回本机值时也要跳过它，否则等于用这台机器的旧设置把包里的数据又盖回去。 */
+      packKvKeys.add(k);
+      if (replay && ocKeys.has(k)) continue;
+      if (v !== null && v !== undefined) await setSetting(k, v);
+    }
+  }
+  for (const k of Object.keys(keepCfg)) {
+    let keep = true;
+    try {
+      const v = await getSetting(k, null);
+      if (v != null && !(typeof v === 'object' && !Object.keys(v).length)) keep = false;
+    } catch (e) {}
+    if (keep) { try { await setSetting(k, keepCfg[k]); } catch (e) {} }
+  }
+
+  /* 20261122：把「包里没有的本机键」原样补回（对应上面 keepKv 的快照）。
+     · 包里有 → 已按包写入，packKvKeys 里有记录，这里跳过；
+     · 包里没有 → 属于这台机器的专属状态（自定义惊喜、累计听歌时长、软件声明、
+       效果查看解锁、音乐源/音量/悬浮窗玻璃档、已读位置……），恢复不该把它们清掉。
+     接口配置 aiConfig / divinationApi 由上面的 keepCfg 专门处理，这里跳过避免重复写。 */
+  let keptBack = 0;
+  if (keepKv.size) {
+    for (const [k, v] of keepKv) {
+      if (packKvKeys.has(k)) continue;
+      if (k === 'aiConfig' || k === 'divinationApi') continue;
+      try { await setSetting(k, v); keptBack++; } catch (e) {}
+    }
+  }
+
+  return { chars: chars.length, msgs: msgs.length, keptKv: keptBack };
+}
+
+/* ---------- ⑤ 四季包：合并而非覆盖（不碰玩家的星球进度，只补缺） ---------- */
+/* 四季包的标记不在顶层：容器形态是 { packedAt, save:{ __season:true, ... }, photos:{...} }，
+   裸存档形态才是顶层带 __season。两种都要认。 */
+function bmRestoreIsSeasonPack(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  if (obj.__season === true) return true;
+  return !!(obj.save && obj.save.__season === true);
+}
+async function bmRestoreSeasonPayload(payload) {
+  if (!bmRestoreIsSeasonPack(payload)) return { ok: false, why: '不是四季包' };
+  const incSave = (payload.save && payload.save.__season) ? payload.save : payload;
+  let local = null;
+  try { const raw = localStorage.getItem('bmSeasonSave'); if (raw) local = JSON.parse(raw); } catch (e) {}
+  if (!local || !local.__season) local = null;
+
+  // ① 照片本体：只补缺，不覆盖玩家在 App 内修过的图
+  let addedPhotos = 0;
+  const photos = payload.photos || {};
+  const have = new Set(await bmSeasonImgKeys());
+  for (const k of Object.keys(photos)) {
+    if (have.has(k)) continue;
+    if (await bmSeasonImgPut(k, photos[k])) addedPhotos++;
+  }
+  // ② 存档：本地空 → 整包取；本地有 → 合并（补植物/种子/书签/图鉴，不冲掉本地进度）
+  const next = local ? bmMergeSeasonSave(local, incSave) : incSave;
+  try { localStorage.setItem('bmSeasonSave', JSON.stringify(next)); }
+  catch (e) { return { ok: false, why: '写存档失败（空间不足？）' }; }
+  const pl = next.planet || {};
+  return { ok: true, addedPhotos, plants: (pl.plants || []).length, books: (next.books || []).length, seeds: (next.seeds || []).length };
+}
+
+/* ---------- ⑥ 总入口：判定来源 → 分发到容器 / 旧目录 ---------- */
+async function bmRestoreRun(it) {
   const FS = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
   const setDir = BM_AUTO_BACKUP_DIR + '/' + it.set;
-  let prog = null;
+  let opened = false;
   try {
-    prog = startProgressPanel([
-      { label: '读取备份' },
-      { label: '解析数据' },
-      { label: '还原图片' },
-      { label: '写入数据库' },
-    ], 0, 'import');
+    startProgressPanel(BM_RESTORE_STAGES, 0, 'import');
     setProgressPanelMode(true);
-    setStageProgress(0, 1, 1);
+    opened = true;
+    setStageProgress(0, 0, 1);
+    _manualIOBusy = true;   // 恢复期间禁止自动备份抢跑
 
-    /* ===================== 新格式：单文件容器 ===================== */
-    if (it.kind === 'container') {
-      // 体积保护：Capacitor 的 readFile 没有「分段读」能力，容器恢复必须整读成 base64 再转字节，
-      //   内存峰值 ≈ 文件大小 × 3.7（base64 1.33 + 解码串 1.33 + 字节数组 1.0）。
-      //   80MB 的文件峰值约 300MB，WebView 堆还能撑；再大就有 OOM 闪退风险，
-      //   这时提示改用「导入全局备份」手动选同一个文件（格式完全通用，效果一样）。
-      let size = it.bytes || 0;
-      try { const st = await FS.stat({ path: setDir, directory: 'DOCUMENTS' }); size = (st && st.size) || size; } catch (e) {}
-      if (size > BM_AUTO_RESTORE_MAX_BYTES) {
-        closeProgressPanel();
-        showConfirm('这份自动备份有 ' + bmFmtBytes(size) + '，超过了 App 内直接恢复的上限（' + bmFmtBytes(BM_AUTO_RESTORE_MAX_BYTES) + '），整读进内存有崩溃风险。\n\n请改用「导入全局备份」→ 手动选择这个文件：\n文档/白日梦备份/' + it.set + '\n\n格式完全通用，导入效果一样。', null);
-        return;
-      }
-      let b64 = '';
-      try {
-        const r = await FS.readFile({ path: setDir, directory: 'DOCUMENTS' });
-        b64 = String(r.data).replace(/[\r\n]/g, '');
-      } catch (e) {
-        closeProgressPanel();
-        showConfirm('读取自动备份失败，可能文件已被移动或删除。', null);
-        return;
-      }
-      let bin = atob(b64);
-      b64 = ''; // 及早丢掉 base64 大字符串，降低峰值内存
-      const u8 = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      bin = '';
-      // 包成内存 File：probeContainerHead / bmCreateStreamReader 都是按 File(slice/arrayBuffer) 工作的，
-      //   这样恢复端直接复用全局导入那一套解析代码，不再维护第二份实现。
-      const file = new File([u8], it.set, { type: 'application/octet-stream' });
-      setStageProgress(0, 1, 1);
-
-      const probed = await probeContainerHead(file);
-      let data;
-      try {
-        data = JSON.parse(probed.headStr);
-      } catch (e) {
-        closeProgressPanel();
-        showConfirm('自动备份文件解析失败，可能不完整。', null);
-        return;
-      }
-      if (!data || data.app !== 'bairimeng') {
-        closeProgressPanel();
-        showConfirm('自动备份文件异常，无法恢复。', null);
-        return;
-      }
-      setStageProgress(1, 1, 1);
-
-      const streamReader = probed.sepFound ? bmCreateStreamReader(file, probed.containerStart) : null;
-      const readImageV4 = streamReader
-        ? async (offset, len, mime) => {
-            const u = await streamReader.readAt(offset || 0, len || 0);
-            if ((len || 0) > 0 && u.byteLength === 0) throw new Error('empty-blob');
-            return new Blob([u], { type: (mime || 'image/png') });
-          }
-        : null;
-      await doImport(data, 'overwrite', (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), readImageV4);
-
-      /* 20261116：配对的四季包一起恢复。四季永远「合并」—— 恢复一份旧备份
-         不应该把玩家最近养的星球进度冲掉，只把缺的照片/记录补回来。 */
-      let seasonMsg = '';
-      if (it.seasonFile) {
-        try {
-          const sr = await FS.readFile({ path: BM_AUTO_BACKUP_DIR + '/' + it.seasonFile, directory: 'DOCUMENTS' });
-          const payload = JSON.parse(bmB64ToText(String(sr.data)));
-          const r2 = await bmImportSeasonPayload(payload, { merge: true });
-          seasonMsg = r2.ok ? ('四季已合并（照片 +' + r2.addedPhotos + '）') : '四季导入失败';
-        } catch (e) {
-          seasonMsg = '四季导入失败（' + String((e && e.message) || e).slice(0, 40) + '）';
-        }
-      }
-      closeProgressPanel();
-      if (seasonMsg) miniToast('恢复完成 · ' + seasonMsg);
-      return;
-    }
-
-    /* ===================== 旧格式：目录式备份集合 ===================== */
-    let data;
-    try {
-      data = await bmReadJsonFile(FS, setDir + '/manifest.json');
-    } catch (e) {
-      closeProgressPanel();
-      showConfirm('读取自动备份失败，可能备份不完整。', null);
-      return;
-    }
-    if (!data || data.app !== 'bairimeng') {
-      closeProgressPanel();
-      showConfirm('自动备份文件异常，无法恢复。', null);
-      return;
-    }
-    // 强制 imagesDir 指向玩家选中的那份（防 manifest 里的 imagesDir 指向别处导致图片读空）
-    data.imagesDir = setDir + '/images';
-
-    // 20261102：恢复自动备份专用图片还原——不碰共用的 restoreImagesV3（那函数被全局导入/
-    //   宫殿导入调用，还原成 {blob,thumb} 塞 IndexedDB）。这里先把 3.0 的 {__img:3,ref} 读回
-    //   并写成 {__img:5,ref} 文件引用（APP 端），再把已还原的 data 交给 doImport。
-    //   因 data 里已无 {__img:3}，doImport 走 deepImagesFromExport 分支，而 {__img:5} 不在
-    //   其收集范围内（只收 {__img:1,data} 与 {blob:dataURL}），会被原样保留正确写库。
-    const readImage = async (ref, mime) => {
-      const r = await FS.readFile({ path: data.imagesDir + '/' + ref, directory: 'DOCUMENTS' });
-      return await dataURLToBlob('data:' + (mime || 'image/png') + ';base64,' + r.data);
-    };
-    data = await restoreAutoImagesV3(data, readImage, (done, total) => setStageProgress(2, done, total));
-
-    await doImport(data, 'overwrite', (idx, total) => setStageProgress(idx, total > 0 ? 1 : 0, total), null);
-    closeProgressPanel();
+    if (it.kind === 'container') return await bmRestoreFromContainer(FS, setDir, it);
+    return await bmRestoreFromFolder(FS, setDir, it);
   } catch (e) {
-    if (prog) closeProgressPanel();
-    miniToast('恢复失败：' + (e && e.message ? e.message : '未知错误'));
+    if (opened) closeProgressPanel();
+    showConfirm('恢复失败：' + String((e && e.message) || e) + '\n\n你的现有数据没有被清空（写入前已整体校验）。', null);
+  } finally {
+    _manualIOBusy = false;
   }
+}
+
+/* ============================================================================
+   20261121：读备份文件 —— 学「全局导入」的做法，直接取二进制，不走 base64
+   ----------------------------------------------------------------------------
+   全局导入为什么不怕大文件：它拿到的是 <input type="file"> 给的 File 对象，
+   全程根本没有 base64 这一步（probeContainerHead → bmCreateStreamReader 直接切字节）。
+   自动备份以前只能 FS.readFile，而这个 API 只吐 base64 字符串，于是 62MB 的包会同时
+   存在「83MB 字符串 + 62MB File」两份内存，WebView renderer 直接被系统杀掉。
+
+   这里改成 Capacitor 官方的大文件读法：
+     FS.getUri() → convertFileSrc() → fetch() → Blob
+   内存里只有一份数据，且由浏览器托管、不进 JS 堆。真机实测 21.6MB 包 fetch 仅 118ms。
+   直读失败（老 WebView / 权限异常）自动回退到原来的 base64 分块解码，行为不变。
+   ========================================================================== */
+async function bmRestoreReadBlob(FS, path) {
+  try {
+    const u = await FS.getUri({ path, directory: 'DOCUMENTS' });
+    const src = (window.Capacitor && window.Capacitor.convertFileSrc)
+      ? window.Capacitor.convertFileSrc(u.uri)
+      : (u && u.uri);
+    const resp = await fetch(src);
+    if (resp && resp.ok) {
+      const b = await resp.blob();
+      if (b && b.size > 0) return b;
+    }
+  } catch (e) { /* 落到下面的回退 */ }
+  const r = await FS.readFile({ path, directory: 'DOCUMENTS' });
+  return bmB64ToFileChunked(String(r.data).replace(/[\r\n]/g, ''), String(path).split('/').pop());
+}
+
+/* 新格式：单文件容器 */
+async function bmRestoreFromContainer(FS, setDir, it) {
+  let file;
+  try { file = await bmRestoreReadBlob(FS, setDir); }
+  catch (e) {
+    closeProgressPanel();
+    showConfirm('读取备份失败，文件可能已被移动或删除：\n' + it.set, null);
+    return;
+  }
+  setStageProgress(0, 1, 1);
+  /* 统一成 File：probeContainerHead / bmCreateStreamReader 只用 size + slice，
+     Blob 本身也够用，但包成 File 更接近全局导入拿到的对象形态（不复制数据，只是引用）。 */
+  if (!(file instanceof File)) {
+    try { file = new File([file], String(it.set || 'backup.ocdata'), { type: 'application/octet-stream' }); } catch (e) {}
+  }
+  if (!file || !file.size) {
+    closeProgressPanel();
+    showConfirm('这份备份读出来是空的：\n' + it.set + '\n\n文件大小：' + bmFmtBytes(it.bytes || 0), null);
+    return;
+  }
+
+  const probed = await probeContainerHead(file);
+  let data;
+  try { data = JSON.parse(probed.headStr); }
+  catch (e) { closeProgressPanel(); showConfirm('备份文件解析失败，可能不完整或被截断。', null); return; }
+
+  // 万一玩家选中的是四季包（有些老包直接存成 .ocdata 外壳）
+  if (bmRestoreIsSeasonPack(data)) {
+    const r = await bmRestoreSeasonPayload(data);
+    closeProgressPanel();
+    if (r.ok) { miniToast('四季已恢复：植物 ' + r.plants + ' 株 / 书签 ' + r.books + ' 张 / 种子 ' + r.seeds + ' 颗'); setTimeout(() => location.reload(), 700); }
+    else showConfirm('四季恢复失败：' + r.why, null);
+    return;
+  }
+  if (!data || data.app !== 'bairimeng') {
+    closeProgressPanel();
+    showConfirm('这不是白日梦的主数据备份（缺少标识），未执行恢复。\n文件：' + it.set, null);
+    return;
+  }
+  setStageProgress(1, 1, 1);
+
+  // 图片：容器内 offset/len 引用 → 顺序流式读
+  const stream = probed.sepFound ? bmCreateStreamReader(file, probed.containerStart) : null;
+  if (bmRestoreHasImg(data, 4)) {
+    if (stream) {
+      data = await bmRestoreImagesV4(data, async (offset, len, mime) => {
+        const u = await stream.readAt(offset || 0, len || 0);
+        if ((len || 0) > 0 && u.byteLength === 0) throw new Error('empty-blob');
+        return new Blob([u], { type: mime || 'image/png' });
+      }, (d, t) => setStageProgress(2, d, t));
+    }
+  } else {
+    // 容器里也可能带老式 base64 图
+    data = await bmRestoreImagesInline(data, (d, t) => setStageProgress(2, d, t));
+  }
+  setStageProgress(2, 1, 1);
+
+  await bmRestoreApply(data, (idx, val, total) => setStageProgress(idx, total > 0 ? 1 : 0, total));
+
+  // 配对的四季包：合并（永远不覆盖，恢复旧备份不该冲掉最近的星球进度）
+  let seasonMsg = '';
+  if (it.seasonFile) {
+    try {
+      const sr = await FS.readFile({ path: BM_AUTO_BACKUP_DIR + '/' + it.seasonFile, directory: 'DOCUMENTS' });
+      const payload = JSON.parse(bmB64ToText(String(sr.data)));
+      const r2 = await bmRestoreSeasonPayload(payload);
+      seasonMsg = r2.ok ? ('四季已合并：植物 ' + r2.plants + ' 株 / 书签 ' + r2.books + ' 张') : ('四季未合并（' + r2.why + '）');
+    } catch (e) {
+      seasonMsg = '四季未合并（读取失败）';
+    }
+  }
+  closeProgressPanel();
+  miniToast('恢复完成' + (seasonMsg ? ' · ' + seasonMsg : '') + '，正在重新载入…');
+  setTimeout(() => location.reload(), 800);
+}
+
+/* 旧格式：目录式备份集合（manifest.json + images/） */
+async function bmRestoreFromFolder(FS, setDir, it) {
+  let data;
+  try { data = await bmReadJsonFile(FS, setDir + '/manifest.json'); }
+  catch (e) {
+    closeProgressPanel();
+    showConfirm('读取旧格式备份失败，目录可能不完整：\n' + it.set + '\n\n（旧格式备份需要 manifest.json 与 images 目录同时存在）', null);
+    return;
+  }
+  if (bmRestoreIsSeasonPack(data)) {
+    const r = await bmRestoreSeasonPayload(data);
+    closeProgressPanel();
+    if (r.ok) { miniToast('四季已恢复：植物 ' + r.plants + ' 株'); setTimeout(() => location.reload(), 700); }
+    else showConfirm('四季恢复失败：' + r.why, null);
+    return;
+  }
+  if (!data || data.app !== 'bairimeng') {
+    closeProgressPanel();
+    showConfirm('这个目录不是白日梦的备份，未执行恢复。', null);
+    return;
+  }
+  setStageProgress(0, 1, 1);
+  // 强制指向玩家选中的这一份，防止 manifest 里写过别的 imagesDir 导致读空
+  data.imagesDir = setDir + '/images';
+  setStageProgress(1, 1, 1);
+
+  /* 20261121：旧格式的图片也改成直读二进制（同 bmRestoreReadBlob），
+     不再每张 readFile 拿 base64 再 dataURLToBlob 绕一圈。mime 由数据声明决定。 */
+  const readByRef = async (ref, mime) => {
+    const b = await bmRestoreReadBlob(FS, data.imagesDir + '/' + ref);
+    if (!b || !b.size) return new Blob([], { type: mime || 'image/png' });
+    try { return b.slice(0, b.size, mime || 'image/png'); } catch (e) { return b; }
+  };
+  if (bmRestoreHasImg(data, 3)) {
+    data = await bmRestoreImagesV3(data, readByRef, (d, t) => setStageProgress(2, d, t));
+  } else {
+    data = await bmRestoreImagesInline(data, (d, t) => setStageProgress(2, d, t));
+  }
+  setStageProgress(2, 1, 1);
+
+  await bmRestoreApply(data, (idx, val, total) => setStageProgress(idx, total > 0 ? 1 : 0, total));
+  closeProgressPanel();
+  miniToast('恢复完成，正在重新载入…');
+  setTimeout(() => location.reload(), 800);
+}
+
+/* 兼容外壳：老调用点（恢复列表）仍然叫这个名字，内部全部走独立链路 */
+async function doRestoreAutoBackup(it) {
+  return bmRestoreRun(it);
 }
 
 /* ---------- 20261101：角色卡独立导出/导入（用户点名需求） ----------
@@ -27823,7 +28604,8 @@ async function _exportAllInner(opts = {}) {
 const BM_AUTO_BACKUP_DIR = '白日梦备份';                            // 自动备份所在目录（公共文档目录下）
 const BM_AUTO_BACKUP_INDEX = '白日梦备份/白日梦自动备份索引.json';  // 列表用索引（只存统计，几十字节/条）
 const BM_AUTO_BACKUP_KEEP = 10;                                     // 20261115b：保留最近 N 份单文件备份（每天一条，约覆盖 10 天）
-const BM_AUTO_RESTORE_MAX_BYTES = 80 * 1024 * 1024;                 // 直接恢复的体积上限（原因见 doRestoreAutoBackup）
+/* 20261121：原来的 BM_AUTO_RESTORE_MAX_BYTES（80MB 直接恢复上限）已按玩家要求彻底删除。
+   任何导入/导出/恢复链路都不设体积门槛，靠「分块解码」降低内存峰值来避免 OOM。 */
 /* 20261115b：自动备份文件名的唯一判定（清理/轮转只认它，绝不误伤手动导出包） */
 const BM_AUTO_BACKUP_RE = /^白日梦自动备份_\d{8}-\d{4}\.ocdata$/;
 
@@ -27834,6 +28616,25 @@ function bmFmtBytes(n) {
   if (v < 1024 * 1024) return (v / 1024).toFixed(0) + ' KB';
   if (v < 1024 * 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB';
   return (v / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+/* 20261121：base64 字符串 → File（分块解码，不整块解）。
+   为什么必须分块：Capacitor 的 readFile 只能整读成 base64，老写法再 atob 出一整条 bin 字符串、
+   再复制成一整块 Uint8Array、再被 File 复制一次，峰值约 4.3×；58MB 的文件就要 250MB 内存，
+   正好顶穿 WebView 的 256MB 堆上限 → OutOfMemoryError 闪退（真机 logcat 已抓到）。
+   分块后同一份 58MB 文件的堆占用只有 base64 本身（约 77MB）+ 单块 3MB 字节，安全余量足够。
+   块长取 4MB 字符：必须是 4 的倍数（base64 每 4 字符 = 3 字节），否则段边界会解出乱码。 */
+function bmB64ToFileChunked(b64, name, chunkChars) {
+  const CHUNK = chunkChars || (4 * 1024 * 1024);
+  const parts = [];
+  for (let i = 0; i < b64.length; i += CHUNK) {
+    const seg = b64.slice(i, i + CHUNK);       // 临时 4MB 字符串，下一轮即被回收
+    const bin = atob(seg);
+    const u8 = new Uint8Array(bin.length);
+    for (let j = 0; j < bin.length; j++) u8[j] = bin.charCodeAt(j);
+    parts.push(u8);                            // 进 Blob 后数据由浏览器托管，可挪出 JS 堆
+  }
+  return new File(parts, name || 'backup.ocdata', { type: 'application/octet-stream' });
 }
 
 /* 把一段 JSON 以 base64 形式写进「文档」目录。
@@ -27992,34 +28793,110 @@ async function bmWriteSeasonBackupFile(FS, relPath, save) {
 function bmMergeSeasonSave(local, inc) {
   const out = (local && local.__season) ? JSON.parse(JSON.stringify(local)) : { __season: true, version: '1.1' };
   const incSave = (inc && inc.__season) ? inc : {};
-  const arrMerge = (key, idKey) => {
+  /* 合并数组。keyOf 可以传字段名，也可以传函数（用于复合键）。
+     20261121：书签/照片/种子的 id 都不跨存档稳定 —— 真机实测本地 book id=2 是「荷花」，
+     而 11-19 包里 id=2 是「南瓜」，按 id 去重会把南瓜整张漏掉；种子更明显，sid 只在
+     单个角色内递增（两个角色都有 sd1）。所以这三个都改用「内容键」判断重复。 */
+  const arrMerge = (key, keyOf) => {
+    const kf = typeof keyOf === 'function' ? keyOf : (x => String(x && x[keyOf]));
     const base = Array.isArray(out[key]) ? out[key] : [];
-    const seen = new Set(base.map(x => String(x && x[idKey])));
+    const seen = new Set(base.map(kf));
     (Array.isArray(incSave[key]) ? incSave[key] : []).forEach(x => {
-      const id = String(x && x[idKey]);
-      if (id === 'undefined' || seen.has(id)) return;
+      const id = kf(x);
+      if (!id) return;
+      if (seen.has(id)) return;
       base.push(x); seen.add(id);
     });
     out[key] = base;
   };
-  arrMerge('photos', 'id');
-  arrMerge('books', 'id');
-  arrMerge('seeds', 'id');
-  arrMerge('dexExtra', 'dex');
+  const fieldKey = (...fields) => (x) => {
+    if (!x || typeof x !== 'object') return '';
+    const parts = fields.map(f => (x[f] === undefined || x[f] === null) ? '' : String(x[f]));
+    return parts.every(p => p === '') ? '' : parts.join('|');
+  };
+  /* 20261121：合并前先剔掉本地的「示例图」占位记录（src:'demo' / demo:true）。
+     它是软件在存档为空时自动生成的样例，不是玩家拍的照片；不清掉的话合并后会变成
+     照片墙里多出一张假图。只在包里确实带了真实照片时才剔，避免把玩家唯一的图删掉。 */
+  if (Array.isArray(out.photos) && Array.isArray(incSave.photos)
+    && incSave.photos.some(p => p && p.src !== 'demo' && !p.demo)) {
+    out.photos = out.photos.filter(p => p && p.src !== 'demo' && !p.demo);
+  }
+  arrMerge('photos', fieldKey('dex', 'date', 'name'));
+  arrMerge('books', fieldKey('name', 'date'));
+  /* 种子的唯一键是 ownerId + sid（sid 只在角色内递增） */
+  arrMerge('seeds', fieldKey('ownerId', 'sid'));
+  /* 20261121：图鉴额外解锁条目的唯一键是 no（图鉴编号），不是 dex —— 按 dex 去重时
+     每条 kf(x) 都是 'undefined'，5 条会被压成 1 条（真机已复现）。 */
+  arrMerge('dexExtra', 'no');
   out.dexSeen = Object.assign({}, incSave.dexSeen || {}, out.dexSeen || {});   // 并集，本地优先
   out.mutSeen = Object.assign({}, incSave.mutSeen || {}, out.mutSeen || {});
   out.titles = Object.assign({}, incSave.titles || {}, out.titles || {});
   out.impFound = Array.from(new Set([].concat(out.impFound || [], incSave.impFound || [])));
-  /* 星球进度：本地有进度就整块保留（合并不能把玩家现在的星球冲掉）；
-     本地是空的（新装机 / 刚清除数据）才整块取包里的。 */
+  /* 星球进度：本地整个空的（新装机 / 刚清除数据）才整块取包里的；
+     本地有进度则逐项补缺 —— 见下面的 20261121 修复。 */
   const localPl = out.planet && typeof out.planet === 'object' ? out.planet : null;
   const localPlEmpty = !localPl || !((localPl.plants || []).length || (localPl.mutSeeds || []).length
     || (localPl.pool && Object.keys(localPl.pool).length) || (localPl.round || 0));
   if (localPlEmpty && incSave.planet) out.planet = JSON.parse(JSON.stringify(incSave.planet));
   else if (localPl && incSave.planet) {
-    // 非空时只补「已解锁的皮肤 / 已见种类」这类只增不减的账
-    localPl.seenKinds = Object.assign({}, incSave.planet.seenKinds || {}, localPl.seenKinds || {});
-    localPl.skins = Object.assign({}, incSave.planet.skins || {}, localPl.skins || {});
+    const incPl = incSave.planet || {};
+    const clone = (v) => JSON.parse(JSON.stringify(v));
+    // 已见种类：并集，本地优先
+    localPl.seenKinds = Object.assign({}, incPl.seenKinds || {}, localPl.seenKinds || {});
+    // 皮肤：每个角色的值是数组，直接 Object.assign 会被本地空数组盖掉，改按角色并集
+    const skinMap = {};
+    const skinKeys = new Set([].concat(Object.keys(incPl.skins || {}), Object.keys(localPl.skins || {})));
+    skinKeys.forEach(cid => {
+      skinMap[cid] = Array.from(new Set([]
+        .concat((incPl.skins || {})[cid] || [], (localPl.skins || {})[cid] || [])));
+    });
+    localPl.skins = skinMap;
+    /* 20261121 关键修复：星球上的植物 / 种子池 / 变异种子
+       原来是「本地非空就整块保留」——玩家本地 pool 里只要还剩一个角色条目就算非空，
+       包里 6 株已经长大的植物被整块丢弃，于是「合并导入成功但星球空的」。
+       现在改成逐株按 id 补缺：本地同 id 的保留（不冲掉当前成长进度），本地缺的从包里补进来。 */
+    if (!Array.isArray(localPl.plants)) localPl.plants = [];
+    const seenPlant = new Set(localPl.plants.map(p => String(p && p.id)));
+    (Array.isArray(incPl.plants) ? incPl.plants : []).forEach(p => {
+      const id = String(p && p.id);
+      if (id === 'undefined' || seenPlant.has(id)) return;
+      localPl.plants.push(clone(p)); seenPlant.add(id);
+    });
+    // 种子池：按角色并集，同一角色内按植物 id 去重
+    if (!localPl.pool || typeof localPl.pool !== 'object') localPl.pool = {};
+    Object.keys(incPl.pool || {}).forEach(cid => {
+      const cur = Array.isArray(localPl.pool[cid]) ? localPl.pool[cid] : [];
+      const seen = new Set(cur.map(p => String(p && p.id)));
+      (Array.isArray(incPl.pool[cid]) ? incPl.pool[cid] : []).forEach(p => {
+        const id = String(p && p.id);
+        if (id === 'undefined' || seen.has(id)) return;
+        cur.push(clone(p)); seen.add(id);
+      });
+      localPl.pool[cid] = cur;
+    });
+    // 变异种子：按 id 补缺
+    if (!Array.isArray(localPl.mutSeeds)) localPl.mutSeeds = [];
+    const seenMut = new Set(localPl.mutSeeds.map(s => String(s && s.id)));
+    (Array.isArray(incPl.mutSeeds) ? incPl.mutSeeds : []).forEach(s => {
+      const id = String(s && s.id);
+      if (id === 'undefined' || seenMut.has(id)) return;
+      localPl.mutSeeds.push(clone(s)); seenMut.add(id);
+    });
+    // 轮次只增不减
+    localPl.round = Math.max(Number(localPl.round) || 0, Number(incPl.round) || 0);
+    // 照料 / 备注的「下次时间表」：补包里缺的键，本地已有排程不动
+    localPl.careNextAtBy = Object.assign({}, incPl.careNextAtBy || {}, localPl.careNextAtBy || {});
+    localPl.noteNextAtBy = Object.assign({}, incPl.noteNextAtBy || {}, localPl.noteNextAtBy || {});
+    // 其余单值字段：只在本地为空时用包里的补齐
+    ['bg', 'skin', 'viewId', 'careNextAt', 'loveDay', 'careDay', 'roundLove', 'pending', 'notes'].forEach(k => {
+      const lv = localPl[k];
+      const iv = incPl[k];
+      if (iv === undefined || iv === null) return;
+      const empty = lv === undefined || lv === null || lv === ''
+        || (Array.isArray(lv) && !lv.length)
+        || (typeof lv === 'object' && !Array.isArray(lv) && !Object.keys(lv).length);
+      if (empty) localPl[k] = clone(iv);
+    });
   }
   if (!out.bookTitle && incSave.bookTitle) out.bookTitle = incSave.bookTitle;
   if (!out.wallBg && incSave.wallBg) out.wallBg = incSave.wallBg;
@@ -28157,6 +29034,23 @@ async function autoBackup() {
     const chars = await idbGetAll('characters');
     if (!chars || !chars.length) return;
     const rawData = await buildBackupPayload('3.0'); // 读出全量原始数据（图片还是 {blob,thumb} / {__img:5} 引用）
+    /* 20261122（玩家点名）：自动备份要把「包外本机 kv」也带上，否则换机恢复后这些真实数据全丢
+       —— buildBackupPayload 的 settings 是逐键白名单，自定义惊喜 oc_customGifts、累计听歌
+       musicTogetherTotal、软件声明、效果查看解锁、音乐源/音量/悬浮窗与毛玻璃档位等都不在其中。
+       做法：读一次当前 kv 全量，白名单已经有的键不动，只把白名单没有的补进 settings。
+       接口配置（aiConfig / divinationApi）仍按原设计不进包 —— 换机本来就该重填，也避免明文 Key 落盘。
+       注意：这里只改「自动备份」这条链路，exportAll 用的还是原样的 buildBackupPayload。 */
+    try {
+      const kvRows = await idbGetAll('kv');
+      if (!rawData.settings || typeof rawData.settings !== 'object') rawData.settings = {};
+      const kvSkip = new Set(['aiConfig', 'divinationApi']);
+      for (const r of (kvRows || [])) {
+        if (!r || r.key == null) continue;
+        const k = String(r.key);
+        if (kvSkip.has(k) || (k in rawData.settings)) continue;
+        rawData.settings[k] = r.value;
+      }
+    } catch (e) {}
     // 数据指纹：用来判断「同一天里到底有没有新内容」，没有就不重写。
     const sigOf = (d) => {
       let maxT = 0;
@@ -28203,6 +29097,21 @@ async function autoBackup() {
         const sRel = BM_AUTO_BACKUP_DIR + '/' + seasonFile;
         seasonPhotos = await bmWriteSeasonBackupFile(FS, sRel, seasonSave);
         try { const st2 = await FS.stat({ path: sRel, directory: 'DOCUMENTS' }); seasonBytes = (st2 && st2.size) || 0; } catch (e) {}
+        /* 20261121：内容自检。存档读得到不代表内容是好的 —— 玩家 11-20 那次备份
+           「0 株植物 / 0 颗种子」就是当时四季已被清空，备份忠实地把空档存了下来。
+           这里如实记一条原因，列表上就能看见「为什么这次没有植物」，不必再来问。 */
+        try {
+          const pl = (seasonSave.planet && typeof seasonSave.planet === 'object') ? seasonSave.planet : {};
+          const nPlants = (pl.plants || []).length;
+          const nSeeds = (seasonSave.seeds || []).length;
+          const nBooks = (seasonSave.books || []).length;
+          if (!nPlants && !nSeeds && !nBooks) seasonErr = '当前四季存档是空的（植物/种子/书签全为 0）';
+          else if (!nPlants) seasonErr = '存档里没有植物（' + nBooks + ' 张书签 / ' + nSeeds + ' 颗种子）';
+        } catch (e) {}
+      } else {
+        // 读不到存档 = 四季数据不在（App 刚重装、存档被清）。以前这里静默跳过，
+        // 玩家只会看到「这次没有四季包」，以为自动备份不备四季了 —— 必须留痕。
+        seasonErr = '没读到四季存档（四季数据可能已被清空）';
       }
     } catch (e) {
       seasonErr = String(e && e.message ? e.message : e).slice(0, 120);
@@ -37927,6 +38836,16 @@ async function generateCharReply(charId, opts = {}) {
       if (_sa) return _sa;
     }
   } catch (e) {}
+  /* 20261122：角色自主删字卡（隐藏事件，card-delete.js）。
+     与上面「申请改数值」同一位置、同一写法：命中就直接返回一个不出文字气泡的类型，
+     卡片由 card-delete.js 自己投递，下面所有原有逻辑一行不动。
+     概率 0.8%（远低于改数值的 3%），带每角色 72 小时冷却，群聊不触发。 */
+  try {
+    if (typeof bmCardDeleteMaybe === 'function' && !currentGroupId) {
+      const _cd = await bmCardDeleteMaybe(charId);
+      if (_cd) return _cd;
+    }
+  } catch (e) {}
   const aiOn = await isCharAIMode(charId);
   if (!aiOn) {
     const c = characters.find(x => x.id === charId);
@@ -38577,6 +39496,15 @@ function gpacketCardHtml(m) {
 function refreshGroupPacketCard(m) {
   const el = document.querySelector(`[data-gpacket-card="${m.id}"]`);
   if (el) el.outerHTML = gpacketCardHtml(m);
+}
+/* 20261122：只替换这一张红包卡 —— 拆开过渡播完后用它刷新，不整页 renderMessages，
+   否则正在跑的动画会被整页重绘腰斩，滚动位置也会跳。 */
+function refreshRedpacketCard(m) {
+  try {
+    const el = document.querySelector(`[data-redpacket-card="${m.id}"]`);
+    if (el) { el.outerHTML = redpacketCardHtml(m); return true; }
+  } catch (e) {}
+  return false;
 }
 /* 拆分金额：拼手气=二分法随机（现实中"抢红包"的方差感）；平分=均摊余数进首份 */
 function splitPacketShares(amount, count, mode) {
