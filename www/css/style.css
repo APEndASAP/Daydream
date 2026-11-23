@@ -417,6 +417,79 @@ input, textarea { user-select: text; }
   transition: transform 0.22s ease;
 }
 .modal-mask.show .modal { transform: translateY(0); }
+/* 20261123：访客禁词弹窗 —— 去掉容器内边距，让顶部吸顶导航栏（#ban-top）贴住弹窗最上沿；
+   内容自己套一层带内边距的 #ban-body，所以外观和别的弹窗一致。别的弹窗不受影响。 */
+#modal-content.bm-ban-modal { padding: 0; }
+/* 导航栏要跟内容「融为一体」：常态完全透明、没有分隔线没有阴影；
+   内容往上滚（scrollTop > 2）时 JS 加 .is-stuck，才浮出底色和一点投影。 */
+#modal-content.bm-ban-modal #ban-top {
+  position: sticky; top: 0; z-index: 9;
+  padding: 14px 22px 8px;
+  background: transparent;
+  border: 0;
+  transition: background .18s ease, box-shadow .18s ease;
+}
+#modal-content.bm-ban-modal #ban-top.is-stuck {
+  background: var(--bg-elevated);
+  box-shadow: 0 10px 18px -14px rgba(0, 0, 0, .65);
+}
+#modal-content.bm-ban-modal #ban-body { padding: 2px 22px 22px; }
+
+/* 已设禁词：按原分组折叠 + 每条可勾 + 批量移出 */
+#ban-list {
+  margin-bottom: 4px;
+  /* 禁词多的时候不能把下面的「手动添加 / 从字卡库禁用」顶到看不见，这里自己滚 */
+  max-height: 38vh; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px;
+}
+.bn-g {
+  border: 1px solid var(--border); border-radius: 12px; margin-bottom: 8px;
+  overflow: hidden; background: var(--bg-elevated-2);
+}
+.bn-gh { display: flex; align-items: center; gap: 7px; padding: 9px 11px; cursor: pointer; }
+.bn-gh:active { background: rgba(255, 255, 255, .03); }
+/* 箭头提亮加大：原来 11px 三级灰，几乎看不见，玩家不知道这一行能折叠 */
+.bn-ar { font-size: 12px; color: var(--text-secondary); width: 12px; flex: 0 0 12px; text-align: center; }
+.bn-gn {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bn-gt { font-size: 11.5px; color: var(--text-tertiary); flex: 0 0 auto; }
+/* 每个分组自己的「全选 / 取消」小按钮（20261123 三改） */
+.bn-gall {
+  flex: 0 0 auto; font-family: var(--font); font-size: 11px; line-height: 1;
+  padding: 4px 8px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+  transition: background .12s, color .12s, border-color .12s;
+}
+.bn-gall:active { opacity: .7; }
+/* 有勾选时按钮转成紫色描边，和顶部全局全选按钮的气质一致 */
+.bn-gh.has-sel .bn-gall { border-color: rgba(167, 139, 250, .55); color: var(--purple-soft); }
+.bn-gb { padding: 2px 11px 10px 37px; border-top: 1px solid var(--border); }
+.bn-row { display: flex; align-items: center; gap: 8px; padding: 9px 0; cursor: pointer; }
+.bn-row:active { opacity: .75; }
+.bn-tx { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.5; word-break: break-word; }
+.bn-tag {
+  flex: 0 0 auto; font-size: 10.5px; color: var(--purple-soft);
+  border: 1px solid rgba(167, 139, 250, .45); border-radius: 6px; padding: 0 4px;
+}
+.bn-box {
+  flex: 0 0 18px; width: 18px; height: 18px; border-radius: 6px;
+  border: 1.6px solid var(--text-tertiary);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; line-height: 1; color: #141019;
+  transition: background .12s, border-color .12s;
+}
+.bn-box.on { background: var(--purple); border-color: var(--purple); }
+.bn-box.on::after { content: '✓'; }
+.bn-box.half { border-color: var(--purple-soft); }
+.bn-box.half::after { content: '–'; color: var(--purple-soft); }
+.bn-empty { color: var(--text-tertiary); font-size: 12.5px; padding: 4px 0 8px; }
+.ban-mini {
+  flex: 0 0 auto; font-size: 11.5px; padding: 4px 10px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--bg-elevated-2);
+  color: var(--text-secondary); cursor: pointer;
+}
+.ban-mini:active { opacity: .7; }
 .modal h3 { font-size: 18px; margin-bottom: 16px; font-weight: 600; }
 
 /* 表单 */
@@ -4186,7 +4259,13 @@ body.theme-light .checkin-loc-pos { color: #6a54c4; }
 .letter-card {
   background: linear-gradient(150deg, #57486f 0%, #3b3153 55%, #302747 100%);
   border: 1px solid rgba(167, 139, 250, 0.38); border-radius: 16px; padding: 14px 16px;
-  min-width: 210px; cursor: pointer; position: relative; overflow: hidden;
+  min-width: 210px; cursor: pointer; position: relative;
+  /* 20261122b：这里原本是 overflow:hidden，已去掉 —— 真机上「书信封面有时有有时没有、
+     滚动时消失、滚回来又出现」就是它引起的：Android WebView 会为
+     「overflow:hidden + border-radius + 子元素 clip-path」单独开裁剪合成层，
+     这一层的纹理在滚动/滚动停止时可能被回收，表现就是紫色背景整块变透明、文字照常显示。
+     去掉后不再需要父级裁剪：信封盖 .lc-flap 自己按圆角裁（见下一条规则），
+     其余绝对定位元素（未读红点 / 火漆印）本来就在卡片内部，不会溢出。 */
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 .letter-card .lc-flap {
@@ -4194,6 +4273,8 @@ body.theme-light .checkin-loc-pos { color: #6a54c4; }
   /* 20261118：跟着卡片一起提亮（原 .14 在提亮后的底上看不出信封盖） */
   background: linear-gradient(180deg, rgba(196, 181, 253, 0.26), rgba(196, 181, 253, 0.02));
   clip-path: polygon(0 0, 100% 0, 50% 100%);
+  /* 20261122b：父级不再 overflow:hidden，这里补上顶部圆角，保证信封盖不越出卡片轮廓 */
+  border-radius: 15px 15px 0 0;
   pointer-events: none;
 }
 .letter-card .lc-tag { font-size: 11px; color: var(--purple-soft); letter-spacing: 2px; margin-bottom: 6px; }
@@ -10221,12 +10302,29 @@ body.vp-fs-open .bm-music-float {
      scrollToBottom() 算出来的位置和动画结束后完全一致 —— 不会出现「先弹一下再回落」。
    ============================================================ */
 @keyframes bmMsgIn {
-  from { opacity: 0; transform: translate3d(0, 14px, 0) scale(0.985); }
-  55%  { opacity: 1; }
-  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  /* 20261122 二次调：玩家说「中间还是有卡顿，渐显也要有缓动」。
+     卡顿的真正原因就是上一版那两条中段关键帧（38% / 68%）——
+     透明度在关键帧交界处「速度突变」（前一段快、后一段慢），眼睛对亮度变化很敏感，
+     这种速度断点看起来就是一下一下地顿。
+     ⇒ 现在**只留首尾两帧**，整段交给一条连续缓动曲线，中途不再有任何速度断点。
+
+     曲线参考移动端大厂（手机 QQ / 微信 / 企微 的聊天气泡进场）：
+       · 时长 200ms 左右（微信几乎不做动画，QQ 是 150~200ms 的极轻浮入，都比 300ms 更「利落」）
+       · 缓动要「起步就有速度、末段自己收住」——这是 QQ 那种「浮上来」的手感来源；
+         纯 ease-in 的曲线会让前 1/5 时间没有变化，看起来就是卡一下（这条踩过）
+       · 起始透明度**不给 0**（0 → 会「凭空闪一下」），留 0.1 的淡影，
+         这样第一帧就能看见轮廓，看起来是「浮现」而不是「蹦出」
+       · 位移只给 8px：大厂气泡基本不靠位移表达，位移大了反而显得笨重
+     —— 位移/透明度都只走合成层，不触发重排，滚动位置从第 0 帧就是最终值。 */
+  from { opacity: 0.1;  transform: translate3d(0, 8px, 0) scale(0.985); }
+  to   { opacity: 1;    transform: translate3d(0, 0, 0) scale(1); }
 }
 .msg-row.bm-msg-in {
-  animation: bmMsgIn 170ms cubic-bezier(0.22, 0.85, 0.28, 1) both;
+  /* 缓动不用 ease-in-out 的 (0.4,0,0.2,1)：那条曲线前 15% 的 y 几乎为 0，
+     实测前 40ms 透明度纹丝不动，眼睛会先看到「迟一下」再开始变亮 —— 这就是玩家说的卡顿。
+     换成 (0.22,0.55,0.3,1)：起步立刻有速度（第一帧就能察觉在变化），
+     中段匀速推进（走势清晰可见），末段速度收敛到接近 0（不会「啪」地停住）。 */
+  animation: bmMsgIn 200ms cubic-bezier(0.22, 0.55, 0.3, 1) both;
   will-change: transform, opacity;
 }
 

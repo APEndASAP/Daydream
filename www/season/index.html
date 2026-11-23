@@ -1445,10 +1445,17 @@ body{
 .pls-art canvas{display:block;width:72px;height:72px;image-rendering:pixelated}
 .pls-i{flex:1 1 auto;min-width:0}
 .pls-n{font-size:16px;color:#f2f6ff;letter-spacing:1px;line-height:1.2}
-.pls-l{font-size:16px;transform:scale(.5);transform-origin:left top;color:#9fb0cc;
-  letter-spacing:.4px;height:10px;margin-top:2px;white-space:nowrap;overflow:hidden}
-.pls-s{font-size:16px;transform:scale(.5);transform-origin:left top;color:#8fd08a;
-  letter-spacing:1px;margin-top:8px;white-space:normal;width:200%;line-height:1.5}
+/* 20261123：学名/品种行改为「可换行」，不再单行硬截（玩家：字多了可以换行，手机上更窄）。
+   原来 font-size:16 + transform:scale(.5) + height:10px + nowrap + overflow:hidden：
+   单行时靠固定高度裁掉下半截空白，一旦换行就会被裁没。
+   改用 zoom（与 .pls-tx 同一方案，布局尺寸真的缩小），高度交给内容自适应。
+   20261123 六改：玩家说小字看不清 —— 全部小字从 zoom.5（≈8px）提到 .65（≈10.4px），
+   仍明显小于 16px 的标题（植物名 / 互动记录），只做「看得清但不抢标题」。 */
+.pls-l{font-size:16px;zoom:.65;transform:none;color:#9fb0cc;
+  letter-spacing:.4px;line-height:1.4;margin-top:6px;
+  white-space:normal;word-break:break-word;overflow:visible;height:auto}
+.pls-s{font-size:16px;zoom:.65;transform:none;color:#8fd08a;
+  letter-spacing:1px;margin-top:10px;white-space:normal;width:100%;line-height:1.5}
 /* 20261116：详情页状态徽标可点（列表里的不可点）——点开看这个状态什么意思、该怎么办 */
 .pls-n [data-st]{cursor:pointer;-webkit-tap-highlight-color:transparent}
 .pls-n [data-st]:active{filter:brightness(1.3)}
@@ -1459,37 +1466,50 @@ body{
   background:#cfd9ea;transform:rotate(90deg)}
 .pls-bar{height:8px;background:#0f141d;border:2px solid #0a0d14;margin:9px 0 0;overflow:hidden}
 .pls-bar i{display:block;height:100%;width:0;background:#5aa353;transition:width .4s linear}
-.pls-desc{font-size:16px;transform:scale(.52);transform-origin:left top;color:#a8b6ce;
-  line-height:1.7;margin-top:8px;width:192%}
+/* 描述同样放大（scale.52 → zoom.65），改 zoom 后不用再写 width:192% 的补偿 */
+.pls-desc{font-size:16px;zoom:.65;transform:none;color:#a8b6ce;
+  line-height:1.7;margin-top:10px;width:100%}
 .pls-logt{font-size:16px;color:#cfd9ea;letter-spacing:2px;margin:10px 0 4px;
   display:flex;align-items:baseline;gap:6px;border-top:2px dashed #33405a;padding-top:8px}
-.pls-logt small{font-size:16px;transform:scale(.46);transform-origin:left center;color:#7c8aa4;letter-spacing:1px}
-.pls-log{max-height:84px;overflow-y:auto}
-.pls-li{display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px dotted #2a3448}
+.pls-logt small{font-size:16px;zoom:.6;transform:none;color:#7c8aa4;letter-spacing:1px}
+/* 字变大后每条更高，原来 84px 只能看到两条，放到 120px */
+.pls-log{max-height:120px;overflow-y:auto}
+.pls-li{display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px dotted #2a3448}
 .pls-li:last-child{border-bottom:0}
-.pls-i2{flex:0 0 auto;font-size:16px;transform:scale(.5);transform-origin:left center;
-  color:#0f141d;background:#8fd08a;padding:1px 5px;letter-spacing:1px}
+/* 左侧标签（浇水/施肥/未照料）与右侧时间一起放大，保持与正文同一档 */
+.pls-i2{flex:0 0 auto;font-size:16px;zoom:.6;transform:none;
+  color:#0f141d;background:#8fd08a;padding:1px 6px;letter-spacing:1px}
 .pls-i2.w{background:#7fb6e8}
 .pls-i2.f{background:#e0b878}
 .pls-i2.s{background:#a8b6ce}
-.pls-tx{flex:1 1 auto;min-width:0;font-size:16px;transform:scale(.5);transform-origin:left center;
-  color:#c6d2e6;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pls-tm{flex:0 0 auto;font-size:16px;transform:scale(.44);transform-origin:right center;color:#7c8aa4}
+.pls-tx{flex:1 1 auto;min-width:0;font-size:16px;letter-spacing:.6px;zoom:.65;
+  color:#c6d2e6;line-height:1.5;white-space:normal;word-break:break-word}
+.pls-tm{flex:0 0 auto;font-size:16px;zoom:.56;transform:none;color:#7c8aa4}
 .pls-acts{display:flex;gap:8px;margin-top:10px}
 
 /* ===== 星球 v4：经纬度 + 多阶段 + 点击反馈 + 铲除 + 选角色 ===== */
 .pl-iw{flex:1 1 auto;min-width:0}
 .pl-n{flex:none;width:100%}
-.pl-sub{font-size:16px;transform:scale(.44);transform-origin:left top;color:#7f8da6;
-  width:227%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;line-height:1.2}
+/* 20261123：植物列表的「坐标 · 气候」副标题改为可换行。
+   原来 width:227% + transform:scale(.44) + nowrap + ellipsis：气候一长就变省略号，
+   手机窄屏更明显。现在 zoom 让布局真的变小，行数交给内容自己决定。
+   20261123 六改：字号 .44→.56（≈9px），和详情里的小字一起放大，仍小于 16px 的植物名。 */
+.pl-sub{font-size:16px;zoom:.56;transform:none;color:#7f8da6;
+  margin-top:7px;line-height:1.45;
+  white-space:normal;word-break:break-word;overflow:visible;height:auto;width:100%}
 .pl-i{cursor:pointer}
 .pl-i:active{background:var(--paper2)}
-.pls-by{font-size:16px;transform:scale(.44);transform-origin:left top;color:#8a99b4;
-  margin-top:5px;width:227%;white-space:nowrap;overflow:hidden}
-.pls-meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:7px;
-  font-size:16px;transform:scale(.5);transform-origin:left top;color:#9fb0cc;
-  letter-spacing:1px;width:200%;gap:10px}
-.pls-meta span:last-child{color:#8fd08a;text-align:right}
+/* 20261123：来历行（谁种下的 / 定向星种来源）同样改为可换行，长句不再被切掉后半截 */
+.pls-by{font-size:16px;zoom:.62;transform:none;color:#8a99b4;
+  margin-top:9px;line-height:1.4;
+  white-space:normal;word-break:break-word;overflow:visible;height:auto}
+/* 坐标 · 气候行：同样放大到 zoom.6，改 zoom 后 width:200% 的补偿不再需要 */
+.pls-meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;
+  font-size:16px;zoom:.6;transform:none;color:#9fb0cc;
+  letter-spacing:1px;width:100%;gap:22px}
+.pls-meta span:last-child{color:#8fd08a;text-align:right;flex:1 1 auto;min-width:0}
+/* 左边坐标固定一行，别跟着气候一起换行，否则两栏会交错着排、看着乱 */
+.pls-meta span:first-child{white-space:nowrap}
 .pls-acts .bp-act{flex:1 1 0}
 .pls-acts .bp-act.danger{flex:0 0 74px;background:#7d2f2f;color:#f1dcd6;border-color:#4a1a1a;
   box-shadow:inset -3px -3px 0 rgba(0,0,0,.30),4px 4px 0 rgba(0,0,0,.22)}

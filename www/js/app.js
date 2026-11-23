@@ -10919,7 +10919,7 @@ function openModal(html, opts) {
   if (_noticeGate && String(html || '').indexOf('notice-modal') === -1) return false;
   // 20260929aq：超频礼物弹窗支持玻璃拟态（glass）与收窄（narrow）外观
   // 20260929bc：glitch=故障风非圆角弹窗（warning/惊喜触发）；galaxy=记忆宫殿星空卡片风
-  box.classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy', 'modal-gray-hall');
+  box.classList.remove('modal-oc-glass', 'modal-oc-narrow', 'modal-oc-hub', 'modal-oc-glitch', 'modal-pal-galaxy', 'modal-gray-hall', 'bm-ban-modal');
   if (o.glass) box.classList.add('modal-oc-glass');
   if (o.narrow) box.classList.add('modal-oc-narrow');
   if (o.glitch) box.classList.add('modal-oc-glitch');
@@ -11494,7 +11494,7 @@ async function showCharProfile(charId = null) {
     { id: 'btn-char-emoji', label: 'TA 的表情包库', note: `${(c.emojis || []).length} 张`, arrow: true },
     { id: 'btn-char-diary', label: '我们的日记', note: '', arrow: true },
     { id: 'btn-char-chatset', label: '聊天设置', note: '', arrow: true },
-    { id: 'btn-banwords', label: '访客禁词', note: `${banWords.length} 个词${bannedGroups ? ' · ' + bannedGroups + ' 个分组' : ''}` },
+    { id: 'btn-banwords', label: '访客禁词', note: (() => { const n = banTotalOf(c); return n ? (n + ' 条' + (bannedGroups ? ' · ' + bannedGroups + ' 组整组' : '')) : ''; })() },
     { id: 'btn-clear-chat', label: '清除聊天记录', arrow: true },
   ];
   openModal(`
@@ -11779,6 +11779,27 @@ function showRelationModal(c) {
   };
 }
 
+/* 访客禁词的「生效条数」：手动词 + 整组禁用（按组内条数算）+ 勾选的单条。
+   个人主页入口那一行的提示用它，免得显示「0 个词」但实际已经整组禁了几十条。 */
+function banTotalOf(c) {
+  if (!c) return 0;
+  let n = (c.banWords || []).length;
+  const bg = new Set(c.bannedGroups || []);
+  const folders = new Map();
+  const addF = (id, items) => { if (id) folders.set(id, (items || []).filter(t => typeof t === 'string' && t.trim())); };
+  (cards.customReplyGroups || []).forEach(g => { if (g && g.id) addF(g.id, g.items); });
+  addF('__pool_replies__', cards.customReplies);
+  addF('__pool_mottos__', cards.customMottos);
+  (cards.customPokeGroups || []).forEach(g => { if (g && g.id) addF(g.id, g.items); });
+  addF('__pool_pokes__', cards.customPokes);
+  bg.forEach(id => { n += (folders.get(id) || []).length; });
+  Object.keys(c.bannedGroupItems || {}).forEach(id => {
+    if (bg.has(id)) return;
+    n += ((c.bannedGroupItems[id] || []).length);
+  });
+  return n;
+}
+
 /* 访客禁词管理（手动输入 + 从字卡总库勾选单条 + 直接勾选字卡文件夹整组禁用）
    修复：旧版每次交互都重渲染整个弹窗并从 c 读回旧值，导致整组禁用/单条勾选改动丢失、
    视觉堆叠、无法展开收起。改为：本地可变状态 + 就地更新 DOM，不再重渲染弹窗。 */
@@ -11792,18 +11813,33 @@ function showBanWordsModal(c) {
   if (window._banTab !== 'pokes') window._banTab = 'replies';
 
   openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-      <div style="font-size:18px;font-weight:600;">访客禁词</div>
-      <button class="icon-btn" id="ban-close"><i data-icon="close" data-size="17"></i></button>
+    <!-- 20261123 二改：顶部导航栏要「和内容融为一体」——正常状态完全透明、无分隔线无阴影，
+         只有内容开始往上滚（scrollTop > 2）时，JS 给它加 .is-stuck，才浮出底色和一点投影。
+         玩家原话：「中间还有一根线，必须跟下面融合在一起，没有阴影，只有往下移动的时候
+         才能看出来它是个导航栏」。 -->
+    <div id="ban-top">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="flex:1;min-width:0;font-size:17px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">访客禁词<span style="font-size:12px;font-weight:400;color:var(--text-tertiary);margin-left:7px;">已设 <b class="ban-cnt" style="color:var(--purple-soft);font-weight:600;">0</b> 条</span></div>
+        <button class="btn primary" id="ban-save" style="padding:7px 15px;font-size:13px;flex-shrink:0;">完成</button>
+        <button class="icon-btn" id="ban-close" style="flex-shrink:0;"><i data-icon="close" data-size="17"></i></button>
+      </div>
     </div>
+
+    <div id="ban-body">
     <div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px;">TA 回复、书信、入梦签等抽取字卡时，过滤禁词、禁用分组和勾选的单条字卡（入梦签同样只从 TA 可用的字卡里抽）<br><span style="color:var(--text-tertiary);font-size:12px;">禁词按<b style="color:var(--text);">整句</b>判定：只有和字卡原文逐字完全相同的那一条才会被挡掉，和字卡库「过滤重复字卡」是同一个标准。</span></div>
 
-    <div style="font-size:14px;font-weight:600;margin-bottom:8px;">已设禁词（<span id="ban-count">${words.length}</span>）</div>
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;min-height:20px;" id="ban-list"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <div style="flex:1;min-width:0;font-size:14px;font-weight:600;">已设禁词（<span class="ban-cnt" style="color:var(--purple-soft);">0</span>）</div>
+      <button class="ban-mini" id="ban-all">全选</button>
+    </div>
+    <!-- 已设禁词：按原分组折叠 + 每条可勾 + 批量移出（玩家：「这里可以直接勾选，然后移出」） -->
+    <div id="ban-list"></div>
+    <button class="btn block" id="ban-unban-sel" disabled style="margin:8px 0 18px;">移出所选</button>
 
+    <div style="font-size:14px;font-weight:600;margin-bottom:8px;">手动添加禁词</div>
     <div style="display:flex;gap:8px;margin-bottom:18px;">
-      <input class="input" id="ban-input" placeholder="粘贴整句字卡（需与原文完全一致）" style="flex:1;">
-      <button class="btn primary" id="ban-add">添加</button>
+      <input class="input" id="ban-input" placeholder="粘贴整句字卡（需与原文完全一致）" style="flex:1;min-width:0;">
+      <button class="btn primary" id="ban-add" style="flex-shrink:0;">添加</button>
     </div>
 
     <div style="font-size:14px;font-weight:600;margin-bottom:8px;">从字卡库禁用（文件夹形式：可展开收起 / 整组禁用 / 单条勾选）</div>
@@ -11811,21 +11847,225 @@ function showBanWordsModal(c) {
       <button class="card-mod-tab active" data-bantab="replies">回复 / 寄语</button>
       <button class="card-mod-tab" data-bantab="pokes">戳一戳</button>
     </div>
-    <div style="margin-bottom:16px;display:flex;flex-direction:column;gap:8px;" id="ban-groups"></div>
-
-    <button class="btn primary block" id="ban-save">完成</button>
+    <div style="margin-bottom:4px;display:flex;flex-direction:column;gap:8px;" id="ban-groups"></div>
+    </div>
   `);
+  // 让这个弹窗去掉内边距，吸顶条才能真正贴住顶部（别的弹窗不受影响：openModal 会清掉这个类）
+  try { $('#modal-content').classList.add('bm-ban-modal'); } catch (e) {}
+
+  /* —— 导航栏融合：滚动才显形 —— */
+  (function bindTopFade() {
+    const mc = $('#modal-content');
+    const bar = $('#ban-top');
+    if (!mc || !bar) return;
+    const onScroll = () => {
+      if (!bar.isConnected) { mc.removeEventListener('scroll', onScroll); return; }
+      bar.classList.toggle('is-stuck', mc.scrollTop > 2);
+    };
+    mc.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
 
   /* —— 就地渲染函数（只更新对应容器，不重渲染弹窗） —— */
 
-  // 已设禁词列表
+  /* 所有可禁用的文件夹（回复分组 + 未分组回复 + 寄语 + 戳一戳分组 + 未分组戳一戳）。
+     注意：这里**不分 tab**，因为「已设禁词」要把两个 tab 里已经禁掉的都汇总出来，
+     否则在戳一戳里禁的组，切回回复 tab 就看不出自己禁过什么。 */
+  function banFoldersAll() {
+    const out = [];
+    const add = (gid, name, items) => out.push({
+      id: gid,
+      name: (typeof name === 'string' && name.trim() && !isLineJunkText(name)) ? name : '未命名分组',
+      items: (items || []).filter(t => typeof t === 'string' && t.trim() && !isLineJunkText(t)),
+    });
+    (cards.customReplyGroups || []).forEach(g => { if (g && g.id) add(g.id, g.name, g.items); });
+    add('__pool_replies__', '未分组回复', cards.customReplies);
+    add('__pool_mottos__', '寄语', cards.customMottos);
+    (cards.customPokeGroups || []).forEach(g => { if (g && g.id) add(g.id, g.name, g.items); });
+    add('__pool_pokes__', '未分组戳一戳', cards.customPokes);
+    return out;
+  }
+
+  /* 已设禁词的分组模型（20261123 二改）：
+     玩家要的是「这里可以直接勾选，然后移出」+「按原本的分组展开收起」+「看得出是哪组的」。
+     所以按来源分组聚合：
+       groups = [{ gid, name, rows: [{ key, kind, text, gid, n }] }]
+     kind: 'group'（整组禁用，一行代表整组）| 'item'（单条勾选）| 'word'（手动添加） */
+  function banAggModel() {
+    const folders = banFoldersAll();
+    const byId = new Map(folders.map(f => [f.id, f]));
+    const map = new Map();
+    const bucket = (gid, name) => {
+      if (!map.has(gid)) map.set(gid, { gid: gid, name: name, rows: [] });
+      return map.get(gid);
+    };
+    bannedGroups.forEach(gid => {
+      const f = byId.get(gid);
+      const items = f ? f.items : [];
+      bucket(gid, f ? f.name : '已不存在的分组').rows.push({
+        key: 'g:' + gid, kind: 'group', gid: gid, n: items.length,
+        text: (f ? f.name : '已不存在的分组') + '（整组 ' + items.length + ' 条）',
+      });
+    });
+    Object.keys(bannedGroupItems).forEach(gid => {
+      if (bannedGroups.has(gid)) return;            // 整组已禁 → 不再重复列单条
+      const f = byId.get(gid);
+      (bannedGroupItems[gid] || []).forEach(t => {
+        bucket(gid, f ? f.name : '已不存在的分组').rows.push({
+          key: 'i:' + gid + '\u0001' + t, kind: 'item', gid: gid, text: t,
+        });
+      });
+    });
+    words.forEach(w => bucket('__manual__', '手动添加').rows.push({ key: 'w:' + w, kind: 'word', text: w }));
+
+    // 按字卡库里的原顺序输出（回复分组 → 未分组回复 → 寄语 → 戳一戳分组 → 未分组戳一戳 → 手动）
+    const out = [];
+    ['__manual__'].forEach(() => {});
+    folders.forEach(f => { if (map.has(f.id)) { out.push(map.get(f.id)); map.delete(f.id); } });
+    // 剩下的（库里已无此分组，但禁词记录还在）兜底列在后面
+    map.forEach(g => { if (g.gid !== '__manual__') out.push(g); });
+    if (map.has('__manual__')) out.push(map.get('__manual__'));
+    return out;
+  }
+  function banRowCount(r) { return r.kind === 'group' ? (r.n || 0) : 1; }
+  function banTotal() {
+    let n = 0;
+    banAggModel().forEach(g => g.rows.forEach(r => { n += banRowCount(r); }));
+    return n;
+  }
+  function refreshBanCount() {
+    const n = banTotal();
+    document.querySelectorAll('.ban-cnt').forEach(el => { el.textContent = n; });
+  }
+
+  /* 勾选状态（跨重渲染保留：勾完一组、去另一组勾，不会丢） */
+  const sel = new Set();
+  /* 已设禁词里各分组是否收起（默认全展开，因为这里是「我禁了啥」的汇总，要先看得见）。
+     20261123 三改：折叠状态挂到 window._banBFold，关掉弹窗再打开还记得上次收起/展开的样子。
+     注意不能和上面「从字卡库禁用」区的 fold 共用对象——同一批分组 id 在两边默认态相反
+     （那边默认收起、这边默认展开），共用会互相打架。 */
+  const bfold = Object.assign(Object.create(null), window._banBFold || {});
+  const persistBFold = () => { window._banBFold = Object.assign({}, bfold); };
+
+  function syncUnbanBtn() {
+    const btn = $('#ban-unban-sel');
+    if (!btn) return;
+    btn.textContent = sel.size ? ('移出所选（' + sel.size + '）') : '移出所选';
+    btn.disabled = sel.size === 0;
+    // 选中了才变成主按钮，平时是灰色待命，避免一大块高亮按钮抢注意力
+    btn.classList.toggle('primary', sel.size > 0);
+  }
+  function syncAllBtn() {
+    const b = $('#ban-all');
+    if (!b) return;
+    const keys = [];
+    banAggModel().forEach(g => g.rows.forEach(r => keys.push(r.key)));
+    const allOn = keys.length > 0 && keys.every(k => sel.has(k));
+    b.textContent = allOn ? '取消全选' : '全选';
+  }
+
+  // 已设禁词列表：分组可折叠 + 每条可勾 + 批量移出
   function renderList() {
     const el = $('#ban-list');
-    el.innerHTML = words.map((w, i) => `<span class="badge" style="display:inline-flex;gap:4px;cursor:pointer;" data-bi="${i}">${escapeHtml(w)} <i data-icon="close" data-size="12"></i></span>`).join('');
-    $('#ban-count').textContent = words.length;
-    el.querySelectorAll('[data-bi]').forEach(b => {
-      b.onclick = () => { words.splice(parseInt(b.dataset.bi), 1); renderList(); };
+    if (!el) return;
+    const groups = banAggModel();
+    const flat = [];                       // 行下标 → 行数据（避免把 \u0001 之类的 key 塞进 DOM 属性）
+    let total = 0;
+    groups.forEach(g => g.rows.forEach(r => { total += banRowCount(r); }));
+
+    // 清掉已经失效的勾选（比如整组被解禁，里面的单条 key 就没了）
+    const alive = new Set();
+    groups.forEach(g => g.rows.forEach(r => alive.add(r.key)));
+    Array.from(sel).forEach(k => { if (!alive.has(k)) sel.delete(k); });
+
+    if (!groups.length) {
+      el.innerHTML = '<div class="bn-empty">还没有设置禁词。在下面点分组前的方块（整组禁用）或点某张字卡（单条禁用），就会记到这里。</div>';
+      syncUnbanBtn(); syncAllBtn();
+      return;
+    }
+
+    el.innerHTML = groups.map((g, gi) => {
+      const collapsed = bfold[g.gid] === true;
+      const keys = g.rows.map(r => r.key);
+      const nSel = keys.filter(k => sel.has(k)).length;
+      const allOn = keys.length > 0 && nSel === keys.length;
+      const cnt = g.rows.reduce((s, r) => s + banRowCount(r), 0);
+      let body = '';
+      if (!collapsed) {
+        body = '<div class="bn-gb">' + g.rows.map(r => {
+          const idx = flat.length;
+          flat.push(r);
+          const on = sel.has(r.key);
+          return '<div class="bn-row' + (on ? ' on' : '') + '" data-bn-row="' + idx + '">' +
+            '<span class="bn-box' + (on ? ' on' : '') + '"></span>' +
+            '<span class="bn-tx">' + escapeHtml(r.text) + '</span>' +
+            (r.kind === 'group' ? '<span class="bn-tag">整组</span>' : '') +
+            '</div>';
+        }).join('') + '</div>';
+      }
+      /* 20261123 三改：组头 = 勾选框（状态） + 组名 + 条数 + 本组「全选」 + 行尾箭头。
+         玩家原话：「每个组都应该可以去全选，就是每个组都要有一个全选按钮」——
+         所以每组都配一个独立的全选/取消按钮，不用再跑去顶上点全局全选。
+         箭头放行尾（列表折叠的通行位置），不再夹在勾选框和组名之间挤成一团。
+         data-bn-gsel / data-bn-gall 都会 stopPropagation，不会误触发折叠。 */
+      return '<div class="bn-g">' +
+        '<div class="bn-gh' + (nSel ? ' has-sel' : '') + '" data-bn-gh="' + gi + '" title="点一下展开 / 收起">' +
+          '<span class="bn-box' + (allOn ? ' on' : '') + (nSel && !allOn ? ' half' : '') + '" data-bn-gsel="' + gi + '"></span>' +
+          '<span class="bn-gn">' + escapeHtml(g.name) + '</span>' +
+          '<span class="bn-gt">' + cnt + ' 条</span>' +
+          '<button class="bn-gall" data-bn-gall="' + gi + '">' + (allOn ? '取消' : '全选') + '</button>' +
+          '<span class="bn-ar">' + (collapsed ? '▸' : '▾') + '</span>' +
+        '</div>' + body +
+      '</div>';
+    }).join('');
+
+    el.querySelectorAll('[data-bn-gsel]').forEach(box => {
+      box.onclick = (ev) => {
+        ev.stopPropagation();
+        const g = groups[parseInt(box.dataset.bnGsel, 10)];
+        if (!g) return;
+        const keys = g.rows.map(r => r.key);
+        const allOn = keys.length > 0 && keys.every(k => sel.has(k));
+        keys.forEach(k => { if (allOn) sel.delete(k); else sel.add(k); });
+        renderList();
+      };
     });
+    /* 本组「全选 / 取消」文字按钮：和点方块同一个效果，只是更好发现 */
+    el.querySelectorAll('[data-bn-gall]').forEach(btn => {
+      btn.onclick = (ev) => {
+        ev.stopPropagation();
+        const g = groups[parseInt(btn.dataset.bnGall, 10)];
+        if (!g) return;
+        const keys = g.rows.map(r => r.key);
+        const allOn = keys.length > 0 && keys.every(k => sel.has(k));
+        keys.forEach(k => { if (allOn) sel.delete(k); else sel.add(k); });
+        // 收起状态下点「全选」→ 顺手把这一组展开，让玩家直接看见哪些被勾上了
+        if (!allOn && bfold[g.gid] === true) { bfold[g.gid] = false; persistBFold(); }
+        renderList();
+      };
+    });
+    el.querySelectorAll('[data-bn-gh]').forEach(h => {
+      h.onclick = (ev) => {
+        if (ev.target.closest('[data-bn-gsel]') || ev.target.closest('[data-bn-gall]')) return;
+        const g = groups[parseInt(h.dataset.bnGh, 10)];
+        if (!g) return;
+        bfold[g.gid] = (bfold[g.gid] === true) ? false : true;
+        persistBFold();
+        renderList();
+      };
+    });
+    el.querySelectorAll('[data-bn-row]').forEach(row => {
+      row.onclick = () => {
+        const r = flat[parseInt(row.dataset.bnRow, 10)];
+        if (!r) return;
+        if (sel.has(r.key)) sel.delete(r.key); else sel.add(r.key);
+        renderList();
+      };
+    });
+
+    refreshBanCount();
+    syncUnbanBtn();
+    syncAllBtn();
   }
 
   // 分组区域（展开/收起、整组禁用勾选、单条勾选）
@@ -11889,13 +12129,14 @@ function showBanWordsModal(c) {
           <span class="ban-garrow" style="color:var(--text-tertiary);font-size:12px;transition:transform .15s;">${collapsed ? '▸' : '▾'}</span>
           <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${g.color};margin-right:2px;flex-shrink:0;"></span>
           <div style="flex:1;font-size:13px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(gName)}</div>
-          <div style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">${items.length} 条${itemBanned.length ? ` · 禁用 ${itemBanned.length}` : ''}</div>
+          <div style="font-size:12px;color:var(--text-tertiary);flex-shrink:0;">${items.length} 条${on ? ' · 整组禁用' : (itemBanned.length ? ` · 禁 ${itemBanned.length}` : '')}</div>
         </div>`;
       let body = '';
       if (!collapsed) {
         body = `<div class="ban-gbody" style="padding:6px 12px 10px 44px;display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid var(--border);">
           ${items.length === 0 ? '<span style="color:var(--text-tertiary);font-size:12px;">（空分组）</span>' : items.map((t, ii) => {
-            const checked = itemBanned.includes(t);
+            // 整组禁用时组内每一条都是「已被禁」的，要一起亮起来，否则玩家看不出一共有哪些被挡了
+            const checked = on || itemBanned.includes(t);
             return `<span class="badge ban-gitem" data-bgid="${g.id}" data-bt="${ii}" title="${escapeHtml(t)}" style="cursor:pointer;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;${checked ? 'background:var(--purple);color:#141019;' : ''}">${escapeHtml(cardBrief(t))}</span>`;
           }).join('')}
         </div>`;
@@ -11910,9 +12151,13 @@ function showBanWordsModal(c) {
         if (ev.target.closest('.ban-gcheck')) {
           bannedGroups.has(gid) ? bannedGroups.delete(gid) : bannedGroups.add(gid);
           renderGroups();
+          renderList();          // 整组禁用会一次性多出好几条，顶部清单要同步
           return;
         }
-        fold[gid] = !fold[gid];
+        // fold[gid] === false 表示「展开」；其余（undefined/true）都是收起。
+        // 20261123：原来写 fold[gid] = !fold[gid]，undefined → true 仍是收起，
+        // 第一次点分组头看着「没反应」，要点两下才展开 —— 改成按当前是否收起取反。
+        fold[gid] = (fold[gid] !== false) ? false : true;
         renderGroups();
       };
     });
@@ -11921,12 +12166,21 @@ function showBanWordsModal(c) {
       it.onclick = () => {
         const gid = it.dataset.bgid;
         const g = findFolder(gid);
-        const t = groupItems(g || {})[parseInt(it.dataset.bt)];
+        const items = groupItems(g || {});
+        const t = items[parseInt(it.dataset.bt, 10)];
         if (t == null) return;
-        const arr = bannedGroupItems[gid] = bannedGroupItems[gid] || [];
-        if (arr.includes(t)) bannedGroupItems[gid] = arr.filter(x => x !== t);
-        else arr.push(t);
+        if (bannedGroups.has(gid)) {
+          // 整组已禁用时点某一条 = 只把这一条放出来：整组标记拆成逐条禁用，其余保持禁用
+          bannedGroups.delete(gid);
+          const rest = items.filter(x => x !== t);
+          if (rest.length) bannedGroupItems[gid] = rest; else delete bannedGroupItems[gid];
+        } else {
+          const arr = bannedGroupItems[gid] = bannedGroupItems[gid] || [];
+          if (arr.includes(t)) bannedGroupItems[gid] = arr.filter(x => x !== t);
+          else arr.push(t);
+        }
         renderGroups();
+        renderList();
       };
     });
   }
@@ -11943,18 +12197,62 @@ function showBanWordsModal(c) {
     };
   });
 
-  // 关闭：把本地状态写回 c（点 ✕ 也保存，符合直觉）
-  const commit = async (toast) => {
+  /* 保存：把本地状态写回 c。
+     20261123：玩家要求「点完成不要退出这个页面」+「滚到哪里都能保存」——
+     所以 👉 完成 = 只存不走；✕ = 存完才关；点遮罩也算关闭，同样先存（不然刚勾的全丢）。 */
+  const commit = async (opts) => {
+    const o = opts || {};
     c.banWords = words;
     c.bannedGroups = [...bannedGroups];
     c.bannedGroupItems = bannedGroupItems;
     window._banFold = fold;
-    await saveChar(c);
-    if (toast) miniToast('禁词已保存');
-    closeModal();
+    // 先改内存再存，即使保存慢，界面/后续逻辑读到的都是新值
+    try { await saveChar(c); } catch (e) {}
+    if (o.close) { closeModal(); return; }
+    miniToast(o.quiet ? '禁词已保存' : '禁词已保存，可以接着设置');
   };
 
-  $('#ban-close').onclick = () => commit(false);
+  $('#ban-close').onclick = () => commit({ close: true });
+  // 点遮罩 = 关闭弹窗：先落盘再关，避免「勾了一堆没点完成 → 点空白全丢」
+  window.__bmModalOnDismiss = () => { commit({ close: true, quiet: true }); };
+
+  /* 全选 / 取消全选（已设禁词区） */
+  $('#ban-all').onclick = () => {
+    const keys = [];
+    banAggModel().forEach(g => g.rows.forEach(r => keys.push(r.key)));
+    const allOn = keys.length > 0 && keys.every(k => sel.has(k));
+    sel.clear();
+    if (!allOn) keys.forEach(k => sel.add(k));
+    renderList();
+  };
+
+  /* 批量移出所选：手动词删掉、整组解禁、单条从 bannedGroupItems 里摘掉 */
+  $('#ban-unban-sel').onclick = () => {
+    if (!sel.size) return;
+    let n = 0;
+    Array.from(sel).forEach(k => {
+      if (k.indexOf('w:') === 0) {
+        const t = k.slice(2);
+        const i = words.indexOf(t);
+        if (i >= 0) { words.splice(i, 1); n++; }
+      } else if (k.indexOf('g:') === 0) {
+        if (bannedGroups.delete(k.slice(2))) n++;
+      } else if (k.indexOf('i:') === 0) {
+        const rest = k.slice(2);
+        const sep = rest.indexOf('\u0001');
+        const gid = rest.slice(0, sep);
+        const t = rest.slice(sep + 1);
+        const arr = (bannedGroupItems[gid] || []).filter(x => x !== t);
+        if (arr.length) bannedGroupItems[gid] = arr; else delete bannedGroupItems[gid];
+        n++;
+      }
+    });
+    sel.clear();
+    renderGroups();
+    renderList();
+    miniToast(n ? ('已把 ' + n + ' 项移出禁词') : '没有可移出的项');
+  };
+
   $('#ban-add').onclick = () => {
     const v = $('#ban-input').value.trim();
     if (v && !words.includes(v)) { words.push(v); $('#ban-input').value = ''; renderList(); }
@@ -11962,7 +12260,7 @@ function showBanWordsModal(c) {
   $('#ban-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') $('#ban-add').click();
   });
-  $('#ban-save').onclick = () => commit(true);
+  $('#ban-save').onclick = () => commit({});
 }
 
 /* 关系网总览（交互式：先选角色 → 查看/直接修改 TA 与玩家、与其他所有访客的关系） */
@@ -14482,7 +14780,7 @@ function openSeasonLayer(cid) {
                     frame.contentWindow.document.body.children.length > 0);
   } catch (e) { frameAlive = false; }
   if (frame && (!_seasonFrameLoaded || !frameAlive)) {
-    frame.src = 'season/index.html?v=20261119t';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
+    frame.src = 'season/index.html?v=20261123f';   // 加缓存戳：四季页改动后光清 app.js 的缓存不够
     _seasonFrameLoaded = true;
   }
   layer.classList.add('show');
@@ -19170,7 +19468,7 @@ function showCardsModal() {
           : searchResults.map((r, k) => {
               const loc = r.g === null ? `#未分组` : `#${cards.customReplyGroups[r.g].name || '未命名分组'}`;
               return `
-              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:10px;">
+              <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:10px;cursor:pointer;" data-search-edit="${k}" title="点击编辑这张字卡">
                 <span style="flex:1;font-size:14px;word-break:break-word;">${escapeHtml(r.t)}</span>
                 <span style="color:var(--text-tertiary);font-size:11px;flex-shrink:0;">${escapeHtml(loc)}</span>
                 <button class="badge" style="cursor:pointer;color:var(--danger);flex-shrink:0;" data-search-del="${k}">删</button>
@@ -19192,7 +19490,7 @@ function showCardsModal() {
         <div style="display:${window._ungroupCollapsed ? 'none' : 'flex'};flex-wrap:wrap;gap:6px;padding:10px 4px;max-height:180px;overflow-y:auto;" id="cards-ungrouped">
           ${cards.customReplies.map((t, i) => batch
             ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-sel-ungroup="${i}">${escapeHtml(cardBrief(t))}</span>`
-            : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-idx="${i}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
+            : `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)} · 点击编辑" data-idx="${i}">${escapeHtml(cardBrief(t))}</span>`
           ).join('') || '<span style="color:var(--text-tertiary);font-size:12px;">（空）</span>'}
         </div>
       </div>
@@ -19215,7 +19513,7 @@ function showCardsModal() {
           <div style="display:${collapsed ? 'none' : 'flex'};flex-wrap:wrap;gap:6px;padding:12px;">
             ${g.items.length === 0 ? '<span style="color:var(--text-tertiary);font-size:12px;">（空分组）</span>' : g.items.map((t, ii) => batch
               ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-sel-group="${gi}" data-sel-i="${ii}">${escapeHtml(cardBrief(t))}</span>`
-              : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-g="${gi}" data-i="${ii}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
+              : `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)} · 点击编辑" data-g="${gi}" data-i="${ii}">${escapeHtml(cardBrief(t))}</span>`
             ).join('')}
           </div>
         </div>`;
@@ -19247,7 +19545,7 @@ function showCardsModal() {
           <div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 4px;max-height:180px;overflow-y:auto;" id="mod-ungrouped">
             ${list.map((t, i) => batch
               ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-sel-ungroup="${i}">${escapeHtml(cardBrief(t))}</span>`
-              : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-idx="${i}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
+              : `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)} · 点击编辑" data-mod-idx="${i}">${escapeHtml(cardBrief(t))}</span>`
             ).join('') || '<span style="color:var(--text-tertiary);font-size:12px;">（空）</span>'}
           </div>
         </div>`;
@@ -19269,7 +19567,7 @@ function showCardsModal() {
             <div style="display:${collapsed ? 'none' : 'flex'};flex-wrap:wrap;gap:6px;padding:12px;">
               ${g.items.length === 0 ? '<span style="color:var(--text-tertiary);font-size:12px;">（空分组）</span>' : g.items.map((t, ii) => batch
                 ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-sel-group="${gi}" data-mod-sel-i="${ii}">${escapeHtml(cardBrief(t))}</span>`
-                : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-mod-g="${gi}" data-mod-i="${ii}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
+                : `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)} · 点击编辑" data-mod-g="${gi}" data-mod-i="${ii}">${escapeHtml(cardBrief(t))}</span>`
               ).join('')}
             </div>
           </div>`;
@@ -19302,7 +19600,7 @@ function showCardsModal() {
         <div style="max-height:340px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">
           ${list.map((t, i) => batch
             ? `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-flat-sel="${i}">${escapeHtml(cardBrief(t))}</span>`
-            : `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;max-width:100%;" title="${escapeHtml(t)}" data-flat-idx="${i}">${escapeHtml(cardBrief(t))} <i data-icon="close" data-size="12"></i></span>`
+            : `<span class="badge" style="cursor:pointer;max-width:100%;" title="${escapeHtml(t)} · 点击编辑" data-flat-idx="${i}">${escapeHtml(cardBrief(t))}</span>`
           ).join('') || '<span style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:24px 0;">还没有内容</span>'}
         </div>
         <div style="display:flex;gap:8px;">
@@ -19385,7 +19683,7 @@ function showCardsModal() {
       slot2.innerHTML = '<div class="bm-cd-shelf" id="bm-cd-shelf-entry">' +
         '<span class="bm-cd-shelf-ic">📋</span>' +
         '<span class="bm-cd-shelf-tx">' +
-        '<span class="bm-cd-shelf-t">角色禁词总览</span>' +
+        '<span class="bm-cd-shelf-t">角色禁词</span>' +
         '<span class="bm-cd-shelf-s">' + sub + ' · 可移出或删掉字卡</span>' +
         '</span>' +
         '<span class="bm-cd-shelf-arr">&#8250;</span></div>';
@@ -19421,6 +19719,17 @@ function showCardsModal() {
       if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
     };
   }
+
+  // 搜索结果：点整行 → 编辑这张（「删」按钮保留，点它才是删）
+  document.querySelectorAll('[data-search-edit]').forEach(el => {
+    el.onclick = (ev) => {
+      if (ev.target.closest('[data-search-del]')) return;
+      const k = parseInt(el.dataset.searchEdit);
+      const r = searchResults[k];
+      if (!r) return;
+      showCardEditModal({ kind: 'reply', text: r.t, gi: r.g, i: r.i });
+    };
+  });
 
   // 搜索结果删除：按扁平结果的原始定位删除
   document.querySelectorAll('[data-search-del]').forEach(el => {
@@ -19619,20 +19928,19 @@ function showCardsModal() {
         return;
       }
 
-      // 非批量：删除未分组条目
+      // 非批量：点一下 = 编辑这一条（删除在编辑弹窗里）
       document.querySelectorAll('[data-mod-idx]').forEach(el => {
         el.onclick = () => {
           const i = parseInt(el.dataset.modIdx);
-          cards[listKey].splice(i, 1);
-          saveCards(cards).then(() => showCardsModal());
+          showCardEditModal({ kind: 'mod', text: cards[listKey][i], key: listKey, i: i });
         };
       });
-      // 非批量：删除分组内条目
+      // 非批量：分组内条目 → 编辑
       document.querySelectorAll('[data-mod-g][data-mod-i]').forEach(el => {
         el.onclick = () => {
           const g = parseInt(el.dataset.modG), i = parseInt(el.dataset.modI);
-          groups[g].items.splice(i, 1);
-          saveCards(cards).then(() => showCardsModal());
+          const arr = (groups[g] && groups[g].items) || [];
+          showCardEditModal({ kind: 'mod', text: arr[i], arr: arr, i: i });
         };
       });
       // 非批量：删除分组
@@ -19697,12 +20005,11 @@ function showCardsModal() {
       return;
     }
 
-    // 非批量：删除单条
+    // 非批量：点一下 = 编辑这一条
     document.querySelectorAll('[data-flat-idx]').forEach(el => {
       el.onclick = () => {
         const i = parseInt(el.dataset.flatIdx);
-        cards[flatKey].splice(i, 1);
-        saveCards(cards).then(() => showCardsModal());
+        showCardEditModal({ kind: 'flat', text: cards[flatKey][i], key: flatKey, i: i });
       };
     });
     // 添加一条
@@ -19875,21 +20182,20 @@ function showCardsModal() {
     return;
   }
 
-  // 删除未分组字卡
+  // 未分组字卡：点一下 = 编辑（删除收进编辑弹窗，避免误触直接删掉）
   document.querySelectorAll('#cards-ungrouped [data-idx]').forEach(el => {
     el.onclick = () => {
       const idx = parseInt(el.dataset.idx);
-      cards.customReplies.splice(idx, 1);
-      saveCards(cards).then(() => showCardsModal());
+      showCardEditModal({ kind: 'reply', text: cards.customReplies[idx], gi: null, i: idx });
     };
   });
 
-  // 删除分组内字卡
+  // 分组内字卡：点一下 = 编辑
   document.querySelectorAll('[data-g][data-i]').forEach(el => {
     el.onclick = () => {
       const g = parseInt(el.dataset.g), i = parseInt(el.dataset.i);
-      cards.customReplyGroups[g].items.splice(i, 1);
-      saveCards(cards).then(() => showCardsModal());
+      const arr = (cards.customReplyGroups[g] && cards.customReplyGroups[g].items) || [];
+      showCardEditModal({ kind: 'reply', text: arr[i], gi: g, i: i });
     };
   });
 
@@ -19916,6 +20222,108 @@ function showCardsModal() {
     if (save.cancelled) return;
     const blob = new Blob([JSON.stringify(cards, null, 2)], { type: 'application/json' });
     await finishExport(save, blob, removed > 0 ? `已导出字卡库（自动过滤重复 ${removed} 条）` : '已导出字卡库');
+  };
+}
+
+/* 20261123（玩家要求）：点字卡 → 编辑这张，不再「点一下就删」。
+   · 能改文字；回复字卡还能改所在分组（等于移动）；
+   · 删除收进这个弹窗里，带二次确认，免得手指一滑就没了。
+   loc = { kind:'reply'|'flat'|'mod', text, gi, i, key } */
+function showCardEditModal(loc) {
+  if (!loc) return;
+  const kind = loc.kind || 'reply';
+  const groupable = (kind === 'reply');
+  const text = String(loc.text == null ? '' : loc.text);
+  const giCur = (loc.gi == null) ? -1 : loc.gi;
+
+  let placeHtml = '';
+  if (groupable) {
+    const opts = ['<option value="-1"' + (giCur === -1 ? ' selected' : '') + '>未分组</option>']
+      .concat((cards.customReplyGroups || []).map((g, gi) => {
+        const nm = (typeof g.name === 'string' && g.name.trim() && !isLineJunkText(g.name)) ? g.name : '未命名分组';
+        return '<option value="' + gi + '"' + (gi === giCur ? ' selected' : '') + '>' + escapeHtml(nm) + '</option>';
+      })).join('');
+    placeHtml = `<div class="field" style="margin-top:12px;">
+      <label style="font-size:12px;color:var(--text-tertiary);">放在哪个分组</label>
+      <select class="input" id="card-edit-group" style="margin-top:6px;">${opts}</select>
+    </div>`;
+  }
+
+  openModal(`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:18px;font-weight:600;">编辑字卡</div>
+      <button class="icon-btn" id="card-edit-x"><i data-icon="close" data-size="17"></i></button>
+    </div>
+    <div class="field">
+      <textarea class="textarea" id="card-edit-text" style="min-height:120px;">${escapeHtml(text)}</textarea>
+    </div>
+    ${placeHtml}
+    <div style="font-size:11.5px;color:var(--text-tertiary);margin:10px 0 14px;line-height:1.5;">
+      改完点「保存」。换分组等于把这张卡搬到那个分组里；不同分组里可以有同样的一句话，同一分组里不会重复。
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn danger" style="flex:0 0 auto;" id="card-edit-del">删除</button>
+      <button class="btn" style="flex:1;" id="card-edit-cancel">取消</button>
+      <button class="btn primary" style="flex:1;" id="card-edit-save">保存</button>
+    </div>
+  `);
+
+  const back = () => showCardsModal();
+  const ta = $('#card-edit-text');
+  const sel = $('#card-edit-group');
+  const xBtn = $('#card-edit-x');
+  if (xBtn) xBtn.onclick = back;
+  $('#card-edit-cancel').onclick = back;
+
+  const srcArr = () => {
+    if (Array.isArray(loc.arr)) return loc.arr;      // 分组内条目：直接拿该组的 items 引用
+    if (groupable) return giCur < 0 ? cards.customReplies : ((cards.customReplyGroups[giCur] || {}).items || null);
+    return cards[loc.key] || null;
+  };
+
+  $('#card-edit-save').onclick = async () => {
+    const nv = String((ta && ta.value) || '').trim();
+    if (!nv) { showToast('字卡内容不能为空'); return; }
+    const arr = srcArr();
+    if (!Array.isArray(arr)) { showToast('这张字卡已经不在了'); return; }
+
+    if (!groupable) {
+      const at = arr.indexOf(text);
+      if (at < 0) { showToast('这张字卡已经不在了'); return; }
+      if (nv !== text && arr.indexOf(nv) >= 0) { showToast('已经有同样的字卡了'); return; }
+      if (nv === text) { back(); return; }
+      arr[at] = nv;
+      await saveCards(cards);
+      back();
+      miniToast('已保存');
+      return;
+    }
+
+    const giNew = sel ? parseInt(sel.value, 10) : -1;
+    if (giNew === giCur && nv === text) { back(); return; }
+    const target = giNew < 0 ? cards.customReplies : ((cards.customReplyGroups[giNew] || {}).items || null);
+    if (!Array.isArray(target)) { showToast('目标分组不见了'); return; }
+    if (target.indexOf(nv) >= 0) { showToast('这个分组里已经有这张字卡了'); return; }
+
+    const at = arr.indexOf(text);
+    if (at >= 0) arr.splice(at, 1);
+    target.push(nv);
+    await saveCards(cards);
+    back();
+    miniToast(giNew === giCur ? '已保存' : '已保存并换了分组');
+  };
+
+  $('#card-edit-del').onclick = () => {
+    showConfirm('把这张字卡从字卡库删掉？\n\n删掉之后字卡库里就真的没有了，不能撤销。', async () => {
+      const arr = srcArr();
+      if (Array.isArray(arr)) {
+        const at = arr.indexOf(text);
+        if (at >= 0) arr.splice(at, 1);
+        await saveCards(cards);
+      }
+      back();
+      miniToast('已删除这张字卡');
+    }, () => {});
   };
 }
 
@@ -22475,7 +22883,7 @@ function chatSettingsHtml(s, title, subtitle, isPerChar = false) {
         <span>允许角色自己添加禁词</span>
         <input type="checkbox" id="cs-allow-self-ban" ${s.allowSelfBan !== false ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--purple);">
       </label>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开着：TA 可能自己把某几张字卡收进自己的禁词，也可能把之前收进去的放出来。每次改动都会给你发一张清单；字卡库 →「角色禁词总览」里能看到每个角色当前的全部禁词，随时移出或删掉对应字卡。关掉：TA 不再动禁词。这一项只由你决定，角色不会动它。</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">开着：TA 可能自己把某几张字卡收进自己的禁词，也可能把之前收进去的放出来。每次改动都会给你发一张清单；字卡库 →「角色禁词」里能看到每个角色当前的全部禁词，随时移出或删掉对应字卡。关掉：TA 不再动禁词。这一项只由你决定，角色不会动它。</div>
     </div>
 
     <div class="field">
